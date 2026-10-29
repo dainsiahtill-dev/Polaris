@@ -19,7 +19,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, TypeVar, cast
 
 from polaris.kernelone.utils.time_utils import utc_now as _utc_now
 
@@ -130,7 +130,7 @@ class AggregatedMetric:
         if variance < 0:
             # Numerical precision edge case
             return 0.0
-        return variance**0.5
+        return cast("float", (variance**0.5))
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""

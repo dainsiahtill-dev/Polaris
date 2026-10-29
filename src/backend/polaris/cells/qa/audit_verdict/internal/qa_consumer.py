@@ -7,7 +7,7 @@ import os
 import re
 import shlex
 import threading
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.qa.audit_verdict.internal.evidence_commit import (
@@ -677,7 +677,7 @@ def _failure_class_for_observed_verdict(verdict: str) -> str:
     """Map a local observation token to typed evidence, never to a transition."""
 
     failure_class, _ = classify_qa_audit_failure({"verdict": verdict})
-    return failure_class
+    return cast("str", (failure_class))
 
 
 def _normalize_path_values(raw: Any) -> list[str]:
@@ -854,7 +854,7 @@ def _first_failing_verify_clause(verify: str, *, cwd: str) -> str:
     (single source of truth for the three verify touchpoints)."""
     from polaris.kernelone.quality.step_verify import first_failing_verify_clause
 
-    return first_failing_verify_clause(verify, cwd=cwd)
+    return cast("str", (first_failing_verify_clause(verify, cwd=cwd)))
 
 
 class QAConsumer:
@@ -1169,18 +1169,23 @@ class QAConsumer:
         if not job_token:
             return None
         run_id = str(job_token.get("run_id") or payload.get("run_id") or payload.get("source_run_id") or "").strip()
-        return commit_qa_evidence(
-            workspace=self._workspace,
-            run_id=run_id,
-            task_id=task_id,
-            gate_name=gate_name,
-            ok=ok,
-            summary=summary,
-            verdict=verdict,
-            audit_result=audit_result,
-            failure_reason=failure_reason,
-            job_token=job_token,
-        ).to_dict()
+        return cast(
+            "dict[str, str] | None",
+            (
+                commit_qa_evidence(
+                    workspace=self._workspace,
+                    run_id=run_id,
+                    task_id=task_id,
+                    gate_name=gate_name,
+                    ok=ok,
+                    summary=summary,
+                    verdict=verdict,
+                    audit_result=audit_result,
+                    failure_reason=failure_reason,
+                    job_token=job_token,
+                ).to_dict()
+            ),
+        )
 
     def _apply_canonical_verdict_transition(
         self,

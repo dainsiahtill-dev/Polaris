@@ -11,7 +11,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from polaris.kernelone.constants import DEFAULT_MAX_RETRIES
 from pydantic import BaseModel, ValidationError
@@ -110,13 +110,18 @@ class StructuredLLMClient:
         # Try Instructor first if available
         if self._instructor_client:
             try:
-                return await self._instructor_client.chat.completions.create(
-                    model=model or "gpt-4",
-                    messages=messages,
-                    response_model=response_model,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    max_retries=max_retries,
+                return cast(
+                    "T",
+                    (
+                        await self._instructor_client.chat.completions.create(
+                            model=model or "gpt-4",
+                            messages=messages,
+                            response_model=response_model,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            max_retries=max_retries,
+                        )
+                    ),
                 )
             except (RuntimeError, ValueError) as e:
                 logger.warning(f"Instructor failed: {e}, falling back to manual parsing")
@@ -341,13 +346,13 @@ Previous attempt failed. Make sure to output ONLY the JSON object, wrapped in ``
             matches = re.findall(pattern, text, re.DOTALL)
             for match in matches:
                 try:
-                    return json.loads(match.strip())
+                    return cast("dict[str, Any]", (json.loads(match.strip())))
                 except json.JSONDecodeError:
                     continue
 
         # Try parsing entire text as JSON
         try:
-            return json.loads(text)
+            return cast("dict[str, Any]", (json.loads(text)))
         except json.JSONDecodeError:
             pass
 

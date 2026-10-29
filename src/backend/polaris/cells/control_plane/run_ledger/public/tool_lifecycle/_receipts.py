@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public.failure_evidence import (
     FailureClassV1,
@@ -746,7 +746,7 @@ def normalize_tool_call_lifecycle_receipt(value: Any) -> dict[str, Any]:
             "ok",
             payload["dispatch_status"] == "dispatched" and not normalize_failure_class(payload.get("failure_class")),
         )
-        return payload
+        return cast("dict[str, Any]", (payload))
     return {
         "schema_version": "tool_call_lifecycle_receipt.v1",
         "ok": False,
@@ -1153,11 +1153,11 @@ def native_tool_call_count_from_metadata(metadata: Mapping[str, Any] | None, *, 
     if isinstance(metadata, Mapping):
         facts = native_tool_call_facts_from_metadata(metadata)
         if facts:
-            return _int_value(facts.get("native_tool_calls_count"))
+            return cast("int", (_int_value(facts.get("native_tool_calls_count"))))
         metadata_count = _int_value(metadata.get("native_tool_calls_count"))
         if metadata_count > 0:
-            return metadata_count
-    return _int_value(fallback)
+            return cast("int", (metadata_count))
+    return cast("int", (_int_value(fallback)))
 
 
 def native_tool_call_count_from_facts(facts: Mapping[str, Any] | None, *, fallback: int = 0) -> int:
@@ -1176,8 +1176,8 @@ def native_tool_call_count_from_facts(facts: Mapping[str, Any] | None, *, fallba
     if isinstance(facts, Mapping):
         count = _int_value(facts.get("native_tool_calls_count"))
         if count > 0:
-            return count
-    return _int_value(fallback)
+            return cast("int", (count))
+    return cast("int", (_int_value(fallback)))
 
 
 def tool_dispatch_dropped_guard_applies(
@@ -1445,19 +1445,24 @@ def failure_evidence_from_lifecycle_receipt(value: Any) -> dict[str, Any]:
         evidence_refs.append(f"dropped_tool_call:{_stable_hash(dropped)}")
 
     reason = _clean_string(receipt.get("reason")) or dispatch_status or failure_class
-    return FailureEvidenceV1(
-        failure_class=failure_class,
-        responsible_layer="execution_control_plane",
-        reason=reason,
-        evidence_refs=tuple(evidence_refs),
-        metadata={
-            "source": "tool_call_lifecycle_receipt.v1",
-            "dispatch_status": dispatch_status,
-            "native_tool_calls_count": _int_value(receipt.get("native_tool_calls_count")),
-            "decoded_tool_calls_count": _int_value(receipt.get("decoded_tool_calls_count")),
-            "dispatched_tool_calls_count": _int_value(receipt.get("dispatched_tool_calls_count")),
-            "tool_result_count": _int_value(receipt.get("tool_result_count")),
-            "effect_receipt_count": _int_value(receipt.get("effect_receipt_count")),
-            "dropped_tool_calls": _dropped_tool_call_refs(receipt.get("dropped_tool_calls")),
-        },
-    ).to_dict()
+    return cast(
+        "dict[str, Any]",
+        (
+            FailureEvidenceV1(
+                failure_class=failure_class,
+                responsible_layer="execution_control_plane",
+                reason=reason,
+                evidence_refs=tuple(evidence_refs),
+                metadata={
+                    "source": "tool_call_lifecycle_receipt.v1",
+                    "dispatch_status": dispatch_status,
+                    "native_tool_calls_count": _int_value(receipt.get("native_tool_calls_count")),
+                    "decoded_tool_calls_count": _int_value(receipt.get("decoded_tool_calls_count")),
+                    "dispatched_tool_calls_count": _int_value(receipt.get("dispatched_tool_calls_count")),
+                    "tool_result_count": _int_value(receipt.get("tool_result_count")),
+                    "effect_receipt_count": _int_value(receipt.get("effect_receipt_count")),
+                    "dropped_tool_calls": _dropped_tool_call_refs(receipt.get("dropped_tool_calls")),
+                },
+            ).to_dict()
+        ),
+    )

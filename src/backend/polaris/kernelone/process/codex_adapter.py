@@ -5,7 +5,7 @@ import re
 import subprocess
 import sys
 import time
-from typing import Any, Union
+from typing import Any, Union, cast
 
 from polaris.kernelone.fs.text_ops import read_file_safe
 from polaris.kernelone.tool_execution.io_tools import ensure_codex_available
@@ -93,7 +93,7 @@ def _read_codex_output(path: str) -> str:
         return text
     except (RuntimeError, ValueError) as e:
         logger.debug(f"Failed to read file: {e}")
-        return read_file_safe(path)
+        return cast("str", (read_file_safe(path)))
 
 
 def _prepare_codex_output_path(path: str) -> None:

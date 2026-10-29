@@ -23,7 +23,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, cast
 
 from polaris.kernelone.events.final_request_evidence import (
     ContextSnapshotAuditPinV1,
@@ -562,7 +562,7 @@ class ContextSnapshotAuditPinRepository:
             ) from exc
 
     def _read_bytes(self, path: str) -> bytes:
-        return self._read_snapshot(path).content
+        return cast("bytes", (self._read_snapshot(path).content))
 
     @contextmanager
     def _exclusive_lock(self, *, observe: bool = False) -> Iterator[None]:
@@ -618,7 +618,7 @@ class ContextSnapshotAuditPinRepository:
     @staticmethod
     def _validated_ref(value: str) -> str:
         try:
-            return validate_context_hash(str(value or ""))
+            return cast("str", (validate_context_hash(str(value or ""))))
         except ValueError as exc:
             raise ContextSnapshotAuditPinError("context_snapshot_ref must be exactly 24 lowercase hex") from exc
 

@@ -181,7 +181,7 @@ def _has_write_tools_in_receipt(batch_receipt: dict[str, Any] | None) -> bool:
         status = str(item.get("status") or "").strip()
         if name in WRITE_TOOLS and status == "success":
             return True
-    return has_authoritative_write_receipt(batch_receipt)
+    return cast("bool", (has_authoritative_write_receipt(batch_receipt)))
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +204,7 @@ def _should_use_slice_mode(file_path: str, content_length: int) -> bool:
     from polaris.cells.roles.kernel.internal.transaction.read_strategy import _should_use_slice_mode as _check_slice
 
     should_slice, _ = _check_slice(file_path, content_length=content_length)
-    return should_slice
+    return cast("bool", (should_slice))
 
 
 def _detect_truncation_heuristics(content: str | None, result_metadata: dict[str, Any] | None = None) -> bool:
@@ -221,7 +221,7 @@ def _detect_truncation_heuristics(content: str | None, result_metadata: dict[str
         True 如果内容被截断
     """
     is_truncated, _ = is_content_truncated(content, result_metadata)
-    return is_truncated
+    return cast("bool", (is_truncated))
 
 
 class ReadStrategyAdapter:

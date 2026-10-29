@@ -10,7 +10,7 @@ Specialized validators for verifying ContextOS behavior:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.benchmark.unified_judge import ValidatorPort
 from polaris.kernelone.events.constants import (
@@ -158,16 +158,16 @@ class ContextOSLongSessionValidator(ValidatorPort):
         """Extract traces from observed run"""
         # Try direct attribute
         if hasattr(observed, "event_traces"):
-            return observed.event_traces
+            return cast("list[ContextTraceEvent]", (observed.event_traces))
 
         # Try metadata first (legacy)
         if hasattr(observed, "metadata") and "event_traces" in observed.metadata:
-            return observed.metadata["event_traces"]
+            return cast("list[ContextTraceEvent]", (observed.metadata["event_traces"]))
 
         # Try fingerprint (primary for ObservedBenchmarkRun)
         fingerprint = getattr(observed, "fingerprint", None)
         if isinstance(fingerprint, dict) and "event_traces" in fingerprint:
-            return fingerprint["event_traces"]
+            return cast("list[ContextTraceEvent]", (fingerprint["event_traces"]))
 
         return []
 
@@ -232,16 +232,16 @@ class ContextOSDesynchronizationValidator(ValidatorPort):
         """Extract traces from observed run"""
         # Try direct attribute
         if hasattr(observed, "event_traces"):
-            return observed.event_traces
+            return cast("list[ContextTraceEvent]", (observed.event_traces))
 
         # Try metadata first (legacy)
         if hasattr(observed, "metadata") and "event_traces" in observed.metadata:
-            return observed.metadata["event_traces"]
+            return cast("list[ContextTraceEvent]", (observed.metadata["event_traces"]))
 
         # Try fingerprint (primary for ObservedBenchmarkRun)
         fingerprint = getattr(observed, "fingerprint", None)
         if isinstance(fingerprint, dict) and "event_traces" in fingerprint:
-            return fingerprint["event_traces"]
+            return cast("list[ContextTraceEvent]", (fingerprint["event_traces"]))
 
         return []
 
@@ -308,16 +308,16 @@ class ContextOSIncorrectTruncationValidator(ValidatorPort):
         """Extract traces from observed run"""
         # Try direct attribute
         if hasattr(observed, "event_traces"):
-            return observed.event_traces
+            return cast("list[ContextTraceEvent]", (observed.event_traces))
 
         # Try metadata first (legacy)
         if hasattr(observed, "metadata") and "event_traces" in observed.metadata:
-            return observed.metadata["event_traces"]
+            return cast("list[ContextTraceEvent]", (observed.metadata["event_traces"]))
 
         # Try fingerprint (primary for ObservedBenchmarkRun)
         fingerprint = getattr(observed, "fingerprint", None)
         if isinstance(fingerprint, dict) and "event_traces" in fingerprint:
-            return fingerprint["event_traces"]
+            return cast("list[ContextTraceEvent]", (fingerprint["event_traces"]))
 
         return []
 
@@ -365,16 +365,16 @@ class ContextOSLossValidator(ValidatorPort):
         """Extract traces from observed run"""
         # Try direct attribute
         if hasattr(observed, "event_traces"):
-            return observed.event_traces
+            return cast("list[ContextTraceEvent]", (observed.event_traces))
 
         # Try metadata first (legacy)
         if hasattr(observed, "metadata") and "event_traces" in observed.metadata:
-            return observed.metadata["event_traces"]
+            return cast("list[ContextTraceEvent]", (observed.metadata["event_traces"]))
 
         # Try fingerprint (primary for ObservedBenchmarkRun)
         fingerprint = getattr(observed, "fingerprint", None)
         if isinstance(fingerprint, dict) and "event_traces" in fingerprint:
-            return fingerprint["event_traces"]
+            return cast("list[ContextTraceEvent]", (fingerprint["event_traces"]))
 
         return []
 

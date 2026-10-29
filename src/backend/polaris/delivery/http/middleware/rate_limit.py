@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass
 from hashlib import sha256
 from threading import RLock
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import Request, Response
 from polaris.delivery.http.endpoint_policy import (
@@ -257,17 +257,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         """Process request with rate limiting."""
         if not self._enabled:
-            return await call_next(request)
+            return cast("Response", (await call_next(request)))
 
         path = request.url.path
         if is_always_rate_limit_exempt(path) or any(path.startswith(excluded) for excluded in self._excluded_paths):
-            return await call_next(request)
+            return cast("Response", (await call_next(request)))
         if self._exempt_loopback and request.client and request.client.host in _LOOPBACK_CLIENTS:
-            return await call_next(request)
+            return cast("Response", (await call_next(request)))
         if request.client and request.client.host in _LOOPBACK_CLIENTS and is_loopback_rate_limit_exempt(path):
-            return await call_next(request)
+            return cast("Response", (await call_next(request)))
         if is_bootstrap_rate_limit_sensitive(path) and request.client and request.client.host in _LOOPBACK_CLIENTS:
-            return await call_next(request)
+            return cast("Response", (await call_next(request)))
 
         # Token-bucket rate limit check (atomic: check + consume under lock)
         allowed, retry_after, tokens = self._store.check_rate_limit(
@@ -302,7 +302,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         response.headers["X-RateLimit-Limit"] = str(self._burst)
         response.headers["X-RateLimit-Remaining"] = str(remaining)
 
-        return response
+        return cast("Response", (response))
 
 
 def get_rate_limit_middleware(

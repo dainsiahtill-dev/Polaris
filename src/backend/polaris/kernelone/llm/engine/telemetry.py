@@ -13,7 +13,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
 from polaris.kernelone.constants import DEFAULT_TELEMETRY_BUFFER_SIZE
@@ -355,7 +355,7 @@ class TelemetryCollector:
 
     @staticmethod
     def _now() -> str:
-        return utc_now_iso()
+        return cast("str", (utc_now_iso()))
 
 
 class MetricsAggregator:

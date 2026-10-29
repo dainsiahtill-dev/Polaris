@@ -21,7 +21,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.storage.layout.public.service import resolve_polaris_roots
 from polaris.infrastructure.storage import LocalFileSystemAdapter
@@ -127,7 +127,7 @@ class HistoryArchiveService:
         self._manifest_repo = HistoryManifestRepository(str(self.workspace))
 
     def _workspace_rel(self, path: Path) -> str:
-        return self._kernel_fs.to_workspace_relative_path(str(path))
+        return cast("str", (self._kernel_fs.to_workspace_relative_path(str(path))))
 
     # =========================================================================
     # Core Archive Operations

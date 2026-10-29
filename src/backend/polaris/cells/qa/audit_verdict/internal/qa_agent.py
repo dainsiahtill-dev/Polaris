@@ -13,7 +13,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 # Cross-Cell import: AgentMessage and MessageType come from the shared kernelone
@@ -501,7 +501,7 @@ class QAAgent(RoleAgent):
             "approved": len([record for record in self._reviews.values() if record.status == ReviewStatus.APPROVED]),
             "rejected": len([record for record in self._reviews.values() if record.status == ReviewStatus.REJECTED]),
         }
-        return status
+        return cast("dict[str, Any]", (status))
 
 
 class ReviewStore:

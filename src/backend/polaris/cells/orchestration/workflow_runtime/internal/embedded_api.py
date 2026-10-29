@@ -33,7 +33,7 @@ import re
 from contextvars import ContextVar, Token
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, get_type_hints
+from typing import TYPE_CHECKING, Any, cast, get_type_hints
 
 from polaris.cells.orchestration.workflow_runtime.internal.runtime_engine.runtime import (
     get_activity_registry,
@@ -428,10 +428,10 @@ def _lookup_activity_handler(runtime_engine: Any, activity_name: str) -> Callabl
     handlers = getattr(runner, "_handlers", {}) if runner is not None else {}
     handler = handlers.get(token) if isinstance(handlers, dict) else None
     if callable(handler):
-        return handler
+        return cast("Callable[..., Any] | None", (handler))
     definition = get_activity_registry().get(token)
     if definition is not None:
-        return definition.handler
+        return cast("Callable[..., Any] | None", (definition.handler))
     return None
 
 

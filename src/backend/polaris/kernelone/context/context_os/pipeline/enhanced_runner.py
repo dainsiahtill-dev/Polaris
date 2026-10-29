@@ -30,7 +30,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.context.context_os.decision_log import (
     ContextDecisionLog,
@@ -404,5 +404,5 @@ class EnhancedPipelineRunner(PipelineRunner):
     def metrics(self) -> dict[str, Any] | None:
         """Get collected metrics."""
         if self._metrics_collector:
-            return self._metrics_collector.collect()
+            return cast("dict[str, Any] | None", (self._metrics_collector.collect()))
         return None

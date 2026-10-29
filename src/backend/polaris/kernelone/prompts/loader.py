@@ -2,7 +2,7 @@ import json
 import os
 import re
 from functools import lru_cache
-from typing import Any
+from typing import Any, cast
 
 PROFILE_ENV = "KERNELONE_PROMPT_PROFILE"
 DEFAULT_PROFILE = "zhenguan_governance"
@@ -77,7 +77,7 @@ def load_profile(profile: str | None = None) -> dict[str, object]:
         if os.path.isfile(fallback):
             candidate = fallback
     with open(candidate, encoding="utf-8") as handle:
-        return json.load(handle)
+        return cast("dict[str, object]", (json.load(handle)))
 
 
 def get_template(name: str, profile: str | None = None) -> str:

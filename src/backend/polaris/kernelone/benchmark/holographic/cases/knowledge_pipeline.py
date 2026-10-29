@@ -11,7 +11,7 @@ import hashlib
 import itertools
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.akashic.knowledge_pipeline.extractors.base import (
     BaseExtractor,
@@ -133,7 +133,7 @@ class _SyntheticExtractor(BaseExtractor):
 
     async def extract(self, doc: DocumentInput) -> list[ExtractedFragment]:
         await asyncio.sleep(0.0004)
-        return await super().extract(doc)
+        return cast("list[Any]", (await super().extract(doc)))
 
     def _do_extract(
         self,

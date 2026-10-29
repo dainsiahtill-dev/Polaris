@@ -24,7 +24,7 @@ Usage:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from polaris.cells.roles.kernel.public.service import MetricsCollector
@@ -59,7 +59,7 @@ def create_tool_spec_registry(_: DIContainer) -> type[ToolSpecRegistry]:
 
     # ToolSpecRegistry is a class-level registry, not an instance singleton
     # Return the class itself for type registration
-    return ToolSpecRegistry
+    return cast("type[Any]", (ToolSpecRegistry))
 
 
 def reset_tool_spec_registry_for_test() -> None:

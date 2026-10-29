@@ -16,7 +16,7 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.orchestration.workflow_runtime.public.process_launch import (
     ProcessLaunchRequest,
@@ -188,7 +188,7 @@ class ProcessLauncher:
             )
             if terminated:
                 self._active_processes.pop(process_id, None)
-            return terminated
+            return cast("bool", (terminated))
         except (RuntimeError, ValueError) as e:
             logger.warning("terminate failed for process %s: %s", process_id, e)
             return False

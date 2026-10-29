@@ -110,7 +110,7 @@ async def execute_single_tool(
             "[execute_single_tool] _injected_tool_executor (with auth gate): tool=%s",
             tool_name,
         )
-        return await kernel._injected_tool_executor.execute(tool_name, args, context=context)
+        return cast("dict[str, Any]", (await kernel._injected_tool_executor.execute(tool_name, args, context=context)))
 
     from polaris.cells.roles.kernel.internal.kernel.tool_executor import KernelToolExecutor
 
@@ -161,7 +161,7 @@ async def execute_single_tool(
         kernel._cached_gateway_profile = profile
         kernel._cached_gateway_turn_id = current_turn_id
 
-    return gateway.execute_tool(tool_name, args)
+    return cast("dict[str, Any]", (gateway.execute_tool(tool_name, args)))
 
 
 def reset_cached_tool_gateway_turn_boundary(kernel: RoleExecutionKernel, turn_id: str) -> None:

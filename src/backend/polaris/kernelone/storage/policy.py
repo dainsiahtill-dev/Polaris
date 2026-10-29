@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import cast
 
 # StorageCategory is defined once in contracts.py (str, Enum version).
 # Import it here so existing callers of policy.StorageCategory continue to work.
@@ -392,7 +393,7 @@ class StoragePolicyService:
             suffix = normalized[len("workspace/") :]
             return os.path.join(roots.workspace_persistent_root, suffix) if suffix else roots.workspace_persistent_root
         elif normalized == "config":
-            return roots.config_root
+            return cast("str", (roots.config_root))
         else:
             # Default to runtime root
             return runtime_root

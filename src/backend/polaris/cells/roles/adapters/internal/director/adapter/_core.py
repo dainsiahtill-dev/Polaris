@@ -630,7 +630,7 @@ class DirectorAdapter(BaseRoleAdapter):
             "task_execution_profile_source",
             "director.tasking.public.execution_guidance.resolve_task_execution_profile",
         )
-        return profile.to_dict()
+        return cast("dict[str, Any]", (profile.to_dict()))
 
     @staticmethod
     def _metadata_path_list(
@@ -1001,7 +1001,7 @@ class DirectorAdapter(BaseRoleAdapter):
 
     def _get_task(self, task_id: str) -> dict[str, Any] | None:
         """获取任务信息"""
-        return self.task_runtime.get_task(task_id)
+        return cast("dict[str, Any] | None", (self.task_runtime.get_task(task_id)))
 
     def _task_row_needs_rematerialize(self, task: dict[str, Any] | None, requested_task_id: str) -> bool:
         """Return True only for missing/ghost/terminal rows.
@@ -1037,7 +1037,7 @@ class DirectorAdapter(BaseRoleAdapter):
 
     def _select_pending_board_task(self) -> dict[str, Any] | None:
         """当编排任务没有 TaskBoard 映射时，回退到可执行的真实待办任务。"""
-        return self.task_runtime.select_next_task(prefer_resumable=True)
+        return cast("dict[str, Any] | None", (self.task_runtime.select_next_task(prefer_resumable=True)))
 
     def _materialize_runtime_task(
         self,
@@ -1064,11 +1064,16 @@ class DirectorAdapter(BaseRoleAdapter):
             or ""
         ).strip()
         metadata = self._build_materialized_metadata(requested_task_id, input_data)
-        return self.task_runtime.ensure_task_row(
-            external_task_id=requested_task_id,
-            subject=subject,
-            description=description,
-            metadata=metadata,
+        return cast(
+            "dict[str, Any]",
+            (
+                self.task_runtime.ensure_task_row(
+                    external_task_id=requested_task_id,
+                    subject=subject,
+                    description=description,
+                    metadata=metadata,
+                )
+            ),
         )
 
     def _build_ephemeral_task(self, requested_task_id: str, input_data: dict[str, Any]) -> dict[str, Any]:

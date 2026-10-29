@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.llm.dialogue.internal.cognitive_evidence import (
     append_context_to_prompt,
@@ -189,7 +189,7 @@ def _extract_slot_answer(slot_id: str, text: str) -> str:
 
     if slot_id == "key_user_flow":
         if "->" in body or "→" in body:
-            return truncate_text(body, 96)
+            return cast("str", (truncate_text(body, 96)))
         return ""
 
     if slot_id == "external_dependencies":
@@ -463,7 +463,7 @@ async def generate_dialogue_turn(
                     output_length=len(last_output),
                     metadata={"result": "parsed"},
                 )
-                return attach_cognitive_meta(result, cognitive_evidence)
+                return cast("dict[str, Any] | None", (attach_cognitive_meta(result, cognitive_evidence)))
 
         # 检查是否是截断导致的失败
         if response.ok and ResponseNormalizer.looks_truncated_json(last_output):
@@ -500,7 +500,7 @@ Each list <= {_MAX_DIALOGUE_ITEMS} items. No markdown.
                     output_length=len(repair_response.output or last_output),
                     metadata={"result": "repaired"},
                 )
-                return attach_cognitive_meta(result, cognitive_evidence)
+                return cast("dict[str, Any] | None", (attach_cognitive_meta(result, cognitive_evidence)))
 
     # 降级响应
     cognitive_evidence = record_llm_cognitive_receipt(
@@ -512,7 +512,10 @@ Each list <= {_MAX_DIALOGUE_ITEMS} items. No markdown.
         output_length=len(last_output),
         metadata={"result": "fallback"},
     )
-    return attach_cognitive_meta(generate_dialogue_fallback(fields, message, state), cognitive_evidence)
+    return cast(
+        "dict[str, Any] | None",
+        (attach_cognitive_meta(generate_dialogue_fallback(fields, message, state), cognitive_evidence)),
+    )
 
 
 async def generate_dialogue_turn_streaming(

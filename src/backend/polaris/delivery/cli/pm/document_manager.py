@@ -11,7 +11,7 @@ import os
 import re
 from dataclasses import asdict, dataclass, field
 from difflib import unified_diff
-from typing import Any
+from typing import Any, cast
 
 from polaris.delivery.cli.pm.state_manager import (
     _now_iso,
@@ -126,7 +126,7 @@ class DocumentManager:
             self.state_manager.initialize()
 
     def _get_doc_dir(self) -> str:
-        return self.state_manager.get_data_path("documents", "")
+        return cast("str", (self.state_manager.get_data_path("documents", "")))
 
     def _compute_checksum(self, content: str) -> str:
         """计算内容校验和."""
@@ -137,7 +137,7 @@ class DocumentManager:
         data = self.state_manager.read_subsystem_data("documents", self.VERSIONS_FILE)
         if data is None:
             return {"version": "1.0", "documents": {}}
-        return data
+        return cast("dict[str, Any]", (data))
 
     def _save_versions(self, versions: dict[str, Any]) -> None:
         """Save document versions registry."""
@@ -145,7 +145,7 @@ class DocumentManager:
 
     def _get_snapshot_path(self, checksum: str) -> str:
         """Get snapshot file path."""
-        return self.state_manager.get_data_path("documents", f"{self.SNAPSHOTS_DIR}/{checksum}.md")
+        return cast("str", (self.state_manager.get_data_path("documents", f"{self.SNAPSHOTS_DIR}/{checksum}.md")))
 
     def _load_analysis(self, doc_name: str) -> DocumentAnalysis | None:
         """Load document analysis."""

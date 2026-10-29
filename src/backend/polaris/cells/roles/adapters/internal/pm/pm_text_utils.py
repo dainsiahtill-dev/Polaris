@@ -12,7 +12,7 @@ import ast
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 _DEFAULT_PHASE_SEQUENCE = ("requirements", "implementation", "verification")
 _STOPWORDS = {
@@ -445,7 +445,7 @@ def _pm_path_token_from_subject(subject: str) -> str:
     text = _pm_text(subject).lower()
     ascii_tokens = [token for token in re.findall(r"[a-z][a-z0-9_-]{2,}", text) if token not in _STOPWORDS]
     if ascii_tokens:
-        return ascii_tokens[0]
+        return cast("str", (ascii_tokens[0]))
     return "product"
 
 

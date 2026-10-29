@@ -2,7 +2,7 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.runtime.projection.public.service import format_mtime
 from polaris.kernelone.runtime.defaults import DEFAULT_WORKSPACE
@@ -95,7 +95,7 @@ def _resolve_memo_path(rel_path: str, workspace: str, cache_root: str) -> str:
     if not rel_path:
         return ""
     try:
-        return resolve_safe_path(workspace, cache_root, rel_path)
+        return cast("str", (resolve_safe_path(workspace, cache_root, rel_path)))
     except (RuntimeError, ValueError) as exc:
         logger.warning("Failed to resolve memo path %s: %s", rel_path, exc)
         return ""

@@ -7,7 +7,7 @@ import json
 import unicodedata
 from collections.abc import Mapping
 from pathlib import PurePosixPath, PureWindowsPath
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from polaris.cells.control_plane.verifier_policy.public import normalize_verifier_command_argv
 from polaris.kernelone.quality.verification_commands import (
@@ -108,7 +108,7 @@ def _optional_completion_command(name: str, value: object) -> str | None:
 
 
 def _require_verifier_argv(value: object) -> tuple[str, ...]:
-    return normalize_verifier_command_argv(value)
+    return cast("tuple[str, ...]", (normalize_verifier_command_argv(value)))
 
 
 def _require_verifier_cwd(value: object) -> str:
@@ -118,7 +118,7 @@ def _require_verifier_cwd(value: object) -> str:
 
 
 def _verification_command_authority_hash(*, task_id: str, modality: str, argv: tuple[str, ...], cwd: str) -> str:
-    return verification_command_authority_hash(task_id=task_id, modality=modality, argv=argv, cwd=cwd)
+    return cast("str", (verification_command_authority_hash(task_id=task_id, modality=modality, argv=argv, cwd=cwd)))
 
 
 def _project_kind_authority_hash(

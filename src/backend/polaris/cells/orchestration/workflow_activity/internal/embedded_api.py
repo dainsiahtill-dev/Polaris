@@ -20,7 +20,7 @@ import re
 from contextvars import ContextVar, Token
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, get_type_hints
+from typing import TYPE_CHECKING, Any, cast, get_type_hints
 
 from polaris.kernelone.constants import DEFAULT_OPERATION_TIMEOUT_SECONDS, MAX_WORKFLOW_TIMEOUT_SECONDS
 from polaris.kernelone.workflow.activity_runner import ActivityConfig
@@ -549,7 +549,7 @@ def _lookup_activity_handler(runtime_engine: Any, activity_name: str) -> Callabl
     handlers = getattr(runner, "_handlers", {}) if runner is not None else {}
     handler = handlers.get(token) if isinstance(handlers, dict) else None
     if callable(handler):
-        return handler
+        return cast("Callable[..., Any] | None", (handler))
     definition = get_activity_registry().get(token)
     if definition is not None:
         return definition.handler

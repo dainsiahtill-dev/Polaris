@@ -15,7 +15,7 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.security.dangerous_patterns import is_dangerous_command as _is_dangerous_command
 
@@ -371,7 +371,7 @@ class BudgetPolicy:
     @staticmethod
     def is_dangerous_command(command: str) -> bool:
         """检查命令是否包含危险模式。"""
-        return _is_dangerous_command(command)
+        return cast("bool", (_is_dangerous_command(command)))
 
 
 __all__ = [

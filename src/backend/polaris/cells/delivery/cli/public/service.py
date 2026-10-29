@@ -23,7 +23,7 @@ import logging
 import time
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.delivery.cli.public.contracts import (
     CommandErrorV1,
@@ -203,7 +203,7 @@ class CliExecutionService:
             Exit code (0 = success, non-zero = failure)
         """
         result = await self.execute_command(command)
-        return result.exit_code
+        return cast("int", (result.exit_code))
 
     async def get_status(
         self,

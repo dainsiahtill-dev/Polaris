@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.utils import _now
 
@@ -94,7 +94,7 @@ class CheckpointManager:
 
     @staticmethod
     def _now() -> str:
-        return _now()
+        return cast("str", (_now()))
 
     @staticmethod
     def _get_event_attr(event: Any, attr: str, default: Any = None) -> Any:

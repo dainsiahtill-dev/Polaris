@@ -15,7 +15,7 @@ import os
 import posixpath
 import re
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from polaris.kernelone.shared.text_utils import unique_preserve
 
@@ -110,7 +110,7 @@ def normalize_path_list(value: Any) -> list[str]:
         normalized = normalize_path(candidate)
         if normalized:
             items.append(normalized)
-    return unique_preserve(items)
+    return cast("list[str]", (unique_preserve(items)))
 
 
 def is_docs_path(path: str) -> bool:

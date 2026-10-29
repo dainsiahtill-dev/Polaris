@@ -12,7 +12,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import asdict  # re-exported for lossless surface
 from pathlib import Path
-from typing import TYPE_CHECKING, Any  # Protocol re-exported for lossless surface
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.roles.kernel.public.physical_attempt_control import (
     SETTLE_FACTORY_PHYSICAL_ATTEMPT_SCHEMA,
@@ -132,7 +132,7 @@ class _FactoryRunServicePhysicalMixin:
             drain = existing.close()
             if not drain.settled:
                 raise FactoryPhysicalAttemptReplayError("factory_physical_attempt_live_recovery_unsettled")
-            return existing
+            return cast("FactoryPhysicalAttemptLiveControlPort", (existing))
 
         claim = lease.lifecycle_operation_claim
         if claim is None or claim.run_id != run.id:
@@ -638,7 +638,7 @@ class _FactoryRunServicePhysicalMixin:
                 },
             )
             claimed = False
-            return replayed
+            return cast("FactoryPhysicalAttemptLiveControlPort", (replayed))
         except Exception:
             if claimed:
                 await self._rollback_lifecycle_operation(
@@ -739,8 +739,13 @@ class _FactoryRunServicePhysicalMixin:
         else:
             replayed = await self._replay_failed_retry_physical_attempt_epoch_locked(run)
         self._require_failed_retry_terminal_release(run)
-        return await self._open_fresh_physical_attempt_execution_epoch_locked(
-            run,
-            replayed=replayed,
-            source="failed_run_stage_retry",
+        return cast(
+            "FactoryRun",
+            (
+                await self._open_fresh_physical_attempt_execution_epoch_locked(
+                    run,
+                    replayed=replayed,
+                    source="failed_run_stage_retry",
+                )
+            ),
         )

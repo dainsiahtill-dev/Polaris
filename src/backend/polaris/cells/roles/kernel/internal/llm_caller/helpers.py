@@ -12,7 +12,7 @@ import os
 import time
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.constants import DIRECTOR_TIMEOUT_SECONDS
 from polaris.kernelone.llm.budget_policy import (
@@ -184,7 +184,7 @@ def _clamp_factory_director_timeout_to_deadline(
 
 def _coerce_context_max_tokens_override(raw: Any) -> int | None:
     """Compatibility delegate for trusted override coercion."""
-    return _foundation_context_output_budget_tokens({"llm_max_tokens": raw})
+    return cast("int | None", (_foundation_context_output_budget_tokens({"llm_max_tokens": raw})))
 
 
 def _mapping_payload(value: Any) -> dict[str, Any]:
@@ -193,7 +193,7 @@ def _mapping_payload(value: Any) -> dict[str, Any]:
 
 def resolve_context_output_budget_tokens(context_override: Any) -> int | None:
     """Compatibility delegate to KernelOne's canonical pure context scan."""
-    return _foundation_context_output_budget_tokens(context_override)
+    return cast("int | None", (_foundation_context_output_budget_tokens(context_override)))
 
 
 def _resolve_context_max_tokens_override(context_override: Any) -> int | None:
@@ -229,7 +229,7 @@ def resolve_timeout_seconds(profile: Any, context_override: Any | None = None) -
 
 def resolve_max_tokens(requested: Any, context_override: Any | None = None) -> int:
     """Compatibility delegate to KernelOne's canonical pure output resolver."""
-    return resolve_output_budget_tokens(requested, context_override)
+    return cast("int", (resolve_output_budget_tokens(requested, context_override)))
 
 
 _TRANSACTION_KERNEL_TEMPERATURE_OVERRIDE_KEY = "_transaction_kernel_temperature_override"

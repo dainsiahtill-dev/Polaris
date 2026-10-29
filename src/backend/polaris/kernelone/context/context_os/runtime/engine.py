@@ -17,7 +17,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.context.projection_engine import ProjectionEngine
 from polaris.kernelone.context.receipt_store import ReceiptStore
@@ -185,7 +185,7 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
             run_card=projection.run_card,
             structured_findings=projection.structured_findings,
         )
-        return self._projection_engine.project(payload, self._receipt_store)
+        return cast("list[dict[str, Any]]", (self._projection_engine.project(payload, self._receipt_store)))
 
     def _get_pipeline_runner(self) -> PipelineRunner:
         """Get or create the pipeline runner (lazy initialization)."""

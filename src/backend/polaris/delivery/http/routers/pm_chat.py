@@ -3,7 +3,7 @@
 与interview和docs_dialogue保持一致，复用平台层基础设施。
 """
 
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Request
 from polaris.cells.llm.evaluation.public.service import load_llm_test_index
@@ -20,7 +20,7 @@ router = APIRouter()
 
 def _workspace_value(settings: Any) -> str:
     """Resolve the active desktop workspace from compatible settings fields."""
-    return active_workspace_value(settings)
+    return cast("str", (active_workspace_value(settings)))
 
 
 def _context_workspace(payload: dict[str, Any]) -> str:
@@ -39,7 +39,7 @@ def _workspace_for_pm_request(settings: Any, requested: str = "", payload: dict[
     ``context.workspace`` (or a ``workspace`` query param) is honored instead of
     being silently ignored and run against the wrong workspace.
     """
-    return requested_or_active_workspace(settings, requested or _context_workspace(payload or {}))
+    return cast("str", (requested_or_active_workspace(settings, requested or _context_workspace(payload or {}))))
 
 
 @router.get("/v2/pm/chat/ping", response_model=PMChatPingResponse, dependencies=[Depends(require_auth)])

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, cast
 
 from polaris.cells.events.fact_stream.public import (
     AppendSegmentedFactEventCommandV1,
@@ -124,15 +124,20 @@ class _AuthorityScan:
 
 
 def _fragment_vector_hash(fragments: tuple[_StoredFragment, ...]) -> str:
-    return canonical_role_final_request_hash(
-        [
-            {
-                "index": fragment.payload.index,
-                "event_id": fragment.event_id,
-                "global_seq": fragment.sequence,
-                "event_hash": fragment.event_hash,
-                "chunk_hash": fragment.payload.chunk_hash,
-            }
-            for fragment in fragments
-        ]
+    return cast(
+        "str",
+        (
+            canonical_role_final_request_hash(
+                [
+                    {
+                        "index": fragment.payload.index,
+                        "event_id": fragment.event_id,
+                        "global_seq": fragment.sequence,
+                        "event_hash": fragment.event_hash,
+                        "chunk_hash": fragment.payload.chunk_hash,
+                    }
+                    for fragment in fragments
+                ]
+            )
+        ),
     )

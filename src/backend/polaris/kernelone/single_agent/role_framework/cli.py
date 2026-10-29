@@ -6,7 +6,7 @@
 import argparse
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 from .base import RoleBase
 
@@ -253,7 +253,7 @@ class RoleCLI:
 
         # 检查是否是自定义命令
         if args.command in self._custom_commands:
-            return self._custom_commands[args.command]["func"](role, args)
+            return cast("int", (self._custom_commands[args.command]["func"](role, args)))
 
         # 检查是否是标准命令
         handler = handlers.get(args.command)

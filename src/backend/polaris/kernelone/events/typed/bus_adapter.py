@@ -12,7 +12,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.events.emit_result import EmitResult
 from polaris.kernelone.events.message_bus import Message, MessageType
@@ -490,7 +490,7 @@ class TypedEventBusAdapter:
             wrapped_handler,
         )
         self._registry_subscriptions.append((pattern, registry_subscription_id))
-        return registry_subscription_id
+        return cast("str", (registry_subscription_id))
 
     # -------------------------------------------------------------------------
     # Cleanup

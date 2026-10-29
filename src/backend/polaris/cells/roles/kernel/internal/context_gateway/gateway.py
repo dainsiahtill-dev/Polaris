@@ -276,7 +276,7 @@ class RoleContextGateway:
         adaptive weights for the next turn.
         """
         self._projection_engine.record_outcome(success=success, tokens_used=tokens_used)
-        return self._projection_engine.get_adaptive_weights()
+        return cast("dict[str, float]", (self._projection_engine.get_adaptive_weights()))
 
     async def _build_context_impl(
         self,

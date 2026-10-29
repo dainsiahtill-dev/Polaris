@@ -23,7 +23,7 @@ import time
 import urllib.request
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 from uuid import uuid4
 
 from polaris.kernelone.utils import utc_now_iso
@@ -100,7 +100,7 @@ _HIGH_SENSITIVITY_PAYLOAD_KEYS = frozenset(
 
 
 def _now_utc() -> str:
-    return utc_now_iso()
+    return cast("str", (utc_now_iso()))
 
 
 def _truthy_env(name: str) -> bool:

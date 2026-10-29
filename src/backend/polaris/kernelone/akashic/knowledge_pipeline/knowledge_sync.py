@@ -28,7 +28,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.constants import DEFAULT_SHORT_TIMEOUT_SECONDS
 
@@ -333,7 +333,7 @@ class KnowledgeSync:
             semantic = self._jsonl._semantic
             for item in semantic._items.values():
                 if self._content_hash(item.text) == content_hash:
-                    return item.text
+                    return cast("str | None", (item.text))
         except (RuntimeError, ValueError) as exc:
             logger.warning("Failed to look up text for %s: %s", content_hash[:12], exc)
         return None

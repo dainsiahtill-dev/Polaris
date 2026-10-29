@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any, cast
 
 from polaris.kernelone.cognitive.evolution.belief_decay import (
     BeliefDecayEngine,
@@ -269,7 +270,7 @@ class EvolutionEngine:
                     new_confidence=updated.confidence,
                     rationale="Automatic time-based belief decay",
                 )
-        return decayed
+        return cast("list[Any]", (decayed))
 
     async def evolve_and_decay(
         self,

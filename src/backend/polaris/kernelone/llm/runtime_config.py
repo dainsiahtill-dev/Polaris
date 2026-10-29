@@ -14,7 +14,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
 from polaris.kernelone.storage import resolve_global_path
@@ -450,7 +450,7 @@ class RuntimeConfigManager:
         env_path = os.environ.get("KERNELONE_LLM_CONFIG")
         if env_path:
             return str(env_path)
-        return resolve_global_path("config/llm/llm_config.json")
+        return cast("str", (resolve_global_path("config/llm/llm_config.json")))
 
     def _load_config(self) -> dict[str, Any]:
         config_path = self._get_config_path()

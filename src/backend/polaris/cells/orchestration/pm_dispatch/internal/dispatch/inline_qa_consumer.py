@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ def _write_mainline_full_integration_qa_result(
         if parent:
             os.makedirs(parent, exist_ok=True)
         write_json_atomic(target, payload)
-        return target
+        return cast("str", (target))
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         logger.warning("mainline-full integration QA artifact write failed: %s", exc)
         return ""

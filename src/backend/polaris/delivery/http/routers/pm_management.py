@@ -3,7 +3,7 @@
 提供文档管理、任务历史、需求追踪的REST API接口。
 """
 
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Query, Request
 from polaris.cells.runtime.artifact_store.public.service import resolve_safe_path
@@ -43,7 +43,7 @@ def _get_pm_instance(workspace: str) -> ScriptsPMAdapter:
 
 def _resolve_document_path(workspace: str, doc_path: str) -> str:
     """Resolve document path under workspace-bound safe path policy."""
-    return resolve_safe_path(workspace, "", doc_path)
+    return cast("str", (resolve_safe_path(workspace, "", doc_path)))
 
 
 def _workspace_from_request(request: Request, requested: Any = "") -> str:
@@ -57,7 +57,7 @@ def _workspace_from_request(request: Request, requested: Any = "") -> str:
             code="WORKSPACE_NOT_CONFIGURED",
             message="workspace is not configured",
         )
-    return workspace
+    return cast("str", (workspace))
 
 
 def _enum_to_wire(value: Any) -> Any:
@@ -701,7 +701,7 @@ def get_document(
     if content is not None:
         doc_info["content"] = content
 
-    return doc_info
+    return cast("dict[str, Any]", (doc_info))
 
 
 @router.get("/search/documents", dependencies=[Depends(require_auth)], response_model=DocumentSearchResponse)
@@ -777,7 +777,7 @@ def get_task_history(
         limit=limit,
         offset=offset,
     )
-    return result
+    return cast("dict[str, Any]", (result))
 
 
 @router.get("/tasks/director", dependencies=[Depends(require_auth)], response_model=TaskHistoryResponse)
@@ -800,7 +800,7 @@ def get_director_task_history(
         raise StructuredHTTPException(status_code=400, code="PM_NOT_INITIALIZED", message="PM system not initialized")
 
     result = pm.get_director_task_history(iteration=iteration, limit=limit, offset=offset)
-    return result
+    return cast("dict[str, Any]", (result))
 
 
 @router.get("/tasks/{task_id}", dependencies=[Depends(require_auth)], response_model=TaskDetailResponse)
@@ -917,7 +917,7 @@ def get_requirement(
     if req is None:
         raise StructuredHTTPException(status_code=404, code="REQUIREMENT_NOT_FOUND", message="Requirement not found")
 
-    return req
+    return cast("dict[str, Any]", (req))
 
 
 # ===== Project Status & Health =====
@@ -964,7 +964,7 @@ def get_pm_health(
     if not pm.is_initialized():
         raise StructuredHTTPException(status_code=400, code="PM_NOT_INITIALIZED", message="PM system not initialized")
 
-    return pm.analyze_project_health()
+    return cast("dict[str, Any]", (pm.analyze_project_health()))
 
 
 @router.post("/init", dependencies=[Depends(require_auth)], response_model=PMInitResponse)

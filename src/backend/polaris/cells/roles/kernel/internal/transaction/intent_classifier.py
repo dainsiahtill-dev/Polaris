@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.roles.kernel.internal.transaction.constants import (
     _EN_ANALYSIS_RE,
@@ -160,7 +160,7 @@ def requires_mutation_intent(message: str) -> bool:
     """
     explicit = leading_instruction_delivery_contract(message)
     if explicit is not None:
-        return explicit.requires_mutation
+        return cast("bool", (explicit.requires_mutation))
     intent = classify_intent_regex(message)
     return intent in {"STRONG_MUTATION", "DEBUG_AND_FIX", "DEVOPS", "WEAK_MUTATION"}
 

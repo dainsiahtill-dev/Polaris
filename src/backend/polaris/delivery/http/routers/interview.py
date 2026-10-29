@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import logging
 import re
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Request
@@ -305,20 +305,25 @@ async def _run_interview_jetstream(
 async def v2_llm_interview_ask(request: Request, payload: InterviewAskPayload) -> dict[str, Any]:
     """Generate an interview answer for a given role and question."""
     state = get_state(request)
-    return await run_interactive_interview_question(
-        state.settings,
-        payload.role,
-        payload.provider_id,
-        payload.model,
-        payload.question,
-        session_id=payload.session_id,
-        context=payload.context,
-        expects_thinking=payload.expects_thinking,
-        criteria=payload.criteria,
-        api_key=payload.api_key,
-        extra_headers=payload.headers,
-        env_overrides=payload.env_overrides,
-        debug=payload.debug,
+    return cast(
+        "dict[str, Any]",
+        (
+            await run_interactive_interview_question(
+                state.settings,
+                payload.role,
+                payload.provider_id,
+                payload.model,
+                payload.question,
+                session_id=payload.session_id,
+                context=payload.context,
+                expects_thinking=payload.expects_thinking,
+                criteria=payload.criteria,
+                api_key=payload.api_key,
+                extra_headers=payload.headers,
+                env_overrides=payload.env_overrides,
+                debug=payload.debug,
+            )
+        ),
     )
 
 
@@ -326,13 +331,18 @@ async def v2_llm_interview_ask(request: Request, payload: InterviewAskPayload) -
 def v2_llm_interview_save(request: Request, payload: InterviewSavePayload) -> dict[str, Any]:
     """Save an interview report."""
     state = get_state(request)
-    return save_interactive_interview_report(
-        state.settings,
-        payload.role,
-        payload.provider_id,
-        payload.model,
-        payload.report,
-        session_id=payload.session_id,
+    return cast(
+        "dict[str, Any]",
+        (
+            save_interactive_interview_report(
+                state.settings,
+                payload.role,
+                payload.provider_id,
+                payload.model,
+                payload.report,
+                session_id=payload.session_id,
+            )
+        ),
     )
 
 

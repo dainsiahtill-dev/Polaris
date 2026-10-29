@@ -271,16 +271,21 @@ def _claim_from_payload(payload: object) -> ProjectCompletionDispatchClaimV1:
 def _receipt_content_hash(receipt: ProjectCompletionActionReceiptV1) -> str:
     """Canonical owner receipt digest; never trust a caller-supplied digest alone."""
 
-    return project_completion_action_receipt_hash(
-        identity=receipt.identity,
-        action_id=receipt.action_id,
-        handoff_id=receipt.handoff_id,
-        diagnostic_id=receipt.diagnostic_id,
-        owner_task_id=receipt.owner_task_id,
-        status=receipt.status,
-        lease_id=receipt.lease_id,
-        settlement_id=receipt.settlement_id,
-        effect_hash=receipt.effect_hash,
+    return cast(
+        "str",
+        (
+            project_completion_action_receipt_hash(
+                identity=receipt.identity,
+                action_id=receipt.action_id,
+                handoff_id=receipt.handoff_id,
+                diagnostic_id=receipt.diagnostic_id,
+                owner_task_id=receipt.owner_task_id,
+                status=receipt.status,
+                lease_id=receipt.lease_id,
+                settlement_id=receipt.settlement_id,
+                effect_hash=receipt.effect_hash,
+            )
+        ),
     )
 
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.director.runtime.public import (
     QueryDirectorRepairAdvisoryPolicyV1,
@@ -1447,13 +1447,17 @@ def resident_agi_capability_surface_payload() -> dict[str, object]:
 def resident_agi_director_repair_strategy_catalog_payload() -> dict[str, Any]:
     """Return Director hard-coded repair strategy evidence for AGI judgement."""
 
-    return query_director_repair_strategy_catalog(QueryDirectorRepairStrategyCatalogV1()).to_dict()
+    return cast(
+        "dict[str, Any]", (query_director_repair_strategy_catalog(QueryDirectorRepairStrategyCatalogV1()).to_dict())
+    )
 
 
 def resident_agi_director_repair_advisory_policy_payload() -> dict[str, Any]:
     """Return Director repair advisory policy evidence for AGI judgement."""
 
-    return query_director_repair_advisory_policy(QueryDirectorRepairAdvisoryPolicyV1()).to_dict()
+    return cast(
+        "dict[str, Any]", (query_director_repair_advisory_policy(QueryDirectorRepairAdvisoryPolicyV1()).to_dict())
+    )
 
 
 __all__ = [

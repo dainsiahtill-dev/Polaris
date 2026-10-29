@@ -34,7 +34,7 @@ Usage::
 from __future__ import annotations
 
 import random
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from polaris.kernelone.common.clock import ClockPort
@@ -62,7 +62,7 @@ def build_backoff_seconds(
     exp_delay = base_delay_seconds * (2 ** max(0, attempt - 1))
     bounded = min(max_delay_seconds, max(base_delay_seconds, exp_delay))
     jitter = random.uniform(0.0, bounded * 0.2)
-    return bounded + jitter
+    return cast("float", (bounded + jitter))
 
 
 class BackoffController:

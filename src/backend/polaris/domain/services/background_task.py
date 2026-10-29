@@ -23,7 +23,7 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from polaris.kernelone.constants import DEFAULT_OPERATION_TIMEOUT_SECONDS
 
@@ -311,7 +311,7 @@ class FileTaskStorage:
         data = self._adapter.read_json(self._state_file)
         if not data:
             return {"tasks": {}, "schema_version": 1}
-        return data
+        return cast("dict[str, Any]", (data))
 
     def _save_state(self, state: dict[str, Any]) -> None:
         """Save state to disk."""

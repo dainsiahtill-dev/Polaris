@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 # PipelineSpec / PipelineTask / RunStatus / TaskPhase are used at runtime as VALUES
 # (e.g. RunStatus.PENDING and TaskPhase.INIT defaults below, PipelineSpec(...) /
@@ -309,10 +309,15 @@ class GenericPipelineWorkflowBase:
             "stage": context.get("stage", "default"),
         }
 
-        return await adapter.execute(
-            task_id=task.task_id,
-            input_data=input_data,
-            context=context,
+        return cast(
+            "dict[str, Any]",
+            (
+                await adapter.execute(
+                    task_id=task.task_id,
+                    input_data=input_data,
+                    context=context,
+                )
+            ),
         )
 
     def _build_result(self, cancelled: bool = False) -> PipelineWorkflowResult:

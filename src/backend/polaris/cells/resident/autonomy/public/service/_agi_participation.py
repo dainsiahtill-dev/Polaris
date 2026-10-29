@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.director.runtime.public import RepairAdvisoryV1
 from polaris.cells.resident.autonomy.internal.agi_capability_surface import resident_agi_participation_policy_payload
@@ -36,7 +36,7 @@ def query_resident_agi_audit_pack(query: QueryResidentAgiAuditPackV1) -> dict[st
     audit_pack["truth_sources"] = truth_sources
     audit_pack["repair_advisory_overlay_query"] = repair_advisory_overlay_query
     audit_pack["latest_repair_advisory_overlay"] = repair_advisory_overlay_query.get("overlay")
-    return audit_pack
+    return cast("dict[str, Any]", (audit_pack))
 
 
 def _resident_agi_participation_scope_key(value: Any) -> str:
@@ -69,7 +69,7 @@ def _resident_agi_identity_participation(workspace: str) -> dict[str, Any]:
     except (RuntimeError, ValueError, OSError) as exc:
         logger.warning("Resident AGI participation policy unavailable: %s", exc)
         return {}
-    return participation.to_dict()
+    return cast("dict[str, Any]", (participation.to_dict()))
 
 
 def _resident_agi_decision_turn_participation(

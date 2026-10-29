@@ -13,7 +13,7 @@ import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from polaris.cells.roles.kernel.public.transaction_contracts import (
@@ -216,7 +216,9 @@ class SessionStateReducer:
 
     @staticmethod
     def _has_successful_write_receipt(batch_receipt: Any | None) -> bool:
-        return has_authoritative_write_receipt(SessionStateReducer._normalize_batch_receipt(batch_receipt))
+        return cast(
+            "bool", (has_authoritative_write_receipt(SessionStateReducer._normalize_batch_receipt(batch_receipt)))
+        )
 
     def _is_materialize_changes_mode(self) -> bool:
         """Return True when the current session is running in mutation mode."""
@@ -332,7 +334,7 @@ class SessionStateReducer:
             current, 0
         ) > _PHASE_PROGRESS_PRIORITY.get(normalized, 0):
             return current
-        return normalized
+        return cast("str", (normalized))
 
     def _build_last_failure(
         self,

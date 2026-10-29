@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, NamedTuple, Sequence
+from typing import Any, NamedTuple, Sequence, cast
 
 # ---------------------------------------------------------------------------
 # 基础类型
@@ -410,7 +410,7 @@ class CognitiveValidatorDispatcher:
         if validator is None:
             validator = OutputAntiSlopValidator()
             self._validators["antislop"] = validator
-        return validator.validate(content, {"domain": domain.value})
+        return cast("list[ValidationViolation]", (validator.validate(content, {"domain": domain.value})))
 
     def _run_completeness(
         self,
@@ -425,7 +425,7 @@ class CognitiveValidatorDispatcher:
         if validator is None:
             validator = OutputCompletenessEnforcer()
             self._validators["completeness"] = validator
-        return validator.validate(content, {"domain": domain.value})
+        return cast("list[ValidationViolation]", (validator.validate(content, {"domain": domain.value})))
 
     # -----------------------------------------------------------------------
     # 统计与观测

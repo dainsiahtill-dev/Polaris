@@ -6,7 +6,7 @@ Contains path-related helper functions and BudgetExceededError re-export.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.llm.exceptions import BudgetExceededError
 
@@ -30,7 +30,7 @@ def resolve_workspace_path(kernel_fs: KernelFileSystem, file: str) -> Path:
     Returns:
         Resolved Path object
     """
-    return kernel_fs.resolve_workspace_path(file)
+    return cast("Path", (kernel_fs.resolve_workspace_path(file)))
 
 
 def to_workspace_relative_path(kernel_fs: KernelFileSystem, path: Path) -> str:
@@ -43,7 +43,7 @@ def to_workspace_relative_path(kernel_fs: KernelFileSystem, path: Path) -> str:
     Returns:
         Workspace-relative path string
     """
-    return kernel_fs.to_workspace_relative_path(str(path))
+    return cast("str", (kernel_fs.to_workspace_relative_path(str(path))))
 
 
 def get_budget_remaining_lines(budget_state: Any | None) -> int | None:
@@ -69,7 +69,7 @@ def get_budget_remaining_lines(budget_state: Any | None) -> int | None:
             if max_bytes is None:
                 return None
             total_bytes = getattr(budget_state, "result_size_bytes", 0)
-            return max(0, (max_bytes - total_bytes) // 104)  # ~104 bytes/line
+            return cast("int | None", (max(0, (max_bytes - total_bytes) // 104)))  # ~104 bytes/line
 
         # tokens -> lines: ~4 chars/token, ~100 chars/line
         chars_per_token = 4

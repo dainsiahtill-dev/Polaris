@@ -43,7 +43,7 @@ import logging
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.memory.contracts import MemoryItemSnapshot, MemoryPort
 
@@ -686,7 +686,7 @@ class _LegacyMemoryStoreAdapter:
             hash=content_hash,
             context=metadata or {},
         )
-        return await self._store.add(item)
+        return cast("str", (await self._store.add(item)))
 
     async def search(
         self,
@@ -720,7 +720,7 @@ class _LegacyMemoryStoreAdapter:
     def get_stats(self) -> dict[str, Any]:
         """Get stats from legacy store if available."""
         if hasattr(self._store, "get_stats"):
-            return self._store.get_stats()
+            return cast("dict[str, Any]", (self._store.get_stats()))
         return {"type": "legacy_adapter", "supported": False}
 
 

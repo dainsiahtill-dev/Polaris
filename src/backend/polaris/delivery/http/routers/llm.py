@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Request
 from polaris.cells.llm.evaluation.public.service import reconcile_llm_test_index
@@ -132,7 +132,7 @@ def _get_llm_config_payload(request: Request) -> dict[str, Any]:
     state = get_state(request)
     workspace, cache_root = _workspace_and_cache_root(state.settings)
     config = llm_config.load_llm_config(workspace, cache_root, settings=state.settings)
-    return llm_config.redact_llm_config(config)
+    return cast("dict[str, Any]", (llm_config.redact_llm_config(config)))
 
 
 def _save_llm_config_payload(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
@@ -158,12 +158,12 @@ def _save_llm_config_payload(request: Request, payload: dict[str, Any]) -> dict[
     reconcile_llm_test_index(state.settings, config)
     apply_llm_config_updates_to_settings(state.settings, config)
     save_persisted_settings(state.settings)
-    return llm_config.redact_llm_config(config)
+    return cast("dict[str, Any]", (llm_config.redact_llm_config(config)))
 
 
 def _migrate_config_payload(payload: dict[str, Any]) -> dict[str, Any]:
     try:
-        return _provider_manager.migrate_legacy_config(payload)
+        return cast("dict[str, Any]", (_provider_manager.migrate_legacy_config(payload)))
     except (RuntimeError, ValueError) as exc:  # pragma: no cover - defensive runtime path
         logger.error("migrate_config failed: %s", exc)
         raise StructuredHTTPException(status_code=500, code="INTERNAL_ERROR", message="internal error") from exc
@@ -171,7 +171,7 @@ def _migrate_config_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _llm_status_payload(request: Request, workspace: str = "") -> dict[str, Any]:
     state = get_state(request)
-    return build_llm_status(settings_with_workspace_override(state.settings, workspace))
+    return cast("dict[str, Any]", (build_llm_status(settings_with_workspace_override(state.settings, workspace))))
 
 
 def _runtime_status_payload(request: Request) -> dict[str, Any]:
@@ -346,7 +346,7 @@ def llm_metrics_v2(request: Request, window_seconds: int = 300) -> dict[str, Any
     )
 
     store = get_llm_metrics_store()
-    return store.query(window_seconds=window_seconds)
+    return cast("dict[str, Any]", (store.query(window_seconds=window_seconds)))
 
 
 __all__ = [

@@ -13,7 +13,7 @@ from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -122,7 +122,7 @@ class _Mixin00:
         handler = handlers.get(stage)
         if handler is None:
             return StageResult(stage=stage, status="skipped", output="No handler for this stage")
-        return await handler(run, context)
+        return cast("StageResult", (await handler(run, context)))
 
     @staticmethod
     def _factory_role_evidence_cutoff_port(context: Mapping[str, Any]) -> FactoryRoleEvidenceAuthorityPort:

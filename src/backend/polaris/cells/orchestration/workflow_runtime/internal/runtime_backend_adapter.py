@@ -14,7 +14,7 @@ import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.orchestration.workflow_runtime.internal.config import WorkflowConfig
 from polaris.kernelone.workflow.base import EmbeddedConfig, RuntimeBackendPort
@@ -209,7 +209,7 @@ class RuntimeBackendAdapter:
     ) -> dict[str, Any]:
         """Query 工作流。"""
         runtime = self._require_runtime()
-        return await runtime.query_workflow(str(workflow_id or "").strip(), query_name, *args)
+        return cast("dict[str, Any]", (await runtime.query_workflow(str(workflow_id or "").strip(), query_name, *args)))
 
     async def cancel_workflow(
         self,
@@ -218,7 +218,7 @@ class RuntimeBackendAdapter:
     ) -> dict[str, Any]:
         """取消工作流。"""
         runtime = self._require_runtime()
-        return await runtime.cancel_workflow(str(workflow_id or "").strip(), reason)
+        return cast("dict[str, Any]", (await runtime.cancel_workflow(str(workflow_id or "").strip(), reason)))
 
     async def signal_workflow(
         self,
@@ -228,10 +228,15 @@ class RuntimeBackendAdapter:
     ) -> dict[str, Any]:
         """发送 Signal。"""
         runtime = self._require_runtime()
-        return await runtime.signal_workflow(
-            str(workflow_id or "").strip(),
-            signal_name,
-            signal_args,
+        return cast(
+            "dict[str, Any]",
+            (
+                await runtime.signal_workflow(
+                    str(workflow_id or "").strip(),
+                    signal_name,
+                    signal_args,
+                )
+            ),
         )
 
     async def execute_activity_sync(

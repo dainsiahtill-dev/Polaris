@@ -5,7 +5,7 @@ from __future__ import annotations
 import fnmatch
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.quality.file_ownership_ledger import (
     build_file_ownership_handoff_requests,
@@ -39,7 +39,7 @@ def _clean_token(value: Any) -> str:
 
 
 def _normalize_target(raw: Any) -> str:
-    return normalize_file_ownership_target(raw)
+    return cast("str", (normalize_file_ownership_target(raw)))
 
 
 def normalize_declared_scope_path(value: Any, *, workspace_name: str = "") -> str:

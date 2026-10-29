@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import cast
 
 from polaris.kernelone.cognitive.evolution.models import Belief
 
@@ -144,4 +145,4 @@ class BeliefDecayEngine:
 
     def _calculate_decay_factor(self, days_since_verified: float) -> float:
         """Compute the exponential decay factor."""
-        return 0.5 ** (days_since_verified / self._policy.half_life_days)
+        return cast("float", (0.5 ** (days_since_verified / self._policy.half_life_days)))

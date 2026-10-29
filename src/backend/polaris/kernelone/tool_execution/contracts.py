@@ -291,7 +291,7 @@ def canonicalize_tool_name(name: str, *, keep_unknown: bool = True) -> str:
     registry = _tool_spec_registry()
     canonical = registry.get_canonical(cleaned)
     if keep_unknown:
-        return canonical
+        return cast("str", (canonical))
     return canonical if registry.is_registered(canonical) else ""
 
 
@@ -447,7 +447,7 @@ def supported_tool_names() -> list[str]:
     Returns:
         Alphabetically sorted list of all tool names (read, write, and exec).
     """
-    return _tool_spec_registry().get_all_canonical_names()
+    return cast("list[str]", (_tool_spec_registry().get_all_canonical_names()))
 
 
 def list_tool_contracts(categories: Iterable[str] | None = None) -> list[dict[str, Any]]:

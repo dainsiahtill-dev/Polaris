@@ -15,7 +15,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.chief_engineer.blueprint.public.contracts import (
     RegisterTechRadarCommandV1,
@@ -57,7 +57,7 @@ def _validate_record_id(value: str) -> str:
     wrapper so existing call sites and test monkeypatch targets resolve
     unchanged. Fail-closed: anything but a bare safe token raises.
     """
-    return validate_storage_record_id(value, label="radar_id")
+    return cast("str", (validate_storage_record_id(value, label="radar_id")))
 
 
 def _normalize_library(value: str) -> str:

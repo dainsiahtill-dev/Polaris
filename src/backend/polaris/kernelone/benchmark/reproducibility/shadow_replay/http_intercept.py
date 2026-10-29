@@ -11,7 +11,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -149,13 +149,13 @@ async def _patched_send(self: httpx.AsyncClient, request: httpx.Request, **kwarg
         if not should_proceed2 and response_or_none2 is not None:
             return response_or_none2
 
-        return response
+        return cast("httpx.Response", (response))
 
     # Not intercepted - call original
     original = _get_original_send()
     if original is not None:
         if inspect.ismethod(original):
-            return await original(self, request, **kwargs)
+            return cast("httpx.Response", (await original(self, request, **kwargs)))
         else:
             return await original(self, request, **kwargs)
 

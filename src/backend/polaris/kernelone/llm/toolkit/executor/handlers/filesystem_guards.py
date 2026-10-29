@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # ---------------------------------------------------------------------------
 # Post-write syntax gate (Phase-1 A5, factory-bench L2-09 live evidence:
@@ -27,7 +27,7 @@ def _syntax_check_file(absolute_path: str) -> dict[str, Any] | None:
     the materialization artifact-quality scan)."""
     from polaris.kernelone.quality import check_source_file_syntax
 
-    return check_source_file_syntax(absolute_path)
+    return cast("dict[str, Any] | None", (check_source_file_syntax(absolute_path)))
 
 
 def attach_post_write_syntax_check(result: dict[str, Any], absolute_path: str) -> dict[str, Any]:

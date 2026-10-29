@@ -18,7 +18,7 @@ import logging
 import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 # Reuse SemanticMemoryItem from akashic
 from polaris.kernelone.fs.jsonl.locking import file_lock
@@ -210,7 +210,7 @@ class IdempotentVectorStore:
                 memory_id[:12],
                 content_hash[:8],
             )
-            return memory_id
+            return cast("str", (memory_id))
 
     async def delete(self, memory_id: str) -> bool:
         """Soft-delete a memory.
@@ -363,7 +363,7 @@ class IdempotentVectorStore:
         Returns the memory dict or None if not found / deleted.
         Delegates to AkashicSemanticMemory.get().
         """
-        return await self._semantic.get(memory_id)
+        return cast("dict[str, Any] | None", (await self._semantic.get(memory_id)))
 
 
 # Type annotation for protocol

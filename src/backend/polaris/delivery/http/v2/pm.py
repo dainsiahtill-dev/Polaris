@@ -14,7 +14,7 @@ from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from polaris.application.health import get_lancedb_status
@@ -252,7 +252,7 @@ def _workspace_value(settings: Any, workspace_override: str | None = None) -> st
     override = str(workspace_override or "").strip()
     if override:
         return override
-    return active_workspace_value(settings)
+    return cast("str", (active_workspace_value(settings)))
 
 
 def _build_workspace_diagnostics(
@@ -788,7 +788,7 @@ async def get_cache_stats() -> dict[str, Any]:
     from polaris.cells.roles.kernel.public.service import get_global_llm_cache
 
     cache = get_global_llm_cache()
-    return cache.get_stats()
+    return cast("dict[str, Any]", (cache.get_stats()))
 
 
 @router.post("/cache-clear", dependencies=[Depends(require_auth)])
@@ -805,7 +805,7 @@ async def clear_cache() -> dict[str, Any]:
 async def get_token_budget_stats() -> dict[str, Any]:
     """获取 Token 预算统计信息"""
     budget = get_global_token_budget()
-    return budget.get_stats()
+    return cast("dict[str, Any]", (budget.get_stats()))
 
 
 __all__ = ["router"]

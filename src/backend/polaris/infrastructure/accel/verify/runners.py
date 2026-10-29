@@ -6,7 +6,7 @@ import os
 import signal
 import subprocess
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.process.command_executor import CommandExecutionService
 
@@ -34,7 +34,7 @@ def _resolve_preexec_fn() -> Callable[[], None] | None:
         return None
     setsid = getattr(os, "setsid", None)
     if callable(setsid):
-        return setsid
+        return cast("Callable[[], None] | None", (setsid))
     return None
 
 

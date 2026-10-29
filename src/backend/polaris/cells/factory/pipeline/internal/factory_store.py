@@ -15,7 +15,7 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.fs.guarded_regular_file_snapshot import (
     GuardedRegularFileSnapshotError,
@@ -66,7 +66,7 @@ def _get_run_file_lock(file_path: Path) -> threading.Lock:
         if lock is None:
             lock = threading.Lock()
             _RUN_FILE_LOCKS.set(key, lock)
-        return lock
+        return cast("threading.Lock", (lock))
 
 
 class FileLockTimeoutError(TimeoutError):
@@ -638,7 +638,7 @@ class FactoryStore:
 
     async def _read_file(self, file_path: Path) -> str:
         """异步文件读取 helper"""
-        return await _run_file_operation(file_path, lambda: self._read_file_sync(file_path))
+        return cast("str", (await _run_file_operation(file_path, lambda: self._read_file_sync(file_path))))
 
     def _read_file_sync(self, file_path: Path) -> str:
         """同步文件读取（在线程池中执行）"""
@@ -1077,7 +1077,7 @@ class FactoryStore:
 
     async def _read_lines(self, file_path: Path) -> list[str]:
         """异步文件读取行 helper"""
-        return await _run_file_operation(file_path, lambda: self._read_lines_sync(file_path))
+        return cast("list[str]", (await _run_file_operation(file_path, lambda: self._read_lines_sync(file_path))))
 
     def _read_lines_sync(self, file_path: Path) -> list[str]:
         """同步文件读取行（在线程池中执行）"""

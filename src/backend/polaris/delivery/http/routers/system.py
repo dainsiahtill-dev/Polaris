@@ -3,7 +3,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Request
 from polaris.application.health import get_lancedb_status
@@ -99,7 +99,7 @@ def _state_snapshot_payload(state: Any, *, workspace: str, cache_root: str) -> d
     docs_present, workspace_status = _workspace_readiness_projection(workspace)
     payload["docs_present"] = docs_present
     payload["workspace_status"] = workspace_status
-    return payload
+    return cast("dict[str, Any]", (payload))
 
 
 def _get_settings_update_lock() -> asyncio.Lock:
@@ -124,7 +124,7 @@ def _compute_backend_source_fingerprint() -> str:
     try:
         from scripts.factory_bench.backend_fingerprint import compute_source_fingerprint
 
-        return compute_source_fingerprint(_backend_source_root())
+        return cast("str", (compute_source_fingerprint(_backend_source_root())))
     except (ImportError, OSError, RuntimeError, ValueError):
         return ""
 
@@ -149,7 +149,7 @@ def _active_workspace_from_request(request: Request | None) -> str:
 def _current_process_instance_id() -> str:
     """Project the controlled process identity without guessing a default."""
 
-    return normalize_instance_id(os.environ.get("KERNELONE_INSTANCE_ID", ""))
+    return cast("str", (normalize_instance_id(os.environ.get("KERNELONE_INSTANCE_ID", ""))))
 
 
 def _build_runtime_process_identity_response(request: Request | None = None) -> dict[str, Any]:
@@ -208,7 +208,7 @@ async def _build_health_response() -> dict[str, Any]:
         async def get_pm_status() -> dict[str, Any]:
             container = await get_container()
             pm_service = await container.resolve_async(PMService)
-            return pm_service.get_status()
+            return cast("dict[str, Any]", (pm_service.get_status()))
 
         # Use await directly - endpoint is async so no nested event loop
         try:
@@ -229,7 +229,7 @@ async def _build_health_response() -> dict[str, Any]:
         async def get_director_status() -> dict[str, Any]:
             container = await get_container()
             director_service = await container.resolve_async(DirectorService)
-            return await director_service.get_status()
+            return cast("dict[str, Any]", (await director_service.get_status()))
 
         try:
             director_status = await get_director_status()
@@ -465,7 +465,7 @@ async def _update_settings_internal(request: Request, payload: SettingsUpdate) -
     result = state.settings.to_payload()
     raw_json_log_path = str(result.get("json_log_path") or "").strip()
     result["json_log_path"] = normalize_artifact_rel_path(raw_json_log_path) if raw_json_log_path else DEFAULT_PM_LOG
-    return result
+    return cast("dict[str, Any]", (result))
 
 
 @router.get("/v2/health", dependencies=[Depends(require_auth)], response_model=HealthResponse)
@@ -509,7 +509,7 @@ def v2_get_settings(request: Request) -> dict[str, Any]:
     payload = state.settings.to_payload()
     raw_json_log_path = str(payload.get("json_log_path") or "").strip()
     payload["json_log_path"] = normalize_artifact_rel_path(raw_json_log_path) if raw_json_log_path else DEFAULT_PM_LOG
-    return payload
+    return cast("dict[str, Any]", (payload))
 
 
 @router.post("/v2/settings", dependencies=[Depends(require_auth)], response_model=SettingsResponse)

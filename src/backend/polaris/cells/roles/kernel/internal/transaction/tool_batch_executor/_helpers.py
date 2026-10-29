@@ -229,7 +229,7 @@ def _seal_deo_abort_tool_lifecycle(
             turn_id,
             error_token,
         )
-        return lifecycle
+        return cast("dict[str, Any]", (lifecycle))
     try:
         append_tool_call_lifecycle_event(
             AppendToolCallLifecycleEventCommandV1(
@@ -246,7 +246,7 @@ def _seal_deo_abort_tool_lifecycle(
         )
     except (OSError, RuntimeError, TypeError, ValueError):
         logger.debug("R135: failed to append DEO-abort tool lifecycle to Run Ledger", exc_info=True)
-    return lifecycle
+    return cast("dict[str, Any]", (lifecycle))
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,7 +270,7 @@ def _is_mutation_for_speculative_routing(
 
     if directed_effect_required:
         return invocation.effect_type is not ToolEffectType.READ
-    return WriteToolPhases.is_write_tool(str(invocation.tool_name))
+    return cast("bool", (WriteToolPhases.is_write_tool(str(invocation.tool_name))))
 
 
 # ---------------------------------------------------------------------------
@@ -1191,7 +1191,7 @@ def rewrite_existing_file_paths_in_invocations(
 
 def _merge_batch_receipts(receipts: list[Any]) -> dict[str, Any] | None:
     """Merge multiple per-tool receipts into a single canonical batch receipt."""
-    return merge_batch_receipts(receipts)
+    return cast("dict[str, Any] | None", (merge_batch_receipts(receipts)))
 
 
 def _capability_token_from_effect_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
@@ -1208,7 +1208,7 @@ def _capability_token_from_effect_receipt(receipt: dict[str, Any]) -> dict[str, 
 
 def _effect_receipts_from_batch_receipts(receipts: list[Any]) -> list[dict[str, Any]]:
     """Compatibility wrapper for Run Ledger-owned effect receipt extraction."""
-    return effect_receipts_from_batch_receipts(normalize_batch_receipts(receipts))
+    return cast("list[dict[str, Any]]", (effect_receipts_from_batch_receipts(normalize_batch_receipts(receipts))))
 
 
 def _batch_result_count(receipts: list[Any]) -> int:

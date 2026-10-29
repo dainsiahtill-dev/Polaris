@@ -22,7 +22,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.context._token_estimator import estimate_tokens as _estimate_tokens_from_module
 from polaris.kernelone.context.crushers import crush_by_type
@@ -487,7 +487,7 @@ class IntelligentCompressor:
         Returns:
             int: Estimated token count.
         """
-        return _estimate_tokens_from_module(text)
+        return cast("int", (_estimate_tokens_from_module(text)))
 
     async def _summarize_items(self, items: list[Any]) -> str | None:
         """Summarize multiple low-priority items using LLM.

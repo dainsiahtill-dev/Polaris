@@ -220,7 +220,7 @@ class _Mixin03:
                 self.workspace,
                 task_id="factory-workspace-quality-post-execution-repair",
             )
-            return results
+            return cast("list[dict[str, Any]]", (results))
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             return [
                 {
@@ -234,7 +234,7 @@ class _Mixin03:
             ]
 
     def _workspace_quality_repair_target_files(self) -> list[str]:
-        return self._collect_declared_delivery_targets(self._load_pm_plan_tasks("tasks/plan.json"))
+        return cast("list[str]", (self._collect_declared_delivery_targets(self._load_pm_plan_tasks("tasks/plan.json"))))
 
     def _workspace_quality_repair_diagnostic_target_files(self, artifact_quality_errors: list[str]) -> list[str]:
         from polaris.cells.director.runtime.public import normalize_director_repair_diagnostics
@@ -518,7 +518,7 @@ class _Mixin03:
         if remaining_seconds is None:
             return configured
         capped = max(1.0, remaining_seconds - _QUALITY_GATE_QA_DEADLINE_SAFETY_SECONDS)
-        return max(1.0, min(configured, capped))
+        return cast("float", (max(1.0, min(configured, capped))))
 
     async def _apply_workspace_quality_llm_repairs(
         self,
@@ -579,19 +579,24 @@ class _Mixin03:
         # request, closure and revocation. New stage ports never reuse it.
         setattr(self, binding_key, binding)
         context[binding_key] = binding
-        return await self._call_with_factory_role_evidence_authority(
-            authority_port,
-            "director",
-            lambda: workspace_quality_impl._apply_workspace_quality_llm_repairs(
-                executor,
-                run=run,
-                context=context,
-                artifact_quality_errors=artifact_quality_errors,
-                repair_attempt=repair_attempt,
-                interface_discrepancy_evidence=interface_discrepancy_evidence,
-                owner_target_files=owner_target_files,
+        return cast(
+            "tuple[list[dict[str, Any]], dict[str, Any]]",
+            (
+                await self._call_with_factory_role_evidence_authority(
+                    authority_port,
+                    "director",
+                    lambda: workspace_quality_impl._apply_workspace_quality_llm_repairs(
+                        executor,
+                        run=run,
+                        context=context,
+                        artifact_quality_errors=artifact_quality_errors,
+                        repair_attempt=repair_attempt,
+                        interface_discrepancy_evidence=interface_discrepancy_evidence,
+                        owner_target_files=owner_target_files,
+                    ),
+                    authority_binding=binding,
+                )
             ),
-            authority_binding=binding,
         )
 
     @staticmethod

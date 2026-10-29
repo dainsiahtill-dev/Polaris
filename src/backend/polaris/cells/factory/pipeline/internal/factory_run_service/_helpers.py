@@ -9,7 +9,7 @@ import contextlib
 import logging
 import threading  # re-exported for lossless surface compatibility
 from collections.abc import Callable, Iterator
-from typing import TYPE_CHECKING  # Protocol re-exported for lossless surface
+from typing import TYPE_CHECKING
 
 from polaris.cells.roles.kernel.public.provider_attempt_lifecycle_replay import (
     AppendFactoryProviderAttemptRecoveryTerminalV1,

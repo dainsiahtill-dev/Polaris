@@ -19,7 +19,7 @@ Example:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.values.alignment_service import (
     ValueAlignmentResult,
@@ -86,7 +86,7 @@ class AlignmentServiceAdapter(IAlignmentService):
             context=kwargs.get("context", ""),
             user_intent=kwargs.get("user_intent", ""),
         )
-        return result.final_verdict != "REJECTED" and result.overall_score >= 0.6
+        return cast("bool", (result.final_verdict != "REJECTED" and result.overall_score >= 0.6))
 
     async def get_alignment_score(self, action: str, **kwargs: Any) -> float:
         """Get an alignment score for an action.
@@ -103,7 +103,7 @@ class AlignmentServiceAdapter(IAlignmentService):
             context=kwargs.get("context", ""),
             user_intent=kwargs.get("user_intent", ""),
         )
-        return result.overall_score
+        return cast("float", (result.overall_score))
 
     async def explain_misalignment(self, action: str, **kwargs: Any) -> str:
         """Explain why an action is misaligned.

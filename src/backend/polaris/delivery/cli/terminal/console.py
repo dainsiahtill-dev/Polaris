@@ -11,7 +11,7 @@ import sys
 import threading
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.roles.host.public import RoleHostKind
 from polaris.cells.runtime.task_runtime.public.evidence import task_row_execution_event_failure
@@ -1359,7 +1359,7 @@ def run_role_console(
         )
         if handled:
             if exit_code >= 0:
-                return exit_code
+                return cast("int", (exit_code))
             continue
 
         try:

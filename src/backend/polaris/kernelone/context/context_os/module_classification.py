@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 
 def get_contextos_module_classification_diagnostics() -> dict[str, Any]:
@@ -45,7 +45,7 @@ def get_contextos_module_classification_diagnostics() -> dict[str, Any]:
 
 
 def _load_manifest(manifest_path: Path) -> dict[str, Any]:
-    return json.loads(manifest_path.read_text(encoding="utf-8"))
+    return cast("dict[str, Any]", (json.loads(manifest_path.read_text(encoding="utf-8"))))
 
 
 def _default_manifest_path() -> Path:

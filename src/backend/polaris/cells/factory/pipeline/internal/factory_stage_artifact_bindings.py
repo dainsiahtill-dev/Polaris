@@ -8,7 +8,7 @@ import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, cast
 
 from polaris.cells.chief_engineer.blueprint.public import (
     ChiefEngineerBlueprintErrorV1,
@@ -220,7 +220,7 @@ def _read_source(source_root: object, logical_path: str, *, max_bytes: int = _MA
         ) from exc
     if snapshot.size <= 0:
         raise _fail("factory_stage_artifact_empty", "Artifact must contain positive UTF-8 bytes")
-    return snapshot.content
+    return cast("bytes", (snapshot.content))
 
 
 def _persist_snapshot(
@@ -240,12 +240,17 @@ def _persist_snapshot(
 
 
 def _artifact_canonical_hash(domain: str, schema: str, document: Mapping[str, Any]) -> str:
-    return canonical_role_final_request_hash(
-        {
-            "domain": domain,
-            "document_schema_version": schema,
-            "document": dict(document),
-        }
+    return cast(
+        "str",
+        (
+            canonical_role_final_request_hash(
+                {
+                    "domain": domain,
+                    "document_schema_version": schema,
+                    "document": dict(document),
+                }
+            )
+        ),
     )
 
 
@@ -580,14 +585,19 @@ def _binding_vector_hash(
     stage: Literal["pm_planning", "chief_engineer_review"],
     item_records: list[dict[str, object]],
 ) -> str:
-    return canonical_role_final_request_hash(
-        {
-            "domain": "polaris.factory.stage_artifact_binding_vector.v1",
-            "schema_version": _BINDING_SCHEMA,
-            "factory_run_id": factory_run_id,
-            "stage": stage,
-            "items": item_records,
-        }
+    return cast(
+        "str",
+        (
+            canonical_role_final_request_hash(
+                {
+                    "domain": "polaris.factory.stage_artifact_binding_vector.v1",
+                    "schema_version": _BINDING_SCHEMA,
+                    "factory_run_id": factory_run_id,
+                    "stage": stage,
+                    "items": item_records,
+                }
+            )
+        ),
     )
 
 
@@ -974,23 +984,33 @@ def _pm_tasks_by_id(document: Mapping[str, Any], *, factory_run_id: str) -> dict
 
 
 def _pm_task_canonical_hash(task: Mapping[str, Any], *, factory_run_id: str) -> str:
-    return canonical_role_final_request_hash(
-        {
-            "domain": "polaris.factory.ce_pm_task.v1",
-            "factory_run_id": factory_run_id,
-            "task": dict(task),
-        }
+    return cast(
+        "str",
+        (
+            canonical_role_final_request_hash(
+                {
+                    "domain": "polaris.factory.ce_pm_task.v1",
+                    "factory_run_id": factory_run_id,
+                    "task": dict(task),
+                }
+            )
+        ),
     )
 
 
 def _pm_task_projection_hash(task: Mapping[str, Any], *, factory_run_id: str) -> str:
     projection = _task_projection(task, factory_run_id=factory_run_id)
-    return canonical_role_final_request_hash(
-        {
-            "domain": "polaris.factory.pm_task_projection.v1",
-            "factory_run_id": factory_run_id,
-            "task": projection,
-        }
+    return cast(
+        "str",
+        (
+            canonical_role_final_request_hash(
+                {
+                    "domain": "polaris.factory.pm_task_projection.v1",
+                    "factory_run_id": factory_run_id,
+                    "task": projection,
+                }
+            )
+        ),
     )
 
 

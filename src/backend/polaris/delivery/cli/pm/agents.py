@@ -4,7 +4,7 @@ import argparse
 import logging
 import os
 import time
-from typing import Any
+from typing import Any, cast
 
 from polaris.delivery.cli.pm.agents_helpers import (
     _build_fallback,
@@ -105,7 +105,7 @@ def maybe_generate_agents_draft(
     # Check for existing draft
     existing = check_existing_draft(draft_full, feedback_full, feedback_text)
     if existing:
-        return existing
+        return cast("str | None", (existing))
 
     # Gather context
     docs_text, root_text, docs_context = gather_docs_context(workspace_full, cache_root_full)
@@ -113,7 +113,7 @@ def maybe_generate_agents_draft(
         logger.info("[pm] generating AGENTS.md draft using fallback (no README/feedback found)")
         content = _build_fallback(docs_text, root_text, feedback_text, "no README/feedback available")
         write_text_atomic(draft_full, content)
-        return draft_full
+        return cast("str | None", (draft_full))
 
     # Generate using LLM
     try:
@@ -175,12 +175,12 @@ def maybe_generate_agents_draft(
             )
 
         write_text_atomic(draft_full, content)
-        return draft_full
+        return cast("str | None", (draft_full))
     except Exception as e:  # noqa: BLE001 - draft generation falls back on any backend/write failure.
         logger.error("[pm] error generating AGENTS.md: %s", e)
         content = _build_fallback(docs_text, root_text, feedback_text, str(e))
         write_text_atomic(draft_full, content)
-        return draft_full
+        return cast("str | None", (draft_full))
 
 
 def wait_for_agents_confirmation(
@@ -218,30 +218,40 @@ def wait_for_agents_confirmation(
 
     # Handle auto_accept mode
     if mode == "auto_accept":
-        return handle_auto_accept(
-            agents_path,
-            draft_path,
-            pm_state,
-            pm_state_full,
-            pm_report_full,
-            dialogue_full,
-            run_id,
-            pm_iteration,
-            timestamp,
+        return cast(
+            "bool",
+            (
+                handle_auto_accept(
+                    agents_path,
+                    draft_path,
+                    pm_state,
+                    pm_state_full,
+                    pm_report_full,
+                    dialogue_full,
+                    run_id,
+                    pm_iteration,
+                    timestamp,
+                )
+            ),
         )
 
     # Handle fail_fast mode
     if mode == "fail_fast":
-        return handle_fail_fast(
-            pm_state,
-            pm_state_full,
-            workspace_full,
-            pm_report_full,
-            dialogue_full,
-            run_id,
-            pm_iteration,
-            timestamp,
-            draft_path,
+        return cast(
+            "bool",
+            (
+                handle_fail_fast(
+                    pm_state,
+                    pm_state_full,
+                    workspace_full,
+                    pm_report_full,
+                    dialogue_full,
+                    run_id,
+                    pm_iteration,
+                    timestamp,
+                    draft_path,
+                )
+            ),
         )
 
     # Handle wait mode
@@ -325,16 +335,21 @@ def wait_for_agents_confirmation(
                         },
                         meta={"approval_mode": mode, "autonomy": "unattended"},
                     )
-                return handle_auto_accept(
-                    agents_path,
-                    draft_path,
-                    pm_state,
-                    pm_state_full,
-                    pm_report_full,
-                    dialogue_full,
-                    run_id,
-                    pm_iteration,
-                    timestamp,
+                return cast(
+                    "bool",
+                    (
+                        handle_auto_accept(
+                            agents_path,
+                            draft_path,
+                            pm_state,
+                            pm_state_full,
+                            pm_report_full,
+                            dialogue_full,
+                            run_id,
+                            pm_iteration,
+                            timestamp,
+                        )
+                    ),
                 )
             reason = f"AGENTS.md missing after waiting {timeout_sec}s. Review AGENTS.generated.md and resume after manual confirmation."
             _mark_manual_intervention(

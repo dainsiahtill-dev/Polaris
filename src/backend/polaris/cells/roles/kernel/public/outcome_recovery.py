@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.events.fact_stream.public import FactPayloadReferenceV1, FactStreamProvenanceV1
 from polaris.cells.roles.kernel.public.turn_contracts import CommitReceipt, SealedTurn, TurnOutcome
@@ -90,16 +90,16 @@ class RecoveredTurnOutcomeV1:
     @property
     def result_projection(self) -> dict[str, Any]:
         """Return the original detached result projection, never a guessed kind."""
-        return json.loads(self.result_projection_json)
+        return cast("dict[str, Any]", (json.loads(self.result_projection_json)))
 
 
 def query_prepared_turn_outcome(query: QueryPreparedTurnOutcomeV1) -> PreparedTurnOutcomeReferenceV1 | None:
     from polaris.cells.roles.kernel.internal.transaction.outcome_commit import find_prepared_turn_outcome
 
-    return find_prepared_turn_outcome(query)
+    return cast("PreparedTurnOutcomeReferenceV1 | None", (find_prepared_turn_outcome(query)))
 
 
 def replay_prepared_turn_outcome(command: ReplayPreparedTurnOutcomeCommandV1) -> RecoveredTurnOutcomeV1:
     from polaris.cells.roles.kernel.internal.transaction.outcome_commit import replay_prepared_outcome
 
-    return replay_prepared_outcome(command)
+    return cast("RecoveredTurnOutcomeV1", (replay_prepared_outcome(command)))

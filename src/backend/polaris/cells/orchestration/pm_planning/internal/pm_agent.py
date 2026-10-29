@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.roles.runtime.public.service import (
     AgentMessage,
@@ -137,7 +137,7 @@ class PMTaskStore:
             return {}
         try:
             with open(self._index_file, encoding="utf-8") as f:
-                return json.load(f)
+                return cast("dict[str, dict[str, Any]]", (json.load(f)))
         except (RuntimeError, ValueError):
             return {}
 

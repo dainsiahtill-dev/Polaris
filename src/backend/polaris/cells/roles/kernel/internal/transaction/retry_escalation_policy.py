@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.llm.budget_policy import RETRY_CREATE_OUTPUT_FLOOR_TOKENS
 
@@ -244,14 +244,14 @@ def resolve_retry_create_output_floor() -> int | None:
     """
     raw = os.environ.get(_RETRY_CREATE_OUTPUT_FLOOR_ENV)
     if raw is None:
-        return _DEFAULT_RETRY_CREATE_OUTPUT_FLOOR_TOKENS
+        return cast("int | None", (_DEFAULT_RETRY_CREATE_OUTPUT_FLOOR_TOKENS))
     text = raw.strip().lower()
     if text in {"", "off", "none", "disabled", "false"}:
         return None
     try:
         value = int(text)
     except ValueError:
-        return _DEFAULT_RETRY_CREATE_OUTPUT_FLOOR_TOKENS
+        return cast("int | None", (_DEFAULT_RETRY_CREATE_OUTPUT_FLOOR_TOKENS))
     if value <= 0:
         return None
     return value

@@ -11,7 +11,7 @@ so no conversion is needed - we can delegate directly.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.ports.bus_port import (
     AgentEnvelope,
@@ -74,7 +74,7 @@ class KernelOneBusPortAdapter(IBusPort):
         Returns:
             True on success, False if the bus is full / unavailable.
         """
-        return self._impl.publish(envelope)
+        return cast("bool", (self._impl.publish(envelope)))
 
     def poll(
         self,
@@ -126,7 +126,7 @@ class KernelOneBusPortAdapter(IBusPort):
         Returns:
             True if the message was found and removed.
         """
-        return self._impl.ack(message_id, receiver)
+        return cast("bool", (self._impl.ack(message_id, receiver)))
 
     def nack(
         self,
@@ -147,7 +147,7 @@ class KernelOneBusPortAdapter(IBusPort):
         Returns:
             True if the message was found.
         """
-        return self._impl.nack(message_id, receiver, reason=reason, requeue=requeue)
+        return cast("bool", (self._impl.nack(message_id, receiver, reason=reason, requeue=requeue)))
 
     def pending_count(self, receiver: str) -> int:
         """Return number of pending messages in inbox.
@@ -158,7 +158,7 @@ class KernelOneBusPortAdapter(IBusPort):
         Returns:
             Number of pending messages.
         """
-        return self._impl.pending_count(receiver)
+        return cast("int", (self._impl.pending_count(receiver)))
 
     def requeue_all_inflight(self, receiver: str) -> int:
         """Requeue ALL inflight messages for a receiver back to inbox.
@@ -169,7 +169,7 @@ class KernelOneBusPortAdapter(IBusPort):
         Returns:
             Number of messages requeued.
         """
-        return self._impl.requeue_all_inflight(receiver)
+        return cast("int", (self._impl.requeue_all_inflight(receiver)))
 
     @property
     def dead_letters(self) -> list[DeadLetterRecord]:
@@ -178,4 +178,4 @@ class KernelOneBusPortAdapter(IBusPort):
         Returns:
             List of dead letter records.
         """
-        return self._impl.dead_letters
+        return cast("list[Any]", (self._impl.dead_letters))

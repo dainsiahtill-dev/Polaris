@@ -12,7 +12,7 @@ import logging
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Any, Literal, overload
+from typing import Any, Literal, cast, overload
 
 from polaris.cells.orchestration.workflow_runtime.internal.ports import (
     OrchestrationEventPublisher,
@@ -1013,7 +1013,7 @@ class UnifiedOrchestrationService(OrchestrationService):
         ui_state = UIStateConverter.from_orchestration_snapshot(snapshot)
         ui_state.latency_ms = UIStateConverter.calculate_latency(ui_state)
 
-        return ui_state.to_dict()
+        return cast("dict[str, Any] | None", (ui_state.to_dict()))
 
 
 # ============================================================================

@@ -30,7 +30,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Protocol, cast
 
 from polaris.cells.runtime.task_runtime.public.contracts import (
     SettleTaskRuntimeExecutionAttemptCommandV1,
@@ -483,7 +483,7 @@ class Worker:
         add_listener = getattr(self.task_runtime, "add_ready_listener", None)
         if not callable(add_listener):
             return None
-        return add_listener(self._wake)
+        return cast("Callable[[], None] | None", (add_listener(self._wake)))
 
     def _has_ready_task(self) -> bool:
         return _has_legacy_ready_task(self.task_runtime)
@@ -760,7 +760,7 @@ class AsyncWorker:
         add_listener = getattr(self.task_runtime, "add_ready_listener", None)
         if not callable(add_listener):
             return None
-        return add_listener(self._wake_threadsafe)
+        return cast("Callable[[], None] | None", (add_listener(self._wake_threadsafe)))
 
     def _has_ready_task(self) -> bool:
         return _has_legacy_ready_task(self.task_runtime)

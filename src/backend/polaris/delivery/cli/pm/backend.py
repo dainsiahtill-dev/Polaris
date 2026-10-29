@@ -8,7 +8,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Coroutine, TypeVar
+from typing import Any, Coroutine, TypeVar, cast
 from uuid import uuid4
 
 from polaris.cells.context.engine.public.service import get_anthropomorphic_context_v2
@@ -701,50 +701,53 @@ def build_pm_prompt(
         limit=4,
     )
     # Enforce backlog mapping guidance even if a profile template is stale.
-    return (
-        rendered
-        + "\n\nBacklog mapping rule (required):\n"
-        + "- Each generated task SHOULD include `backlog_ref` with the original plan backlog text it derives from.\n"
-        + "- If source backlog item is uncertain, set `backlog_ref` to an empty string.\n"
-        + "- Never hallucinate a backlog source.\n"
-        + "\nrequired_evidence contract rule (required):\n"
-        + "- `required_evidence` is validation metadata only, not an instruction channel.\n"
-        + "- Do NOT output `required_evidence.must_read` or `required_evidence.must_find_calls`.\n"
-        + "- For Director tasks, use `required_evidence.validation_paths` only when post-run validation artifacts are needed.\n"
-        + "- Return exactly one JSON object and no extra text.\n"
-        + "- Do NOT emit TOOL_CALL/function-call markup.\n"
-        + "\nBootstrap-first planning rule (required):\n"
-        + "- If key project files are missing (e.g. package.json, pyproject.toml, src entry files), create bootstrap tasks first.\n"
-        + "- Do NOT schedule verification-only tasks (build/test/lint/read-only inspection) before scaffold files exist.\n"
-        + '- For Director tasks, default to `scope_mode: "module"` with `scope_paths` (module/directory prefixes).\n'
-        + '- Only use `scope_mode: "exact_files"` with `target_files` when high-risk or when user explicitly requests precise file locking.\n'
-        + "- In `module` mode, `target_files` is optional and acts as hints, not the primary scope boundary.\n"
-        + "- Avoid exploration-only/read-only Director tasks unless explicitly requested by the user.\n"
-        + "\nDocs-stage dispatch rule (required):\n"
-        + "- If requirements contain `[PM_DOC_STAGE]`, tasks MUST stay within the active document scope only.\n"
-        + "- Never generate synthetic bootstrap paths outside the active stage document.\n"
-        + "- If file targets are unclear, emit a docs-stage convergence task bound to `active_document` instead of cross-stage code tasks.\n"
-        + "\nDefect-loop and rollback rule (required):\n"
-        + "- Auto rollback is forbidden. Director must use fix-forward multi-round repair.\n"
-        + "- Keep retrying code repair up to 5 rounds before escalating to Tri-Council (Director -> ChiefEngineer -> PM).\n"
-        + "- Request human intervention only after Tri-Council rounds are exhausted and issue remains unresolved.\n"
-        + "\nVerification cadence rule (required):\n"
-        + "- Do not require heavy syntax/test verification on every repair round.\n"
-        + "- Prioritize final-round verification for a task and integration-level verification after task completion.\n"
-        + "\nTask dependency rule (required):\n"
-        + "- Emit `depends_on` when a task logically requires an earlier task output.\n"
-        + "- Use `phase` hints to express execution order: bootstrap/scaffold -> core/implementation -> integration -> verification/qa -> polish.\n"
-        + "- Never place test-only tasks before required implementation/bootstrap tasks.\n"
-        + "- For complex coding tasks, you MAY assign `ChiefEngineer` before `Director` to produce a detailed construction blueprint.\n"
-        + "\nTask detail quality rule (required):\n"
-        + "- When tasks count >= 2, include at least one dependency chain via `depends_on`.\n"
-        + "- Every task MUST include `phase` and `execution_checklist` (3-6 concrete steps).\n"
-        + "- Every task acceptance criteria MUST include measurable signals (commands/thresholds/evidence paths), not generic prose.\n"
-        + "- Every task SHOULD include `backlog_ref` mapped to the originating backlog/blueprint item text.\n"
-        + "- In docs-stage, every task MUST include `metadata.doc_sections` (array) and `metadata.change_intent`.\n"
-        + "- If active docs-stage is enabled, keep all task paths strictly within `active_document` (or its direct doc directory scope only when explicitly needed).\n"
-        + role_boundary_rules
-        + meta_prompt_appendix
+    return cast(
+        "str",
+        (
+            rendered
+            + "\n\nBacklog mapping rule (required):\n"
+            + "- Each generated task SHOULD include `backlog_ref` with the original plan backlog text it derives from.\n"
+            + "- If source backlog item is uncertain, set `backlog_ref` to an empty string.\n"
+            + "- Never hallucinate a backlog source.\n"
+            + "\nrequired_evidence contract rule (required):\n"
+            + "- `required_evidence` is validation metadata only, not an instruction channel.\n"
+            + "- Do NOT output `required_evidence.must_read` or `required_evidence.must_find_calls`.\n"
+            + "- For Director tasks, use `required_evidence.validation_paths` only when post-run validation artifacts are needed.\n"
+            + "- Return exactly one JSON object and no extra text.\n"
+            + "- Do NOT emit TOOL_CALL/function-call markup.\n"
+            + "\nBootstrap-first planning rule (required):\n"
+            + "- If key project files are missing (e.g. package.json, pyproject.toml, src entry files), create bootstrap tasks first.\n"
+            + "- Do NOT schedule verification-only tasks (build/test/lint/read-only inspection) before scaffold files exist.\n"
+            + '- For Director tasks, default to `scope_mode: "module"` with `scope_paths` (module/directory prefixes).\n'
+            + '- Only use `scope_mode: "exact_files"` with `target_files` when high-risk or when user explicitly requests precise file locking.\n'
+            + "- In `module` mode, `target_files` is optional and acts as hints, not the primary scope boundary.\n"
+            + "- Avoid exploration-only/read-only Director tasks unless explicitly requested by the user.\n"
+            + "\nDocs-stage dispatch rule (required):\n"
+            + "- If requirements contain `[PM_DOC_STAGE]`, tasks MUST stay within the active document scope only.\n"
+            + "- Never generate synthetic bootstrap paths outside the active stage document.\n"
+            + "- If file targets are unclear, emit a docs-stage convergence task bound to `active_document` instead of cross-stage code tasks.\n"
+            + "\nDefect-loop and rollback rule (required):\n"
+            + "- Auto rollback is forbidden. Director must use fix-forward multi-round repair.\n"
+            + "- Keep retrying code repair up to 5 rounds before escalating to Tri-Council (Director -> ChiefEngineer -> PM).\n"
+            + "- Request human intervention only after Tri-Council rounds are exhausted and issue remains unresolved.\n"
+            + "\nVerification cadence rule (required):\n"
+            + "- Do not require heavy syntax/test verification on every repair round.\n"
+            + "- Prioritize final-round verification for a task and integration-level verification after task completion.\n"
+            + "\nTask dependency rule (required):\n"
+            + "- Emit `depends_on` when a task logically requires an earlier task output.\n"
+            + "- Use `phase` hints to express execution order: bootstrap/scaffold -> core/implementation -> integration -> verification/qa -> polish.\n"
+            + "- Never place test-only tasks before required implementation/bootstrap tasks.\n"
+            + "- For complex coding tasks, you MAY assign `ChiefEngineer` before `Director` to produce a detailed construction blueprint.\n"
+            + "\nTask detail quality rule (required):\n"
+            + "- When tasks count >= 2, include at least one dependency chain via `depends_on`.\n"
+            + "- Every task MUST include `phase` and `execution_checklist` (3-6 concrete steps).\n"
+            + "- Every task acceptance criteria MUST include measurable signals (commands/thresholds/evidence paths), not generic prose.\n"
+            + "- Every task SHOULD include `backlog_ref` mapped to the originating backlog/blueprint item text.\n"
+            + "- In docs-stage, every task MUST include `metadata.doc_sections` (array) and `metadata.change_intent`.\n"
+            + "- If active docs-stage is enabled, keep all task paths strictly within `active_document` (or its direct doc directory scope only when explicitly needed).\n"
+            + role_boundary_rules
+            + meta_prompt_appendix
+        ),
     )
 
 

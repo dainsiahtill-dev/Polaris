@@ -3,7 +3,7 @@ import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # Path helpers: same cell (artifact_store.internal) — no cross-cell violation.
 from polaris.cells.runtime.artifact_store.internal.artifact_paths import (
@@ -39,7 +39,7 @@ def read_json(path: str) -> dict[str, Any] | None:
     if not path or not os.path.isfile(path):
         return None
     try:
-        return json.loads(Path(path).read_text(encoding="utf-8"))
+        return cast("dict[str, Any] | None", (json.loads(Path(path).read_text(encoding="utf-8"))))
     except (OSError, json.JSONDecodeError, ValueError):
         return None
 
@@ -479,11 +479,16 @@ def build_snapshot(
     projection = RuntimeProjectionService.build(workspace=ws, cache_root=Path(cr), state=state)
 
     # Convert to snapshot payload
-    return build_snapshot_payload_from_projection(
-        projection=projection,
-        state=state,
-        workspace=ws,
-        cache_root=Path(cr),
+    return cast(
+        "dict[str, Any]",
+        (
+            build_snapshot_payload_from_projection(
+                projection=projection,
+                state=state,
+                workspace=ws,
+                cache_root=Path(cr),
+            )
+        ),
     )
 
 
@@ -730,7 +735,7 @@ def build_runtime_snapshot_v2(
         summary=summary,
     )
 
-    return snapshot.model_dump(mode="json")
+    return cast("dict[str, Any]", (snapshot.model_dump(mode="json")))
 
 
 def _build_pm_status(state: AppState) -> dict[str, Any]:

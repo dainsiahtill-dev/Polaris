@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public.contracts import (
     AppendRunLedgerEventCommandV1,
@@ -403,7 +403,7 @@ def _missing_required_modalities(
 
 def _evidence_modalities_from_physical_evidence(physical_evidence: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Compatibility delegate to the platform evidence projection owner."""
-    return derive_run_ledger_evidence_modalities(physical_evidence)
+    return cast("dict[str, dict[str, Any]]", (derive_run_ledger_evidence_modalities(physical_evidence)))
 
 
 def _build_capability_audit(
@@ -800,13 +800,13 @@ def persist_real_run_gate_ledger(
 def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     """Build the canonical read model for ledger-backed UI/QA projections."""
 
-    return _build_platform_run_ledger_projection(events)
+    return cast("dict[str, Any]", (_build_platform_run_ledger_projection(events)))
 
 
 def summarize_run_ledger_projection(value: Any) -> dict[str, Any]:
     """Return the control-plane integrity status for a ledger projection."""
 
-    return _summarize_platform_run_ledger_projection(value)
+    return cast("dict[str, Any]", (_summarize_platform_run_ledger_projection(value)))
 
 
 def load_run_ledger_projection(

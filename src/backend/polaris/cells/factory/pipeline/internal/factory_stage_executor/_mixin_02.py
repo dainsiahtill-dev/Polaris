@@ -1074,9 +1074,14 @@ class _Mixin02:
             raise ValueError("chief_engineer_repair_task_count_must_be_positive")
         if repair_round < 1:
             raise ValueError("chief_engineer_repair_round_must_be_positive")
-        return resolve_role_output_budget(
-            context=context,
-            requested=chief_engineer_portfolio_output_tokens(task_count),
+        return cast(
+            "int",
+            (
+                resolve_role_output_budget(
+                    context=context,
+                    requested=chief_engineer_portfolio_output_tokens(task_count),
+                )
+            ),
         )
 
     @staticmethod
@@ -3748,13 +3753,19 @@ class _Mixin02:
             )
 
             evidence = scan_workspace_artifact_quality_evidence(str(self.workspace))
-            return artifact_quality_issues_for_errors(artifact_quality_errors, evidence.issues)
+            return cast(
+                "tuple[dict[str, Any], ...]",
+                (artifact_quality_issues_for_errors(artifact_quality_errors, evidence.issues)),
+            )
         except (ImportError, OSError, RuntimeError, TypeError, ValueError):
             pass
         try:
             from polaris.kernelone.quality import artifact_quality_issues_from_errors
 
-            return artifact_quality_issues_from_errors(str(item) for item in artifact_quality_errors or [])
+            return cast(
+                "tuple[dict[str, Any], ...]",
+                (artifact_quality_issues_from_errors(str(item) for item in artifact_quality_errors or [])),
+            )
         except (ImportError, RuntimeError, TypeError, ValueError):
             return ()
 
@@ -3767,12 +3778,19 @@ class _Mixin02:
                 query_director_repair_coverage,
             )
 
-            return query_director_repair_coverage(
-                QueryDirectorRepairCoverageV1(
-                    artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
-                    artifact_quality_issues=self._workspace_quality_repair_issue_payloads(artifact_quality_errors),
-                )
-            ).to_dict()
+            return cast(
+                "dict[str, Any]",
+                (
+                    query_director_repair_coverage(
+                        QueryDirectorRepairCoverageV1(
+                            artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
+                            artifact_quality_issues=self._workspace_quality_repair_issue_payloads(
+                                artifact_quality_errors
+                            ),
+                        )
+                    ).to_dict()
+                ),
+            )
         except (ImportError, RuntimeError, TypeError, ValueError) as exc:
             return {
                 "schema_version": "factory.workspace_quality_repair_coverage_query_error.v1",
@@ -3795,17 +3813,24 @@ class _Mixin02:
                 query_director_repair_plan_probe,
             )
 
-            return query_director_repair_plan_probe(
-                QueryDirectorRepairPlanProbeV1(
-                    artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
-                    artifact_quality_issues=self._workspace_quality_repair_issue_payloads(artifact_quality_errors),
-                    base_files=self._workspace_quality_repair_plan_probe_base_files(artifact_quality_errors),
-                    metadata={
-                        "source": "factory_stage_executor.workspace_quality",
-                        "coverage_is_not_planning": True,
-                    },
-                )
-            ).to_dict()
+            return cast(
+                "dict[str, Any]",
+                (
+                    query_director_repair_plan_probe(
+                        QueryDirectorRepairPlanProbeV1(
+                            artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
+                            artifact_quality_issues=self._workspace_quality_repair_issue_payloads(
+                                artifact_quality_errors
+                            ),
+                            base_files=self._workspace_quality_repair_plan_probe_base_files(artifact_quality_errors),
+                            metadata={
+                                "source": "factory_stage_executor.workspace_quality",
+                                "coverage_is_not_planning": True,
+                            },
+                        )
+                    ).to_dict()
+                ),
+            )
         except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
             return {
                 "schema_version": "factory.workspace_quality_repair_plan_probe_query_error.v1",

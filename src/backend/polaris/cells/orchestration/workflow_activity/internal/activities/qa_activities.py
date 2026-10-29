@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.orchestration.pm_planning.public.service import (
@@ -41,18 +41,28 @@ def _qa_activity_classification(
     failure_class: str = FailureClassV1.IMPLEMENTATION_DEFECT.value,
 ) -> dict[str, Any]:
     if passed:
-        return build_qa_pass_classification_v1(
-            reason=reason or "Workflow QA activity passed",
-        ).to_dict()
+        return cast(
+            "dict[str, Any]",
+            (
+                build_qa_pass_classification_v1(
+                    reason=reason or "Workflow QA activity passed",
+                ).to_dict()
+            ),
+        )
     is_test_environment_failure = failure_class == FailureClassV1.TEST_ENVIRONMENT_FAILURE.value
-    return build_qa_failure_classification_v1(
-        failure_class=failure_class,
-        route="pending_qa" if is_test_environment_failure else "pending_exec",
-        reason=reason or "Workflow QA activity failed",
-        repairable_by_director=not is_test_environment_failure,
-        owner="qa_infra" if is_test_environment_failure else "director",
-        responsible_layer="qa_infra" if is_test_environment_failure else "director",
-    ).to_dict()
+    return cast(
+        "dict[str, Any]",
+        (
+            build_qa_failure_classification_v1(
+                failure_class=failure_class,
+                route="pending_qa" if is_test_environment_failure else "pending_exec",
+                reason=reason or "Workflow QA activity failed",
+                repairable_by_director=not is_test_environment_failure,
+                owner="qa_infra" if is_test_environment_failure else "director",
+                responsible_layer="qa_infra" if is_test_environment_failure else "director",
+            ).to_dict()
+        ),
+    )
 
 
 def _write_runtime_result(
@@ -73,7 +83,7 @@ def _write_runtime_result(
     target = resolve_artifact_path(workspace, cache_root, rel_path)
     if target:
         write_json_atomic(target, result)
-    return target
+    return cast("str", (target))
 
 
 def _run_command(command: str, workspace: str, timeout_seconds: int) -> tuple[bool, str, list[str]]:
@@ -115,7 +125,7 @@ def _run_command(command: str, workspace: str, timeout_seconds: int) -> tuple[bo
 
 def _detect_unit_command(workspace: str) -> str:
     if os.path.isfile(os.path.join(workspace, "package.json")):
-        return detect_integration_verify_command(workspace)
+        return cast("str", (detect_integration_verify_command(workspace)))
     if os.path.isfile(os.path.join(workspace, "go.mod")):
         return "go test ./... -run TestDoesNotExist"
     if os.path.isfile(os.path.join(workspace, "Cargo.toml")):

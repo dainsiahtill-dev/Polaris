@@ -12,7 +12,7 @@ import json
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public import (
     FailureClassV1,
@@ -107,7 +107,7 @@ def _artifact_quality_dict(value: ArtifactQualityEvidence | dict[str, Any] | Non
     if value is None:
         return {}
     if isinstance(value, ArtifactQualityEvidence):
-        return value.to_dict()
+        return cast("dict[str, Any]", (value.to_dict()))
     if isinstance(value, dict):
         return dict(value)
     return {}
@@ -922,11 +922,16 @@ class QAVerdictEngine:
         if not targets:
             return {}
         try:
-            return scan_workspace_artifact_quality_evidence(
-                self.workspace,
-                relative_paths=targets,
-                task_id=str(payload.get("task_id") or payload.get("id") or ""),
-            ).to_dict()
+            return cast(
+                "dict[str, Any]",
+                (
+                    scan_workspace_artifact_quality_evidence(
+                        self.workspace,
+                        relative_paths=targets,
+                        task_id=str(payload.get("task_id") or payload.get("id") or ""),
+                    ).to_dict()
+                ),
+            )
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             return {
                 "ok": False,

@@ -2,7 +2,7 @@
 
 import os
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from polaris.delivery.cli.pm.utils import compact_text
 from polaris.kernelone.fs.jsonl.ops import append_jsonl
@@ -107,7 +107,7 @@ def write_pm_memo_index(
     rel_path = os.path.join("runtime", "memos", "index.jsonl")
     index_path = resolve_artifact_path(workspace_full, cache_root_full, rel_path)
     append_jsonl(index_path, record)
-    return index_path
+    return cast("str", (index_path))
 
 
 def write_pm_memo_summary(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.cognitive.knowledge_distiller.internal.pattern_analyzer import (
     PatternAnalyzer,
@@ -86,7 +86,7 @@ class KnowledgeDistillerService:
             All knowledge units
         """
         store = self._engine.get_knowledge_store()
-        return store.get_all()
+        return cast("list[Any]", (store.get_all()))
 
 
 __all__ = [

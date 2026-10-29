@@ -27,7 +27,7 @@ from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnContinuationMode,
@@ -335,7 +335,7 @@ async def _run_session_workflow_case(
 def _event_to_dict(event: TurnEvent) -> dict[str, Any]:
     """Convert a TurnEvent to a plain dict."""
     if hasattr(event, "to_dict"):
-        return event.to_dict()
+        return cast("dict[str, Any]", (event.to_dict()))
     return {
         "type": event.__class__.__name__,
         **{k: getattr(event, k) for k in dir(event) if not k.startswith("_") and not callable(getattr(event, k))},
@@ -344,7 +344,7 @@ def _event_to_dict(event: TurnEvent) -> dict[str, Any]:
 
 def _event_type_name(event: TurnEvent) -> str:
     """Get the event type name."""
-    return event.__class__.__name__
+    return cast("str", (event.__class__.__name__))
 
 
 def _is_subsequence(sub: list[str], seq: list[str]) -> bool:

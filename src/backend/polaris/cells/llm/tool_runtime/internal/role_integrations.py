@@ -12,7 +12,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
-from typing import Any, Self
+from typing import Any, Self, cast
 
 from polaris.kernelone.llm.toolkit.executor import AgentAccelToolExecutor
 from polaris.kernelone.llm.toolkit.parsers import format_tool_result
@@ -328,7 +328,7 @@ class ChiefEngineerToolIntegration:
             result = self.process_llm_response(content)
 
             if not result["has_tools"]:
-                return result["clean_response"]
+                return cast("str", (result["clean_response"]))
 
             # 添加 LLM 回复
             messages.append({"role": "assistant", "content": content})
@@ -497,10 +497,15 @@ class DirectorToolIntegration:
 
     def format_tools_for_native_calling(self) -> list[dict[str, Any]]:
         """格式化为原生 Function Calling 格式."""
-        return ToolSpecRegistry.generate_llm_schemas(
-            format="openai",
-            include_arg_aliases=True,
-            deterministic=True,
+        return cast(
+            "list[dict[str, Any]]",
+            (
+                ToolSpecRegistry.generate_llm_schemas(
+                    format="openai",
+                    include_arg_aliases=True,
+                    deterministic=True,
+                )
+            ),
         )
 
     def build_tool_results_prompt(self, executed_tools: list[dict[str, Any]]) -> str:
@@ -1000,8 +1005,8 @@ class ToolEnabledLLMClient:
             result = chat_method(messages, **kwargs)
             # 处理异步方法
             if inspect.isawaitable(result):
-                return await result
-            return result
+                return cast("dict[str, Any]", (await result))
+            return cast("dict[str, Any]", (result))
         elif hasattr(self.base_client, "invoke"):
             prompt = messages[-1].get("content", "") if messages else ""
             invoke_method = self.base_client.invoke

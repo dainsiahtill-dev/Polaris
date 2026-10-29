@@ -7,7 +7,7 @@ import os
 import random
 import re
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import aiohttp
 import requests
@@ -55,7 +55,7 @@ def _strip_structured_tags(text: str) -> str:
 
 
 def _timeout_seconds(config: dict[str, Any], default: int) -> int:
-    return normalize_timeout_seconds(config.get("timeout"), default=default)
+    return cast("int", (normalize_timeout_seconds(config.get("timeout"), default=default)))
 
 
 def _resolve_max_tokens(config: dict[str, Any], default: int) -> int:

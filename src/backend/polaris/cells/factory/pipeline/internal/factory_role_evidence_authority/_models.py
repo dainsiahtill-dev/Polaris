@@ -7,6 +7,7 @@ import binascii
 import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import cast
 
 from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FACTORY_ROLE_EVIDENCE_CUTOFF_REQUEST_SCHEMA,
@@ -440,31 +441,36 @@ def _canonical_cutoff_body_bytes(record: Mapping[str, object]) -> bytes:
     raw = canonical_role_final_request_json(dict(record)).encode("utf-8")
     if len(raw) > _MAX_CUTOFF_BODY_BYTES:
         raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_cutoff_body_too_large")
-    return raw
+    return cast("bytes", (raw))
 
 
 def _request_authority_hash(
     request: FactoryRoleEvidenceCutoffRequestV1,
     authority: FactoryRoleEvidenceStageAuthorityV1,
 ) -> str:
-    return canonical_role_final_request_hash(
-        {
-            "schema_version": "polaris.factory_role_evidence_request_authority.v1",
-            "factory_run_id": authority.factory_run_id,
-            "run_id": request.run_id,
-            "role": request.role,
-            "turn_id": request.turn_id,
-            "call_id": request.call_id,
-            "request_freeze_id": request.request_freeze_id,
-            "semantic_candidate_hash": request.semantic_candidate_hash,
-            "attempt_budget": request.attempt_budget,
-            "execution_authority_hash": request.execution_authority_hash,
-            "candidate_refs": list(request.candidate_refs),
-            "stage": authority.stage,
-            "workspace_fencing_token": authority.workspace_fencing_token,
-            "stage_claim_attempt": authority.stage_claim_attempt,
-            "stage_claim_nonce": authority.stage_claim_nonce,
-        }
+    return cast(
+        "str",
+        (
+            canonical_role_final_request_hash(
+                {
+                    "schema_version": "polaris.factory_role_evidence_request_authority.v1",
+                    "factory_run_id": authority.factory_run_id,
+                    "run_id": request.run_id,
+                    "role": request.role,
+                    "turn_id": request.turn_id,
+                    "call_id": request.call_id,
+                    "request_freeze_id": request.request_freeze_id,
+                    "semantic_candidate_hash": request.semantic_candidate_hash,
+                    "attempt_budget": request.attempt_budget,
+                    "execution_authority_hash": request.execution_authority_hash,
+                    "candidate_refs": list(request.candidate_refs),
+                    "stage": authority.stage,
+                    "workspace_fencing_token": authority.workspace_fencing_token,
+                    "stage_claim_attempt": authority.stage_claim_attempt,
+                    "stage_claim_nonce": authority.stage_claim_nonce,
+                }
+            )
+        ),
     )
 
 

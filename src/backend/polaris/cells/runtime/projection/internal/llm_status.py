@@ -5,7 +5,7 @@ import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import Mock
 
 from polaris.cells.llm.evaluation.public.service import (
@@ -928,7 +928,7 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
 
 
 def _runtime_issue(role: str, provider_id: str | None, provider_cfg: dict[str, Any]) -> str:
-    return role_runtime_support_issue(role, provider_id, provider_cfg)
+    return cast("str", (role_runtime_support_issue(role, provider_id, provider_cfg)))
 
 
 def _binding_readiness(
@@ -1066,7 +1066,7 @@ def _readiness_candidate_issue(
         return identity_issue
     freshness_issue = readiness_freshness_issue(tested_timestamp)
     if freshness_issue:
-        return freshness_issue
+        return cast("str", (freshness_issue))
     return ""
 
 

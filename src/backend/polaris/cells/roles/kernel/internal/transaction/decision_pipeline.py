@@ -78,17 +78,22 @@ def build_tool_dispatch_dropped_anomaly(
     native_tool_calls = native_tool_calls_from_response(response)
     response_hash = provider_response_hash(response, metadata)
     native_envelopes = native_tool_call_envelopes_from_response(response, metadata)
-    return build_tool_dispatch_dropped_anomaly_from_sources(
-        run_id=str(metadata.get("run_id") or ""),
-        task_id=str(metadata.get("task_id") or ""),
-        turn_id=turn_id,
-        role=str(metadata.get("role") or ""),
-        provider_response_hash=response_hash,
-        metadata=metadata,
-        native_tool_calls=native_tool_calls,
-        native_tool_call_envelopes=native_envelopes,
-        streaming=streaming,
-        reason="provider_emitted_tool_calls_but_no_decoded_tool_batch",
+    return cast(
+        "dict[str, Any]",
+        (
+            build_tool_dispatch_dropped_anomaly_from_sources(
+                run_id=str(metadata.get("run_id") or ""),
+                task_id=str(metadata.get("task_id") or ""),
+                turn_id=turn_id,
+                role=str(metadata.get("role") or ""),
+                provider_response_hash=response_hash,
+                metadata=metadata,
+                native_tool_calls=native_tool_calls,
+                native_tool_call_envelopes=native_envelopes,
+                streaming=streaming,
+                reason="provider_emitted_tool_calls_but_no_decoded_tool_batch",
+            )
+        ),
     )
 
 

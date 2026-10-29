@@ -14,6 +14,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import cast
 
 from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
 from polaris.kernelone.storage.layout import (
@@ -50,7 +51,7 @@ def polaris_home() -> str:
 
     kern_home = resolve_env_str("home")
     if kern_home:
-        return os.path.abspath(os.path.expanduser(os.path.expandvars(kern_home)))
+        return cast("str", (os.path.abspath(os.path.expanduser(os.path.expandvars(kern_home)))))
 
     root_override = str(os.environ.get("KERNELONE_ROOT") or "").strip()
     if root_override:
@@ -81,9 +82,14 @@ def default_polaris_cache_base() -> str:
 def canonical_project_runtime_root(workspace: str) -> str:
     """Return Polaris's canonical target-project runtime root."""
 
-    return canonical_workspace_runtime_root(
-        workspace,
-        metadata_dir_name=_polaris_metadata_dir_name(),
+    return cast(
+        "str",
+        (
+            canonical_workspace_runtime_root(
+                workspace,
+                metadata_dir_name=_polaris_metadata_dir_name(),
+            )
+        ),
     )
 
 

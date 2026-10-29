@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.llm.contracts import ToolCall, ToolPolicy
 from polaris.kernelone.llm.toolkit.executor.runtime import (
@@ -25,7 +25,7 @@ def normalize_tool_name(value: str) -> str:
         return ""
     if not _TOOL_NAME_PATTERN.fullmatch(token):
         return ""
-    return token
+    return cast("str", (token))
 
 
 def normalize_tool_arguments(value: Any, tool_name: str = "") -> dict[str, Any]:

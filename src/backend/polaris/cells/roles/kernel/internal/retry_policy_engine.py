@@ -6,6 +6,7 @@
 import random
 from dataclasses import dataclass
 from enum import Enum
+from typing import cast
 
 
 class ErrorCategory(str, Enum):
@@ -208,7 +209,7 @@ class RetryPolicyEngine:
         jitter = 0.7 + (random.random() * 0.6)
         delay *= jitter
 
-        return delay
+        return cast("float", (delay))
 
     def get_suggestions(self, category: ErrorCategory) -> list[str]:
         """根据错误类别获取修复建议

@@ -22,7 +22,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Request
 from polaris.delivery.http.routers._shared import (
@@ -143,7 +143,7 @@ def _split_csv(value: str) -> list[str]:
 
 
 def _workspace_value(settings: Any) -> str:
-    return active_workspace_value(settings)
+    return cast("str", (active_workspace_value(settings)))
 
 
 def _settings_for_request(request: Request, workspace: str = "") -> Any:

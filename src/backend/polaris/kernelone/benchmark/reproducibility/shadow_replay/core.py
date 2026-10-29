@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.benchmark.reproducibility.shadow_replay.cassette import (
     Cassette,
@@ -174,9 +174,9 @@ class ShadowReplay:
                 )
                 if entry is not None:
                     # Replay found - short circuit
-                    return await player.intercept(exchange)
+                    return cast("tuple[bool, Any]", (await player.intercept(exchange)))
                 # No replay found - proceed with recording
-                return await recorder.intercept(exchange)
+                return cast("tuple[bool, Any]", (await recorder.intercept(exchange)))
 
             set_interceptor(combined_intercept)
 

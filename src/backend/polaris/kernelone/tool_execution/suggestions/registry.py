@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.tool_execution.suggestions.protocols import SuggestionBuilder
 
@@ -101,7 +101,7 @@ def build_suggestion(
                     error_result.get("error", ""),
                     suggestion[:100],
                 )
-                return suggestion
+                return cast("str | None", (suggestion))
         except Exception as exc:  # noqa: BLE001
             # Builders are plugin-like; isolate failures so one bad builder
             # does not break the entire suggestion pipeline.

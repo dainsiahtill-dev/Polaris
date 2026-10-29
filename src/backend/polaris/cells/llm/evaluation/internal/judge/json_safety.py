@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Any, cast
 
 # Default maximum nesting depth to prevent stack overflow from malicious JSON.
 _DEFAULT_JSON_MAX_DEPTH: int = 100
@@ -135,7 +135,7 @@ def _json_loads_with_depth_limit(s: str, max_depth: int) -> dict[str, Any] | lis
             )
         return obj
 
-    return json.loads(s, object_hook=depth_limited_object_hook)
+    return cast("dict[str, Any] | list[Any]", (json.loads(s, object_hook=depth_limited_object_hook)))
 
 
 def _serialize_args(args: dict[str, object]) -> str:

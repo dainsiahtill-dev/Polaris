@@ -5,7 +5,7 @@ import logging
 import os
 import time
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.fs.text_ops import ensure_parent_dir, write_json_atomic
 
@@ -145,7 +145,7 @@ def run_director_once(
         exit_code=exit_code,
         error="" if int(exit_code) == 0 else f"DIRECTOR_EXIT_{int(exit_code)}",
     )
-    return exit_code
+    return cast("int", (exit_code))
 
 
 def detect_plan_missing(plan_path: str, log_path: str, since_ts: float) -> str:
@@ -204,7 +204,7 @@ def build_run_dir(workspace: str, cache_root: str, iteration: int) -> str:
     from polaris.kernelone.storage.io_paths import resolve_artifact_path
 
     rel = os.path.join("runtime", "runs", f"pm-{iteration:05d}")
-    return resolve_artifact_path(workspace, cache_root, rel)
+    return cast("str", (resolve_artifact_path(workspace, cache_root, rel)))
 
 
 __all__ = [

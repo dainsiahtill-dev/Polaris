@@ -17,7 +17,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-from typing import Any
+from typing import Any, cast
 
 # ---------------------------------------------------------------------------
 # Module re-export / monkeypatch surface.
@@ -217,7 +217,7 @@ def run_once(args: argparse.Namespace, iteration: int = 1) -> int:
     Returns:
         Exit code (0 for success, non-zero for failure)
     """
-    return run_once_impl(args, iteration=iteration)
+    return cast("int", (run_once_impl(args, iteration=iteration)))
 
 
 def _run_dispatch_pipeline_with_workflow(
@@ -247,23 +247,28 @@ def _run_dispatch_pipeline_with_workflow(
     ``orchestration_engine._run_dispatch_pipeline_with_workflow`` keep working and
     so the runner can resolve monkeypatchable globals through this module.
     """
-    return run_dispatch_pipeline_with_workflow(
-        args=args,
-        engine=engine,
-        workspace_full=workspace_full,
-        cache_root_full=cache_root_full,
-        run_dir=run_dir,
-        run_id=run_id,
-        iteration=iteration,
-        normalized=normalized,
-        run_events=run_events,
-        dialogue_full=dialogue_full,
-        runtime_pm_tasks_full=runtime_pm_tasks_full,
-        pm_out_full=pm_out_full,
-        run_pm_tasks=run_pm_tasks,
-        run_director_result=run_director_result,
-        docs_stage=docs_stage,
-        pm_state=pm_state,
+    return cast(
+        "dict[str, Any]",
+        (
+            run_dispatch_pipeline_with_workflow(
+                args=args,
+                engine=engine,
+                workspace_full=workspace_full,
+                cache_root_full=cache_root_full,
+                run_dir=run_dir,
+                run_id=run_id,
+                iteration=iteration,
+                normalized=normalized,
+                run_events=run_events,
+                dialogue_full=dialogue_full,
+                runtime_pm_tasks_full=runtime_pm_tasks_full,
+                pm_out_full=pm_out_full,
+                run_pm_tasks=run_pm_tasks,
+                run_director_result=run_director_result,
+                docs_stage=docs_stage,
+                pm_state=pm_state,
+            )
+        ),
     )
 
 
@@ -273,7 +278,7 @@ def _merge_engine_config(payload_engine: Any, args: argparse.Namespace) -> dict[
 
     normalized_payload = normalize_engine_config(payload_engine)
     cfg = EngineRuntimeConfig.from_sources(args, normalized_payload)
-    return cfg.to_payload()
+    return cast("dict[str, Any]", (cfg.to_payload()))
 
 
 # Re-export from orchestration_core for backward compatibility

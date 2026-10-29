@@ -7,7 +7,7 @@ UTF-8 编码验证: 本文所有文本使用 UTF-8
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from .token_estimator import TokenEstimator
 
@@ -415,7 +415,7 @@ class CompressionEngine:
         if projection is not None:
             rendered = self._continuity_strategy.build_continuity_prompt_block_from_projection(projection)
             if rendered:
-                return rendered
+                return cast("str", (rendered))
         if summary_text:
             return f"【会话连续性摘要】\n{summary_text}"
         return ""

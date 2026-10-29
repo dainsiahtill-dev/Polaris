@@ -16,7 +16,7 @@ import os
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.context.repo_intelligence.cache import (
     TagsCache,
@@ -305,7 +305,7 @@ class RepoIntelligenceFacade:
             ]
             self._cache.set_tags(abs_path, tag_dicts)
 
-        return tags
+        return cast("list[Any]", (tags))
 
     def _get_rel_path(self, abs_path: str) -> str:
         """Get relative path from workspace."""

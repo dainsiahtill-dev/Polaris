@@ -10,7 +10,7 @@ import logging
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 from polaris.infrastructure.llm import AppLLMRuntimeAdapter
 from polaris.kernelone.shared import truncate_text
@@ -191,7 +191,7 @@ class ResponseNormalizer:
     @staticmethod
     def extract_json_object(text: str) -> dict[str, Any] | None:
         """Extract JSON object from text (delegate to parse_json_payload)."""
-        return parse_json_payload(text)
+        return cast("dict[str, Any] | None", (parse_json_payload(text)))
 
     @staticmethod
     def looks_truncated_json(text: str) -> bool:

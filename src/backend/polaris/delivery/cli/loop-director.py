@@ -19,7 +19,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 
 def _bootstrap_backend_import_path() -> None:
@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 def load_pm_task_contract(pm_task_path: str) -> dict[str, Any]:
     """Load PM task contract from JSON file."""
     with open(pm_task_path, encoding="utf-8") as f:
-        return json.load(f)
+        return cast("dict[str, Any]", (json.load(f)))
 
 
 def map_pm_priority_to_director(priority: Any) -> TaskPriority:

@@ -14,7 +14,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.chief_engineer.blueprint.public.contracts import (
     IncidentSeverity,
@@ -54,7 +54,7 @@ def _validate_record_id(value: str) -> str:
     wrapper so existing call sites and test monkeypatch targets resolve
     unchanged. Fail-closed: anything but a bare safe token raises.
     """
-    return validate_storage_record_id(value, label="incident_id")
+    return cast("str", (validate_storage_record_id(value, label="incident_id")))
 
 
 def _coerce_severity(value: Any) -> IncidentSeverity:

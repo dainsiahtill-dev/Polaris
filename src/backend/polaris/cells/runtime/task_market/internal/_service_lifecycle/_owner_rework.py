@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.runtime.task_market.public.contracts import (
     OWNER_REWORK_HANDOFFS_METADATA_KEY,
@@ -399,10 +399,13 @@ class OwnerReworkMixin:
     ) -> bool:
         if record is None:
             return False
-        return (
-            record.handoff_id == command.handoff_id
-            and record.owner_task_id == command.owner_task_id
-            and record.requester_task_id == command.requester_task_id
+        return cast(
+            "bool",
+            (
+                record.handoff_id == command.handoff_id
+                and record.owner_task_id == command.owner_task_id
+                and record.requester_task_id == command.requester_task_id
+            ),
         )
 
     @classmethod

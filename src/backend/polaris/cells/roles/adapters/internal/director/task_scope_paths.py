@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.fs.materialization import materialized_file_paths
 from polaris.kernelone.quality.scope_authority import (
@@ -131,11 +131,11 @@ def _extract_project_declared_target_path_candidates(source: dict[str, Any] | No
 
 
 def _path_matches_any_declared_candidate(path: str, candidates: list[str]) -> bool:
-    return path_matches_any_declared_scope_candidate(path, candidates)
+    return cast("bool", (path_matches_any_declared_scope_candidate(path, candidates)))
 
 
 def _path_matches_declared_candidate(path: str, candidate: str) -> bool:
-    return path_matches_declared_scope_candidate(path, candidate)
+    return cast("bool", (path_matches_declared_scope_candidate(path, candidate)))
 
 
 def _workspace_path_exists_case_insensitive(root: Path, rel_path: str, *, require_materialized: bool = False) -> bool:
@@ -344,7 +344,7 @@ def _scope_directory_covers_explicit_target(scope_candidate: str, explicit_targe
 
 
 def _normalize_declared_task_path(value: str, *, workspace_name: str = "") -> str:
-    return normalize_declared_scope_path(value, workspace_name=workspace_name)
+    return cast("str", (normalize_declared_scope_path(value, workspace_name=workspace_name)))
 
 
 def _path_candidate_exists_in_file_set(candidate: str, current_files: set[str]) -> bool:
@@ -363,7 +363,7 @@ def _path_candidate_exists_in_file_set(candidate: str, current_files: set[str]) 
 
 
 def _glob_path_matches(path: str, pattern: str) -> bool:
-    return glob_declared_scope_path_matches(path, pattern)
+    return cast("bool", (glob_declared_scope_path_matches(path, pattern)))
 
 
 def _dedupe_preserve_order(values: list[str]) -> list[str]:

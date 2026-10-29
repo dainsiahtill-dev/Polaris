@@ -5,7 +5,7 @@ This module provides the public API surface for roles.session cell.
 - Implementation classes are re-exported from internal for backward compatibility
 """
 
-from typing import Any
+from typing import Any, cast
 
 # Re-export implementation classes from internal for backward compatibility
 # These are NOT part of the public contract - use Protocol types instead
@@ -59,7 +59,7 @@ def init_db() -> None:
     """Initialize the session database."""
     from polaris.cells.roles.session.internal.conversation import init_db as _init_db
 
-    return _init_db()
+    return cast("None", (_init_db()))
 
 
 def get_db() -> Any:

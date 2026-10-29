@@ -154,23 +154,31 @@ def hash_directed_effect_target_state_components(
     is_no_file_state: bool,
 ) -> str:
     """Return the canonical aggregate for already-validated target-state components."""
-    return hash_directed_effect_arguments(
+    return cast(
+        "str",
         (
-            ("domain", "director_effect_target_state_evidence_v1"),
-            (
-                "target_state_evidence",
-                DirectedEffectImmutableMapV1(
-                    items=(
-                        ("agents_policy_hash", agents_policy_hash),
-                        ("before_content_hash", before_content_hash),
-                        ("exists", exists),
-                        ("is_no_file_state", is_no_file_state),
-                        ("minimal_content_evidence", DirectedEffectImmutableMapV1(items=minimal_content_evidence)),
-                        ("target_path", target_path),
-                    )
-                ),
-            ),
-        )
+            hash_directed_effect_arguments(
+                (
+                    ("domain", "director_effect_target_state_evidence_v1"),
+                    (
+                        "target_state_evidence",
+                        DirectedEffectImmutableMapV1(
+                            items=(
+                                ("agents_policy_hash", agents_policy_hash),
+                                ("before_content_hash", before_content_hash),
+                                ("exists", exists),
+                                ("is_no_file_state", is_no_file_state),
+                                (
+                                    "minimal_content_evidence",
+                                    DirectedEffectImmutableMapV1(items=minimal_content_evidence),
+                                ),
+                                ("target_path", target_path),
+                            )
+                        ),
+                    ),
+                )
+            )
+        ),
     )
 
 
@@ -410,24 +418,31 @@ def hash_directed_effect_policy_snapshot_evidence(
         raise TypeError("subject must be DirectorEffectPolicyOperationSubjectV1")
     if not isinstance(baseline_target_state_evidence, DirectorEffectTargetStateEvidenceV1):
         raise TypeError("baseline_target_state_evidence must be DirectorEffectTargetStateEvidenceV1")
-    return hash_directed_effect_arguments(
+    return cast(
+        "str",
         (
-            ("allowed", allowed),
-            (
-                "baseline_target_state_evidence",
-                DirectedEffectImmutableMapV1(items=_target_state_evidence_items(baseline_target_state_evidence)),
-            ),
-            ("domain", "director_effect_policy_snapshot_evidence_v1"),
-            ("error_code", error_code),
-            ("normalized_operation_hash", normalized_operation_hash),
-            ("policy_hash", policy_hash),
-            ("policy_version", policy_version),
-            ("status", status),
-            (
-                "subject",
-                DirectedEffectImmutableMapV1(items=_operation_subject_items(subject)),
-            ),
-        )
+            hash_directed_effect_arguments(
+                (
+                    ("allowed", allowed),
+                    (
+                        "baseline_target_state_evidence",
+                        DirectedEffectImmutableMapV1(
+                            items=_target_state_evidence_items(baseline_target_state_evidence)
+                        ),
+                    ),
+                    ("domain", "director_effect_policy_snapshot_evidence_v1"),
+                    ("error_code", error_code),
+                    ("normalized_operation_hash", normalized_operation_hash),
+                    ("policy_hash", policy_hash),
+                    ("policy_version", policy_version),
+                    ("status", status),
+                    (
+                        "subject",
+                        DirectedEffectImmutableMapV1(items=_operation_subject_items(subject)),
+                    ),
+                )
+            )
+        ),
     )
 
 
@@ -454,14 +469,19 @@ def hash_directed_effect_policy_member_binding(
         "member identity",
         cast(DirectedEffectImmutableItemsV1, member_items_unvalidated),
     )
-    return hash_directed_effect_arguments(
+    return cast(
+        "str",
         (
-            ("authorization_binding_hash", authorization_binding_hash),
-            ("authorization_evidence_hash", authorization_evidence_hash),
-            ("domain", "director_effect_policy_member_binding_v1"),
-            ("member", DirectedEffectImmutableMapV1(items=member_items)),
-            ("snapshot_evidence_hash", snapshot_evidence_hash),
-        )
+            hash_directed_effect_arguments(
+                (
+                    ("authorization_binding_hash", authorization_binding_hash),
+                    ("authorization_evidence_hash", authorization_evidence_hash),
+                    ("domain", "director_effect_policy_member_binding_v1"),
+                    ("member", DirectedEffectImmutableMapV1(items=member_items)),
+                    ("snapshot_evidence_hash", snapshot_evidence_hash),
+                )
+            )
+        ),
     )
 
 
@@ -830,21 +850,26 @@ def hash_directed_effect_policy_revalidation_evidence(
     )
     if not isinstance(current_target_state_evidence, DirectorEffectTargetStateEvidenceV1):
         raise TypeError("current_target_state_evidence must be DirectorEffectTargetStateEvidenceV1")
-    return hash_directed_effect_arguments(
+    return cast(
+        "str",
         (
-            ("allowed", allowed),
-            (
-                "current_target_state_evidence",
-                DirectedEffectImmutableMapV1(items=_target_state_evidence_items(current_target_state_evidence)),
-            ),
-            ("current_normalized_operation_hash", current_normalized_operation_hash),
-            ("current_policy_hash", current_policy_hash),
-            ("current_policy_version", current_policy_version),
-            ("domain", "director_effect_policy_revalidation_evidence_v1"),
-            ("error_code", error_code),
-            ("status", status),
-            ("target_observation_performed", target_observation_performed),
-        )
+            hash_directed_effect_arguments(
+                (
+                    ("allowed", allowed),
+                    (
+                        "current_target_state_evidence",
+                        DirectedEffectImmutableMapV1(items=_target_state_evidence_items(current_target_state_evidence)),
+                    ),
+                    ("current_normalized_operation_hash", current_normalized_operation_hash),
+                    ("current_policy_hash", current_policy_hash),
+                    ("current_policy_version", current_policy_version),
+                    ("domain", "director_effect_policy_revalidation_evidence_v1"),
+                    ("error_code", error_code),
+                    ("status", status),
+                    ("target_observation_performed", target_observation_performed),
+                )
+            )
+        ),
     )
 
 
@@ -929,65 +954,70 @@ def hash_director_effect_current_policy_evidence(
 ) -> str:
     """Bind every post-claim current-source observation in one hash domain."""
 
-    return hash_directed_effect_arguments(
+    return cast(
+        "str",
         (
-            (
-                "baseline_authorization_binding_hash",
-                _require_hash(
-                    "baseline_authorization_binding_hash",
-                    baseline_authorization_binding_hash,
-                ),
-            ),
-            (
-                "baseline_public_policy_evidence_hash",
-                _require_hash(
-                    "baseline_public_policy_evidence_hash",
-                    baseline_public_policy_evidence_hash,
-                ),
-            ),
-            ("bound_member_hash", _require_hash("bound_member_hash", bound_member_hash)),
-            ("claim_grant_hash", _require_hash("claim_grant_hash", claim_grant_hash)),
-            ("policy_target_version", _require_token("policy_target_version", policy_target_version)),
-            ("policy_target_hash", _require_hash("policy_target_hash", policy_target_hash)),
-            ("operation_version", _require_token("operation_version", operation_version)),
-            ("operation_hash", _require_hash("operation_hash", operation_hash)),
-            (
-                "capability_scope_version",
-                _require_token("capability_scope_version", capability_scope_version),
-            ),
-            (
-                "capability_scope_hash",
-                _require_hash("capability_scope_hash", capability_scope_hash),
-            ),
-            ("job_token_id", _require_token("job_token_id", job_token_id)),
-            ("job_token_version", _require_token("job_token_version", job_token_version)),
-            (
-                "job_token_evidence_hash",
-                _require_hash("job_token_evidence_hash", job_token_evidence_hash),
-            ),
-            (
-                "tool_spec_snapshot_hash",
-                _require_hash("tool_spec_snapshot_hash", tool_spec_snapshot_hash),
-            ),
-            ("alias_binding_hash", _require_hash("alias_binding_hash", alias_binding_hash)),
-            (
-                "execution_envelope_version",
-                _require_token("execution_envelope_version", execution_envelope_version),
-            ),
-            (
-                "execution_envelope_hash",
-                _require_hash("execution_envelope_hash", execution_envelope_hash),
-            ),
-            (
-                "allowed_commands_version",
-                _require_token("allowed_commands_version", allowed_commands_version),
-            ),
-            (
-                "allowed_commands_hash",
-                _require_hash("allowed_commands_hash", allowed_commands_hash),
-            ),
-            ("domain", "director_effect_current_policy_evidence_v1"),
-        )
+            hash_directed_effect_arguments(
+                (
+                    (
+                        "baseline_authorization_binding_hash",
+                        _require_hash(
+                            "baseline_authorization_binding_hash",
+                            baseline_authorization_binding_hash,
+                        ),
+                    ),
+                    (
+                        "baseline_public_policy_evidence_hash",
+                        _require_hash(
+                            "baseline_public_policy_evidence_hash",
+                            baseline_public_policy_evidence_hash,
+                        ),
+                    ),
+                    ("bound_member_hash", _require_hash("bound_member_hash", bound_member_hash)),
+                    ("claim_grant_hash", _require_hash("claim_grant_hash", claim_grant_hash)),
+                    ("policy_target_version", _require_token("policy_target_version", policy_target_version)),
+                    ("policy_target_hash", _require_hash("policy_target_hash", policy_target_hash)),
+                    ("operation_version", _require_token("operation_version", operation_version)),
+                    ("operation_hash", _require_hash("operation_hash", operation_hash)),
+                    (
+                        "capability_scope_version",
+                        _require_token("capability_scope_version", capability_scope_version),
+                    ),
+                    (
+                        "capability_scope_hash",
+                        _require_hash("capability_scope_hash", capability_scope_hash),
+                    ),
+                    ("job_token_id", _require_token("job_token_id", job_token_id)),
+                    ("job_token_version", _require_token("job_token_version", job_token_version)),
+                    (
+                        "job_token_evidence_hash",
+                        _require_hash("job_token_evidence_hash", job_token_evidence_hash),
+                    ),
+                    (
+                        "tool_spec_snapshot_hash",
+                        _require_hash("tool_spec_snapshot_hash", tool_spec_snapshot_hash),
+                    ),
+                    ("alias_binding_hash", _require_hash("alias_binding_hash", alias_binding_hash)),
+                    (
+                        "execution_envelope_version",
+                        _require_token("execution_envelope_version", execution_envelope_version),
+                    ),
+                    (
+                        "execution_envelope_hash",
+                        _require_hash("execution_envelope_hash", execution_envelope_hash),
+                    ),
+                    (
+                        "allowed_commands_version",
+                        _require_token("allowed_commands_version", allowed_commands_version),
+                    ),
+                    (
+                        "allowed_commands_hash",
+                        _require_hash("allowed_commands_hash", allowed_commands_hash),
+                    ),
+                    ("domain", "director_effect_current_policy_evidence_v1"),
+                )
+            )
+        ),
     )
 
 

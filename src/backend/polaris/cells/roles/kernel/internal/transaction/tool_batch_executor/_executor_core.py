@@ -10,7 +10,7 @@ import time
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import replace
-from typing import Any, NoReturn
+from typing import Any, NoReturn, cast
 
 from polaris.cells.director.runtime.public import DirectedEffectImmutableItemsV1, hash_directed_effect_arguments
 from polaris.cells.roles.kernel.internal.deferred_repair_effects import (
@@ -1104,7 +1104,7 @@ class _ToolBatchExecutorCore:
         for receipt in normalized_followup_receipts:
             receipt["deferred_repair_followup_batch_id"] = followup.batch_id
             receipt["deferred_repair_request_ids"] = list(followup.request_ids)
-        return normalized_followup_receipts
+        return cast("list[dict[str, Any]]", (normalized_followup_receipts))
 
     def _check_materialize_contract(self, ledger: TurnLedger, invocations: list[Any]) -> bool:
         """Primary check: delivery contract 已明确要求 materialize。"""

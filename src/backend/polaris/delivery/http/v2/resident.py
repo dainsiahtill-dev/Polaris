@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from polaris.cells.resident.autonomy.public.service import (
@@ -220,13 +220,15 @@ class ResidentAgiTacticalActionRequest(ResidentWorkspaceRequest):
 @router.get("/status", dependencies=[Depends(require_auth)])
 def resident_status(request: Request, details: bool = False, workspace: str = "") -> dict[str, Any]:
     ws = _resolve_workspace(request, workspace)
-    return query_resident_status(QueryResidentStatusV1(workspace=ws or "."), include_details=details)
+    return cast(
+        "dict[str, Any]", (query_resident_status(QueryResidentStatusV1(workspace=ws or "."), include_details=details))
+    )
 
 
 @router.get("/capabilities", dependencies=[Depends(require_auth)])
 def resident_capabilities(request: Request, workspace: str = "") -> dict[str, Any]:
     ws = _resolve_workspace(request, workspace)
-    return query_resident_capabilities(QueryResidentCapabilitiesV1(workspace=ws or "."))
+    return cast("dict[str, Any]", (query_resident_capabilities(QueryResidentCapabilitiesV1(workspace=ws or "."))))
 
 
 @router.get("/agi/audit-pack", dependencies=[Depends(require_auth)])
@@ -238,7 +240,10 @@ def resident_agi_audit_pack(
     """Return the read-only evidence pack a Resident AGI turn should inspect."""
 
     ws = _resolve_workspace(request, workspace)
-    return query_resident_agi_audit_pack(QueryResidentAgiAuditPackV1(workspace=ws, decision_limit=decision_limit))
+    return cast(
+        "dict[str, Any]",
+        (query_resident_agi_audit_pack(QueryResidentAgiAuditPackV1(workspace=ws, decision_limit=decision_limit))),
+    )
 
 
 @router.get("/agi/evidence-interfaces", dependencies=[Depends(require_auth)])
@@ -256,16 +261,21 @@ def resident_agi_evidence_interfaces(
 
     ws = _resolve_workspace(request, workspace)
     requested_interfaces = tuple(item.strip() for item in str(interface_ids or "").split(",") if item.strip())
-    return query_resident_agi_evidence_interfaces(
-        QueryResidentAgiEvidenceInterfacesV1(
-            workspace=ws,
-            decision_type=decision_type,
-            interface_ids=requested_interfaces,
-            run_id=run_id,
-            task_id=task_id,
-            decision_limit=decision_limit,
-            max_runs=max_runs,
-        )
+    return cast(
+        "dict[str, Any]",
+        (
+            query_resident_agi_evidence_interfaces(
+                QueryResidentAgiEvidenceInterfacesV1(
+                    workspace=ws,
+                    decision_type=decision_type,
+                    interface_ids=requested_interfaces,
+                    run_id=run_id,
+                    task_id=task_id,
+                    decision_limit=decision_limit,
+                    max_runs=max_runs,
+                )
+            )
+        ),
     )
 
 
@@ -280,13 +290,18 @@ def resident_agi_handoffs(
     """Return Resident AGI handoff inbox items derived from decision trace."""
 
     ws = _resolve_workspace(request, workspace)
-    return query_resident_agi_handoffs(
-        QueryResidentAgiHandoffsV1(
-            workspace=ws,
-            target_role=target_role,
-            handoff_status=handoff_status,
-            limit=limit,
-        )
+    return cast(
+        "dict[str, Any]",
+        (
+            query_resident_agi_handoffs(
+                QueryResidentAgiHandoffsV1(
+                    workspace=ws,
+                    target_role=target_role,
+                    handoff_status=handoff_status,
+                    limit=limit,
+                )
+            )
+        ),
     )
 
 
@@ -301,13 +316,18 @@ def resident_agi_repair_advisory_overlay(
     """Return the latest persisted Resident AGI repair advisory overlay."""
 
     ws = _resolve_workspace(request, workspace)
-    return query_resident_agi_repair_advisory_overlay(
-        QueryResidentAgiRepairAdvisoryOverlayV1(
-            workspace=ws,
-            limit=limit,
-            require_ready=require_ready,
-            require_eligible=require_eligible,
-        )
+    return cast(
+        "dict[str, Any]",
+        (
+            query_resident_agi_repair_advisory_overlay(
+                QueryResidentAgiRepairAdvisoryOverlayV1(
+                    workspace=ws,
+                    limit=limit,
+                    require_ready=require_ready,
+                    require_eligible=require_eligible,
+                )
+            )
+        ),
     )
 
 
@@ -324,23 +344,28 @@ async def resident_agi_decide(request: Request, payload: ResidentAgiDecisionTurn
                 "message": "include_audit_pack must remain enabled for Resident AGI decisions.",
             },
         )
-    return await run_resident_agi_decision_turn(
-        RunResidentAgiDecisionTurnCommandV1(
-            workspace=ws,
-            objective=payload.objective,
-            decision_type=payload.decision_type,
-            run_id=payload.run_id,
-            task_id=payload.task_id,
-            goal_id=payload.goal_id,
-            evidence=payload.evidence,
-            constraints=tuple(payload.constraints),
-            candidate_actions=tuple(payload.candidate_actions),
-            context_refs=tuple(payload.context_refs),
-            evidence_refs=tuple(payload.evidence_refs),
-            confidence=payload.confidence,
-            include_audit_pack=payload.include_audit_pack,
-            audit_pack_decision_limit=payload.audit_pack_decision_limit,
-        )
+    return cast(
+        "dict[str, Any]",
+        (
+            await run_resident_agi_decision_turn(
+                RunResidentAgiDecisionTurnCommandV1(
+                    workspace=ws,
+                    objective=payload.objective,
+                    decision_type=payload.decision_type,
+                    run_id=payload.run_id,
+                    task_id=payload.task_id,
+                    goal_id=payload.goal_id,
+                    evidence=payload.evidence,
+                    constraints=tuple(payload.constraints),
+                    candidate_actions=tuple(payload.candidate_actions),
+                    context_refs=tuple(payload.context_refs),
+                    evidence_refs=tuple(payload.evidence_refs),
+                    confidence=payload.confidence,
+                    include_audit_pack=payload.include_audit_pack,
+                    audit_pack_decision_limit=payload.audit_pack_decision_limit,
+                )
+            )
+        ),
     )
 
 
@@ -349,20 +374,25 @@ def resident_agi_tactical_chat(request: Request, payload: ResidentAgiTacticalCha
     """Return a Resident AGI tactical-console response from public evidence."""
 
     ws = _resolve_workspace(request, payload.workspace)
-    return query_resident_agi_tactical_chat(
-        QueryResidentAgiTacticalChatV1(
-            workspace=ws,
-            message=payload.message,
-            decision_type=payload.decision_type,
-            run_id=payload.run_id,
-            task_id=payload.task_id,
-            goal_id=payload.goal_id,
-            context=payload.context,
-            context_refs=tuple(payload.context_refs),
-            evidence_refs=tuple(payload.evidence_refs),
-            decision_limit=payload.decision_limit,
-            max_runs=payload.max_runs,
-        )
+    return cast(
+        "dict[str, Any]",
+        (
+            query_resident_agi_tactical_chat(
+                QueryResidentAgiTacticalChatV1(
+                    workspace=ws,
+                    message=payload.message,
+                    decision_type=payload.decision_type,
+                    run_id=payload.run_id,
+                    task_id=payload.task_id,
+                    goal_id=payload.goal_id,
+                    context=payload.context,
+                    context_refs=tuple(payload.context_refs),
+                    evidence_refs=tuple(payload.evidence_refs),
+                    decision_limit=payload.decision_limit,
+                    max_runs=payload.max_runs,
+                )
+            )
+        ),
     )
 
 
@@ -370,7 +400,7 @@ def resident_agi_tactical_chat(request: Request, payload: ResidentAgiTacticalCha
 def resident_agi_tactical_action_catalog() -> dict[str, Any]:
     """Return the read-only Resident AGI tactical-console action catalog."""
 
-    return query_resident_agi_tactical_action_catalog()
+    return cast("dict[str, Any]", (query_resident_agi_tactical_action_catalog()))
 
 
 @router.post("/agi/actions/execute", dependencies=[Depends(require_auth)])
@@ -378,34 +408,39 @@ async def resident_agi_tactical_action(request: Request, payload: ResidentAgiTac
     """Execute a governed Resident AGI tactical-console action."""
 
     ws = _resolve_workspace(request, payload.workspace)
-    return await execute_resident_agi_tactical_action(
-        ExecuteResidentAgiTacticalActionCommandV1(
-            workspace=ws,
-            message=payload.message,
-            action_id=payload.action_id,
-            decision_type=payload.decision_type,
-            run_id=payload.run_id,
-            task_id=payload.task_id,
-            goal_id=payload.goal_id,
-            context=payload.context,
-            context_refs=tuple(payload.context_refs),
-            evidence_refs=tuple(payload.evidence_refs),
-            decision_limit=payload.decision_limit,
-            max_runs=payload.max_runs,
-        )
+    return cast(
+        "dict[str, Any]",
+        (
+            await execute_resident_agi_tactical_action(
+                ExecuteResidentAgiTacticalActionCommandV1(
+                    workspace=ws,
+                    message=payload.message,
+                    action_id=payload.action_id,
+                    decision_type=payload.decision_type,
+                    run_id=payload.run_id,
+                    task_id=payload.task_id,
+                    goal_id=payload.goal_id,
+                    context=payload.context,
+                    context_refs=tuple(payload.context_refs),
+                    evidence_refs=tuple(payload.evidence_refs),
+                    decision_limit=payload.decision_limit,
+                    max_runs=payload.max_runs,
+                )
+            )
+        ),
     )
 
 
 @router.post("/start", dependencies=[Depends(require_auth)])
 def resident_start(request: Request, payload: ResidentStartRequest) -> dict[str, Any]:
     ws = _resolve_workspace(request, payload.workspace)
-    return start_resident(StartResidentCommandV1(workspace=ws, mode=payload.mode))
+    return cast("dict[str, Any]", (start_resident(StartResidentCommandV1(workspace=ws, mode=payload.mode))))
 
 
 @router.post("/stop", dependencies=[Depends(require_auth)])
 def resident_stop(request: Request, payload: ResidentWorkspaceRequest) -> dict[str, Any]:
     ws = _resolve_workspace(request, payload.workspace)
-    return stop_resident(StopResidentCommandV1(workspace=ws))
+    return cast("dict[str, Any]", (stop_resident(StopResidentCommandV1(workspace=ws))))
 
 
 @router.post("/tick", dependencies=[Depends(require_auth)])
@@ -415,23 +450,28 @@ def resident_tick(
     force: bool = False,
 ) -> dict[str, Any]:
     ws = _resolve_workspace(request, payload.workspace)
-    return run_resident_tick(RunResidentTickCommandV1(workspace=ws, force=force))
+    return cast("dict[str, Any]", (run_resident_tick(RunResidentTickCommandV1(workspace=ws, force=force))))
 
 
 @router.get("/identity", dependencies=[Depends(require_auth)])
 def resident_identity(request: Request, workspace: str = "") -> dict[str, Any]:
     service = get_resident_service(_resolve_workspace(request, workspace))
-    return service.get_status(include_details=False)["identity"]
+    return cast("dict[str, Any]", (service.get_status(include_details=False)["identity"]))
 
 
 @router.patch("/identity", dependencies=[Depends(require_auth)])
 def resident_patch_identity(request: Request, payload: ResidentIdentityPatch) -> dict[str, Any]:
     ws = _resolve_workspace(request, payload.workspace)
-    return update_resident_identity(
-        UpdateResidentIdentityCommandV1(
-            workspace=ws,
-            payload=payload.model_dump(exclude_none=True),
-        )
+    return cast(
+        "dict[str, Any]",
+        (
+            update_resident_identity(
+                UpdateResidentIdentityCommandV1(
+                    workspace=ws,
+                    payload=payload.model_dump(exclude_none=True),
+                )
+            )
+        ),
     )
 
 
@@ -452,37 +492,42 @@ def resident_patch_agi_participation(
     current = resident_agi_participation(request, workspace=ws)
     current_scopes_raw = current.get("scopes")
     current_participation_raw = current.get("participation")
-    return update_resident_agi_participation(
-        UpdateResidentAgiParticipationCommandV1(
-            workspace=ws,
-            enabled=bool(current.get("enabled", False) if payload.enabled is None else payload.enabled),
-            scopes=tuple(
-                payload.scopes
-                if payload.scopes is not None
-                else current_scopes_raw
-                if isinstance(current_scopes_raw, list)
-                else []
-            ),
-            participation=(
-                payload.participation
-                if payload.participation is not None
-                else current_participation_raw
-                if isinstance(current_participation_raw, dict)
-                else {}
-            ),
-            custom_scopes_allowed=bool(
-                current.get("custom_scopes_allowed", True)
-                if payload.custom_scopes_allowed is None
-                else payload.custom_scopes_allowed
-            ),
-        )
+    return cast(
+        "dict[str, Any]",
+        (
+            update_resident_agi_participation(
+                UpdateResidentAgiParticipationCommandV1(
+                    workspace=ws,
+                    enabled=bool(current.get("enabled", False) if payload.enabled is None else payload.enabled),
+                    scopes=tuple(
+                        payload.scopes
+                        if payload.scopes is not None
+                        else current_scopes_raw
+                        if isinstance(current_scopes_raw, list)
+                        else []
+                    ),
+                    participation=(
+                        payload.participation
+                        if payload.participation is not None
+                        else current_participation_raw
+                        if isinstance(current_participation_raw, dict)
+                        else {}
+                    ),
+                    custom_scopes_allowed=bool(
+                        current.get("custom_scopes_allowed", True)
+                        if payload.custom_scopes_allowed is None
+                        else payload.custom_scopes_allowed
+                    ),
+                )
+            )
+        ),
     )
 
 
 @router.get("/agenda", dependencies=[Depends(require_auth)])
 def resident_agenda(request: Request, workspace: str = "") -> dict[str, Any]:
     service = get_resident_service(_resolve_workspace(request, workspace))
-    return service.get_status(include_details=False)["agenda"]
+    return cast("dict[str, Any]", (service.get_status(include_details=False)["agenda"]))
 
 
 @router.get("/goals", dependencies=[Depends(require_auth)])
@@ -495,7 +540,10 @@ def resident_goals(request: Request, workspace: str = "", status_filter: str = "
 @router.post("/goals", dependencies=[Depends(require_auth)])
 def resident_create_goal(request: Request, payload: GoalProposalPayload) -> dict[str, Any]:
     ws = _resolve_workspace(request, payload.workspace)
-    return create_resident_goal(CreateResidentGoalCommandV1(workspace=ws, payload=payload.model_dump()))
+    return cast(
+        "dict[str, Any]",
+        (create_resident_goal(CreateResidentGoalCommandV1(workspace=ws, payload=payload.model_dump()))),
+    )
 
 
 @router.post("/goals/{goal_id}/approve", dependencies=[Depends(require_auth)])
@@ -504,7 +552,7 @@ def resident_approve_goal(request: Request, goal_id: str, payload: GoalNotePaylo
     result = approve_resident_goal(ApproveResidentGoalCommandV1(workspace=ws, goal_id=goal_id, note=payload.note))
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="goal not found")
-    return result
+    return cast("dict[str, Any]", (result))
 
 
 @router.post("/goals/{goal_id}/reject", dependencies=[Depends(require_auth)])
@@ -513,7 +561,7 @@ def resident_reject_goal(request: Request, goal_id: str, payload: GoalNotePayloa
     result = reject_resident_goal(RejectResidentGoalCommandV1(workspace=ws, goal_id=goal_id, note=payload.note))
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="goal not found")
-    return result
+    return cast("dict[str, Any]", (result))
 
 
 @router.post("/goals/{goal_id}/materialize", dependencies=[Depends(require_auth)])
@@ -526,7 +574,7 @@ def resident_materialize_goal(request: Request, goal_id: str, payload: ResidentW
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="internal error") from exc
     if contract is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="goal not found")
-    return contract
+    return cast("dict[str, Any]", (contract))
 
 
 @router.post("/goals/{goal_id}/stage", dependencies=[Depends(require_auth)])
@@ -547,7 +595,7 @@ def resident_stage_goal(request: Request, goal_id: str, payload: GoalStageReques
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="internal error") from exc
     if staged is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="goal not found")
-    return staged
+    return cast("dict[str, Any]", (staged))
 
 
 @router.post("/goals/{goal_id}/run", dependencies=[Depends(require_auth)])
@@ -569,7 +617,7 @@ async def resident_run_goal(request: Request, goal_id: str, payload: GoalRunRequ
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="internal error") from exc
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="goal not found")
-    return result
+    return cast("dict[str, Any]", (result))
 
 
 @router.get("/goals/{goal_id}/execution", dependencies=[Depends(require_auth)])
@@ -586,7 +634,7 @@ def resident_goal_execution(
     result = service.get_goal_execution_view(goal_id)
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Goal not found")
-    return result
+    return cast("dict[str, Any]", (result))
 
 
 @router.get("/goals/execution/bulk", dependencies=[Depends(require_auth)])
@@ -630,13 +678,16 @@ def resident_decision_evidence(
     result = service.get_decision_evidence_bundle(decision_id)
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Decision or evidence bundle not found")
-    return result
+    return cast("dict[str, Any]", (result))
 
 
 @router.post("/decisions", dependencies=[Depends(require_auth)])
 def resident_record_decision(request: Request, payload: DecisionRecordPayload) -> dict[str, Any]:
     ws = _resolve_workspace(request, payload.workspace)
-    return record_resident_decision_entry(RecordResidentDecisionCommandV1(workspace=ws, payload=payload.model_dump()))
+    return cast(
+        "dict[str, Any]",
+        (record_resident_decision_entry(RecordResidentDecisionCommandV1(workspace=ws, payload=payload.model_dump()))),
+    )
 
 
 @router.get("/skills", dependencies=[Depends(require_auth)])

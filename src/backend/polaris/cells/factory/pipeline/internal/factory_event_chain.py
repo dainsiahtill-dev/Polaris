@@ -11,7 +11,7 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from polaris.kernelone.events.final_request_evidence import (
     canonical_role_final_request_hash,
@@ -100,11 +100,16 @@ def build_factory_run_admitted_event(admission: FactoryRunAdmissionV1) -> dict[s
 
 def _event_hash(record_without_hash: Mapping[str, Any]) -> str:
     try:
-        return canonical_role_final_request_hash(
-            {
-                "domain": _CHAIN_HASH_DOMAIN,
-                "event": dict(record_without_hash),
-            }
+        return cast(
+            "str",
+            (
+                canonical_role_final_request_hash(
+                    {
+                        "domain": _CHAIN_HASH_DOMAIN,
+                        "event": dict(record_without_hash),
+                    }
+                )
+            ),
         )
     except ValueError as exc:
         raise _fail("factory_event_chain_noncanonical_json", "event contains non-canonical JSON") from exc
@@ -116,7 +121,7 @@ def encode_factory_event_record(record: Mapping[str, Any]) -> bytes:
     if not isinstance(record, Mapping):
         raise TypeError("factory event record must be a mapping")
     try:
-        return (canonical_role_final_request_json(dict(record)) + "\n").encode("utf-8")
+        return cast("bytes", ((canonical_role_final_request_json(dict(record)) + "\n").encode("utf-8")))
     except ValueError as exc:
         raise _fail("factory_event_chain_noncanonical_json", "event contains non-canonical JSON") from exc
 

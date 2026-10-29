@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.llm.providers import (
     ProviderConfigValidationResult,
@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 
 def _timeout_seconds(config: dict[str, Any], default: int) -> int:
-    return normalize_timeout_seconds(config.get("timeout"), default=default)
+    return cast("int", (normalize_timeout_seconds(config.get("timeout"), default=default)))
 
 
 def _resolve_max_tokens(config: dict[str, Any], default: int) -> int:

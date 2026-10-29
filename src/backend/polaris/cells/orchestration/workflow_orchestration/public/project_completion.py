@@ -14,7 +14,7 @@ import unicodedata
 from dataclasses import InitVar, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Protocol, cast, runtime_checkable
 
 from polaris.cells.factory.verification_guard.public.contracts import (
     ProjectCompletionDiagnosticsV1,
@@ -396,7 +396,7 @@ async def advance_project_completion(
         advance_project_completion_authoritatively,
     )
 
-    return await advance_project_completion_authoritatively(command)
+    return cast("ProjectCompletionAdvanceResultV1", (await advance_project_completion_authoritatively(command)))
 
 
 async def notify_project_completion(

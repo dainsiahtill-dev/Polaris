@@ -45,7 +45,7 @@ from __future__ import annotations
 import time
 from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
 from polaris.kernelone.storage import resolve_runtime_path
@@ -111,7 +111,7 @@ class RolesRuntimeStreamExecutor:
     ) -> AsyncIterator[Mapping[str, Any]]:
         from polaris.cells.roles.runtime.public.service import stream_role_session_command
 
-        return stream_role_session_command(command)
+        return cast("AsyncIterator[Mapping[str, Any]]", (stream_role_session_command(command)))
 
 
 def _emit_progress(
@@ -210,7 +210,7 @@ def _resolve_executor(context: Mapping[str, Any] | None) -> RoleSessionStreamExe
     if executor is None:
         return RolesRuntimeStreamExecutor()
     if hasattr(executor, "stream_session"):
-        return executor
+        return cast("RoleSessionStreamExecutor", (executor))
     raise TypeError("role_session_executor must provide a stream_session(command) method")
 
 

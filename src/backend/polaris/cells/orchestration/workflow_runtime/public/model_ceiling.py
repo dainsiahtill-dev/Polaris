@@ -16,7 +16,7 @@ import unicodedata
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Protocol, cast, runtime_checkable
 
 _LOWER_HEX = frozenset("0123456789abcdef")
 
@@ -476,7 +476,7 @@ def qualify_model_ceiling(candidate: ModelCeilingCandidateV1) -> ModelCeilingTer
         qualify_model_ceiling_authoritatively,
     )
 
-    return qualify_model_ceiling_authoritatively(candidate)
+    return cast("ModelCeilingTerminalResultV1", (qualify_model_ceiling_authoritatively(candidate)))
 
 
 def revalidate_model_ceiling_result(result: ModelCeilingTerminalResultV1) -> ModelCeilingTerminalResultV1:
@@ -488,7 +488,7 @@ def revalidate_model_ceiling_result(result: ModelCeilingTerminalResultV1) -> Mod
         revalidate_model_ceiling_result_authoritatively,
     )
 
-    return revalidate_model_ceiling_result_authoritatively(result)
+    return cast("ModelCeilingTerminalResultV1", (revalidate_model_ceiling_result_authoritatively(result)))
 
 
 __all__ = [

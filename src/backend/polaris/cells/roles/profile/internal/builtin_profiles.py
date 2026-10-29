@@ -16,7 +16,7 @@ YAML 是唯一事实来源(SSOT),本模块只把它解析为 ``list[dict]``,供
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
@@ -54,7 +54,7 @@ def _load_builtin_profiles_from_yaml() -> list[dict[str, Any]]:
     if not all(isinstance(item, dict) for item in roles):
         raise RuntimeError(f"core_roles.yaml 'roles' must be a list of mappings: {_CORE_ROLES_YAML}")
 
-    return roles
+    return cast("list[dict[str, Any]]", (roles))
 
 
 # 从 SSOT 派生(模块加载时一次性解析)。禁止在此处重新硬编码角色配置,

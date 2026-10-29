@@ -15,7 +15,7 @@ without losing any skill.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.single_agent.skill_system import (
     SkillLoader,
@@ -49,14 +49,14 @@ def _handle_load_skill(executor: Any, *, name: str, **kwargs: Any) -> dict[str, 
     """Handle load_skill tool call."""
     workspace = getattr(executor, "workspace", ".")
     interface = _get_skill_interface(workspace)
-    return interface.load_skill(name)
+    return cast("dict[str, Any]", (interface.load_skill(name)))
 
 
 def _handle_skill_manifest(executor: Any, *, role: str | None = None, **kwargs: Any) -> dict[str, Any]:
     """Handle skill_manifest tool call."""
     workspace = getattr(executor, "workspace", ".")
     interface = _get_skill_interface(workspace)
-    return interface.list_skills()
+    return cast("dict[str, Any]", (interface.list_skills()))
 
 
 def register_handlers() -> dict[str, Any]:

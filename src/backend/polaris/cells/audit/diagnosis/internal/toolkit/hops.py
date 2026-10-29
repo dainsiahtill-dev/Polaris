@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from typing import TypeAlias
@@ -291,7 +291,7 @@ def load_failure_hops(
 
     try:
         with open(hops_path, encoding="utf-8") as f:
-            return json.load(f)
+            return cast("dict[str, Any] | None", (json.load(f)))
     except (RuntimeError, ValueError) as exc:
         logger.debug("Failed to load failure hops from %s: %s", hops_path, exc)
         return None

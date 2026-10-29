@@ -7,7 +7,7 @@ import logging
 import os
 import re
 from copy import deepcopy
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.orchestration.pm_planning.public.artifact_contracts import validate_generated_outputs
 from polaris.kernelone.events.final_request_evidence import (
@@ -188,9 +188,9 @@ def _structured_task_contract_slot_is_authoritative(key: str, value: Any) -> boo
     if not isinstance(value, dict) or not value:
         return False
     if key in {"pm_contract", "task_contract"}:
-        return looks_like_pm_contract_payload(value)
+        return cast("bool", (looks_like_pm_contract_payload(value)))
     if key in {"ce_blueprint", "chief_engineer_blueprint", "blueprint", "task_blueprint"}:
-        return looks_like_ce_blueprint_payload(value)
+        return cast("bool", (looks_like_ce_blueprint_payload(value)))
     if key == "module_interface_contract":
         return _looks_like_module_interface_contract_payload(value)
     return True

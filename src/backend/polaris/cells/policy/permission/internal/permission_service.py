@@ -27,7 +27,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from threading import Lock
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from polaris.cells.policy.permission.internal.condition_evaluator import (
     ConditionType,
@@ -902,7 +902,7 @@ class PermissionService:
         Returns:
             Set[str]: 展开后的所有角色
         """
-        return self._role_graph.expand_roles(role)
+        return cast("set[str]", (self._role_graph.expand_roles(role)))
 
     def get_role_hierarchy(self, role: str) -> dict[str, Any]:
         """获取角色层次结构
@@ -913,7 +913,7 @@ class PermissionService:
         Returns:
             Dict: 包含 inherits_from, includes, expanded 的字典
         """
-        return self._role_graph.get_role_hierarchy(role)
+        return cast("dict[str, Any]", (self._role_graph.get_role_hierarchy(role)))
 
     def check_role_cycle(self) -> bool:
         """检查角色图中是否存在循环
@@ -921,7 +921,7 @@ class PermissionService:
         Returns:
             bool: 如果存在循环返回 True
         """
-        return self._role_graph.has_cycle()
+        return cast("bool", (self._role_graph.has_cycle()))
 
 
 # =============================================================================

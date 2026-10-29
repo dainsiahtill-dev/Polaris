@@ -7,7 +7,7 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel
 
@@ -163,7 +163,7 @@ class RoleFastAPI:
                 raise HTTPException(status_code=400, detail="Not initialized")  # type: ignore[call-arg]
 
             if hasattr(role, "get_health"):
-                return role.get_health()
+                return cast("dict[str, Any]", (role.get_health()))
             else:
                 return {
                     "state": role.state.name,

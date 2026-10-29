@@ -9,7 +9,7 @@ from polaris.delivery.http.routers.factory.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.audit.diagnosis.public import (
     QueryExactRunCausalAuditV1,
@@ -398,9 +398,14 @@ async def _publish_factory_bench_event_to_jetstream(session_id: str, event: dict
         )
         # ``publish_to_jetstream`` -> ``client.publish_js`` JSON-serializes
         # the payload (nats-py has no dataclass hook). Hand it a dict.
-        return await publish_to_jetstream(
-            subject=f"hp.runtime.bench.{session_id}",
-            payload=envelope.to_dict(),
+        return cast(
+            "bool",
+            (
+                await publish_to_jetstream(
+                    subject=f"hp.runtime.bench.{session_id}",
+                    payload=envelope.to_dict(),
+                )
+            ),
         )
     except (RuntimeError, TimeoutError, ValueError, TypeError) as exc:
         # JetStream fanout is best-effort; JSONL/session write already succeeded.

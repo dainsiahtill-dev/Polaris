@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import shlex
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.shared.text_utils import append_log as _append_log_impl, safe_int as _safe_int_impl
 
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 def safe_int(value: Any, default: int = -1) -> int:
     """Convert a value to int with fallback."""
-    return _safe_int_impl(value, default)
+    return cast("int", (_safe_int_impl(value, default)))
 
 
 def append_log(log_path: str, text: str) -> None:

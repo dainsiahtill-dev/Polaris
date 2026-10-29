@@ -73,7 +73,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 from polaris.kernelone.security.record_id_guard import validate_storage_record_id
@@ -124,7 +124,7 @@ def _validate_record_id(value: str) -> str:
     wrapper so existing call sites and test monkeypatch targets resolve
     unchanged. Fail-closed: anything but a bare safe token raises.
     """
-    return validate_storage_record_id(value, label="decision id")
+    return cast("str", (validate_storage_record_id(value, label="decision id")))
 
 
 def _require_non_empty(name: str, value: str) -> None:

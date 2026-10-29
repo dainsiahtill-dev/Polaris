@@ -1965,7 +1965,7 @@ def test_inventory_projection_rejects_invalid_member_inventory(
         elif violation == "wrong_member_type":
             replace(
                 projection,
-                members=cast(tuple[DirectedEffectInventoryMemberV1, ...], (_intent(),)),
+                members=cast("tuple[DirectedEffectInventoryMemberV1, ...]", (_intent(),)),
             )
         elif violation == "ordinal_gap":
             replace(projection, members=(members[0], replace(members[1], ordinal=2)))

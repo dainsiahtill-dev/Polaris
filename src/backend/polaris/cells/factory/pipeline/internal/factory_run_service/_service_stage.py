@@ -10,7 +10,7 @@ import contextlib
 import uuid
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any  # Protocol re-exported for lossless surface
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.storage import resolve_storage_roots
 
@@ -174,7 +174,7 @@ class _FactoryRunServiceStageMixin:
     async def _recover_cancelled_stage_commit_if_proven(self: Any, run_id: str) -> bool:
         """Compatibility alias for callers/tests predating generic exact recovery."""
 
-        return await self._recover_stage_commit_if_proven(run_id)
+        return cast("bool", (await self._recover_stage_commit_if_proven(run_id)))
 
     async def execute_stage(
         self: Any,
@@ -264,7 +264,7 @@ class _FactoryRunServiceStageMixin:
         if result.status != "success" or result.stage not in {"pm_planning", "chief_engineer_review"}:
             return None
         if self._stage_artifact_binding_builder is not None:
-            return self._stage_artifact_binding_builder(run_id, result)
+            return cast("FactoryStageArtifactBindingsV1 | None", (self._stage_artifact_binding_builder(run_id, result)))
         source_root = Path(resolve_storage_roots(str(self.workspace)).runtime_root).resolve()
         if result.stage == "pm_planning":
             return await asyncio.to_thread(

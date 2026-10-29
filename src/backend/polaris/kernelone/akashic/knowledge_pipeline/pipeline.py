@@ -21,7 +21,7 @@ import asyncio
 import logging
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 # Reuse AkashicSemanticMemory - must be at top before local imports
 from polaris.kernelone.akashic.semantic_memory import AkashicSemanticMemory
@@ -391,7 +391,7 @@ class DocumentPipeline:
                 doc.source,
                 type(extractor).__name__,
             )
-            return fragments
+            return cast("list[ExtractedFragment]", (fragments))
         except (RuntimeError, ValueError) as exc:
             logger.warning(
                 "Extractor %s failed for '%s': %s",

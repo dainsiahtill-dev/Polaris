@@ -1,7 +1,7 @@
 """Director result handling for loop-pm."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from polaris.delivery.cli.director_result_matcher import (
     match_director_result as _match_director_result,
@@ -28,35 +28,42 @@ def director_lifecycle_path(run_dir: str | None = None) -> str:
 
 def wait_for_director_result(path: str, expected_task_id: str, since_ts: float, timeout_s: int) -> dict[str, Any]:
     """Wait for director result matching expected task."""
-    return _wait_for_director_result(
-        path,
-        expected_task_id,
-        since_ts,
-        timeout_s,
-        read_json_file,
-        poll_interval_s=1.0,
-        tolerance_s=0.0,
+    return cast(
+        "dict[str, Any]",
+        (
+            _wait_for_director_result(
+                path,
+                expected_task_id,
+                since_ts,
+                timeout_s,
+                read_json_file,
+                poll_interval_s=1.0,
+                tolerance_s=0.0,
+            )
+        ),
     )
 
 
 def match_director_result(result: Any, expected_task_id: str, since_ts: float) -> dict[str, Any] | None:
     """Match director result to expected task."""
-    return _match_director_result(result, expected_task_id, since_ts, tolerance_s=1.0)
+    return cast("dict[str, Any] | None", (_match_director_result(result, expected_task_id, since_ts, tolerance_s=1.0)))
 
 
 def match_director_result_any(result: Any, expected_task_ids: list[str], since_ts: float) -> dict[str, Any] | None:
     """Match director result to any expected task."""
-    return _match_director_result_any(result, expected_task_ids, since_ts, tolerance_s=1.0)
+    return cast(
+        "dict[str, Any] | None", (_match_director_result_any(result, expected_task_ids, since_ts, tolerance_s=1.0))
+    )
 
 
 def result_timestamp_epoch(result: dict[str, Any]) -> float:
     """Get timestamp epoch from result."""
-    return _result_timestamp_epoch(result)
+    return cast("float", (_result_timestamp_epoch(result)))
 
 
 def normalize_match_mode(value: Any) -> str:
     """Normalize match mode value."""
-    return _normalize_match_mode(value)
+    return cast("str", (_normalize_match_mode(value)))
 
 
 def match_director_result_mode(
@@ -67,13 +74,18 @@ def match_director_result_mode(
     mode: str,
 ) -> dict[str, Any] | None:
     """Match director result with mode."""
-    return _match_director_result_mode(
-        result,
-        expected_task_ids,
-        expected_run_id,
-        since_ts,
-        mode,
-        tolerance_s=1.0,
+    return cast(
+        "dict[str, Any] | None",
+        (
+            _match_director_result_mode(
+                result,
+                expected_task_ids,
+                expected_run_id,
+                since_ts,
+                mode,
+                tolerance_s=1.0,
+            )
+        ),
     )
 
 
@@ -86,16 +98,21 @@ def wait_for_director_result_mode(
     mode: str,
 ) -> dict[str, Any]:
     """Wait for director result with mode."""
-    return _wait_for_director_result_mode(
-        path,
-        expected_task_ids,
-        expected_run_id,
-        since_ts,
-        timeout_s,
-        mode,
-        read_json_file,
-        poll_interval_s=1.0,
-        tolerance_s=1.0,
+    return cast(
+        "dict[str, Any]",
+        (
+            _wait_for_director_result_mode(
+                path,
+                expected_task_ids,
+                expected_run_id,
+                since_ts,
+                timeout_s,
+                mode,
+                read_json_file,
+                poll_interval_s=1.0,
+                tolerance_s=1.0,
+            )
+        ),
     )
 
 

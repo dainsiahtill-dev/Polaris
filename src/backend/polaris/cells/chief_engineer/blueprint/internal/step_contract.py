@@ -20,7 +20,7 @@ import math
 import operator
 import re
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.quality.step_verify import normalize_step_verify
 
@@ -384,7 +384,7 @@ def _verify_is_all_hollow(step: dict[str, Any], verify_text: str) -> bool:
             token = str(item or "").strip()
             if token:
                 signature_tokens.add(token)
-    return verify_is_all_hollow(verify_text, signature_tokens=signature_tokens)
+    return cast("bool", (verify_is_all_hollow(verify_text, signature_tokens=signature_tokens)))
 
 
 def build_blueprint_tasks_contract(

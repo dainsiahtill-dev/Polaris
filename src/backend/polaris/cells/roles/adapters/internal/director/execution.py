@@ -9,7 +9,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 
@@ -125,9 +125,14 @@ class DirectorPatchExecutor:
             clamp_role_execution_timeout_seconds_to_deadline,
         )
 
-        return clamp_role_execution_timeout_seconds_to_deadline(
-            timeout_seconds=timeout_seconds,
-            context=context if isinstance(context, dict) else None,
+        return cast(
+            "float",
+            (
+                clamp_role_execution_timeout_seconds_to_deadline(
+                    timeout_seconds=timeout_seconds,
+                    context=context if isinstance(context, dict) else None,
+                )
+            ),
         )
 
     @staticmethod

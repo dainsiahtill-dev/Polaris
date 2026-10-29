@@ -9,7 +9,7 @@ import uuid
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 
@@ -29,7 +29,7 @@ def _parse_iso_timestamp(value: Any) -> datetime:
 def _get_polaris_home() -> str:
     from polaris.cells.storage.layout.public.service import polaris_home
 
-    return polaris_home()
+    return cast("str", (polaris_home()))
 
 
 #: Sensitive keys that must be masked in API responses and logs.

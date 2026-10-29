@@ -1,7 +1,7 @@
 """Module evolution and Shangshuling PM integration."""
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ def sync_tasks_to_shangshuling(
         if not pm.is_initialized():
             ensure_shangshuling_pm_initialized(workspace_full)
 
-        return pm.sync_from_source_tasks(tasks)
+        return cast("int", (pm.sync_from_source_tasks(tasks)))
     except (RuntimeError, ValueError) as e:
         logger.info(f"[shangshuling] Task sync note: {e}")
         return 0
@@ -84,7 +84,7 @@ def get_shangshuling_ready_tasks(
         if not pm.is_initialized():
             return []
 
-        return pm.get_ready_tasks_for_director(limit)
+        return cast("list[dict[str, Any]]", (pm.get_ready_tasks_for_director(limit)))
     except (RuntimeError, ValueError) as e:
         logger.info(f"[shangshuling] Get tasks note: {e}")
         return []
@@ -117,7 +117,7 @@ def record_shangshuling_task_completion(
         if not pm.is_initialized():
             return False
 
-        return pm.record_task_completion(task_id, executor, success, result)
+        return cast("bool", (pm.record_task_completion(task_id, executor, success, result)))
     except (RuntimeError, ValueError) as e:
         logger.info(f"[shangshuling] Record completion note: {e}")
         return False

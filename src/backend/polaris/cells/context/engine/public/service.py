@@ -8,7 +8,7 @@ Architecture (P1-CTX-003 convergence):
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.context.engine.internal.precision_mode import (
     merge_policy,
@@ -180,7 +180,7 @@ def _context_hash_from_ref(context_snapshot_ref: str) -> str:
     token = str(context_snapshot_ref or "").strip().replace("\\", "/")
     if "/" in token:
         token = token.rstrip("/").rsplit("/", 1)[-1]
-    return validate_context_hash(token)
+    return cast("str", (validate_context_hash(token)))
 
 
 def project_final_provider_request_snapshot(
@@ -579,7 +579,7 @@ def _estimate_tokens(text: str) -> int:
     """Estimate tokens with lazy import (P1-CTX-006 convergence)."""
     from polaris.kernelone.context.engine import _estimate_tokens as estimate
 
-    return estimate(text)
+    return cast("int", (estimate(text)))
 
 
 def _resolve_context_override(

@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from .context import ContextManager, PolarisContext, _generate_id, get_context
 from .logger import get_logger
@@ -591,7 +591,7 @@ def get_current_span_id() -> str | None:
     """获取当前span ID"""
     ctx = get_context()
     if ctx.span_stack:
-        return ctx.span_stack[-1].get("span_id")
+        return cast("str | None", (ctx.span_stack[-1].get("span_id")))
     return None
 
 

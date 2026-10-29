@@ -28,7 +28,7 @@ import os
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, cast
 
 from polaris.kernelone.fs.text_ops import append_text_atomic, write_json_atomic, write_text_atomic
 
@@ -449,7 +449,7 @@ class FactoryBenchService:
         status["control_plane_projection"] = _control_plane_projection_from_audit(status)
         status["events_path"] = str(sdir / "events.jsonl")
         status["events"] = list(self.tail_events(session_id, max_lines=200))
-        return status
+        return cast("dict[str, Any] | None", (status))
 
     def list_sessions(self, limit: int = 50) -> list[dict[str, Any]]:
         root = self.root

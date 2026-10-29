@@ -7,7 +7,7 @@ import time
 import typing
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from polaris.bootstrap.config import Settings, get_settings
 from polaris.cells.runtime.execution_broker.public.contracts import (
@@ -316,9 +316,14 @@ def _publish_process_exit_status(
             },
             "meta": {"source": "roles.runtime.process_service"},
         }
-        return get_log_jetstream_publisher().publish(
-            subject=f"hp.runtime.{workspace_key}.status.process",
-            payload=envelope,
+        return cast(
+            "bool",
+            (
+                get_log_jetstream_publisher().publish(
+                    subject=f"hp.runtime.{workspace_key}.status.process",
+                    payload=envelope,
+                )
+            ),
         )
     except Exception as exc:  # noqa: BLE001
         logger.debug("process exit JetStream publish failed: %s", exc)
@@ -452,15 +457,15 @@ def terminate_process(handle: ProcessHandle) -> None:
 
 
 def terminate_pid(pid: int) -> bool:
-    return _kernel_terminate_pid(pid)
+    return cast("bool", (_kernel_terminate_pid(pid)))
 
 
 def list_external_loop_pm_pids(workspace: str, exclude_pid: int | None = None) -> list[int]:
-    return _kernel_list_external_loop_pm_pids(workspace, exclude_pid=exclude_pid)
+    return cast("list[int]", (_kernel_list_external_loop_pm_pids(workspace, exclude_pid=exclude_pid)))
 
 
 def terminate_external_loop_pm_processes(workspace: str, exclude_pid: int | None = None) -> list[int]:
-    return _kernel_terminate_external_loop_pm_processes(workspace, exclude_pid=exclude_pid)
+    return cast("list[int]", (_kernel_terminate_external_loop_pm_processes(workspace, exclude_pid=exclude_pid)))
 
 
 def clear_stop_flag(workspace: str) -> None:
@@ -468,7 +473,7 @@ def clear_stop_flag(workspace: str) -> None:
 
 
 def director_stop_flag_path(workspace: str) -> str:
-    return _kernel_director_stop_flag_path(workspace)
+    return cast("str", (_kernel_director_stop_flag_path(workspace)))
 
 
 def clear_director_stop_flag(workspace: str) -> None:

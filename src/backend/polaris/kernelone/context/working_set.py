@@ -25,7 +25,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from .exploration_policy import (
     AssetCandidate,
@@ -283,7 +283,7 @@ class WorkingSetAssembler:
         if hot_result is not None:
             _logger.debug("get_or_build_repo_map: hot slice HIT for %s", lang_key)
             try:
-                return json.loads(hot_result)
+                return cast("dict[str, Any]", (json.loads(hot_result)))
             except (json.JSONDecodeError, ValueError) as exc:
                 _logger.debug(
                     "get_or_build_repo_map: failed to parse hot slice for %s: %s",
@@ -372,7 +372,7 @@ class WorkingSetAssembler:
         hot_result = await self._cache.get_hot_slice(hot_key)
         if hot_result is not None:
             try:
-                return json.loads(hot_result)
+                return cast("dict[str, Any] | None", (json.loads(hot_result)))
             except (json.JSONDecodeError, ValueError) as exc:
                 _logger.debug(
                     "get_symbol_index: failed to parse hot slice for %s: %s",

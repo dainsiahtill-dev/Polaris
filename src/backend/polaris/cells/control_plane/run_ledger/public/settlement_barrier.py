@@ -434,7 +434,7 @@ def _observed_readonly_batch(
             )
         ):
             return None
-    return batch
+    return cast("Mapping[str, Any] | None", (batch))
 
 
 def _closed_artifact_receipt_reuse(

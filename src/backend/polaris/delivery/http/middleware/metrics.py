@@ -28,7 +28,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from threading import RLock
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, Request, Response
 from polaris.delivery.http.endpoint_policy import is_observability_exempt
@@ -224,12 +224,12 @@ class MetricsMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         """Process request with metrics collection."""
         if not self._enabled:
-            return await call_next(request)
+            return cast("Response", (await call_next(request)))
 
         path = self._normalize_path(request)
 
         if not self._should_collect(path):
-            return await call_next(request)
+            return cast("Response", (await call_next(request)))
 
         method = request.method
 
@@ -249,7 +249,7 @@ class MetricsMiddleware(BaseHTTPMiddleware):
             duration_ms = (time.time() - start_time) * 1000
             self._collector.record_request(method, path, status_code, duration_ms)
 
-        return response
+        return cast("Response", (response))
 
 
 # Create metrics endpoint router

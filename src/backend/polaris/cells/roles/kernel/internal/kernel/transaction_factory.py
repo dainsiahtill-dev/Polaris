@@ -102,7 +102,7 @@ def _normalize_structured_output_response_with_error_evidence(
     """
 
     try:
-        return normalize_structured_output_response(response, plan)
+        return cast("dict[str, Any]", (normalize_structured_output_response(response, plan)))
     except (TypeError, ValueError) as exc:
         usage = response.get("usage")
         metadata = dict(usage) if isinstance(usage, Mapping) else {}
@@ -153,7 +153,7 @@ def _resolve_turn_transition_id(request: RoleTurnRequest) -> str:
             "turn_transition_id cannot override transaction_attempt_id",
             code="transaction_identity_mismatch",
         )
-    return identity.transition_id
+    return cast("str", (identity.transition_id))
 
 
 def _resolve_durable_workspace(request: RoleTurnRequest, kernel: RoleExecutionKernel) -> str:
@@ -176,7 +176,7 @@ def _resolve_durable_workspace(request: RoleTurnRequest, kernel: RoleExecutionKe
             "durable turn workspace identity mismatch "
             f"request={request_identity.workspace_abs!r} kernel={kernel_identity.workspace_abs!r}"
         )
-    return request_identity.workspace_abs
+    return cast("str", (request_identity.workspace_abs))
 
 
 def _resolve_existing_output_budget_tokens(context_override: dict[str, Any]) -> int | None:
@@ -187,7 +187,7 @@ def _resolve_existing_output_budget_tokens(context_override: dict[str, Any]) -> 
     preserving here — the result only feeds ``max(floor, existing or 0)``
     below, and downstream ``resolve_max_tokens`` applies the same clamp.
     """
-    return resolve_context_output_budget_tokens(context_override)
+    return cast("int | None", (resolve_context_output_budget_tokens(context_override)))
 
 
 def _assert_task_runtime_guard_allows_tool(request: Any) -> None:

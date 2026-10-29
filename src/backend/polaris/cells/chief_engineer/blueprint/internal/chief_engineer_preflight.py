@@ -16,7 +16,7 @@ import logging
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -877,7 +877,7 @@ def _trim_str_list(values: Any, limit: int = 20) -> list[str]:
         values = [str(v).strip() for v in values if v]
     else:
         return []
-    return values[:limit]
+    return cast("list[str]", (values[:limit]))
 
 
 def _module_key_from_path(path: str) -> str:

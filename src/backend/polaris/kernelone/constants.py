@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 from enum import StrEnum
+from typing import cast
 
 # ═══════════════════════════════════════════════════════════════════
 # Timeouts
@@ -416,16 +417,16 @@ class RoleId(StrEnum):
         # Try exact match first
         for member in cls:
             if member.value == value:
-                return member
+                return cast("RoleId", (member))
         # Try case-insensitive match
         for member in cls:
             if member.value.lower() == value.lower():
-                return member
+                return cast("RoleId", (member))
         # Try with underscores/hyphens normalized
         normalized = value.lower().replace("-", "_")
         for member in cls:
             if member.value == normalized:
-                return member
+                return cast("RoleId", (member))
         raise ValueError(f"Invalid role: {value!r}. Valid roles: {[m.value for m in cls]}")
 
     @classmethod

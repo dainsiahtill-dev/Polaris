@@ -224,7 +224,7 @@ class ProcessHandle:
         """Get process ID."""
         if self.process:
             try:
-                return self.process.pid
+                return cast("int | None", (self.process.pid))
             except (OSError, ValueError, AttributeError) as e:
                 logger.debug(f"Failed to get process pid: {e}")
         return None
@@ -675,11 +675,11 @@ class PMService:
 
     def _resolve_lifecycle_status_path(self) -> Path:
         storage = self._refresh_storage_layout()
-        return storage.get_path("status", _PM_LIFECYCLE_STATUS_FILE)
+        return cast("Path", (storage.get_path("status", _PM_LIFECYCLE_STATUS_FILE)))
 
     def _resolve_engine_status_path(self) -> Path:
         storage = self._refresh_storage_layout()
-        return storage.get_path("status", "engine.status.json")
+        return cast("Path", (storage.get_path("status", "engine.status.json")))
 
     def _read_lifecycle_status(self) -> dict[str, Any]:
         path = self._resolve_lifecycle_status_path()
@@ -783,7 +783,7 @@ class PMService:
     async def _check_backend_available(self) -> str | None:
         from polaris.application.health import check_backend_available
 
-        return check_backend_available(self._settings)
+        return cast("str | None", (check_backend_available(self._settings)))
 
     async def _clear_stop_flag(self) -> None:
         storage = self._refresh_storage_layout()
@@ -800,7 +800,7 @@ class PMService:
 
     def _resolve_contract_path(self) -> Path:
         storage = self._refresh_storage_layout()
-        return storage.get_path("contracts", "pm_tasks.contract.json")
+        return cast("Path", (storage.get_path("contracts", "pm_tasks.contract.json")))
 
     def _resolve_effective_workspace(self, *, allow_persisted_fallback: bool = True) -> Path:
         configured_raw = str(getattr(self._settings, "workspace", "") or "").strip()

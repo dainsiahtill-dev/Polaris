@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.orchestration.workflow_runtime.internal.config import WorkflowConfig
 from polaris.cells.orchestration.workflow_runtime.internal.embedded_api import (
@@ -242,13 +242,18 @@ def submit_pm_workflow_sync(
             error="workspace and run_id are required",
         )
     try:
-        return _run_sync(
-            _submit_pm_workflow_async(
-                normalized,
-                wait_until_complete=wait_until_complete,
-                timeout_seconds=timeout_seconds,
-                poll_interval_seconds=poll_interval_seconds,
-            )
+        return cast(
+            "WorkflowSubmissionResult",
+            (
+                _run_sync(
+                    _submit_pm_workflow_async(
+                        normalized,
+                        wait_until_complete=wait_until_complete,
+                        timeout_seconds=timeout_seconds,
+                        poll_interval_seconds=poll_interval_seconds,
+                    )
+                )
+            ),
         )
     except (RuntimeError, ValueError) as exc:
         return WorkflowSubmissionResult(
@@ -287,12 +292,17 @@ def wait_for_workflow_completion_sync(
         }
 
     try:
-        return _run_sync(
-            _wait_for_workflow_completion_async(
-                normalized_id,
-                timeout_seconds=timeout_seconds,
-                poll_interval_seconds=poll_interval_seconds,
-            )
+        return cast(
+            "dict[str, Any]",
+            (
+                _run_sync(
+                    _wait_for_workflow_completion_async(
+                        normalized_id,
+                        timeout_seconds=timeout_seconds,
+                        poll_interval_seconds=poll_interval_seconds,
+                    )
+                )
+            ),
         )
     except (RuntimeError, ValueError) as exc:
         return {
@@ -314,7 +324,7 @@ def describe_workflow_sync(
             "workflow_id": str(workflow_id or "").strip(),
             "error": "workflow_runtime_disabled",
         }
-    return _describe_workflow_sync(workflow_id, config=runtime_config)
+    return cast("dict[str, Any]", (_describe_workflow_sync(workflow_id, config=runtime_config)))
 
 
 def query_workflow_sync(
@@ -332,7 +342,7 @@ def query_workflow_sync(
             "query_name": str(query_name or "").strip(),
             "error": "workflow_runtime_disabled",
         }
-    return _query_workflow_sync(workflow_id, query_name, *args, config=runtime_config)
+    return cast("dict[str, Any]", (_query_workflow_sync(workflow_id, query_name, *args, config=runtime_config)))
 
 
 async def _cancel_workflow_async(
@@ -342,7 +352,7 @@ async def _cancel_workflow_async(
     adapter = await get_adapter()
     if not adapter._running:
         await adapter.start()
-    return await adapter.cancel_workflow(workflow_id, reason)
+    return cast("dict[str, Any]", (await adapter.cancel_workflow(workflow_id, reason)))
 
 
 def cancel_workflow_sync(

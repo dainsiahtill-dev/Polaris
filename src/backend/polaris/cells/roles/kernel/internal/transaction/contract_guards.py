@@ -517,8 +517,8 @@ def is_authoritative_write_invocation(invocation: Any) -> bool:
         return False
     target_file = extract_target_file_from_invocation_args(invocation)
     if target_file:
-        return is_authoritative_write_path(target_file)
-    return _is_authoritative_write_invocation(invocation)
+        return cast("bool", (is_authoritative_write_path(target_file)))
+    return cast("bool", (_is_authoritative_write_invocation(invocation)))
 
 
 # ---------------------------------------------------------------------------
@@ -1221,12 +1221,17 @@ def is_safe_readonly_bootstrap_invocations(invocations: list[Any]) -> bool:
 def _delivery_mode_filtered_tool_call_ref(invocation: Any) -> dict[str, str]:
     """Return audit-safe evidence for a write invocation filtered by delivery mode."""
 
-    return tool_invocation_audit_ref(
-        invocation,
-        reason="delivery_mode_write_tool_filtered",
-        tool_name=extract_invocation_tool_name(invocation),
-        execution_mode=extract_invocation_execution_mode(invocation),
-        target_file=extract_target_file_from_invocation_args(invocation),
+    return cast(
+        "dict[str, str]",
+        (
+            tool_invocation_audit_ref(
+                invocation,
+                reason="delivery_mode_write_tool_filtered",
+                tool_name=extract_invocation_tool_name(invocation),
+                execution_mode=extract_invocation_execution_mode(invocation),
+                target_file=extract_target_file_from_invocation_args(invocation),
+            )
+        ),
     )
 
 

@@ -40,7 +40,7 @@ def _resolve_active_key(project_root: str | None = None) -> str:
 
 def get_brain_path(base_dir: str, filename: str) -> str:
     """Returns path to brain files (memory/reflection jsonl)."""
-    return resolve_workspace_persistent_path(base_dir, f"workspace/brain/{filename}")
+    return cast("str", (resolve_workspace_persistent_path(base_dir, f"workspace/brain/{filename}")))
 
 
 def get_memory_store(project_root: str | None = None) -> MemoryStore | None:

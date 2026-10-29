@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, Mapping
+from typing import Any, Literal, Mapping, cast
 
 from polaris.cells.director.runtime.public.contracts._diagnostics_receipts import (
     RepairAdvisoryV1,
@@ -187,7 +187,7 @@ def _require_sha256_hex(name: str, value: str) -> str:
         or any(char not in "0123456789abcdef" for char in normalized)
     ):
         raise ValueError(f"{name} must be a lowercase 64-character SHA-256 hex digest")
-    return normalized
+    return cast("str", (normalized))
 
 
 def _require_relative_effect_path(value: str) -> str:
@@ -197,7 +197,7 @@ def _require_relative_effect_path(value: str) -> str:
         raise ValueError("target_path must be workspace-relative")
     if any(part in {"", ".", ".."} for part in parts):
         raise ValueError("target_path must be canonical and traversal-free")
-    return normalized
+    return cast("str", (normalized))
 
 
 def _directed_effect_value_to_json(value: DirectedEffectImmutableValueV1) -> Any:
@@ -330,16 +330,24 @@ def hash_director_repair_effect_plan(
 
     if not isinstance(effects, tuple):
         raise TypeError("effects must be an immutable tuple")
-    return hash_directed_effect_arguments(
+    return cast(
+        "str",
         (
-            ("domain", "director_repair_effect_plan_v1"),
-            ("effects", DirectedEffectImmutableSequenceV1(tuple(effect.immutable_identity() for effect in effects))),
-            ("plan_id", _require_non_empty("plan_id", plan_id)),
-            ("round_number", round_number),
-            ("schema_version", _require_non_empty("schema_version", schema_version)),
-            ("source_tool", _require_non_empty("source_tool", source_tool)),
-            ("owner_cell", _require_non_empty("owner_cell", owner_cell)),
-        )
+            hash_directed_effect_arguments(
+                (
+                    ("domain", "director_repair_effect_plan_v1"),
+                    (
+                        "effects",
+                        DirectedEffectImmutableSequenceV1(tuple(effect.immutable_identity() for effect in effects)),
+                    ),
+                    ("plan_id", _require_non_empty("plan_id", plan_id)),
+                    ("round_number", round_number),
+                    ("schema_version", _require_non_empty("schema_version", schema_version)),
+                    ("source_tool", _require_non_empty("source_tool", source_tool)),
+                    ("owner_cell", _require_non_empty("owner_cell", owner_cell)),
+                )
+            )
+        ),
     )
 
 

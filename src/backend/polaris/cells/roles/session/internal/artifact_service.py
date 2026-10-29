@@ -8,7 +8,7 @@ import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.roles.session.internal.storage_paths import (
     resolve_preferred_logical_prefix,
@@ -69,11 +69,11 @@ class RoleSessionArtifactService:
         return f"{self._base_rel_dir}/{session_id}/artifacts/{artifact_id}.json"
 
     def _artifacts_dir_path(self, session_id: str) -> Path:
-        return self._kernel_fs.resolve_path(f"{self._base_rel_dir}/{session_id}/artifacts")
+        return cast("Path", (self._kernel_fs.resolve_path(f"{self._base_rel_dir}/{session_id}/artifacts")))
 
     def get_session_dir(self, session_id: str) -> Path:
         """Get directory for a session."""
-        return self._kernel_fs.resolve_path(f"{self._base_rel_dir}/{session_id}")
+        return cast("Path", (self._kernel_fs.resolve_path(f"{self._base_rel_dir}/{session_id}")))
 
     def write_artifact(
         self,
@@ -190,7 +190,7 @@ class RoleSessionArtifactService:
         removed = self._kernel_fs.remove(artifact_rel_path, missing_ok=True)
         if removed:
             logger.info("Deleted artifact %s from session %s", artifact_id, session_id)
-        return removed
+        return cast("bool", (removed))
 
     def export_artifacts(
         self,

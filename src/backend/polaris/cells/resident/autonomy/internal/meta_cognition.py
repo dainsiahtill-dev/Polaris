@@ -39,7 +39,7 @@ MAX_INSIGHTS_RETURNED (20):
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.domain.models.resident import (
     DecisionRecord,
@@ -101,7 +101,7 @@ def selected_strategy_tags(record: DecisionRecord) -> list[str]:
 
 
 def verdict_success(record: DecisionRecord) -> bool:
-    return record.verdict == DecisionVerdict.SUCCESS
+    return cast("bool", (record.verdict == DecisionVerdict.SUCCESS))
 
 
 def outcome_gap(record: DecisionRecord) -> bool:

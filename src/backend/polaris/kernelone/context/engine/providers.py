@@ -4,7 +4,7 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
-from typing import Protocol
+from typing import Protocol, cast
 
 from polaris.kernelone.context.repo_map import build_repo_map
 from polaris.kernelone.fs.text_ops import read_file_safe
@@ -51,7 +51,7 @@ MemoryStoreFactory = Callable[[str], MemoryStorePort]
 def _build_memory_store(memory_path: str) -> MemoryStorePort:
     from polaris.kernelone.memory.memory_store import MemoryStore
 
-    return MemoryStore(memory_path)
+    return cast("MemoryStorePort", (MemoryStore(memory_path)))
 
 
 class BaseProvider(ABC):

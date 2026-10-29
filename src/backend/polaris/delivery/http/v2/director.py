@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path  # patched via director.Path / dereferenced by support helpers
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
@@ -220,7 +220,7 @@ def select_task_rows_from_projection(projection: Any) -> list[dict[str, Any]]:
     present on the projection payload.
     """
 
-    return _select_projection_task_rows_for_director(projection)
+    return cast("list[dict[str, Any]]", (_select_projection_task_rows_for_director(projection)))
 
 
 # Explicit re-export surface. The lossless module split moved ~90 helpers into
@@ -584,7 +584,7 @@ async def list_workers(
     local_rows = [_worker_payload_from_object(worker) for worker in workers]
     if local_rows:
         return local_rows
-    return await _projected_worker_rows(request, workspace)
+    return cast("list[dict[str, Any]]", (await _projected_worker_rows(request, workspace)))
 
 
 @router.get("/workers/{worker_id}", dependencies=[Depends(require_auth)])
@@ -598,11 +598,11 @@ async def get_worker(
     worker = await service.get_worker(worker_id)
 
     if worker:
-        return _worker_payload_from_object(worker)
+        return cast("dict[str, Any]", (_worker_payload_from_object(worker)))
 
     for row in await _projected_worker_rows(request, workspace):
         if _worker_row_matches_id(row, worker_id):
-            return row
+            return cast("dict[str, Any]", (row))
 
     raise HTTPException(status_code=404, detail="Worker not found")
 
@@ -675,7 +675,7 @@ async def get_cache_stats() -> dict[str, Any]:
     from polaris.cells.roles.kernel.public.service import get_global_llm_cache
 
     cache = get_global_llm_cache()
-    return cache.get_stats()
+    return cast("dict[str, Any]", (cache.get_stats()))
 
 
 @router.post("/cache-clear", dependencies=[Depends(require_auth)])
@@ -705,7 +705,7 @@ async def director_run_integration_qa(
 async def get_token_budget_stats() -> dict[str, Any]:
     """获取 Token 预算统计信息"""
     budget = get_global_token_budget()
-    return budget.get_stats()
+    return cast("dict[str, Any]", (budget.get_stats()))
 
 
 # ============================================================================

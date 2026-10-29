@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.infrastructure.audit.stores.audit_store import AuditStore
 from polaris.kernelone.audit.contracts import (
@@ -85,11 +85,16 @@ class AuditStoreAdapter(KernelAuditStorePort):
         event_types: list[KernelAuditEventType] | None = None,
         include_data: bool = True,
     ) -> dict[str, Any]:
-        return self._store.export_json(
-            start_time=start_time,
-            end_time=end_time,
-            event_types=event_types,
-            include_data=include_data,
+        return cast(
+            "dict[str, Any]",
+            (
+                self._store.export_json(
+                    start_time=start_time,
+                    end_time=end_time,
+                    event_types=event_types,
+                    include_data=include_data,
+                )
+            ),
         )
 
     def export_csv(
@@ -98,7 +103,7 @@ class AuditStoreAdapter(KernelAuditStorePort):
         start_time: datetime | None = None,
         end_time: datetime | None = None,
     ) -> str:
-        return self._store.export_csv(start_time=start_time, end_time=end_time)
+        return cast("str", (self._store.export_csv(start_time=start_time, end_time=end_time)))
 
     def verify_chain(self) -> KernelChainVerificationResult:
         result = self._store.verify_chain()
@@ -118,7 +123,7 @@ class AuditStoreAdapter(KernelAuditStorePort):
         start_time: datetime | None = None,
         end_time: datetime | None = None,
     ) -> dict[str, Any]:
-        return self._store.get_stats(start_time=start_time, end_time=end_time)
+        return cast("dict[str, Any]", (self._store.get_stats(start_time=start_time, end_time=end_time)))
 
     def cleanup_old_logs(self, *, dry_run: bool = False) -> dict[str, Any]:
-        return self._store.cleanup_old_logs(dry_run=dry_run)
+        return cast("dict[str, Any]", (self._store.cleanup_old_logs(dry_run=dry_run)))

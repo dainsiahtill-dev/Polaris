@@ -6,7 +6,7 @@ import os
 import re
 import stat
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.quality.artifact_quality._issues import (
     _file_artifact_quality_issue,
@@ -337,7 +337,7 @@ def _javascript_specialist_text(
             raise ValueError("specialist reader workspace binding mismatch")
         read = reader.read(root_full / relative)
         if read.status == "readable":
-            return read.text
+            return cast("str | None", (read.text))
         incomplete_reasons.append(f"javascript_specialist_source_unknown:{relative}:{read.status}:{read.detail}")
         return None
     try:
@@ -448,7 +448,7 @@ def _resolve_relative_js_module(
                 full, witness = reader.confined_path(root_full / candidate)
                 normalized = full.relative_to(root_full).as_posix()
                 if source_paths is not None and normalized in source_paths:
-                    return normalized
+                    return cast("str | None", (normalized))
                 if witness is not None and stat.S_ISREG(witness.st_mode):
                     if incomplete_reasons is not None:
                         incomplete_reasons.append(f"javascript_module_inventory_unknown:{candidate}")

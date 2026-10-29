@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 import sys
 import types
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, Depends
 from polaris.cells.factory.pipeline.public import (
@@ -257,7 +257,7 @@ async def get_factory_bench_session_v2(session_id: str) -> dict[str, Any]:
             code="BENCH_SESSION_NOT_FOUND",
             message=f"bench session {session_id!r} not found",
         )
-    return snapshot
+    return cast("dict[str, Any]", (snapshot))
 
 
 @router.post("/v2/factory/bench/sessions/{session_id}/events")

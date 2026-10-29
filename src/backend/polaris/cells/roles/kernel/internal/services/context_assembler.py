@@ -40,7 +40,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 
 from polaris.cells.roles.kernel.internal.services.contracts import (
     ContextResult,
@@ -111,7 +111,7 @@ def _is_likely_base64_payload(text: str) -> bool:
     """Use the same encoded-instruction detector as the current gateway."""
     from polaris.cells.roles.kernel.internal.context_gateway.constants import is_likely_base64_payload
 
-    return is_likely_base64_payload(text)
+    return cast("bool", (is_likely_base64_payload(text)))
 
 
 # =============================================================================

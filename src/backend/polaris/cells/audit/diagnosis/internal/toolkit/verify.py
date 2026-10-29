@@ -7,7 +7,7 @@ import hashlib
 import hmac
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.audit.diagnosis.internal.usecases import AuditUseCaseFacade
 
@@ -38,7 +38,7 @@ def verify_chain(
     # 使用 Polaris audit facade（统一入口）
     try:
         facade = AuditUseCaseFacade(runtime_root=runtime_path.resolve())
-        return facade.verify_chain()
+        return cast("dict[str, Any]", (facade.verify_chain()))
     except Exception as e:
         logger.error("Failed to verify chain using audit facade: %s", e)
         raise RuntimeError("Audit chain verification failed") from e

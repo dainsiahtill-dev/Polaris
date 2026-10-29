@@ -11,7 +11,7 @@ import asyncio
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 
@@ -33,7 +33,7 @@ def _safe_target(workspace: Path, relative_path: str) -> tuple[str, Path]:
 
 def _read_optional_text(filesystem: KernelFileSystem, path: Path) -> str | None:
     try:
-        return filesystem.workspace_read_text(str(path), encoding="utf-8")
+        return cast("str | None", (filesystem.workspace_read_text(str(path), encoding="utf-8")))
     except FileNotFoundError:
         return None
 

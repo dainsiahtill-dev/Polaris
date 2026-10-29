@@ -405,7 +405,7 @@ def _module_key(path: str) -> str:
         return "root"
     if parts[0] in {"src", "app", "backend", "frontend", "cmd", "internal", "lib"} and len(parts) >= 2:
         return "/".join(parts[:2])
-    return parts[0]
+    return cast("str", (parts[0]))
 
 
 def _read_text(path: str) -> str:

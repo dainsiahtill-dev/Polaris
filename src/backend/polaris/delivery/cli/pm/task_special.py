@@ -2,7 +2,7 @@
 
 import hashlib
 import os
-from typing import Any
+from typing import Any, cast
 
 from polaris.delivery.cli.pm.task_helpers import extract_defect_ticket, validate_ticket_fields
 from polaris.delivery.cli.pm.utils import _normalize_scope_list
@@ -145,7 +145,7 @@ def build_resume_payload_from_last_tasks(
     normalized["notes"] = (
         f"{notes} {MANUAL_INTERVENTION_RESUME_NOTE}".strip() if notes else MANUAL_INTERVENTION_RESUME_NOTE
     )
-    return normalized
+    return cast("dict[str, Any] | None", (normalized))
 
 
 __all__ = [

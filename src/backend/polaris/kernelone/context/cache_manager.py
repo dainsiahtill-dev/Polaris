@@ -28,7 +28,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from polaris.kernelone.context.cache_policies import (
     HOT_SLICE_TTL_SECONDS,
@@ -514,7 +514,7 @@ class TieredAssetCacheManager:
         metadata_dir = get_workspace_metadata_dir_name()
         root = Path(self._workspace) / metadata_dir / "cache"
         root.mkdir(parents=True, exist_ok=True)
-        return root
+        return cast("Path", (root))
 
     def _persistent_path(self, key: str, subdir: str) -> Path:
         """Derive a stable filesystem path for a persistent cache entry.
@@ -781,9 +781,14 @@ _cache_managers = InstanceScopedStateStore[TieredAssetCacheManager](
 def get_cache_manager(workspace: str | Path) -> TieredAssetCacheManager:
     """Get or create the canonical cache manager for a workspace."""
     workspace_key = normalize_workspace_instance_id(workspace)
-    return _cache_managers.get_or_create(
-        workspace_key,
-        lambda: TieredAssetCacheManager(workspace_key),
+    return cast(
+        "TieredAssetCacheManager",
+        (
+            _cache_managers.get_or_create(
+                workspace_key,
+                lambda: TieredAssetCacheManager(workspace_key),
+            )
+        ),
     )
 
 

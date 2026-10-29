@@ -11,7 +11,7 @@ import shlex
 from collections.abc import Sequence
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Never, SupportsIndex
+from typing import Any, Never, SupportsIndex, cast
 from weakref import WeakSet
 
 from polaris.cells.director.runtime.public import DirectorRepairEffectV1
@@ -137,7 +137,7 @@ def _recover_write_body_or_none(value: Any, *, file_path: str = "") -> str | Non
         return ""
     if isinstance(value, str):
         return value
-    return recover_write_body_string(value, file_path=file_path)
+    return cast("str | None", (recover_write_body_string(value, file_path=file_path)))
 
 
 def _director_write_allowed_scope(tool_kwargs: dict[str, Any] | None) -> list[str]:
@@ -954,7 +954,7 @@ class DirectorToolExecutor:
                 result["json_config_repaired"] = True
             # R147: surface TypeScript parse diagnostics in tool results so the
             # model/repair ladder can fix residual issues next turn.
-            return attach_post_write_syntax_check(result, str(target))
+            return cast("dict[str, Any]", (attach_post_write_syntax_check(result, str(target))))
         except (OSError, RuntimeError, TypeError, UnicodeError, ValueError) as exc:
             return {"ok": False, "error": str(exc)}
 
@@ -1273,14 +1273,19 @@ class DirectorToolExecutor:
                 old_lines >= _DESTRUCTIVE_SHRINK_MIN_REMOVED_LINES
                 and new_lines <= old_lines * _DESTRUCTIVE_SHRINK_MAX_ADD_RATIO
             ):
-                return _destructive_shrink_error(
-                    file_path,
-                    old_lines,
-                    new_lines,
-                    tool_hint=(
-                        "edit_file cannot replace a large existing body with a short fragment. "
-                        "Use a narrow search string that changes only the failing span and preserves "
-                        "unrelated code. If a complete rewrite is required, emit the complete file body."
+                return cast(
+                    "dict[str, Any]",
+                    (
+                        _destructive_shrink_error(
+                            file_path,
+                            old_lines,
+                            new_lines,
+                            tool_hint=(
+                                "edit_file cannot replace a large existing body with a short fragment. "
+                                "Use a narrow search string that changes only the failing span and preserves "
+                                "unrelated code. If a complete rewrite is required, emit the complete file body."
+                            ),
+                        )
                     ),
                 )
             syntax_guard = _precommit_source_syntax_guard(

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, cast
 
 from polaris.cells.runtime.task_runtime.public.contracts._helpers import (
     _factory_run_id_from_task_row,
@@ -799,7 +799,7 @@ class TaskRuntimeExecutionFactV1:
                 "terminal": self.terminal,
             }
         )
-        return record
+        return cast("dict[str, Any]", (record))
 
 
 @dataclass(frozen=True)

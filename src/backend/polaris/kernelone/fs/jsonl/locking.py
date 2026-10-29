@@ -11,7 +11,7 @@ import os
 import platform
 import time
 from contextlib import contextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from polaris.kernelone import _runtime_config
 from polaris.kernelone.constants import (
@@ -49,7 +49,7 @@ def _pid_alive(pid: int) -> bool:
         try:
             import psutil
 
-            return psutil.pid_exists(pid)
+            return cast("bool", (psutil.pid_exists(pid)))
         except (ImportError, RuntimeError, ValueError):
             # psutil not available or failed: conservative — assume process is
             # alive so we do not delete a lock that may belong to a live process.

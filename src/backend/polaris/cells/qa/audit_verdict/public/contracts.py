@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.control_plane.run_ledger.public.failure_evidence import (
     FailureClassV1,
@@ -449,9 +449,14 @@ def _qa_failure_class_key(value: str | FailureClassV1) -> str:
 def _normalize_qa_failure_class(value: str | FailureClassV1) -> str:
     run_ledger_token = normalize_run_ledger_failure_class(value)
     token = _require_non_empty("failure_class", run_ledger_token)
-    return _QA_FAILURE_CLASS_ALIASES.get(
-        _qa_failure_class_key(run_ledger_token),
-        _QA_FAILURE_CLASS_ALIASES.get(_qa_failure_class_key(token), run_ledger_token.upper()),
+    return cast(
+        "str",
+        (
+            _QA_FAILURE_CLASS_ALIASES.get(
+                _qa_failure_class_key(run_ledger_token),
+                _QA_FAILURE_CLASS_ALIASES.get(_qa_failure_class_key(token), run_ledger_token.upper()),
+            )
+        ),
     )
 
 

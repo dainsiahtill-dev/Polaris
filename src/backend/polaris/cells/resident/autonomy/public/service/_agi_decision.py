@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.resident.autonomy.internal.agi_tactical_actions import resident_agi_tactical_action_catalog
 from polaris.cells.resident.autonomy.internal.resident_runtime_service import get_resident_service
@@ -398,25 +398,30 @@ def _resident_agi_decision_handoff(
         or str(error or "").strip()
         or "Resident AGI decision requires governed handoff."
     )
-    return ResidentAgiDecisionHandoffV1(
-        decision_type=command.decision_type,
-        decision_capability_id=decision_capability_id,
-        handoff_status=handoff_status,
-        target_roles=target_roles,
-        allowed_actions=allowed_actions,
-        blocked_actions=_RESIDENT_AGI_HANDOFF_BLOCKED_ACTIONS,
-        downstream_allowed=bool(downstream_allowed and handoff_status == "ready"),
-        reason=reason,
-        evidence_refs=tuple(evidence_refs),
-        context_refs=tuple(command.context_refs),
-        gate_statuses={
-            "hard_rule_gate": hard_rule_gate.get("status", ""),
-            "evidence_gate": evidence_gate.get("status", ""),
-            "decision_preflight": decision_preflight.get("status", ""),
-            "output_contract_gate": output_contract_gate.get("status", ""),
-            "runtime_contract_gate": runtime_contract_gate.get("status", ""),
-        },
-    ).to_dict()
+    return cast(
+        "dict[str, Any]",
+        (
+            ResidentAgiDecisionHandoffV1(
+                decision_type=command.decision_type,
+                decision_capability_id=decision_capability_id,
+                handoff_status=handoff_status,
+                target_roles=target_roles,
+                allowed_actions=allowed_actions,
+                blocked_actions=_RESIDENT_AGI_HANDOFF_BLOCKED_ACTIONS,
+                downstream_allowed=bool(downstream_allowed and handoff_status == "ready"),
+                reason=reason,
+                evidence_refs=tuple(evidence_refs),
+                context_refs=tuple(command.context_refs),
+                gate_statuses={
+                    "hard_rule_gate": hard_rule_gate.get("status", ""),
+                    "evidence_gate": evidence_gate.get("status", ""),
+                    "decision_preflight": decision_preflight.get("status", ""),
+                    "output_contract_gate": output_contract_gate.get("status", ""),
+                    "runtime_contract_gate": runtime_contract_gate.get("status", ""),
+                },
+            ).to_dict()
+        ),
+    )
 
 
 async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnCommandV1) -> dict[str, Any]:

@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.storage import resolve_runtime_path
 
@@ -303,7 +303,10 @@ class EvaluationRunner:
                 api_key=None,
                 headers=None,
             )
-            return resolve_provider_api_key(provider_id, context.provider_type or "generic", context.provider_cfg or {})
+            return cast(
+                "dict[str, Any]",
+                (resolve_provider_api_key(provider_id, context.provider_type or "generic", context.provider_cfg or {})),
+            )
         except (RuntimeError, ValueError) as exc:
             logger.debug("[evaluation.runner] failed to load provider config for %s: %s", provider_id, exc)
             return {}
@@ -327,18 +330,23 @@ class EvaluationRunner:
         provider_cfg: dict[str, Any],
     ) -> dict[str, Any]:
         if suite_name == "interview":
-            return await runner(provider_cfg, request.model, request.role)
+            return cast("dict[str, Any]", (await runner(provider_cfg, request.model, request.role)))
         if suite_name in {"agentic_benchmark", "tool_calling_matrix"}:
-            return await runner(
-                provider_cfg,
-                request.model,
-                request.role,
-                workspace=self.workspace,
-                settings=self.settings,
-                context=request.context,
-                options=request.options,
+            return cast(
+                "dict[str, Any]",
+                (
+                    await runner(
+                        provider_cfg,
+                        request.model,
+                        request.role,
+                        workspace=self.workspace,
+                        settings=self.settings,
+                        context=request.context,
+                        options=request.options,
+                    )
+                ),
             )
-        return await runner(provider_cfg, request.model)
+        return cast("dict[str, Any]", (await runner(provider_cfg, request.model)))
 
     async def _run_suite_with_timeout(
         self,

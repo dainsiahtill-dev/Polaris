@@ -18,7 +18,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.constants import DEFAULT_SHORT_TIMEOUT_SECONDS
 from polaris.kernelone.llm.toolkit.contracts import ServiceLocator
@@ -238,7 +238,7 @@ For each event, respond with JSON array:
             )
 
             response = await provider.generate(request)
-            return response.output
+            return cast("str", (response.output))
         except (RuntimeError, ValueError) as e:
             # If LLM unavailable, return empty response (events will be retried)
             raise RuntimeError(f"LLM provider unavailable: {e}") from e

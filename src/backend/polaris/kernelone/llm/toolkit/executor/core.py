@@ -9,7 +9,7 @@ import logging
 from collections import OrderedDict
 from collections.abc import ItemsView, KeysView, Mapping, ValuesView
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from polaris.kernelone.constants import (
     FILE_MAX_CONTEXT_LINES,
@@ -297,7 +297,7 @@ class AgentAccelToolExecutor:
         last_read_seq = self._file_read_history.get(file_path)
         if last_read_seq is None:
             return True  # Never read → stale
-        return (self._read_sequence - last_read_seq) > self._read_sequence_window
+        return cast("bool", ((self._read_sequence - last_read_seq) > self._read_sequence_window))
 
     def _can_verify_stale_search_edit(
         self,
@@ -354,7 +354,7 @@ class AgentAccelToolExecutor:
         is_valid, _error_code, error_msg = validate_tool_step(tool_name, arguments)
         if is_valid:
             return None
-        return error_msg
+        return cast("str | None", (error_msg))
 
     @staticmethod
     def _drop_unknown_arguments(
@@ -647,7 +647,7 @@ class AgentAccelToolExecutor:
 
     def _handle_treesitter_find_symbol(self, **kwargs) -> dict[str, Any]:
         """Find symbol definitions using tree-sitter AST analysis with fuzzy match."""
-        return self._treesitter_handler.find_symbol(**kwargs)
+        return cast("dict[str, Any]", (self._treesitter_handler.find_symbol(**kwargs)))
 
     async def execute_graph(
         self,
@@ -796,7 +796,7 @@ class AgentAccelToolExecutor:
         Returns:
             dict with total_failures, tool_failures, blocked_tools
         """
-        return self._failure_budget.get_stats()
+        return cast("dict[str, Any]", (self._failure_budget.get_stats()))
 
     async def close(self) -> None:
         """Close the executor asynchronously."""

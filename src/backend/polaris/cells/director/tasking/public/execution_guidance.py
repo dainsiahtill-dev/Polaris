@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.director.tasking.internal.execution_profile import (
     resolve_director_execution_profile as _resolve_director_execution_profile,
@@ -105,13 +105,18 @@ def build_task_language_section(
 ) -> tuple[str, str]:
     """Build the Director language identity and prompt guidance section."""
 
-    return _build_language_section(
-        list(target_files),
-        workspace,
-        metadata=dict(metadata or {}),
-        subject=subject,
-        description=description,
-        scope_paths=tuple(scope_paths or ()),
+    return cast(
+        "tuple[str, str]",
+        (
+            _build_language_section(
+                list(target_files),
+                workspace,
+                metadata=dict(metadata or {}),
+                subject=subject,
+                description=description,
+                scope_paths=tuple(scope_paths or ()),
+            )
+        ),
     )
 
 

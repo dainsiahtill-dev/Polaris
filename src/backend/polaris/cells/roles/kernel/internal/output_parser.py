@@ -16,7 +16,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.roles.kernel.internal.tool_call_protocol import (
     CanonicalToolCallParser,
@@ -193,7 +193,7 @@ class OutputParser:
             sanitize_assistant_transcript_message,
         )
 
-        return sanitize_assistant_transcript_message(sanitized)
+        return cast("str", (sanitize_assistant_transcript_message(sanitized)))
 
     def parse_execution_tool_calls(
         self,
@@ -429,7 +429,7 @@ class OutputParser:
         )
         for match in json_pattern.finditer(content):
             try:
-                return json.loads(str(match.group("body") or "").strip())
+                return cast("dict[str, Any] | None", (json.loads(str(match.group("body") or "").strip())))
             except json.JSONDecodeError:
                 continue
 
@@ -438,7 +438,7 @@ class OutputParser:
         output_match: re.Match[str] | None = re.search(output_pattern, content, re.DOTALL)
         if output_match:
             try:
-                return json.loads(output_match.group(1).strip())
+                return cast("dict[str, Any] | None", (json.loads(output_match.group(1).strip())))
             except json.JSONDecodeError:
                 pass
 

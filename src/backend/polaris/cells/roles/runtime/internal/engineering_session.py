@@ -176,7 +176,7 @@ class EngineeringSessionStore:
         row = connection.execute("SELECT * FROM runs WHERE session_id=?", (session_id,)).fetchone()
         if row is None:
             raise KeyError(f"unknown engineering session: {session_id}")
-        return row
+        return cast("sqlite3.Row", (row))
 
     def create_run(
         self,
@@ -254,7 +254,7 @@ class EngineeringSessionStore:
                 if existing["request_key"] == request_key and all(
                     existing[key] == value for key, value in payload.items()
                 ):
-                    return command.session_id
+                    return cast("str", (command.session_id))
                 raise EngineeringSessionConflictError("engineering session_id conflict")
             now = time.time()
             values = {
@@ -273,7 +273,7 @@ class EngineeringSessionStore:
                 "INSERT INTO runs (" + ",".join(values) + ") VALUES (" + ",".join("?" for _ in values) + ")",
                 tuple(values.values()),
             )
-        return command.session_id
+        return cast("str", (command.session_id))
 
     def find_current_session_id(self, *, workspace: Path, engine_version: str) -> str | None:
         """Select saved workspace identity without recovering or changing a run."""
@@ -722,7 +722,7 @@ class EngineeringSessionStore:
             (row["session_id"],),
         ).fetchone()
         if selected is None:
-            return required
+            return cast("list[str]", (required))
         commands = json.loads(selected["payload"]).get("input_binding", {}).get("commands")
         if not self._valid_commands(commands) or list(commands[: len(required)]) != required:
             raise ValueError("saved verification commands do not preserve original required checks")
@@ -779,7 +779,7 @@ class EngineeringSessionStore:
             for item in event
         ):
             return None
-        return parent
+        return cast("sqlite3.Row | None", (parent))
 
     def begin_verification(
         self,
@@ -1022,7 +1022,7 @@ class EngineeringSessionStore:
                 (projected, self._json(payload["checks"]), time.time(), session_id),
             )
             self._append_event(connection, session_id, kind="verification_completed", role="director", payload=payload)
-        return current
+        return cast("bool", (current))
 
     def continue_role(self, session_id: str, *, role: str, feedback: str) -> None:
         """Reopen the same role with complete native history and ordinary feedback."""

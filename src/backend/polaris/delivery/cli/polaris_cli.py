@@ -12,7 +12,7 @@ import json
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.infrastructure.storage import LocalFileSystemAdapter
 from polaris.kernelone.fs.runtime import KernelFileSystem
@@ -24,7 +24,7 @@ def create_parser() -> argparse.ArgumentParser:
     """Return the canonical Polaris CLI parser."""
     from polaris.delivery.cli.__main__ import create_parser as canonical_create_parser
 
-    return canonical_create_parser()
+    return cast("argparse.ArgumentParser", (canonical_create_parser()))
 
 
 def _resolve_workspace(workspace: str) -> str:
@@ -99,7 +99,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Compatibility entry point delegated to the canonical CLI host."""
     from polaris.delivery.cli.__main__ import main as canonical_main
 
-    return canonical_main(argv)
+    return cast("int", (canonical_main(argv)))
 
 
 if __name__ == "__main__":

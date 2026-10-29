@@ -6,7 +6,7 @@ This module adapts injected ``ToolGatewayPort`` implementations to the
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from polaris.cells.roles.kernel.public.contracts import ToolGatewayPort
@@ -47,7 +47,7 @@ class _ToolGatewayPortAdapter:
             Tool execution result.
         """
         self._execution_count += 1
-        return self._port.execute(tool_name, args)
+        return cast("dict[str, Any]", (self._port.execute(tool_name, args)))
 
     def execute_tool(self, tool_name: str, tool_args: dict[str, Any]) -> dict[str, Any]:
         """Alias for execute() matching RoleToolGateway interface.
@@ -77,7 +77,7 @@ class _ToolGatewayPortAdapter:
         Returns:
             True if approval is required.
         """
-        return self._port.requires_approval(tool_name, args, state)
+        return cast("bool", (self._port.requires_approval(tool_name, args, state)))
 
     def check_tool_permission(
         self,

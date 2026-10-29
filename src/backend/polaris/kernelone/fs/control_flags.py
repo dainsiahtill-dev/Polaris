@@ -6,6 +6,7 @@ import logging
 import os
 import re
 from threading import RLock
+from typing import cast
 
 from polaris.kernelone.constants import RoleId
 
@@ -50,7 +51,7 @@ def _validate_control_logical_path(logical_path: str) -> str:
     normalized = normalize_logical_rel_path(logical_path)
     if not (normalized == "runtime/control" or normalized.startswith("runtime/control/")):
         raise ValueError(f"Unsupported control flag path: {logical_path}")
-    return normalized
+    return cast("str", (normalized))
 
 
 def register_stop_signal(signal_name: str, logical_path: str | None = None) -> str:
@@ -82,7 +83,7 @@ def list_stop_signals() -> dict[str, str]:
 def control_flag_path(workspace: str, logical_path: str) -> str:
     cache_root = build_cache_root(resolve_ramdisk_root(None), workspace)
     normalized = _validate_control_logical_path(logical_path)
-    return resolve_artifact_path(workspace, cache_root, normalized)
+    return cast("str", (resolve_artifact_path(workspace, cache_root, normalized)))
 
 
 def stop_flag_path_for(workspace: str, signal_name: str) -> str:

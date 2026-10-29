@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Request
 from polaris.cells.context.engine.public import (
@@ -238,7 +238,7 @@ def _resolve_workspace(request: Request) -> str:
     """
     state = get_state(request)
     requested = _request_workspace_token(request)
-    return requested_or_active_workspace(state.settings, requested)
+    return cast("str", (requested_or_active_workspace(state.settings, requested)))
 
 
 def _request_workspace_token(request: Request) -> str:

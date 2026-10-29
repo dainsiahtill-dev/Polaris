@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
@@ -101,7 +101,7 @@ def vision_status_v2(request: Request) -> dict[str, Any]:
     """Get vision service availability status."""
     try:
         service = get_vision_service()
-        return service.get_status()
+        return cast("dict[str, Any]", (service.get_status()))
     except (RuntimeError, ValueError) as exc:
         logger.debug("vision_status_v2: service unavailable: %s", exc)
         return {"pil_available": False, "advanced_available": False, "model_loaded": False}
@@ -115,7 +115,7 @@ def analyze_ui_v2(request: Request, payload: VisionRequest) -> dict[str, Any]:
     if not service.is_loaded:
         service.load_model()  # This will likely just enable the mock if dependencies missing
 
-    return service.analyze_image(payload.image, payload.task)
+    return cast("dict[str, Any]", (service.analyze_image(payload.image, payload.task)))
 
 
 @router.get("/v2/scheduler/status", dependencies=[Depends(require_auth)], response_model=SchedulerStatusResponse)

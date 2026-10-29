@@ -21,7 +21,7 @@ import logging
 import threading
 import time
 from dataclasses import replace
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
     DeliveryContract,
@@ -250,7 +250,7 @@ class CognitiveGateway:
                 emb_result = await self._embedding_router.classify(message)
                 if emb_result is not None:
                     logger.debug("CognitiveGateway intent from embedding: %s", emb_result)
-                    return emb_result
+                    return cast("str", (emb_result))
             except (ConnectionError, TimeoutError, RuntimeError, ValueError):
                 logger.debug("Embedding router classify failed", exc_info=True)
 
@@ -262,14 +262,14 @@ class CognitiveGateway:
                     slm_result = await slm.classify_intent(message)
                     if slm_result and slm_result != "UNKNOWN":
                         logger.debug("CognitiveGateway intent from SLM: %s", slm_result)
-                        return slm_result
+                        return cast("str", (slm_result))
                 except (ConnectionError, TimeoutError, RuntimeError, ValueError):
                     logger.debug("SLM classify_intent failed", exc_info=True)
 
         # Level 3: Hard-coded Regex（100% 可用兜底）
         regex_result = classify_intent_regex(message)
         logger.debug("CognitiveGateway intent from regex fallback: %s", regex_result)
-        return regex_result
+        return cast("str", (regex_result))
 
     # ------------------------------------------------------------------
     # 富路由协议 (Rich Routing Protocol)
@@ -632,7 +632,7 @@ class CognitiveGateway:
             slm = self._slm_coprocessor
             if slm is not None:
                 try:
-                    return await slm.distill_long_logs(raw_logs, max_tokens=max_tokens)
+                    return cast("str", (await slm.distill_long_logs(raw_logs, max_tokens=max_tokens)))
                 except (ConnectionError, TimeoutError, RuntimeError, ValueError):
                     logger.debug("SLM distill_long_logs failed", exc_info=True)
         # Fallback: 暴力截断尾部
@@ -644,7 +644,7 @@ class CognitiveGateway:
             slm = self._slm_coprocessor
             if slm is not None:
                 try:
-                    return await slm.heal_json(broken_json)
+                    return cast("dict[str, Any] | None", (await slm.heal_json(broken_json)))
                 except (ConnectionError, TimeoutError, RuntimeError, ValueError):
                     logger.debug("SLM heal_json failed", exc_info=True)
         return None
@@ -655,7 +655,7 @@ class CognitiveGateway:
             slm = self._slm_coprocessor
             if slm is not None:
                 try:
-                    return await slm.expand_search_query(user_query)
+                    return cast("list[str]", (await slm.expand_search_query(user_query)))
                 except (ConnectionError, TimeoutError, RuntimeError, ValueError):
                     logger.debug("SLM expand_search_query failed", exc_info=True)
         return [user_query]
@@ -669,7 +669,7 @@ class CognitiveGateway:
             slm = self._slm_coprocessor
             if slm is not None:
                 try:
-                    return await slm._invoke_slm(prompt, max_tokens=max_tokens)
+                    return cast("str", (await slm._invoke_slm(prompt, max_tokens=max_tokens)))
                 except (ConnectionError, TimeoutError, RuntimeError, ValueError):
                     logger.debug("SLM compress_text failed", exc_info=True)
         return ""

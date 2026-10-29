@@ -17,7 +17,7 @@ import inspect
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
 from polaris.kernelone.contracts.technical import (
     ScheduledTask,
@@ -179,21 +179,21 @@ class SimpleScheduler(SchedulerPort):
         if spec.kind == ScheduleKind.DELAYED:
             return datetime.fromtimestamp(now.timestamp() + spec.delay_seconds, tz=timezone.utc)
         if spec.kind == ScheduleKind.PERIODIC:
-            return now
+            return cast("datetime | None", (now))
         if spec.kind == ScheduleKind.CRON:
             # Simple cron: interpret interval_seconds as period for now
-            return now
+            return cast("datetime | None", (now))
         return None
 
     def _calc_delay_seconds(self, spec: ScheduleSpec) -> float:
         if spec.kind == ScheduleKind.ONCE:
             return 0.0
         if spec.kind == ScheduleKind.DELAYED:
-            return spec.delay_seconds
+            return cast("float", (spec.delay_seconds))
         if spec.kind == ScheduleKind.PERIODIC:
-            return max(0.1, spec.interval_seconds)
+            return cast("float", (max(0.1, spec.interval_seconds)))
         if spec.kind == ScheduleKind.CRON:
-            return max(0.1, spec.interval_seconds)
+            return cast("float", (max(0.1, spec.interval_seconds)))
         return 0.0
 
     def _schedule_loop(self, task_id: str) -> None:

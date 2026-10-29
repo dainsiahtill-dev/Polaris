@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.runtime.task_market.public.contracts import (
     TASK_LOCAL_RETRY_SCHEDULE_METADATA_KEY,
@@ -426,4 +426,4 @@ class FailRetryMixin:
                     deadlines.append(deadline)
             if not deadlines:
                 return None
-            return max(0.0, min(deadlines) - current_epoch)
+            return cast("float | None", (max(0.0, min(deadlines) - current_epoch)))

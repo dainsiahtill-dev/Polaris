@@ -272,7 +272,7 @@ def _normalize_priority(priority: Any) -> int:
     if isinstance(priority, TaskPriority):
         return _PRIORITY_LABEL_TO_VALUE.get(priority.value, 1)
     if isinstance(priority, PolarisTaskPriority):
-        return priority.numeric_value
+        return cast("int", (priority.numeric_value))
     if isinstance(priority, (int, float)):
         return int(priority)
     if isinstance(priority, str):
@@ -537,7 +537,7 @@ class TaskBoard:
             raise PermissionError("historical TaskBoard observation is read-only")
 
     def _logical_path(self, path: Path) -> str:
-        return self._kernel_fs.to_logical_path(str(path))
+        return cast("str", (self._kernel_fs.to_logical_path(str(path))))
 
     @contextmanager
     def transaction(self) -> Any:
@@ -1322,12 +1322,17 @@ class TaskBoard:
     def _next_terminal_event_expected_seq(self) -> int:
         """Return the optimistic next sequence for terminal compatibility facts."""
 
-        return query_fact_stream_head(
-            QueryFactStreamHeadV1(
-                workspace=str(self.workspace),
-                stream=_TASKBOARD_TERMINAL_EVENTS_STREAM,
-            )
-        ).next_expected_seq
+        return cast(
+            "int",
+            (
+                query_fact_stream_head(
+                    QueryFactStreamHeadV1(
+                        workspace=str(self.workspace),
+                        stream=_TASKBOARD_TERMINAL_EVENTS_STREAM,
+                    )
+                ).next_expected_seq
+            ),
+        )
 
     def _write_terminal_event(self, event_data: dict[str, Any]) -> None:
         """Write a compatibility terminal event outside the board transaction.

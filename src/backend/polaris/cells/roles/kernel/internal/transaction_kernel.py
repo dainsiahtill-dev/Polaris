@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
@@ -61,11 +61,16 @@ class TransactionKernel(TurnTransactionController):
         *,
         tool_choice_override: Any | None = None,
     ) -> dict[str, Any]:
-        return await super().execute(
-            turn_id=turn_id,
-            context=context,
-            tool_definitions=tool_definitions,
-            tool_choice_override=tool_choice_override,
+        return cast(
+            "dict[str, Any]",
+            (
+                await super().execute(
+                    turn_id=turn_id,
+                    context=context,
+                    tool_definitions=tool_definitions,
+                    tool_choice_override=tool_choice_override,
+                )
+            ),
         )
 
     async def execute_stream(

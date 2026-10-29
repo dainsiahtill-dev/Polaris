@@ -37,7 +37,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
@@ -186,7 +186,7 @@ class ResidentAgiParticipation:
     updated_at: str = field(default_factory=utc_now_iso)
 
     def to_dict(self) -> dict[str, Any]:
-        return _jsonify(self)
+        return cast("dict[str, Any]", (_jsonify(self)))
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ResidentAgiParticipation:
@@ -219,7 +219,7 @@ class DecisionOption:
     estimated_score: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
-        return _jsonify(self)
+        return cast("dict[str, Any]", (_jsonify(self)))
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> DecisionOption:
@@ -258,7 +258,7 @@ class ResidentIdentity:
     def to_dict(self) -> dict[str, Any]:
         payload = _jsonify(self)
         payload["operating_mode"] = self.operating_mode.value
-        return payload
+        return cast("dict[str, Any]", (payload))
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ResidentIdentity:
@@ -314,7 +314,7 @@ class ResidentAgenda:
     updated_at: str = field(default_factory=utc_now_iso)
 
     def to_dict(self) -> dict[str, Any]:
-        return _jsonify(self)
+        return cast("dict[str, Any]", (_jsonify(self)))
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ResidentAgenda:
@@ -358,7 +358,7 @@ class GoalProposal:
         payload = _jsonify(self)
         payload["goal_type"] = self.goal_type.value
         payload["status"] = self.status.value
-        return payload
+        return cast("dict[str, Any]", (payload))
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> GoalProposal:
@@ -431,7 +431,7 @@ class DecisionRecord:
         payload = _jsonify(self)
         payload["verdict"] = self.verdict.value
         payload["options"] = [item.to_dict() for item in self.options]
-        return payload
+        return cast("dict[str, Any]", (payload))
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> DecisionRecord:
@@ -492,7 +492,7 @@ class MetaInsight:
     created_at: str = field(default_factory=utc_now_iso)
 
     def to_dict(self) -> dict[str, Any]:
-        return _jsonify(self)
+        return cast("dict[str, Any]", (_jsonify(self)))
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> MetaInsight:
@@ -524,7 +524,7 @@ class SkillArtifact:
     updated_at: str = field(default_factory=utc_now_iso)
 
     def to_dict(self) -> dict[str, Any]:
-        return _jsonify(self)
+        return cast("dict[str, Any]", (_jsonify(self)))
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> SkillArtifact:
@@ -587,7 +587,7 @@ class SkillProposal:
     skill_id: str | None = None  # 关联的 SkillArtifact ID
 
     def to_dict(self) -> dict[str, Any]:
-        return _jsonify(self)
+        return cast("dict[str, Any]", (_jsonify(self)))
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> SkillProposal:
@@ -625,7 +625,7 @@ class CapabilityNode:
     updated_at: str = field(default_factory=utc_now_iso)
 
     def to_dict(self) -> dict[str, Any]:
-        return _jsonify(self)
+        return cast("dict[str, Any]", (_jsonify(self)))
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> CapabilityNode:
@@ -686,7 +686,7 @@ class ExperimentRecord:
     def to_dict(self) -> dict[str, Any]:
         payload = _jsonify(self)
         payload["status"] = self.status.value
-        return payload
+        return cast("dict[str, Any]", (payload))
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ExperimentRecord:
@@ -730,7 +730,7 @@ class ImprovementProposal:
     def to_dict(self) -> dict[str, Any]:
         payload = _jsonify(self)
         payload["status"] = self.status.value
-        return payload
+        return cast("dict[str, Any]", (payload))
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ImprovementProposal:
@@ -771,7 +771,7 @@ class ResidentRuntimeState:
     def to_dict(self) -> dict[str, Any]:
         payload = _jsonify(self)
         payload["mode"] = self.mode.value
-        return payload
+        return cast("dict[str, Any]", (payload))
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ResidentRuntimeState:

@@ -12,7 +12,7 @@ import logging
 import os
 import tempfile
 import threading
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from polaris.kernelone.fs.text_ops import ensure_parent_dir
 from polaris.kernelone.storage import resolve_storage_roots
@@ -53,17 +53,17 @@ class StorageAdapter:
     @property
     def runtime_root(self) -> str:
         """Get the runtime root directory."""
-        return self._roots.runtime_root
+        return cast("str", (self._roots.runtime_root))
 
     @property
     def persistent_root(self) -> str:
         """Get the persistent workspace storage root."""
-        return self._roots.workspace_persistent_root
+        return cast("str", (self._roots.workspace_persistent_root))
 
     @property
     def config_root(self) -> str:
         """Get the global config root."""
-        return self._roots.config_root
+        return cast("str", (self._roots.config_root))
 
     def resolve_path(self, logical_path: str) -> str:
         """Resolve a logical path to absolute path.

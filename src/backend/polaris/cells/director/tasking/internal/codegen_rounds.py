@@ -24,7 +24,7 @@ All text operations MUST explicitly use UTF-8 encoding.
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.director.tasking.internal import path_predicates
 from polaris.cells.director.tasking.internal.target_file_resolver import TargetFileResolver
@@ -146,4 +146,4 @@ class CodegenRoundPlanner:
         from ``WorkerExecutor`` (the class-level copy had zero callers); see the G7
         blueprint.
         """
-        return path_predicates.is_test_like_target_file(path)
+        return cast("bool", (path_predicates.is_test_like_target_file(path)))

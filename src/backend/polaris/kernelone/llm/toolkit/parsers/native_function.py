@@ -8,7 +8,7 @@ from __future__ import annotations
 import ast
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.llm.contracts.tool import ToolCall
 from polaris.kernelone.llm.toolkit.parsers.utils import (
@@ -66,7 +66,7 @@ def _parsed_tool_name(value: Any) -> str:
         return ""
     from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_name
 
-    return normalize_tool_name(raw)
+    return cast("str", (normalize_tool_name(raw)))
 
 
 class NativeFunctionCallingParser:

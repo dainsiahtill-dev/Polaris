@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import cast
 
 from polaris.cells.roles.kernel.internal.constitution_adaptor import (
     ConstitutionalRoleContext,
@@ -208,7 +209,7 @@ def reset_role_action_registry_for_test() -> None:
 
 def subscribe_speculation_events(sink: Callable[[SpeculationEvent], None]) -> Callable[[], None]:
     """Subscribe to kernel speculation telemetry through the public Cell boundary."""
-    return _subscribe_speculation_events(sink)
+    return cast("Callable[[], None]", (_subscribe_speculation_events(sink)))
 
 
 def publish_speculation_event(event: SpeculationEvent) -> None:

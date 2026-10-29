@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+from typing import cast
 
 from polaris.kernelone.cognitive.evolution.models import EvolutionRecord
 
@@ -109,7 +110,7 @@ class EvolutionIntegrityGuard:
         """Try to recover a chain signature stored in ``context``."""
         prefix = "chain_sig:"
         if record.context.startswith(prefix):
-            return record.context[len(prefix) :]
+            return cast("str | None", (record.context[len(prefix) :]))
         return None
 
     @staticmethod

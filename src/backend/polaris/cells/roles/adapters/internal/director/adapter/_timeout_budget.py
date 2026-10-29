@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.audit.task_write_guidance import project_task_write_guidance
 from polaris.kernelone.llm.budget_policy import (
@@ -179,7 +179,7 @@ def _task_write_guidance_context(context: dict[str, Any]) -> dict[str, Any] | No
                 )
                 if not isinstance(targets, (list, tuple)) or not isinstance(inventory, (list, tuple)):
                     raise ValueError("task_write_guidance_paths_invalid")
-                return project_task_write_guidance(envelope, [*targets, *inventory])
+                return cast("dict[str, Any] | None", (project_task_write_guidance(envelope, [*targets, *inventory])))
     return None
 
 

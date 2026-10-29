@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public import (
     ReadRunLedgerProjectionQueryV1,
@@ -121,9 +121,14 @@ def _apply_run_ledger_director_status_overlay(
 
 
 def _task_boundary_execution_state(failure_class: str) -> str:
-    return project_qa_failure_execution_state(
-        failure_class,
-        default=QA_DEFAULT_TASK_BOUNDARY_FAILURE_CLASS,
+    return cast(
+        "str",
+        (
+            project_qa_failure_execution_state(
+                failure_class,
+                default=QA_DEFAULT_TASK_BOUNDARY_FAILURE_CLASS,
+            )
+        ),
     )
 
 

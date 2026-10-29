@@ -7,7 +7,7 @@ import os
 import re
 import shlex
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.llm.toolkit.write_scope import WriteGate
 
@@ -264,7 +264,7 @@ def _is_empty_package_manifest(text: str | None) -> bool:
         payload = json.loads(token)
     except json.JSONDecodeError:
         return False
-    return payload == {}
+    return cast("bool", (payload == {}))
 
 
 def _parse_json_object(text: str) -> dict[str, Any]:

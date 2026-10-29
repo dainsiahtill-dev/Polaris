@@ -11,6 +11,8 @@ the cache layer hands back.
 
 from __future__ import annotations
 
+from typing import cast
+
 from src.cache import cached_divide
 from src.config import load_precision
 
@@ -26,4 +28,4 @@ def divide(numerator: float, denominator: float, precision: int | None = None) -
         raise ZeroDivisionError("denominator must be non-zero")
     effective_precision = precision if precision is not None else load_precision()
     quotient = cached_divide(numerator, denominator, effective_precision)
-    return round(quotient, effective_precision)
+    return cast("float", (round(quotient, effective_precision)))

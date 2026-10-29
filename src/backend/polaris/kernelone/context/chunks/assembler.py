@@ -20,7 +20,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.llm.toolkit.contracts import TokenEstimatorPort
 
@@ -621,7 +621,7 @@ class PromptChunkAssembler:
         # Fallback: use canonical token estimator (P1-CTX-006 convergence)
         from polaris.kernelone.context._token_estimator import estimate_tokens
 
-        return estimate_tokens(content)
+        return cast("int", (estimate_tokens(content)))
 
     def _build_messages(
         self,

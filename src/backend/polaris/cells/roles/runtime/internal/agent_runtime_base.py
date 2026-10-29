@@ -34,7 +34,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.roles.runtime.internal.bus_port import (
     AgentBusPort,
@@ -167,7 +167,7 @@ class AgentBusProxy:
             message_id=message.id,
             correlation_id=message.correlation_id,
         )
-        return self._bus.publish(envelope)
+        return cast("bool", (self._bus.publish(envelope)))
 
     def receive(
         self,
@@ -213,7 +213,7 @@ class AgentBusProxy:
         `receipt_path` is accepted for API compatibility but ignored;
         the bus port tracks inflight by message_id.
         """
-        return self._bus.ack(str(message_id or ""), self.agent_name)
+        return cast("bool", (self._bus.ack(str(message_id or ""), self.agent_name)))
 
     def nack(
         self,
@@ -224,11 +224,16 @@ class AgentBusProxy:
         requeue: bool = True,
     ) -> bool:
         """Negative-acknowledge — requeue or dead-letter via bus port."""
-        return self._bus.nack(
-            str(message_id or ""),
-            self.agent_name,
-            reason=reason,
-            requeue=requeue,
+        return cast(
+            "bool",
+            (
+                self._bus.nack(
+                    str(message_id or ""),
+                    self.agent_name,
+                    reason=reason,
+                    requeue=requeue,
+                )
+            ),
         )
 
     def peek(self) -> list[AgentMessage]:
@@ -306,7 +311,7 @@ class AgentBusProxy:
 
     def pending_count(self) -> int:
         """Return count of pending messages in inbox."""
-        return self._bus.pending_count(self.agent_name)
+        return cast("int", (self._bus.pending_count(self.agent_name)))
 
 
 class AgentMemory:
@@ -442,7 +447,7 @@ class AgentMemory:
 
         try:
             with open(self._snapshot_file, encoding="utf-8") as f:
-                return json.load(f)
+                return cast("dict[str, Any]", (json.load(f)))
         except (RuntimeError, ValueError) as exc:
             logger.warning("[%s] Failed to load memory snapshot, returning empty: %s", self.agent_name, exc)
             return {}
@@ -870,7 +875,10 @@ class RoleAgent(ABC):
                 metadata={"auto_created": True},
             )
 
-        return compressor.compact_if_needed(messages, identity, force_compact=force, focus=focus)
+        return cast(
+            "tuple[list[dict[str, Any]], Any | None]",
+            (compressor.compact_if_needed(messages, identity, force_compact=force, focus=focus)),
+        )
 
     def create_context_identity(
         self,
@@ -1252,4 +1260,4 @@ def create_agent_service(
     """Factory function to create and initialize an agent service."""
     agent = agent_class(workspace, agent_name)
     agent.initialize()
-    return agent
+    return cast("RoleAgent", (agent))

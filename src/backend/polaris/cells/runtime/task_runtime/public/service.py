@@ -327,7 +327,7 @@ def settle_task_runtime_execution_attempt(
 ) -> dict[str, object]:
     """Settle one claim through TaskRuntime's canonical identity fence."""
 
-    return TaskRuntimeService(command.workspace).settle_execution_attempt(command)
+    return cast("dict[str, object]", (TaskRuntimeService(command.workspace).settle_execution_attempt(command)))
 
 
 def settle_task_runtime_execution_attempt_typed(
@@ -750,8 +750,13 @@ def query_observable_task_rows(workspace: str) -> ObservableTaskRowsProjectionV1
 def query_factory_run_settlement(workspace: str, *, factory_run_id: str) -> dict[str, object]:
     """Return TaskRuntime-owned settlement evidence for one Factory run."""
 
-    return TaskRuntimeService(workspace).query_factory_run_settlement(
-        factory_run_id=factory_run_id,
+    return cast(
+        "dict[str, object]",
+        (
+            TaskRuntimeService(workspace).query_factory_run_settlement(
+                factory_run_id=factory_run_id,
+            )
+        ),
     )
 
 

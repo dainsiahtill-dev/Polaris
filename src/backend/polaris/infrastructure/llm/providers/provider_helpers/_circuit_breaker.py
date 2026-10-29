@@ -130,7 +130,7 @@ def _build_backoff_seconds(
     bounded = min(max_delay_seconds, max(base_delay_seconds, exp_delay))
     # Add small jitter to reduce synchronized retry storms.
     jitter = random.uniform(0.0, bounded * 0.2)
-    return bounded + jitter
+    return cast("float", (bounded + jitter))
 
 
 _RATE_LIMIT_MIN_RETRIES = 4

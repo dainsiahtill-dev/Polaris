@@ -27,7 +27,7 @@ Architecture:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.events.message_bus import Message, MessageType
 from polaris.kernelone.events.registry import get_global_bus
@@ -119,7 +119,7 @@ class UEPEventPublisher:
             return None
 
     def _utc_now(self) -> str:
-        return utc_now_iso()
+        return cast("str", (utc_now_iso()))
 
     async def publish_stream_event(
         self,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.resident.autonomy.internal.goal_attempt_ledger import transition_goal_state
 from polaris.cells.resident.autonomy.public.contracts import (
@@ -68,7 +68,7 @@ class GoalGovernor:
         goals = self._storage.load_goals()
         status_token = str(status or "").strip().lower()
         if not status_token:
-            return goals
+            return cast("list[Any]", (goals))
         return [goal for goal in goals if goal.status.value == status_token]
 
     def create_manual_proposal(self, payload: Mapping[str, Any]) -> GoalProposal:
@@ -327,7 +327,7 @@ class GoalGovernor:
                 return dict(goal.pm_contract_outline), changed
             return None, False
 
-        return self._storage.mutate_goals(mutate)
+        return cast("dict[str, Any] | None", (self._storage.mutate_goals(mutate)))
 
     def archive_goal(
         self,

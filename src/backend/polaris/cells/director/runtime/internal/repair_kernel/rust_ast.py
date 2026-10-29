@@ -7,7 +7,7 @@ from bisect import bisect_right
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from importlib import import_module
-from typing import Any
+from typing import Any, cast
 
 from .contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
 
@@ -1517,8 +1517,8 @@ def _simple_rust_type_name(type_text: str | None) -> str | None:
         return None
     for identifier in reversed(identifiers):
         if identifier not in {"crate", "super", "self", "mut"}:
-            return identifier
-    return identifiers[-1]
+            return cast("str | None", (identifier))
+    return cast("str | None", (identifiers[-1]))
 
 
 def _is_generated_or_marker_file(content: str) -> bool:

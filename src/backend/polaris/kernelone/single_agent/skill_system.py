@@ -278,7 +278,7 @@ class SkillLoader:
         whole discovery pass.
         """
         try:
-            return self._fs().workspace_read_text(relative_path, encoding="utf-8")
+            return cast("str | None", (self._fs().workspace_read_text(relative_path, encoding="utf-8")))
         except FileNotFoundError:
             return None
         except (OSError, RuntimeError, ValueError) as exc:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -78,7 +78,7 @@ async def _read_response(request: Request, read: Callable[[EngineeringRunService
 async def create_run(payload: EngineeringRunRequest, request: Request) -> dict[str, Any]:
     try:
         service, settings, _workspace = _bound(request)
-        return await start_engineering_run(service, settings, **payload.model_dump())
+        return cast("dict[str, Any]", (await start_engineering_run(service, settings, **payload.model_dump())))
     except (KeyError, OSError, ValueError, RuntimeError) as error:
         raise _error(error) from error
 

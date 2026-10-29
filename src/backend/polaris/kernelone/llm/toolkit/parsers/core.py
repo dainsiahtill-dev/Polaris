@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.llm.contracts.tool import ToolCall
 from polaris.kernelone.llm.toolkit.parsers.utils import (
@@ -66,7 +66,7 @@ def _normalize_textual_calls(
                 parse_error=call.parse_error,
             )
         )
-    return deduplicate_tool_calls(normalized)
+    return cast("list[Any]", (deduplicate_tool_calls(normalized)))
 
 
 def _parse_text_fallback_calls(

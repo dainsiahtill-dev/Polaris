@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any
+from typing import Any, cast
 
 from polaris.delivery.cli.pm.document_manager import DocumentManager, get_document_manager
 from polaris.delivery.cli.pm.execution_tracker import ExecutionTracker, get_execution_tracker
@@ -105,7 +105,7 @@ class PM:
 
     def is_initialized(self) -> bool:
         """Check if PM is initialized."""
-        return self.state.is_initialized()
+        return cast("bool", (self.state.is_initialized()))
 
     def get_status(self) -> dict[str, Any]:
         """Get full PM status."""
@@ -574,7 +574,7 @@ class PM:
         Returns:
             Dictionary with documents list and pagination info
         """
-        return self.documents.list_documents(doc_type, pattern, limit, offset)
+        return cast("dict[str, Any]", (self.documents.list_documents(doc_type, pattern, limit, offset)))
 
     def get_document(self, doc_path: str) -> dict[str, Any] | None:
         """Get document information including versions and analysis.
@@ -585,7 +585,7 @@ class PM:
         Returns:
             Document info or None
         """
-        return self.documents.get_document_info(doc_path)
+        return cast("dict[str, Any] | None", (self.documents.get_document_info(doc_path)))
 
     def get_document_content(self, doc_path: str, version: str | None = None) -> str | None:
         """Get document content.
@@ -597,7 +597,7 @@ class PM:
         Returns:
             Document content or None
         """
-        return self.documents.get_version_content(doc_path, version)
+        return cast("str | None", (self.documents.get_version_content(doc_path, version)))
 
     def create_or_update_document(
         self,
@@ -629,7 +629,7 @@ class PM:
         Returns:
             True if deleted successfully
         """
-        return self.documents.delete_document(doc_path, delete_file)
+        return cast("bool", (self.documents.delete_document(doc_path, delete_file)))
 
     def search_documents(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         """Search documents by content or path.
@@ -641,7 +641,7 @@ class PM:
         Returns:
             List of matching documents
         """
-        return self.documents.search_documents(query, search_content=True, limit=limit)
+        return cast("list[dict[str, Any]]", (self.documents.search_documents(query, search_content=True, limit=limit)))
 
     def get_document_versions(self, doc_path: str) -> list[Any]:
         """Get all versions of a document.
@@ -652,7 +652,7 @@ class PM:
         Returns:
             List of versions
         """
-        return self.documents.list_versions(doc_path)
+        return cast("list[Any]", (self.documents.list_versions(doc_path)))
 
     def compare_document_versions(self, doc_path: str, old_version: str, new_version: str) -> Any:
         """Compare two document versions.
@@ -696,14 +696,19 @@ class PM:
         from polaris.delivery.cli.pm.task_orchestrator import TaskStatus
 
         task_status = TaskStatus(status) if status else None
-        return self.tasks.get_task_history(
-            task_id=task_id,
-            assignee=assignee,
-            status=task_status,
-            start_date=start_date,
-            end_date=end_date,
-            limit=limit,
-            offset=offset,
+        return cast(
+            "dict[str, Any]",
+            (
+                self.tasks.get_task_history(
+                    task_id=task_id,
+                    assignee=assignee,
+                    status=task_status,
+                    start_date=start_date,
+                    end_date=end_date,
+                    limit=limit,
+                    offset=offset,
+                )
+            ),
         )
 
     def get_director_task_history(
@@ -724,7 +729,7 @@ class PM:
         Returns:
             Dictionary with director tasks and pagination info
         """
-        return self.tasks.get_director_task_history(iteration, limit, offset)
+        return cast("dict[str, Any]", (self.tasks.get_director_task_history(iteration, limit, offset)))
 
     def get_task_assignments(
         self,
@@ -742,7 +747,7 @@ class PM:
         Returns:
             List of assignment records
         """
-        return self.tasks.get_task_assignments(task_id, assignee, limit)
+        return cast("list[dict[str, Any]]", (self.tasks.get_task_assignments(task_id, assignee, limit)))
 
     def search_tasks(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         """Search tasks by title or description.
@@ -754,7 +759,7 @@ class PM:
         Returns:
             List of matching tasks
         """
-        return self.tasks.search_tasks(query, search_description=True, limit=limit)
+        return cast("list[dict[str, Any]]", (self.tasks.search_tasks(query, search_description=True, limit=limit)))
 
     def get_task(self, task_id: str) -> Any | None:
         """Get a specific task by ID.

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.llm.control_plane.public.service import LLMConfig, LLMConfigService
 
@@ -35,20 +35,25 @@ class HRAgent(RoleAgent):
         profile: str,
         provider_cfg: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return self._config_service.set_llm_config(
-            role=role,
-            provider_id=provider_id,
-            provider_type=provider_type,
-            model=model,
-            profile=profile,
-            provider_cfg=provider_cfg,
+        return cast(
+            "dict[str, Any]",
+            (
+                self._config_service.set_llm_config(
+                    role=role,
+                    provider_id=provider_id,
+                    provider_type=provider_type,
+                    model=model,
+                    profile=profile,
+                    provider_cfg=provider_cfg,
+                )
+            ),
         )
 
     def _tool_get_llm_config(self, role: str) -> dict[str, Any]:
-        return self._config_service.get_llm_config(role)
+        return cast("dict[str, Any]", (self._config_service.get_llm_config(role)))
 
     def _tool_list_all_configs(self) -> dict[str, Any]:
-        return self._config_service.list_all_configs()
+        return cast("dict[str, Any]", (self._config_service.list_all_configs()))
 
     def _tool_update_llm_config(
         self,
@@ -58,27 +63,32 @@ class HRAgent(RoleAgent):
         profile: str | None = None,
         provider_cfg: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return self._config_service.update_llm_config(
-            role=role, provider_id=provider_id, model=model, profile=profile, provider_cfg=provider_cfg
+        return cast(
+            "dict[str, Any]",
+            (
+                self._config_service.update_llm_config(
+                    role=role, provider_id=provider_id, model=model, profile=profile, provider_cfg=provider_cfg
+                )
+            ),
         )
 
     def _tool_deactivate_config(self, role: str) -> dict[str, Any]:
-        return self._config_service.deactivate_config(role)
+        return cast("dict[str, Any]", (self._config_service.deactivate_config(role)))
 
     def _tool_activate_config(self, role: str) -> dict[str, Any]:
-        return self._config_service.activate_config(role)
+        return cast("dict[str, Any]", (self._config_service.activate_config(role)))
 
     def _tool_delete_config(self, role: str) -> dict[str, Any]:
-        return self._config_service.delete_config(role)
+        return cast("dict[str, Any]", (self._config_service.delete_config(role)))
 
     def _resolve_provider_kind(self, provider_id: str, provider_type: str, provider_cfg: dict[str, Any]) -> str:
-        return self._config_service.resolve_provider_kind(provider_id, provider_type, provider_cfg)
+        return cast("str", (self._config_service.resolve_provider_kind(provider_id, provider_type, provider_cfg)))
 
     def get_config(self, role: str) -> LLMConfig | None:
         return self._config_service.get_config(role)
 
     def get_all_configs(self) -> list[LLMConfig]:
-        return self._config_service.get_all_configs()
+        return cast("list[Any]", (self._config_service.get_all_configs()))
 
     def handle_message(self, message: AgentMessage) -> AgentMessage | None:
         payload = dict(message.payload or {})

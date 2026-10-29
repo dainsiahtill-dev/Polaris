@@ -12,7 +12,7 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 from polaris.kernelone.llm.providers import BaseProvider, ProviderInfo
 from polaris.kernelone.llm.providers.registry import (
@@ -119,7 +119,7 @@ class ProviderManager:
             logger.info("%s provider unavailable: %s", provider_type, exc)
             return None
         ProviderManager.register_provider(self, provider_type, provider_class)
-        return provider_class
+        return cast("type[Any] | None", (provider_class))
 
     def register_provider(self, provider_type: str, provider_class: type[BaseProvider]) -> None:
         """Register a provider class"""
@@ -325,7 +325,7 @@ class ProviderManager:
         if provider_class:
             try:
                 result = provider_class.validate_config(config)
-                return result.valid
+                return cast("bool", (result.valid))
             except (RuntimeError, ValueError) as e:
                 logger.warning(
                     "Error validating config for %s: %s",
@@ -340,7 +340,7 @@ class ProviderManager:
         provider_class = self.get_provider_class(provider_type)
         if provider_class:
             try:
-                return provider_class.get_default_config()
+                return cast("dict[str, Any] | None", (provider_class.get_default_config()))
             except (RuntimeError, ValueError) as e:
                 logger.warning(
                     "Error getting default config for %s: %s",
@@ -354,7 +354,7 @@ class ProviderManager:
         provider_class = self.get_provider_class(provider_type)
         if provider_class:
             try:
-                return provider_class.supports_feature(feature)
+                return cast("bool", (provider_class.supports_feature(feature)))
             except (RuntimeError, ValueError) as e:
                 logger.warning(
                     "Error checking feature support for %s: %s",
@@ -414,7 +414,7 @@ class ProviderManager:
                 if "gemini" in command:
                     return "gemini_cli"
                 return "codex_cli"
-            return provider_type
+            return cast("str | None", (provider_type))
 
         # Try to infer from other config fields
         command = config.get("command", "").lower()

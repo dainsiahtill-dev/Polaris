@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import functools
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.roles.kernel.public import (
     CONSTITUTION,
@@ -201,7 +201,7 @@ class ConstitutionalCoordinator:
 
     def get_violations(self) -> list[dict[str, Any]]:
         """获取违规记录。"""
-        return self._guard.get_violations()
+        return cast("list[dict[str, Any]]", (self._guard.get_violations()))
 
 
 def patch_role_node(base_node_class: type[BaseRoleNode]) -> type[BaseRoleNode]:

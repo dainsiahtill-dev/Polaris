@@ -11,7 +11,7 @@ Both branches remain inside KernelOne storage policy boundaries.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 # Re-export canonical function from kernelone.storage.paths
 from polaris.kernelone.storage.paths import resolve_preferred_logical_prefix  # noqa: F401
@@ -30,14 +30,19 @@ def resolve_preferred_sqlite_path(
 ) -> str:
     """Resolve SQLite path through KernelOne DB policy with runtime->workspace fallback."""
     try:
-        return kernel_db.resolve_sqlite_path(runtime_logical_path, ensure_parent=True)
+        return cast("str", (kernel_db.resolve_sqlite_path(runtime_logical_path, ensure_parent=True)))
     except (RuntimeError, ValueError) as runtime_exc:
         logger.warning(
             "roles.session runtime sqlite path unavailable (%s), fallback to %s",
             runtime_exc,
             workspace_fallback_logical_path,
         )
-        return kernel_db.resolve_sqlite_path(
-            workspace_fallback_logical_path,
-            ensure_parent=True,
+        return cast(
+            "str",
+            (
+                kernel_db.resolve_sqlite_path(
+                    workspace_fallback_logical_path,
+                    ensure_parent=True,
+                )
+            ),
         )

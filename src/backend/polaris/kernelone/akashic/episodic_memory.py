@@ -19,7 +19,7 @@ import os
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.fs.jsonl.locking import file_lock
 from polaris.kernelone.storage import resolve_runtime_path
@@ -210,7 +210,7 @@ class AkashicEpisodicMemory:
                     if data.get("turn_index") == turn_index:
                         if isinstance(data.get("created_at"), str):
                             data["created_at"] = datetime.fromisoformat(data["created_at"])
-                        return data
+                        return cast("dict[str, Any] | None", (data))
         except (json.JSONDecodeError, TypeError):
             pass
         return None
@@ -294,7 +294,7 @@ class AkashicEpisodicMemory:
                     if data.get("episode_id") == episode_id:
                         if isinstance(data.get("created_at"), str):
                             data["created_at"] = datetime.fromisoformat(data["created_at"])
-                        return data
+                        return cast("dict[str, Any] | None", (data))
         except (json.JSONDecodeError, TypeError):
             pass
         return None

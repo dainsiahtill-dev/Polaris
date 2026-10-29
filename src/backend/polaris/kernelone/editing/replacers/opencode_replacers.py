@@ -20,7 +20,7 @@ Reference: OpenCode packages/opencode/src/tool/edit.ts
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -526,7 +526,7 @@ class EscapeNormalizedReplacer:
             if seq.startswith("\\x") or seq.startswith("\\X"):
                 # Hex escape: \xAB
                 return chr(int(seq[2:], 16))
-            return escape_map.get(seq, seq)
+            return cast("str", (escape_map.get(seq, seq)))
 
         return EscapeNormalizedReplacer._ESCAPE_PATTERN.sub(replace_escape, text)
 

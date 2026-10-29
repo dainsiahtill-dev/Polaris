@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends
 from polaris.cells.llm.control_plane.public import list_ollama_models, ollama_stop
@@ -17,4 +17,4 @@ def v2_get_ollama_models() -> dict[str, Any]:
 @router.post("/v2/ollama/stop", dependencies=[Depends(require_auth)], response_model=OllamaStopResponse)
 def v2_stop_ollama_models() -> dict[str, Any]:
     """Stop running Ollama models."""
-    return ollama_stop()
+    return cast("dict[str, Any]", (ollama_stop()))

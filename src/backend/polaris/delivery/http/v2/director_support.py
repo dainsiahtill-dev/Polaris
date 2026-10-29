@@ -20,7 +20,7 @@ import asyncio
 import json
 import os
 import time
-from typing import Any
+from typing import Any, cast
 
 from fastapi import HTTPException, Request, status
 from polaris.delivery.http.v2.director_models import TaskResponse
@@ -52,7 +52,7 @@ def _workspace_from_request(request: Request, workspace: str | None = None) -> s
     from polaris.delivery.http.v2 import director as _d
 
     state = getattr(request.app.state, "app_state", None) or request.app.state
-    return _d.requested_or_active_workspace(state.settings, workspace or "")
+    return cast("str", (_d.requested_or_active_workspace(state.settings, workspace or "")))
 
 
 def _ensure_snapshot_workspace(request: Request, snapshot: Any, run_id: str, workspace: str) -> None:
@@ -104,7 +104,7 @@ async def _projected_worker_rows(request: Request, workspace: str | None = None)
     except (RuntimeError, ValueError):
         _d.logger.debug("Director worker projection unavailable for workspace=%s", resolved_workspace, exc_info=True)
         return []
-    return _d._worker_rows_from_projection(projection)
+    return cast("list[dict[str, Any]]", (_d._worker_rows_from_projection(projection)))
 
 
 def _get_workflow_snapshot_sync(

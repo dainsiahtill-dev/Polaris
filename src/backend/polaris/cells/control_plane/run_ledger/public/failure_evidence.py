@@ -12,7 +12,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.events.final_request_evidence import looks_like_failed_gate_evidence_context_payload
 
@@ -340,7 +340,7 @@ def looks_like_failure_evidence_payload(value: Any) -> bool:
         O(k) via the final-request evidence context predicate; O(1) memory.
     """
 
-    return looks_like_failed_gate_evidence_context_payload(value)
+    return cast("bool", (looks_like_failed_gate_evidence_context_payload(value)))
 
 
 def _merge_failure_evidence_rows_into_payload(

@@ -52,7 +52,7 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from contextlib import suppress
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.constants import (
     AGENT_ERROR_BACKOFF_DELAY_SECONDS,
@@ -540,7 +540,7 @@ class BaseAgent(ABC):
                 message.receiver or "BROADCAST",
             )
 
-        return success
+        return cast("bool", (success))
 
     def _message_to_envelope(self, message: AgentMessage) -> AgentEnvelope:
         """Convert AgentMessage to AgentEnvelope for transport.

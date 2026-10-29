@@ -9,7 +9,7 @@ import re
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.infrastructure.db.adapters import SqliteAdapter
 from polaris.kernelone.constants import DEFAULT_SHORT_TIMEOUT_SECONDS
@@ -152,7 +152,7 @@ class SqliteRuntimeStore:
             ensure_parent=True,
         )
         self._ensure_core_tables(conn)
-        return conn
+        return cast("sqlite3.Connection", (conn))
 
     def _ensure_core_tables(self, conn: sqlite3.Connection) -> None:
         required = {
@@ -176,7 +176,7 @@ class SqliteRuntimeStore:
 
     @staticmethod
     def _now() -> str:
-        return _now()
+        return cast("str", (_now()))
 
     @staticmethod
     def _loads_json(raw: str | None, default: Any) -> Any:

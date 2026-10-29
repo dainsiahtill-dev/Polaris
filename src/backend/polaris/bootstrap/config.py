@@ -6,7 +6,7 @@ import json
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from polaris.bootstrap.config_alias_audit import record_config_alias_migration
 from polaris.config.director_config import DirectorConfig
@@ -787,7 +787,7 @@ class Settings(BaseModel):
 
     @property
     def model(self) -> str:
-        return self.llm.model
+        return cast("str", (self.llm.model))
 
     @model.setter
     def model(self, value: str) -> None:
@@ -795,7 +795,7 @@ class Settings(BaseModel):
 
     @property
     def pm_backend(self) -> str:
-        return self.pm.backend
+        return cast("str", (self.pm.backend))
 
     @pm_backend.setter
     def pm_backend(self, value: str) -> None:
@@ -803,7 +803,7 @@ class Settings(BaseModel):
 
     @property
     def pm_model(self) -> str | None:
-        return self.pm.model
+        return cast("str | None", (self.pm.model))
 
     @pm_model.setter
     def pm_model(self, value: str | None) -> None:
@@ -811,7 +811,7 @@ class Settings(BaseModel):
 
     @property
     def director_model(self) -> str | None:
-        return self.director.model
+        return cast("str | None", (self.director.model))
 
     @director_model.setter
     def director_model(self, value: str | None) -> None:
@@ -819,7 +819,7 @@ class Settings(BaseModel):
 
     @property
     def pm_show_output(self) -> bool:
-        return self.pm.show_output
+        return cast("bool", (self.pm.show_output))
 
     @pm_show_output.setter
     def pm_show_output(self, value: bool) -> None:
@@ -827,7 +827,7 @@ class Settings(BaseModel):
 
     @property
     def pm_runs_director(self) -> bool:
-        return self.pm.runs_director
+        return cast("bool", (self.pm.runs_director))
 
     @pm_runs_director.setter
     def pm_runs_director(self, value: bool) -> None:
@@ -835,7 +835,7 @@ class Settings(BaseModel):
 
     @property
     def pm_director_show_output(self) -> bool:
-        return self.pm.director_show_output
+        return cast("bool", (self.pm.director_show_output))
 
     @pm_director_show_output.setter
     def pm_director_show_output(self, value: bool) -> None:
@@ -843,7 +843,7 @@ class Settings(BaseModel):
 
     @property
     def pm_director_timeout(self) -> int:
-        return self.pm.director_timeout
+        return cast("int", (self.pm.director_timeout))
 
     @pm_director_timeout.setter
     def pm_director_timeout(self, value: int) -> None:
@@ -851,7 +851,7 @@ class Settings(BaseModel):
 
     @property
     def pm_director_iterations(self) -> int:
-        return self.pm.director_iterations
+        return cast("int", (self.pm.director_iterations))
 
     @pm_director_iterations.setter
     def pm_director_iterations(self, value: int) -> None:
@@ -859,7 +859,7 @@ class Settings(BaseModel):
 
     @property
     def pm_director_match_mode(self) -> str:
-        return self.pm.director_match_mode
+        return cast("str", (self.pm.director_match_mode))
 
     @pm_director_match_mode.setter
     def pm_director_match_mode(self, value: str) -> None:
@@ -867,7 +867,7 @@ class Settings(BaseModel):
 
     @property
     def pm_agents_approval_mode(self) -> str:
-        return self.pm.agents_approval_mode
+        return cast("str", (self.pm.agents_approval_mode))
 
     @pm_agents_approval_mode.setter
     def pm_agents_approval_mode(self, value: str) -> None:
@@ -875,7 +875,7 @@ class Settings(BaseModel):
 
     @property
     def pm_agents_approval_timeout(self) -> int:
-        return self.pm.agents_approval_timeout
+        return cast("int", (self.pm.agents_approval_timeout))
 
     @pm_agents_approval_timeout.setter
     def pm_agents_approval_timeout(self, value: int) -> None:
@@ -883,7 +883,7 @@ class Settings(BaseModel):
 
     @property
     def pm_max_failures(self) -> int:
-        return self.pm.max_failures
+        return cast("int", (self.pm.max_failures))
 
     @pm_max_failures.setter
     def pm_max_failures(self, value: int) -> None:
@@ -891,7 +891,7 @@ class Settings(BaseModel):
 
     @property
     def pm_max_blocked(self) -> int:
-        return self.pm.max_blocked
+        return cast("int", (self.pm.max_blocked))
 
     @pm_max_blocked.setter
     def pm_max_blocked(self, value: int) -> None:
@@ -899,7 +899,7 @@ class Settings(BaseModel):
 
     @property
     def pm_max_same(self) -> int:
-        return self.pm.max_same
+        return cast("int", (self.pm.max_same))
 
     @pm_max_same.setter
     def pm_max_same(self, value: int) -> None:
@@ -907,7 +907,7 @@ class Settings(BaseModel):
 
     @property
     def pm_blocked_strategy(self) -> str:
-        return self.pm.blocked_strategy
+        return cast("str", (self.pm.blocked_strategy))
 
     @pm_blocked_strategy.setter
     def pm_blocked_strategy(self, value: str) -> None:
@@ -915,7 +915,7 @@ class Settings(BaseModel):
 
     @property
     def pm_blocked_degrade_max_retries(self) -> int:
-        return self.pm.blocked_degrade_max_retries
+        return cast("int", (self.pm.blocked_degrade_max_retries))
 
     @pm_blocked_degrade_max_retries.setter
     def pm_blocked_degrade_max_retries(self, value: int) -> None:
@@ -923,7 +923,7 @@ class Settings(BaseModel):
 
     @property
     def director_iterations(self) -> int:
-        return self.director.iterations
+        return cast("int", (self.director.iterations))
 
     @director_iterations.setter
     def director_iterations(self, value: int) -> None:
@@ -931,7 +931,7 @@ class Settings(BaseModel):
 
     @property
     def director_execution_mode(self) -> str:
-        return self.director.execution_mode
+        return cast("str", (self.director.execution_mode))
 
     @director_execution_mode.setter
     def director_execution_mode(self, value: str) -> None:
@@ -940,7 +940,7 @@ class Settings(BaseModel):
 
     @property
     def director_max_parallel_tasks(self) -> int:
-        return self.director.max_parallel_tasks
+        return cast("int", (self.director.max_parallel_tasks))
 
     @director_max_parallel_tasks.setter
     def director_max_parallel_tasks(self, value: int) -> None:
@@ -948,7 +948,7 @@ class Settings(BaseModel):
 
     @property
     def director_ready_timeout_seconds(self) -> int:
-        return self.director.ready_timeout_seconds
+        return cast("int", (self.director.ready_timeout_seconds))
 
     @director_ready_timeout_seconds.setter
     def director_ready_timeout_seconds(self, value: int) -> None:
@@ -956,7 +956,7 @@ class Settings(BaseModel):
 
     @property
     def director_claim_timeout_seconds(self) -> int:
-        return self.director.claim_timeout_seconds
+        return cast("int", (self.director.claim_timeout_seconds))
 
     @director_claim_timeout_seconds.setter
     def director_claim_timeout_seconds(self, value: int) -> None:
@@ -964,7 +964,7 @@ class Settings(BaseModel):
 
     @property
     def director_phase_timeout_seconds(self) -> int:
-        return self.director.phase_timeout_seconds
+        return cast("int", (self.director.phase_timeout_seconds))
 
     @director_phase_timeout_seconds.setter
     def director_phase_timeout_seconds(self, value: int) -> None:
@@ -972,7 +972,7 @@ class Settings(BaseModel):
 
     @property
     def director_complete_timeout_seconds(self) -> int:
-        return self.director.complete_timeout_seconds
+        return cast("int", (self.director.complete_timeout_seconds))
 
     @director_complete_timeout_seconds.setter
     def director_complete_timeout_seconds(self, value: int) -> None:
@@ -980,7 +980,7 @@ class Settings(BaseModel):
 
     @property
     def director_task_timeout_seconds(self) -> int:
-        return self.director.task_timeout_seconds
+        return cast("int", (self.director.task_timeout_seconds))
 
     @director_task_timeout_seconds.setter
     def director_task_timeout_seconds(self, value: int) -> None:
@@ -988,7 +988,7 @@ class Settings(BaseModel):
 
     @property
     def director_forever(self) -> bool:
-        return self.director.forever
+        return cast("bool", (self.director.forever))
 
     @director_forever.setter
     def director_forever(self, value: bool) -> None:
@@ -996,7 +996,7 @@ class Settings(BaseModel):
 
     @property
     def director_show_output(self) -> bool:
-        return self.director.show_output
+        return cast("bool", (self.director.show_output))
 
     @director_show_output.setter
     def director_show_output(self, value: bool) -> None:

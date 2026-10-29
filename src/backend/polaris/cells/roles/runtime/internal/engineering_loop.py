@@ -9,7 +9,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from polaris.cells.roles.runtime.internal.engineering_roles import register_consult_tool, role_instruction, role_scope
 from polaris.cells.roles.runtime.internal.engineering_session import EngineeringSessionStore
@@ -115,7 +115,7 @@ def _native_calls(response: AIResponse) -> list[ToolCall]:
         raise NativeTurnRejectedError(
             f"native tool turn rejected: {detail or 'incomplete parser result'}", calls, terminal
         )
-    return parsed
+    return cast("list[Any]", (parsed))
 
 
 async def _invoke(

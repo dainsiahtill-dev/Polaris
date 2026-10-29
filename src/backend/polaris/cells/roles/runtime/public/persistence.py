@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.context import (
     StrategyReceiptEmitter,
@@ -279,7 +279,7 @@ def emit_strategy_receipt(
     """
     emitter = StrategyReceiptEmitter(workspace=workspace)
     receipt = run_ctx.emit_receipt(emitter=None)
-    return emitter.write_receipt(receipt)
+    return cast("Path", (emitter.write_receipt(receipt)))
 
 
 # ── History Projection ─────────────────────────────────────────────────────────

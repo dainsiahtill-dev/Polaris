@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public import stable_hash
 from polaris.cells.roles.adapters.public import (
@@ -241,15 +241,20 @@ async def commit_materialization_deferred_repairs(
             fence_admin_port=fence_ports.admin,
             mutation_port=mutation_port,
         )
-        return await commit_deferred_director_repair_tool_results(
-            workspace=workspace_token,
-            tool_results=tool_results,
-            execution_attempt=execution_attempt,
-            execution_attempt_authority=execution_attempt_authority,
-            directed_effect_runtime=directed_effect_runtime,
-            turn_id=turn_id,
-            capability_scope=capability_scope,
-            capability_token=capability_token,
+        return cast(
+            "list[dict[str, Any]]",
+            (
+                await commit_deferred_director_repair_tool_results(
+                    workspace=workspace_token,
+                    tool_results=tool_results,
+                    execution_attempt=execution_attempt,
+                    execution_attempt_authority=execution_attempt_authority,
+                    directed_effect_runtime=directed_effect_runtime,
+                    turn_id=turn_id,
+                    capability_scope=capability_scope,
+                    capability_token=capability_token,
+                )
+            ),
         )
     except Exception as exc:  # noqa: BLE001 - materialization commit is best-effort fail-closed
         logger.error(

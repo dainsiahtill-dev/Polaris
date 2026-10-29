@@ -20,7 +20,7 @@ deterministic judge，不需要 LLM）。运行产出每用例 PASS/FAIL + 聚�
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from polaris.cells.roles.kernel.public.service import (
     DEFAULT_SIGNAL_PROVIDERS,
@@ -50,7 +50,7 @@ class _BlueprintSignal:
     id = "blueprint_overview"
 
     def applies_to(self, ctx: SignalBuildContext) -> bool:
-        return ctx.role == "chief_engineer"
+        return cast("bool", (ctx.role == "chief_engineer"))
 
     def priority(self, ctx: SignalBuildContext) -> int:
         return 5

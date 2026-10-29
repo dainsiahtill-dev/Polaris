@@ -668,10 +668,10 @@ class CognitivePipelineCoordinator:
             content = pipeline_result.acting_output.content
             if posture == InteractionPosture.TRANSPARENT_REASONING and pipeline_result.thinking_output:
                 content = f"[Thinking] {pipeline_result.thinking_output.content}\n\n[Action] {content}"
-            return content
+            return cast("str", (content))
 
         if pipeline_result.thinking_output:
-            return pipeline_result.thinking_output.content
+            return cast("str", (pipeline_result.thinking_output.content))
 
         return "No output generated"
 

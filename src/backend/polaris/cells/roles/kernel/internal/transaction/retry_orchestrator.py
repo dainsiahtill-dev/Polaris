@@ -403,7 +403,7 @@ class RetryOrchestrator:
             return None
         merged_receipt["batch_id"] = str(batch_id)
         merged_receipt["turn_id"] = turn_id
-        return merged_receipt
+        return cast("dict[str, Any] | None", (merged_receipt))
 
     def _build_retry_context(
         self,
@@ -644,7 +644,9 @@ class RetryOrchestrator:
             )
             # Wave-3: carry the bootstrap READ receipts in the turn's authoritative
             # receipt so the next turn's WorkingMemory can see the file content.
-            return merge_bootstrap_receipt_into_result(deterministic_result, bootstrap_receipt)
+            return cast(
+                "dict[str, Any] | None", (merge_bootstrap_receipt_into_result(deterministic_result, bootstrap_receipt))
+            )
         except RuntimeError:
             ledger.tool_batch_count = deterministic_batch_count_before
             rollback_state_after_retry_batch_failure(state_machine, ledger)
@@ -937,7 +939,7 @@ class RetryOrchestrator:
                     ledger=ledger,
                 )
                 _clear_read_bootstrap_progress(turn_id)
-                return attempt_result
+                return cast("dict[str, Any]", (attempt_result))
             except RuntimeError as retry_exc:
                 # FIX-20260504: rollback batch count so failed attempts don't
                 # accumulate and cause assert_single_tool_batch to fail on retries.
@@ -1260,7 +1262,9 @@ class RetryOrchestrator:
                     # the ceiling counter every loop (observed: count stuck at 1/2
                     # for 7 iterations), so the ceiling never fires. The streak is
                     # only reset on a genuine forced-write escalation success.
-                    return merge_bootstrap_receipt_into_result(followup_result, bootstrap_receipt)
+                    return cast(
+                        "dict[str, Any]", (merge_bootstrap_receipt_into_result(followup_result, bootstrap_receipt))
+                    )
                 except RuntimeError as followup_exc:
                     # FIX-20260504: rollback batch count so failed attempts don't
                     # accumulate and cause assert_single_tool_batch to fail.

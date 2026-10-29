@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import cast
 
 from polaris.cells.policy.workspace_guard.service import ensure_workspace_target_allowed
 from polaris.domain.exceptions import NotFoundError, ValidationError
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 def workspace_status_path(workspace: str) -> str:
     if not workspace:
         return ""
-    return resolve_workspace_persistent_path(workspace, "workspace/meta/workspace_status.json")
+    return cast("str", (resolve_workspace_persistent_path(workspace, "workspace/meta/workspace_status.json")))
 
 
 def validate_workspace(

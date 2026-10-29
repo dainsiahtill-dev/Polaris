@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import functools
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from polaris.cells.roles.kernel.internal.constitution_rules import (
     AntiPattern,
@@ -138,7 +138,7 @@ class ConstitutionGuard:
 
     def get_violations(self) -> list[dict[str, Any]]:
         """获取所有违规记录。"""
-        return self._violations + self.enforcer.get_violations()
+        return cast("list[dict[str, Any]]", (self._violations + self.enforcer.get_violations()))
 
 
 def constitutional_role(role: Role, strict: bool = True) -> Callable[[type], type]:
@@ -285,9 +285,9 @@ class ConstitutionalRoleContext:
                     detail=f"Cannot access {role_name} result directly",
                 )
 
-            return self._context.get_previous_result(role_name)
+            return cast("dict[str, Any] | None", (self._context.get_previous_result(role_name)))
         except ValueError:
-            return self._context.get_previous_result(role_name)
+            return cast("dict[str, Any] | None", (self._context.get_previous_result(role_name)))
 
     def send_to(self, target_role: Role, message: dict[str, Any]) -> None:
         """安全发送消息给其他角色。"""

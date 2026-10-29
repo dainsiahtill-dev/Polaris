@@ -64,7 +64,7 @@ class CommittedTurnReceiptObservationV1:
     @property
     def batch_receipt(self) -> dict[str, Any]:
         """Return a fresh receipt mapping so callers cannot alter the proof."""
-        return json.loads(self.batch_receipt_json)
+        return cast("dict[str, Any]", (json.loads(self.batch_receipt_json)))
 
 
 def _mapping(value: object) -> dict[str, Any]:

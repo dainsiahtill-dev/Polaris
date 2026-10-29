@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 try:
     from nats.js.errors import NotFoundError as JSConsumerNotFoundError
@@ -172,7 +172,7 @@ class StreamManager:
             info = await self._js.stream_info(self._config.stream_name)
             # Convert to dict if needed
             if hasattr(info, "dict"):
-                return info.dict()
+                return cast("dict[str, Any] | None", (info.dict()))
             return info  # type: ignore[return-value]
         except JSConsumerNotFoundError:
             return None
@@ -404,8 +404,8 @@ class ConsumerManager:
             info = await self._js.consumer_info(self._stream_name, consumer_name)
             # Convert to dict if needed
             if hasattr(info, "dict"):
-                return info.dict()
-            return info
+                return cast("dict[str, Any] | None", (info.dict()))
+            return cast("dict[str, Any] | None", (info))
         except JSConsumerNotFoundError:
             return None
 

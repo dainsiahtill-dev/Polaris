@@ -10,7 +10,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.delivery.cli.pm.config import PROJECT_ROOT
 from polaris.delivery.cli.pm.director_mgmt import (
@@ -95,10 +95,15 @@ def _resolve_effective_director_timeout(args: argparse.Namespace) -> int | None:
     """
     cli_timeout = getattr(args, "director_timeout", None)
     if cli_timeout is not None:
-        return timeout_seconds_or_none(cli_timeout, default=0)
-    return timeout_seconds_or_none(
-        os.environ.get("KERNELONE_DIRECTOR_RUN_TIMEOUT", "0"),
-        default=0,
+        return cast("int | None", (timeout_seconds_or_none(cli_timeout, default=0)))
+    return cast(
+        "int | None",
+        (
+            timeout_seconds_or_none(
+                os.environ.get("KERNELONE_DIRECTOR_RUN_TIMEOUT", "0"),
+                default=0,
+            )
+        ),
     )
 
 

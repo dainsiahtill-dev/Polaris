@@ -21,7 +21,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.context.context_os.content_store import ContentRef, ContentStore, RefTracker
 
@@ -271,7 +271,7 @@ class MultiResolutionStore:
         if content is None:
             content = self._try_reconstruct(multi_res, preferred_level)
 
-        return content
+        return cast("str | None", (content))
 
     def _try_reconstruct(
         self,
@@ -300,7 +300,7 @@ class MultiResolutionStore:
                         next_level.value,
                         multi_res.content_id[:8],
                     )
-                    return content
+                    return cast("str", (content))
             current_level = next_level
 
         # All resolutions evicted - return placeholder

@@ -20,7 +20,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.orchestration.pm_planning.internal.quality_gate.primitives import (
     _append_unique_text_item,
@@ -473,7 +473,7 @@ _CARD3D_PM_WORKSPACE_SIGNAL_PATTERNS = (
 
 
 def _game_domain_path_roots(domain: str) -> set[str]:
-    return _domain_path_roots(domain, _GAME_PM_DOMAIN_SCOPE_PATHS)
+    return cast("set[str]", (_domain_path_roots(domain, _GAME_PM_DOMAIN_SCOPE_PATHS)))
 
 
 def _card3d_domain_path_roots(domain: str) -> set[str]:
@@ -525,7 +525,7 @@ def _normalize_game_policy_path(path: str) -> str:
         return "scripts/test.mjs"
     if normalized.startswith("test/"):
         return f"tests/{normalized.removeprefix('test/')}"
-    return normalized
+    return cast("str", (normalized))
 
 
 def _sanitize_game_policy_paths_in_place(task: dict[str, Any]) -> int:
@@ -735,7 +735,7 @@ def _infer_go_target_files_for_task(task: dict[str, Any]) -> list[str]:
         if representative:
             targets.append(representative)
     targets.extend(text_targets)
-    return _dedupe_paths(targets)
+    return cast("list[str]", (_dedupe_paths(targets)))
 
 
 def _go_scope_has_existing_target(scope_path: str, target_files: list[str]) -> bool:
@@ -754,7 +754,7 @@ def _go_existing_targets_for_scope(scope_path: str, target_files: list[str]) -> 
             continue
         if Path(normalized_target).suffix.lower() == ".go":
             targets.append(target)
-    return _dedupe_paths(targets)
+    return cast("list[str]", (_dedupe_paths(targets)))
 
 
 def _go_contract_prefers_src_layout(task: dict[str, Any], target_files: list[str]) -> bool:
@@ -901,7 +901,7 @@ def _go_text_target_files_for_task(task: dict[str, Any]) -> list[str]:
         targets.append(_go_engine_representative_file(prefer_src_layout=prefer_src_layout))
     if "readme" in lowered or "文档" in lowered:
         targets.append("README.md")
-    return _dedupe_paths(targets)
+    return cast("list[str]", (_dedupe_paths(targets)))
 
 
 def _extract_go_contract_file_paths_from_text(text: str) -> list[str]:
@@ -912,16 +912,21 @@ def _extract_go_contract_file_paths_from_text(text: str) -> list[str]:
         r"(?![A-Za-z0-9_./-])",
         re.IGNORECASE,
     )
-    return _dedupe_paths(
-        [
-            _normalize_path(match.group(0))
-            for match in pattern.finditer(normalized_text)
-            if not _is_go_foreign_file_path(match.group(0))
-            and not (
-                _GO_DEFAULT_TOPOLOGY_PATH_RE.fullmatch(_normalize_path(match.group(0)))
-                and _go_text_match_is_negated(normalized_text, match.start(), match.end())
+    return cast(
+        "list[str]",
+        (
+            _dedupe_paths(
+                [
+                    _normalize_path(match.group(0))
+                    for match in pattern.finditer(normalized_text)
+                    if not _is_go_foreign_file_path(match.group(0))
+                    and not (
+                        _GO_DEFAULT_TOPOLOGY_PATH_RE.fullmatch(_normalize_path(match.group(0)))
+                        and _go_text_match_is_negated(normalized_text, match.start(), match.end())
+                    )
+                ]
             )
-        ]
+        ),
     )
 
 
@@ -1681,19 +1686,19 @@ def _primary_task_evidence_path(task: dict[str, Any], workspace_full: Any = "") 
     for path in _normalize_path_list(task.get("target_files") or []):
         normalized = _normalize_path(path)
         if normalized and _is_file_like_pm_scope_path(normalized):
-            return normalized
+            return cast("str", (normalized))
     for path in _collect_task_delivery_paths(task):
         normalized = _normalize_path(path)
         if normalized and _is_file_like_pm_scope_path(normalized):
-            return normalized
+            return cast("str", (normalized))
     for path in _collect_task_delivery_paths(task):
         representative = _representative_workspace_file_for_scope(path, workspace_full)
         if representative:
-            return representative
+            return cast("str", (representative))
     for path in _collect_task_delivery_paths(task):
         fallback = _fallback_file_evidence_path_for_scope(path)
         if fallback:
-            return fallback
+            return cast("str", (fallback))
     return _GAME_PM_DOMAIN_SCOPE_PATHS["engine"]
 
 

@@ -6,7 +6,7 @@ import contextlib
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 # Optional readline import for cross-platform compatibility
 try:
@@ -328,7 +328,7 @@ def _prompt_toolkit_input(
             enable_history_search=True,
             complete_in_thread=True,
         )
-        return session.prompt()
+        return cast("str", (session.prompt()))
     except (EOFError, KeyboardInterrupt):
         raise
     except (RuntimeError, ValueError):

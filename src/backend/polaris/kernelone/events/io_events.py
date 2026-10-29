@@ -10,7 +10,7 @@ import time
 import uuid
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone._runtime_config import (
     get_workspace,
@@ -76,7 +76,7 @@ def _infer_workspace_for_path(path: str) -> str:
     # Priority: KERNELONE_WORKSPACE (via _runtime_config), then KERNELONE_WORKSPACE fallback
     configured = get_workspace()
     if configured:
-        return os.path.abspath(configured)
+        return cast("str", (os.path.abspath(configured)))
     return os.getcwd()
 
 
@@ -452,7 +452,7 @@ def _should_suppress_llm_event(path: str, fingerprint: str, now_ts: float) -> bo
 
 
 def utc_iso_now() -> str:
-    return utc_now_str()
+    return cast("str", (utc_now_str()))
 
 
 def _publish_runtime_event_to_bus(

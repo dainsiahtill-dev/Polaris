@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.events.final_request_evidence._constants import (
     _CONTEXT_SNAPSHOT_HASH_RE,
@@ -60,7 +60,7 @@ def looks_like_pm_contract_payload(value: Any) -> bool:
         ),
     )
     if has_contract_schema:
-        return has_structured_contract
+        return cast("bool", (has_structured_contract))
     return has_task_identity and has_structured_contract
 
 
@@ -104,7 +104,7 @@ def looks_like_ce_blueprint_payload(value: Any) -> bool:
     ):
         return False
     if has_blueprint_schema:
-        return has_structured_blueprint
+        return cast("bool", (has_structured_blueprint))
     return has_blueprint_identity and has_structured_blueprint
 
 
@@ -209,7 +209,7 @@ def normalize_context_snapshot_ref(value: Any) -> str:
     match = _CONTEXT_SNAPSHOT_HASH_RE.search(token)
     if not match:
         return ""
-    return match.group(1).lower()
+    return cast("str", (match.group(1).lower()))
 
 
 def looks_like_workspace_quality_evidence_payload(value: Any) -> bool:

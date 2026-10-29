@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.orchestration.workflow_activity.internal.activities.base import register_activity
@@ -65,22 +65,32 @@ def _workflow_classification(
     director_status: str = "",
 ) -> dict[str, Any]:
     if passed:
-        return build_qa_pass_classification_v1(
-            reason=reason or "QA workflow passed",
-        ).to_dict()
+        return cast(
+            "dict[str, Any]",
+            (
+                build_qa_pass_classification_v1(
+                    reason=reason or "QA workflow passed",
+                ).to_dict()
+            ),
+        )
     failure_class = (
         FailureClassV1.INCOMPLETE_MATERIALIZATION.value
         if director_status and director_status != "completed"
         else FailureClassV1.IMPLEMENTATION_DEFECT.value
     )
-    return build_qa_failure_classification_v1(
-        failure_class=failure_class,
-        route="pending_exec",
-        reason=reason or "QA workflow failed",
-        repairable_by_director=True,
-        owner="director",
-        responsible_layer="director",
-    ).to_dict()
+    return cast(
+        "dict[str, Any]",
+        (
+            build_qa_failure_classification_v1(
+                failure_class=failure_class,
+                route="pending_exec",
+                reason=reason or "QA workflow failed",
+                repairable_by_director=True,
+                owner="director",
+                responsible_layer="director",
+            ).to_dict()
+        ),
+    )
 
 
 @register_activity("register_traceability_verdict")

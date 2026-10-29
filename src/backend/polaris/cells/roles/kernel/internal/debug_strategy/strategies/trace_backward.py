@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import ClassVar
+from typing import ClassVar, cast
 
 from polaris.cells.roles.kernel.internal.debug_strategy.models import (
     DebugPlan,
@@ -287,7 +287,7 @@ class TraceBackwardStrategy(BaseDebugStrategy):
     def _estimate_time(self, steps: list[DebugStep]) -> int:
         """估算调试时间。"""
         total_seconds = sum(step.timeout_seconds for step in steps)
-        return max(5, total_seconds // 60)  # 最少5分钟
+        return cast("int", (max(5, total_seconds // 60)))  # 最少5分钟
 
 
 __all__ = ["TraceBackwardStrategy"]

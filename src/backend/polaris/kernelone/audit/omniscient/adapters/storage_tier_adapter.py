@@ -32,7 +32,7 @@ import shutil
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +150,7 @@ class StorageTierAdapter:
         Returns:
             Event ID.
         """
-        return await self._adapter.emit(event)
+        return cast("str", (await self._adapter.emit(event)))
 
     # -------------------------------------------------------------------------
     # Tier Classification

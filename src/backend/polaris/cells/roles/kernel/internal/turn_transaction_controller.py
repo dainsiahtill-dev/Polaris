@@ -59,7 +59,7 @@ import logging
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import replace
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.events.fact_stream.public import (
     FactStreamError,
@@ -496,12 +496,12 @@ class TurnTransactionController:
     @staticmethod
     def _detect_target_files_known(context: list[dict[str, Any]]) -> bool:
         """检测上下文中是否包含明确的文件路径信息。"""
-        return delivery_intent_resolver.detect_target_files_known(context)
+        return cast("bool", (delivery_intent_resolver.detect_target_files_known(context)))
 
     @staticmethod
     def _is_refusal_response(response: RawLLMResponse) -> bool:
         """检测 LLM 响应是否为拒绝执行（refusal）."""
-        return delivery_intent_resolver.is_refusal_response(response)
+        return cast("bool", (delivery_intent_resolver.is_refusal_response(response)))
 
     @staticmethod
     def _inherit_materialize_from_history(
@@ -601,12 +601,12 @@ class TurnTransactionController:
     @staticmethod
     def _generate_turn_request_id() -> str:
         """生成单次 execute_stream 调用内稳定的 request id。"""
-        return correlation.generate_turn_request_id()
+        return cast("str", (correlation.generate_turn_request_id()))
 
     @staticmethod
     def _generate_span_id(*, prefix: str = "span") -> str:
         """生成 span id。"""
-        return correlation.generate_span_id(prefix=prefix)
+        return cast("str", (correlation.generate_span_id(prefix=prefix)))
 
     @classmethod
     def _attach_event_correlation(
@@ -628,7 +628,7 @@ class TurnTransactionController:
     @staticmethod
     def _resolve_workspace_for_truthlog(context: list[dict[str, Any]]) -> str:
         """Resolve workspace path for turn truthlog persistence."""
-        return correlation.resolve_workspace_for_truthlog(context)
+        return cast("str", (correlation.resolve_workspace_for_truthlog(context)))
 
     @classmethod
     def _build_turn_truthlog_recorder(cls, context: list[dict[str, Any]]) -> TurnTruthLogRecorder | None:
@@ -707,7 +707,7 @@ class TurnTransactionController:
 
         委托给 intent_classifier.classify_intent_regex 以消除代码重复。
         """
-        return delivery_intent_resolver.classify_user_intent(message)
+        return cast("str", (delivery_intent_resolver.classify_user_intent(message)))
 
     async def _requires_mutation_intent_hybrid(self, message: str) -> bool:
         """Async hybrid version of _requires_mutation_intent.
@@ -715,12 +715,12 @@ class TurnTransactionController:
         统一委托 CognitiveGateway（Embedding -> SLM -> Regex 级联瀑布），
         不再保留本地 hybrid 路径，确保全系统意图分类单一真相来源。
         """
-        return await delivery_intent_resolver.requires_mutation_intent_hybrid(message)
+        return cast("bool", (await delivery_intent_resolver.requires_mutation_intent_hybrid(message)))
 
     @classmethod
     def _requires_mutation_intent(cls, message: str) -> bool:
         """判定用户请求是否要求代码/文件突变（需要写工具）。"""
-        return delivery_intent_resolver.requires_mutation_intent(message)
+        return cast("bool", (delivery_intent_resolver.requires_mutation_intent(message)))
 
     @staticmethod
     async def _resolve_delivery_mode_hybrid(user_message: str) -> DeliveryContract:
@@ -734,7 +734,7 @@ class TurnTransactionController:
     @classmethod
     def _requires_verification_intent(cls, message: str) -> bool:
         """判定用户请求是否要求验证/测试（需要 test/verify 类工具）。"""
-        return delivery_intent_resolver.requires_verification_intent(message)
+        return cast("bool", (delivery_intent_resolver.requires_verification_intent(message)))
 
     # ---------------------------------------------------------------------------
     # Public API
@@ -782,7 +782,7 @@ class TurnTransactionController:
         result["turn_outcome"] = recovered.outcome.to_dict()
         result["commit_receipt"] = recovered.receipt.to_dict()
         result["sealed_turn"] = recovered.sealed_turn.to_dict()
-        return result
+        return cast("dict[str, Any]", (result))
 
     def _commit_canonical_outcome(
         self,
@@ -1226,16 +1226,21 @@ class TurnTransactionController:
                 workspace=self._resolve_shadow_workspace(context),
                 turn_id=turn_id,
             )
-            return await self._retry_orchestrator.retry_tool_batch_after_contract_violation(
-                turn_id=turn_id,
-                context=context,
-                tool_definitions=tool_definitions,
-                state_machine=state_machine,
-                ledger=ledger,
-                stream=False,
-                shadow_engine=shadow_engine,
-                original_decision=None,
-                initial_failure_reason=str(exc),
+            return cast(
+                "dict[str, Any]",
+                (
+                    await self._retry_orchestrator.retry_tool_batch_after_contract_violation(
+                        turn_id=turn_id,
+                        context=context,
+                        tool_definitions=tool_definitions,
+                        state_machine=state_machine,
+                        ledger=ledger,
+                        stream=False,
+                        shadow_engine=shadow_engine,
+                        original_decision=None,
+                        initial_failure_reason=str(exc),
+                    )
+                ),
             )
 
         # === Phase 4: 执行决策 ===
@@ -1262,25 +1267,35 @@ class TurnTransactionController:
             ),
         )
         if guard_result is not None:
-            return guard_result
+            return cast("dict[str, Any]", (guard_result))
 
         if decision_kind == TurnDecisionKind.FINAL_ANSWER:
             return await self._handle_final_answer(decision, state_machine, ledger)
 
         elif decision_kind == TurnDecisionKind.HANDOFF_WORKFLOW:
-            return await self._tool_batch_executor.execute_tool_batch(
-                decision,
-                state_machine,
-                ledger,
-                context,
-                allowed_tool_names=set(invocation_tool_names),
+            return cast(
+                "dict[str, Any]",
+                (
+                    await self._tool_batch_executor.execute_tool_batch(
+                        decision,
+                        state_machine,
+                        ledger,
+                        context,
+                        allowed_tool_names=set(invocation_tool_names),
+                    )
+                ),
             )
 
         elif decision_kind == TurnDecisionKind.HANDOFF_DEVELOPMENT:
-            return await self._handoff_handler.handle_development_handoff(decision, state_machine, ledger)
+            return cast(
+                "dict[str, Any]",
+                (await self._handoff_handler.handle_development_handoff(decision, state_machine, ledger)),
+            )
 
         elif decision_kind == TurnDecisionKind.ASK_USER:
-            return await self._handoff_handler.handle_ask_user(decision, state_machine, ledger)
+            return cast(
+                "dict[str, Any]", (await self._handoff_handler.handle_ask_user(decision, state_machine, ledger))
+            )
 
         elif decision_kind == TurnDecisionKind.TOOL_BATCH:
             shadow_engine = self._build_stream_shadow_engine(
@@ -1289,31 +1304,41 @@ class TurnTransactionController:
             )
             allowed_tool_names = set(invocation_tool_names)
             try:
-                return await self._tool_batch_executor.execute_tool_batch(
-                    decision,
-                    state_machine,
-                    ledger,
-                    context,
-                    stream=False,
-                    shadow_engine=shadow_engine,
-                    allowed_tool_names=allowed_tool_names,
+                return cast(
+                    "dict[str, Any]",
+                    (
+                        await self._tool_batch_executor.execute_tool_batch(
+                            decision,
+                            state_machine,
+                            ledger,
+                            context,
+                            stream=False,
+                            shadow_engine=shadow_engine,
+                            allowed_tool_names=allowed_tool_names,
+                        )
+                    ),
                 )
             except RuntimeError as exc:
                 if not is_mutation_contract_violation(exc):
                     raise
-                return await self._retry_orchestrator.retry_tool_batch_after_contract_violation(
-                    turn_id=turn_id,
-                    context=context,
-                    tool_definitions=tool_definitions,
-                    state_machine=state_machine,
-                    ledger=ledger,
-                    stream=False,
-                    shadow_engine=shadow_engine,
-                    # Wave-5: bootstrap a READ-ONLY violating batch directly instead
-                    # of discarding the model's reads and re-asking.
-                    original_decision=decision,
-                    original_allowed_tool_names=invocation_tool_names,
-                    initial_failure_reason=str(exc),
+                return cast(
+                    "dict[str, Any]",
+                    (
+                        await self._retry_orchestrator.retry_tool_batch_after_contract_violation(
+                            turn_id=turn_id,
+                            context=context,
+                            tool_definitions=tool_definitions,
+                            state_machine=state_machine,
+                            ledger=ledger,
+                            stream=False,
+                            shadow_engine=shadow_engine,
+                            # Wave-5: bootstrap a READ-ONLY violating batch directly instead
+                            # of discarding the model's reads and re-asking.
+                            original_decision=decision,
+                            original_allowed_tool_names=invocation_tool_names,
+                            initial_failure_reason=str(exc),
+                        )
+                    ),
                 )
 
         else:
@@ -1477,18 +1502,28 @@ class TurnTransactionController:
         ``StreamOrchestrator`` and is monkeypatched by tests.
         """
         if self.config.continuous_execution:
-            return _build_decision_messages_impl(
-                context,
-                tool_definitions,
-                ledger,
-                tool_choice_override=tool_choice_override,
-                continuous_execution=True,
+            return cast(
+                "list[dict[str, Any]]",
+                (
+                    _build_decision_messages_impl(
+                        context,
+                        tool_definitions,
+                        ledger,
+                        tool_choice_override=tool_choice_override,
+                        continuous_execution=True,
+                    )
+                ),
             )
         if tool_choice_override is not None:
-            return _build_decision_messages_impl(
-                context, tool_definitions, ledger, tool_choice_override=tool_choice_override
+            return cast(
+                "list[dict[str, Any]]",
+                (
+                    _build_decision_messages_impl(
+                        context, tool_definitions, ledger, tool_choice_override=tool_choice_override
+                    )
+                ),
             )
-        return _build_decision_messages_impl(context, tool_definitions, ledger)
+        return cast("list[dict[str, Any]]", (_build_decision_messages_impl(context, tool_definitions, ledger)))
 
     # ---------------------------------------------------------------------------
     # 结果构建
@@ -1610,7 +1645,9 @@ class TurnTransactionController:
         Returns:
             Model name to use, or None for default model
         """
-        return adaptive_session_state.select_model_for_task(self._turn_outcome_history, task_complexity)
+        return cast(
+            "str | None", (adaptive_session_state.select_model_for_task(self._turn_outcome_history, task_complexity))
+        )
 
     def _estimate_task_complexity(self, context: list[dict[str, Any]]) -> str:
         """Estimate task complexity from context.
@@ -1621,7 +1658,7 @@ class TurnTransactionController:
         Returns:
             Complexity level: low/medium/high/complex
         """
-        return adaptive_session_state.estimate_task_complexity(context)
+        return cast("str", (adaptive_session_state.estimate_task_complexity(context)))
 
     # ---------------------------------------------------------------------------
     # Phase 3.2: Cross-Turn Learning
@@ -1663,7 +1700,7 @@ class TurnTransactionController:
         Returns:
             List of correction hints
         """
-        return adaptive_session_state.learn_from_history(self._turn_outcome_history, error_pattern)
+        return cast("list[str]", (adaptive_session_state.learn_from_history(self._turn_outcome_history, error_pattern)))
 
     def _get_learned_constraints(self) -> dict[str, Any]:
         """Phase 3.2: Get constraints learned from turn history.
@@ -1671,7 +1708,7 @@ class TurnTransactionController:
         Returns:
             Dict of learned constraints for this session
         """
-        return adaptive_session_state.get_learned_constraints(self._turn_outcome_history)
+        return cast("dict[str, Any]", (adaptive_session_state.get_learned_constraints(self._turn_outcome_history)))
 
     # ---------------------------------------------------------------------------
     # Phase 3.3: Budget-Aware Execution
@@ -1710,11 +1747,16 @@ class TurnTransactionController:
         Returns:
             Budget status with warnings if approaching limits
         """
-        return adaptive_session_state.check_budget(
-            session_tokens_used=self._session_tokens_used,
-            session_token_budget=self._session_token_budget,
-            session_cost_used=self._session_cost_used,
-            session_cost_budget=self._session_cost_budget,
+        return cast(
+            "dict[str, Any]",
+            (
+                adaptive_session_state.check_budget(
+                    session_tokens_used=self._session_tokens_used,
+                    session_token_budget=self._session_token_budget,
+                    session_cost_used=self._session_cost_used,
+                    session_cost_budget=self._session_cost_budget,
+                )
+            ),
         )
 
     # ---------------------------------------------------------------------------

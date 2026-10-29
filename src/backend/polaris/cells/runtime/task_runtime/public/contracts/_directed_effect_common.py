@@ -5,7 +5,7 @@ Shared vocabulary for inventory, parent registry, and operation contracts.
 
 from __future__ import annotations
 
-from typing import Final, Literal, get_args
+from typing import Final, Literal, cast, get_args
 
 from polaris.cells.runtime.task_runtime.public.contracts._helpers import (
     _require_non_empty,
@@ -173,7 +173,7 @@ DirectedEffectParentReadinessCodeV1 = DirectedEffectOperationCodeV1 | Literal["r
 
 
 def _directed_effect_token(name: str, value: str) -> str:
-    return _require_non_empty(name, value)
+    return cast("str", (_require_non_empty(name, value)))
 
 
 def _directed_effect_positive_int(name: str, value: int) -> int:

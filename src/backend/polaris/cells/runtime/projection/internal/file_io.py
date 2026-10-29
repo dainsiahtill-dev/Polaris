@@ -1,7 +1,7 @@
 import json
 import os
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.workspace.integrity.public.service import read_readme_title as read_readme_title
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
@@ -14,7 +14,7 @@ def read_json(path: str) -> dict[str, Any] | None:
     try:
         fs = KernelFileSystem(os.path.dirname(path) or ".", get_default_adapter())
         content = fs.workspace_read_text(os.path.basename(path), encoding="utf-8")
-        return json.loads(content)
+        return cast("dict[str, Any] | None", (json.loads(content)))
     except (OSError, json.JSONDecodeError, ValueError):
         return None
 

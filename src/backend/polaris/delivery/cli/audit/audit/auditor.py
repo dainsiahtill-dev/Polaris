@@ -11,7 +11,7 @@ import io
 import json
 import logging
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.delivery.cli.audit.audit.formatters import get_result_attr
 
@@ -255,7 +255,7 @@ def show_event(runtime_root: Path, event_id: str) -> dict[str, Any] | None:
 
     for evt in events:
         if evt.event_id == event_id:
-            return evt.to_dict()
+            return cast("dict[str, Any] | None", (evt.to_dict()))
 
     return None
 
@@ -315,7 +315,7 @@ def smart_triage(
         result["suggestions"] = suggestions
         result["help_message"] = "未找到匹配事件，请尝试以上建议"
 
-    return result
+    return cast("dict[str, Any]", (result))
 
 
 def run_diff(

@@ -11,7 +11,7 @@ Callers should import this module directly. This module must not import
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.roles.kernel.internal.forced_tool_scope import augment_forced_transaction_tool_definitions
 from polaris.kernelone.tools.tool_kinds import ACTIVE_WRITE_TOOLS
@@ -198,5 +198,5 @@ def _apply_forced_transaction_tool_definitions(
 
     pin_targets = extract_write_tool_pin_target_files(context_override)
     if not pin_targets:
-        return scoped_definitions
-    return pin_write_tool_file_param_to_targets(scoped_definitions, pin_targets)
+        return cast("list[dict[str, Any]]", (scoped_definitions))
+    return cast("list[dict[str, Any]]", (pin_write_tool_file_param_to_targets(scoped_definitions, pin_targets)))

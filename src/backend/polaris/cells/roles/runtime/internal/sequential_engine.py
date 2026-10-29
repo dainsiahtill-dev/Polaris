@@ -24,7 +24,7 @@ from collections import deque
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -482,10 +482,10 @@ class SeqProgressDetector:
         # 检查写入类工具结果
         tool_name = str(tool_result.get("tool", "")).lower()
         if tool_name in WRITE_TOOL_NAMES:
-            return tool_result.get("success", False)
+            return cast("bool", (tool_result.get("success", False)))
 
         # 检查 changed_files 增加（如果有）
-        return tool_result.get("changed_files_count", 0) > 0
+        return cast("bool", (tool_result.get("changed_files_count", 0) > 0))
 
     def _check_validation_progress(self, tool_result: dict[str, Any] | None) -> bool:
         """Type-B: 检查验证是否改善"""
@@ -866,7 +866,7 @@ class SequentialEngine:
         """检查是否有待执行的工具"""
         # 如果有工具结果且成功，可能需要继续执行
         if step_result.tool_result:
-            return step_result.tool_result.get("has_more_tools", False)
+            return cast("bool", (step_result.tool_result.get("has_more_tools", False)))
         return False
 
     def _track_error_fingerprint(self, error: str) -> None:

@@ -17,7 +17,7 @@ an import cycle while preserving byte-identical symbol resolution.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.roles.runtime.public.cognitive_strategy import _deep_merge_strategy_overrides
 from polaris.cells.roles.runtime.public.persistence import (
@@ -70,7 +70,7 @@ class _StrategyResolutionMixin:
 
         Delegates to extracted persistence module for actual implementation.
         """
-        return _resolve_session_override_impl(session_id)
+        return cast("dict[str, Any] | None", (_resolve_session_override_impl(session_id)))
 
     def resolve_strategy_profile(
         self,
@@ -175,7 +175,7 @@ class _StrategyResolutionMixin:
 
         Delegates to extracted persistence module for actual implementation.
         """
-        return _emit_strategy_receipt_impl(run_ctx, workspace)
+        return cast("Path", (_emit_strategy_receipt_impl(run_ctx, workspace)))
 
     @staticmethod
     def resolve_strategy(

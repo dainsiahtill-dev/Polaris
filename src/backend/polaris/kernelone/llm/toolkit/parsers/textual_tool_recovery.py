@@ -22,7 +22,7 @@ from __future__ import annotations
 import ast
 import re
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, cast
 
 # Gemma uses this 5-character literal as its in-content quote delimiter.
 _QUOTE = '<|"|>'
@@ -100,7 +100,7 @@ def _normalize_tool_arguments(
         return arguments
     if str(raw_tool_name or "").strip().lower() == canonical_tool_name.lower():
         return arguments
-    return normalize_tool_arguments(canonical_tool_name, arguments)
+    return cast("dict[str, Any]", (normalize_tool_arguments(canonical_tool_name, arguments)))
 
 
 def _tool_name_allowed(tool_name: str, allowed: set[str] | None) -> bool:

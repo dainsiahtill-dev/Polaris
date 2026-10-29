@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.context.chunks import PromptChunkAssembler
 from polaris.kernelone.context.context_os import ContextOSInvariantViolationError
@@ -354,7 +354,7 @@ class SessionContinuityStrategy:
         pack = projection.continuity_pack
         if pack is None:
             return {}
-        return pack.to_dict()
+        return cast("dict[str, Any]", (pack.to_dict()))
 
     async def project_to_projection(self, request: dict[str, Any]) -> SessionContinuityProjection | None:
         """Project session continuity and return the full projection object.
@@ -421,7 +421,7 @@ class SessionContinuityStrategy:
             context_os=context_os,
             source="session_continuity",
         )
-        return chunk.content
+        return cast("str", (chunk.content))
 
     # ------------------------------------------------------------------
     # HistoryMaterializationStrategyPort

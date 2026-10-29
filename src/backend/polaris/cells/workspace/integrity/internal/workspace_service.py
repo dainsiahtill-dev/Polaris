@@ -14,7 +14,7 @@ import json
 import logging
 import os
 import re
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.workspace.integrity.internal.fs_utils import (
     normalize_rel_path,
@@ -168,7 +168,7 @@ def read_readme_title(workspace: str) -> str:
                 continue
             if text.startswith("#"):
                 text = text.lstrip("#").strip()
-            return text[:120]
+            return cast("str", (text[:120]))
     except (OSError, UnicodeDecodeError):
         return ""
     return ""

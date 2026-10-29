@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Any
+from typing import Any, cast
 
 from polaris.delivery.cli.pm.utils import normalize_path_list, normalize_str_list
 from polaris.kernelone.process.command_executor import CommandExecutionService
@@ -132,7 +132,7 @@ def _normalize_gate_list(value: Any) -> list[Any]:
 
 
 def _normalize_evidence_required(value: Any) -> list[str]:
-    return normalize_path_list(value)
+    return cast("list[str]", (normalize_path_list(value)))
 
 
 def _looks_like_verify_command(command: str) -> bool:
@@ -145,7 +145,7 @@ def _looks_like_verify_command(command: str) -> bool:
 def _acceptance_text_items(task: dict[str, Any]) -> list[str]:
     if not isinstance(task, dict):
         return []
-    return normalize_str_list(task.get("acceptance_criteria") or task.get("acceptance"))
+    return cast("list[str]", (normalize_str_list(task.get("acceptance_criteria") or task.get("acceptance"))))
 
 
 def _infer_verify_command_gates_from_acceptance(acceptance: list[str]) -> list[dict[str, Any]]:

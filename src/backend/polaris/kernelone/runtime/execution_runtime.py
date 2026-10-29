@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.constants import (
     EXECUTION_CLEANUP_THRESHOLD,
@@ -477,7 +477,7 @@ class ExecutionRuntime:
                 await task
         with contextlib.suppress(RuntimeError):
             state.result = await handle.result()
-        return terminated
+        return cast("bool", (terminated))
 
     async def stream(self, execution_id: str) -> AsyncIterator[StreamChunk]:
         state = self._require_state(execution_id)

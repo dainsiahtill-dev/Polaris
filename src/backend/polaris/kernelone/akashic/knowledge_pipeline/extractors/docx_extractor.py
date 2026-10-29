@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.akashic.knowledge_pipeline.extractors.base import (
     BaseExtractor,
@@ -256,7 +256,7 @@ class DocxExtractor(BaseExtractor):
     def _fallback_extract(self, doc: DocumentInput) -> list[ExtractedFragment]:
         """Fallback to plain text extraction when python-docx is unavailable."""
         text = self._decode_content(doc)
-        return self._extract_lines(text, self._options)
+        return cast("list[Any]", (self._extract_lines(text, self._options)))
 
 
 __all__ = ["DocxExtractor"]

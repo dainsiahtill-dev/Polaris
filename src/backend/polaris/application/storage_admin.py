@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +169,7 @@ class StorageAdminService:
         try:
             from polaris.cells.storage.layout.public import polaris_home
 
-            return polaris_home()
+            return cast("str", (polaris_home()))
         except (ImportError, RuntimeError, ValueError) as exc:
             raise StorageAdminError(
                 f"Failed to resolve polaris_home: {exc}",
@@ -196,7 +196,7 @@ class StorageAdminService:
         try:
             from polaris.kernelone._runtime_config import resolve_env_str
 
-            return resolve_env_str(key)
+            return cast("str", (resolve_env_str(key)))
         except (ImportError, RuntimeError, ValueError) as exc:
             logger.debug("resolve_env(%s) failed: %s", key, exc)
             return ""
@@ -233,7 +233,7 @@ class StorageAdminService:
         try:
             from polaris.kernelone.storage import resolve_global_path
 
-            return resolve_global_path(relative_path)
+            return cast("str", (resolve_global_path(relative_path)))
         except (ImportError, RuntimeError, ValueError) as exc:
             raise StorageAdminError(
                 f"resolve_global_path({relative_path!r}) failed: {exc}",
@@ -263,7 +263,7 @@ class StorageAdminService:
                 resolve_workspace_persistent_path,
             )
 
-            return resolve_workspace_persistent_path(workspace, relative_path)
+            return cast("str", (resolve_workspace_persistent_path(workspace, relative_path)))
         except (ImportError, RuntimeError, ValueError) as exc:
             raise StorageAdminError(
                 f"resolve_workspace_persistent_path({workspace!r}, {relative_path!r}) failed: {exc}",
@@ -288,7 +288,7 @@ class StorageAdminService:
         try:
             from polaris.kernelone.storage.io_paths import build_cache_root
 
-            return build_cache_root(ramdisk_root, workspace)
+            return cast("str", (build_cache_root(ramdisk_root, workspace)))
         except (ImportError, RuntimeError, ValueError) as exc:
             raise StorageAdminError(
                 f"build_cache_root failed: {exc}",

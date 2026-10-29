@@ -18,7 +18,7 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.control_plane.run_ledger.public.contracts import AppendRunLedgerEventCommandV1
 from polaris.cells.control_plane.run_ledger.public.ledger import stable_hash
@@ -234,7 +234,7 @@ class RoleToolGateway:
     @property
     def policy_id(self) -> str:
         """策略标识"""
-        return self.policy.policy_id
+        return cast("str", (self.policy.policy_id))
 
     def capture_directed_effect_policy_inputs(
         self,
@@ -477,12 +477,17 @@ class RoleToolGateway:
         spec = frozen_node_to_value(tool_snapshot.canonical_effective_spec)
         if not isinstance(spec, dict):
             return False
-        return registered_read_scope_permits(
-            KernelFileSystem(self.workspace or ".", get_default_adapter()),
-            self._capability_token,
-            tool_name,
-            arguments,
-            spec,
+        return cast(
+            "bool",
+            (
+                registered_read_scope_permits(
+                    KernelFileSystem(self.workspace or ".", get_default_adapter()),
+                    self._capability_token,
+                    tool_name,
+                    arguments,
+                    spec,
+                )
+            ),
         )
 
     @staticmethod
@@ -1061,19 +1066,19 @@ class RoleToolGateway:
         """获取角色可用的工具列表"""
         if not self.policy.whitelist:
             return []
-        return self.policy.whitelist.copy()
+        return cast("list[str]", (self.policy.whitelist.copy()))
 
     def _is_code_write_tool(self, tool_name: str) -> bool:
         """检查是否为代码写入类工具"""
-        return is_code_write_tool(tool_name)
+        return cast("bool", (is_code_write_tool(tool_name)))
 
     def _is_command_execution_tool(self, tool_name: str) -> bool:
         """检查是否为命令执行类工具"""
-        return is_command_execution_tool(tool_name)
+        return cast("bool", (is_command_execution_tool(tool_name)))
 
     def _is_file_delete_tool(self, tool_name: str) -> bool:
         """检查是否为文件删除类工具"""
-        return is_file_delete_tool(tool_name)
+        return cast("bool", (is_file_delete_tool(tool_name)))
 
     def _is_dangerous_command(self, command: str) -> bool:
         """检查命令是否包含危险操作。
@@ -1082,7 +1087,7 @@ class RoleToolGateway:
         """
         from polaris.kernelone.security.dangerous_patterns import is_dangerous_command
 
-        return is_dangerous_command(command)
+        return cast("bool", (is_dangerous_command(command)))
 
     def _is_path_traversal(self, path: str) -> bool:
         """检查路径是否包含穿越序列
@@ -1101,7 +1106,7 @@ class RoleToolGateway:
             logger.debug("url unquote failed, using original path: %s", exc)
 
         # 2. 使用 canonical 源头进行穿越模式检测
-        return is_path_traversal(path)
+        return cast("bool", (is_path_traversal(path)))
 
     def _normalize_tool_name(self, tool_name: str) -> str:
         """规范化工具名称，使用 canonicalize_tool_name 进行完整别名解析。
@@ -1112,11 +1117,11 @@ class RoleToolGateway:
         Returns:
             规范化后的工具名称（canonical name）
         """
-        return canonicalize_tool_name(tool_name, keep_unknown=True)
+        return cast("str", (canonicalize_tool_name(tool_name, keep_unknown=True)))
 
     @staticmethod
     def _normalize_tool_args(tool_name: str, tool_args: dict[str, Any] | None) -> dict[str, Any]:
-        return normalize_tool_arguments(tool_name, tool_args)
+        return cast("dict[str, Any]", (normalize_tool_arguments(tool_name, tool_args)))
 
     def _validate_scope(self, scope: Any) -> bool:
         """验证scope约束"""

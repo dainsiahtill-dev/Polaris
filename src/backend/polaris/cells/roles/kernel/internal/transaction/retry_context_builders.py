@@ -14,7 +14,7 @@ import json
 import os
 import re
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.roles.kernel.internal.transaction.constants import ACTIVE_WRITE_TOOLS
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
@@ -65,7 +65,7 @@ def _extract_authorized_scope_paths(context: list[dict[str, Any]], target_file_t
     """Extract retry-safe scope paths from the original context."""
     raw_context = "\n".join(str(item.get("content") or "") for item in context if isinstance(item, Mapping))
     scope_paths = extract_allowed_scope_paths_from_message(raw_context)
-    return filter_scope_paths_for_explicit_targets(scope_paths, target_file_tokens)
+    return cast("list[str]", (filter_scope_paths_for_explicit_targets(scope_paths, target_file_tokens)))
 
 
 def _retry_write_guidance_pins(context: list[dict[str, Any]]) -> list[str]:

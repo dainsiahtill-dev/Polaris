@@ -11,7 +11,7 @@ import asyncio
 import logging
 import re
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping
@@ -319,7 +319,7 @@ class ArtifactProjectionRenderer:
         if len(lines) > max_lines:
             truncated = "\n".join(lines[:max_lines])
             return f"{truncated}\n... ({len(lines) - max_lines} more lines)"
-        return content
+        return cast("str", (content))
 
     def render(self, event: dict[str, Any]) -> WidgetUpdate | None:
         """Project an artifact event into a WidgetUpdate."""
@@ -463,7 +463,7 @@ class RendererRegistry:
             if hasattr(renderer, "render"):
                 return renderer.render(event)
             if hasattr(renderer, "project"):
-                return renderer.project(event)
+                return cast("WidgetUpdate | None", (renderer.project(event)))
             logger.warning("Renderer %r has neither render() nor project()", renderer.__class__.__name__)
             return None
         except (RuntimeError, ValueError) as exc:

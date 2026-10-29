@@ -10,7 +10,7 @@ import time
 import uuid
 from collections import OrderedDict
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone import _runtime_config
 from polaris.kernelone.db import KernelDatabase
@@ -343,7 +343,7 @@ class MemoryStore:
         if not token:
             return []
         try:
-            return get_default_embedding_port().get_embedding(token, model=self._embedding_model)
+            return cast("list[float]", (get_default_embedding_port().get_embedding(token, model=self._embedding_model)))
         except (RuntimeError, ValueError) as exc:
             logger.debug("Embedding unavailable for memory retrieval: %s", exc)
             return []

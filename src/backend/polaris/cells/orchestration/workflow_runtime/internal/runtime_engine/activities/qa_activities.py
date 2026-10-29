@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.orchestration.pm_planning.public.service import (
     detect_integration_verify_command,
@@ -74,7 +74,7 @@ def _write_runtime_result(
     target = resolve_artifact_path(workspace, cache_root, rel_path)
     if target:
         write_json_atomic(target, result)
-    return target
+    return cast("str", (target))
 
 
 def _clean_text(value: Any) -> str:
@@ -214,13 +214,18 @@ def _append_qa_workflow_run_ledger_event(
             "evidence_grade": "workflow_qa_ledger",
         },
     }
-    return append_run_ledger_event(
-        AppendRunLedgerEventCommandV1(
-            workspace=workspace,
-            run_id=run_id,
-            event=event,
-        )
-    ).receipt
+    return cast(
+        "dict[str, Any]",
+        (
+            append_run_ledger_event(
+                AppendRunLedgerEventCommandV1(
+                    workspace=workspace,
+                    run_id=run_id,
+                    event=event,
+                )
+            ).receipt
+        ),
+    )
 
 
 def _run_command(command: str, workspace: str, timeout_seconds: int) -> tuple[bool, str, list[str]]:
@@ -263,7 +268,7 @@ def _run_command(command: str, workspace: str, timeout_seconds: int) -> tuple[bo
 
 def _detect_unit_command(workspace: str) -> str:
     if os.path.isfile(os.path.join(workspace, "package.json")):
-        return detect_integration_verify_command(workspace)
+        return cast("str", (detect_integration_verify_command(workspace)))
     if os.path.isfile(os.path.join(workspace, "go.mod")):
         return "go test ./... -run TestDoesNotExist"
     if os.path.isfile(os.path.join(workspace, "Cargo.toml")):

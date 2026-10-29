@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 
 @dataclass(frozen=True)
@@ -59,7 +59,7 @@ class RetryPolicy:
             延迟秒数。指数退避时随尝试次数增加。
         """
         if self._config.exponential_backoff:
-            return self._config.base_delay * (2**attempt)
+            return cast("float", (self._config.base_delay * (2**attempt)))
         return self._config.base_delay
 
     def build_error_context(self, error: ToolError) -> str:

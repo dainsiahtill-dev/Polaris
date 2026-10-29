@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from polaris.domain.verification.business_validators import (
     validate_director_safe_scope as _validate_director_safe_scope_domain,
@@ -209,7 +209,7 @@ def _safe_json_loads(s: str, max_depth: int = _DEFAULT_JSON_MAX_DEPTH) -> dict[s
             raise _ExcessiveNestingError(effective_max_depth)
         return obj
 
-    return json.loads(s, object_hook=depth_limited_object_hook)
+    return cast("dict[str, Any] | list[Any]", (json.loads(s, object_hook=depth_limited_object_hook)))
 
 
 def _extract_json_dict(text: str) -> dict[str, object] | None:

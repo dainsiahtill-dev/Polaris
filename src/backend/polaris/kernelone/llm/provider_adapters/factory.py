@@ -14,7 +14,7 @@ New adapters should use the decorator instead of manual if/elif routing.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -134,20 +134,20 @@ def get_adapter_class(provider: str) -> type[ProviderAdapter]:
             AnthropicMessagesAdapter,
         )
 
-        return AnthropicMessagesAdapter
+        return cast("type[Any]", (AnthropicMessagesAdapter))
     if "ollama" in provider_lower:
         from polaris.kernelone.llm.provider_adapters.ollama_chat_adapter import (
             OllamaChatAdapter,
         )
 
-        return OllamaChatAdapter
+        return cast("type[Any]", (OllamaChatAdapter))
 
     if provider_lower in ("openai", "openai_compat") or "gpt" in provider_lower:
         from polaris.kernelone.llm.provider_adapters.openai_responses_adapter import (
             OpenAIResponsesAdapter,
         )
 
-        return OpenAIResponsesAdapter
+        return cast("type[Any]", (OpenAIResponsesAdapter))
 
     # Priority 2: Check registry for custom adapters
     if provider_lower in _ADAPTER_REGISTRY:
@@ -158,7 +158,7 @@ def get_adapter_class(provider: str) -> type[ProviderAdapter]:
         OpenAIResponsesAdapter,
     )
 
-    return OpenAIResponsesAdapter
+    return cast("type[Any]", (OpenAIResponsesAdapter))
 
 
 def list_registered_adapters() -> list[str]:

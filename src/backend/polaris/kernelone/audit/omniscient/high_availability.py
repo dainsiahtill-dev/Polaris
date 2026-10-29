@@ -39,7 +39,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.audit.omniscient.metrics import StormLevel  # P1-AUDIT-002: canonical StormLevel
 from polaris.kernelone.constants import DEFAULT_BATCH_SIZE, DEFAULT_BATCHER_MEMORY_MB, DEFAULT_SHORT_TIMEOUT_SECONDS
@@ -209,7 +209,7 @@ class AuditStormDetector:
         Returns:
             True if in EMERGENCY state.
         """
-        return self.get_level() == StormLevel.EMERGENCY
+        return cast("bool", (self.get_level() == StormLevel.EMERGENCY))
 
     def should_skip_body(self) -> bool:
         """Check if event bodies should be skipped.
@@ -707,7 +707,7 @@ class AuditFallbackManager:
         if self._memory_buffer:
             added = await self._memory_buffer.add(event)
             if added:
-                return event.get("event_id", "")
+                return cast("str", (event.get("event_id", "")))
             # If memory buffer rejected, fall through
 
         # Tier 2: Normal write (if circuit breaker allows)
@@ -715,7 +715,7 @@ class AuditFallbackManager:
             # This would write to KernelAuditRuntime
             # For now, just record success
             self._circuit_breaker.record_success()
-            return event.get("event_id", "")
+            return cast("str", (event.get("event_id", "")))
 
         # Tier 3: Drop (emergency)
         logger.warning("[audit.fallback] All tiers exhausted, dropping event")

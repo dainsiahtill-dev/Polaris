@@ -2,7 +2,7 @@
 
 import json
 import os
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.shared.path_utils import (
     is_docs_path as _is_docs_path_impl,
@@ -137,22 +137,22 @@ def is_qa_enabled() -> bool:
 
 def normalize_str_list(value: Any) -> list[str]:
     """Normalize value to list of strings."""
-    return _normalize_str_list_impl(value)
+    return cast("list[str]", (_normalize_str_list_impl(value)))
 
 
 def normalize_path_list(value: Any) -> list[str]:
     """Normalize value to canonical relative path list."""
-    return _normalize_path_list_impl(value)
+    return cast("list[str]", (_normalize_path_list_impl(value)))
 
 
 def normalize_path(value: Any) -> str:
     """Normalize a single path to canonical relative form."""
-    return _normalize_path_impl(str(value or ""))
+    return cast("str", (_normalize_path_impl(str(value or ""))))
 
 
 def _is_docs_path(path: str) -> bool:
     """Check if path is within docs directory."""
-    return _is_docs_path_impl(path)
+    return cast("bool", (_is_docs_path_impl(path)))
 
 
 def _normalize_scope_list(value: Any) -> list[str]:
@@ -164,7 +164,7 @@ def _normalize_scope_list(value: Any) -> list[str]:
 
 def _normalize_policy_decision(value: Any) -> str:
     """Normalize policy decision value."""
-    return _normalize_policy_decision_impl(value)
+    return cast("str", (_normalize_policy_decision_impl(value)))
 
 
 def _normalize_audit_result(value: Any) -> str:

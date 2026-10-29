@@ -24,7 +24,7 @@ import socket
 import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.bootstrap.contracts.backend_launch import BackendLaunchRequest, BackendLaunchResult
 from polaris.cells.policy.workspace_guard.service import SELF_UPGRADE_MODE_ENV, ensure_workspace_target_allowed
@@ -221,7 +221,7 @@ class BackendBootstrapper:
             # 设置socket超时，避免线程内无限阻塞
             response = urllib.request.urlopen(req, timeout=socket_timeout)
             try:
-                return response.getcode()
+                return cast("int", (response.getcode()))
             finally:
                 response.close()
 
@@ -554,7 +554,7 @@ class BackendBootstrapper:
         """
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(("", 0))
-            return s.getsockname()[1]
+            return cast("int", (s.getsockname()[1]))
 
     async def _create_server(
         self,

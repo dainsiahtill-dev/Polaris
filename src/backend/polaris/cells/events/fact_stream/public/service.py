@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # Debug-tracing controls are part of this cell's observable surface: delivery
 # and bootstrap layers must use these public re-exports instead of importing
@@ -663,7 +663,7 @@ def _fact_stream_failure_code(operation: str, exc: Exception) -> str:
     if isinstance(exc, EventSourcingError):
         if exc.code in _STRICT_FAILURE_CODES:
             return "strict_stream_corruption"
-        return exc.code
+        return cast("str", (exc.code))
     return f"{operation}_failed"
 
 
@@ -955,4 +955,7 @@ def query_payload_fact_ledger_presence(query: QuerySegmentedFactLedgerHeadV1) ->
     from polaris.kernelone.fs.registry import get_default_adapter
 
     store = _segmented_authority_store(query.workspace, logical_stream=query.logical_stream, read_only=True)
-    return KernelFileSystem(store.storage_identity.workspace_abs, get_default_adapter()).exists(store.storage_prefix)
+    return cast(
+        "bool",
+        (KernelFileSystem(store.storage_identity.workspace_abs, get_default_adapter()).exists(store.storage_prefix)),
+    )

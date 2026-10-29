@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.llm.toolkit.protocol.constants import EditType, ErrorCode
 from polaris.kernelone.llm.toolkit.protocol.models import FileOperation, OperationResult
@@ -486,10 +486,15 @@ class StrictOperationApplier:
         try:
             from polaris.kernelone.editing import apply_fuzzy_search_replace
 
-            return apply_fuzzy_search_replace(
-                content=current_content,
-                search=search,
-                replace=replace,
+            return cast(
+                "str | None",
+                (
+                    apply_fuzzy_search_replace(
+                        content=current_content,
+                        search=search,
+                        replace=replace,
+                    )
+                ),
             )
         except (RuntimeError, ValueError) as exc:
             logger.debug("native fuzzy replace unavailable: %s", exc)

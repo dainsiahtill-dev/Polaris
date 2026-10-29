@@ -8,7 +8,7 @@ from contextlib import suppress
 from copy import copy
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import Mock
 
 # NOTE: artifact_store imports are lazy (inside functions) to avoid a load-time circular
@@ -104,7 +104,9 @@ def build_pm_status(state: AppState) -> dict[str, Any]:
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(run_in_loop)
-            return future.result(timeout=12)  # Slightly longer to account for scheduling overhead
+            return cast(
+                "dict[str, Any]", (future.result(timeout=12))
+            )  # Slightly longer to account for scheduling overhead
     except RuntimeError:
         # No running loop, safe to use asyncio.run
         return asyncio.run(build_pm_status_async(state))
@@ -168,7 +170,10 @@ async def build_director_status(
     workflow_status = await get_workflow_director_status(workspace, cache_root)
     run_ledger_run_id = _extract_run_ledger_run_id(workflow_status, local_status)
     run_ledger_projection = _read_run_ledger_projection_for_run(workspace, run_ledger_run_id)
-    return merge_director_status(local_status, workflow_status, run_ledger_projection=run_ledger_projection)
+    return cast(
+        "dict[str, Any]",
+        (merge_director_status(local_status, workflow_status, run_ledger_projection=run_ledger_projection)),
+    )
 
 
 def _parse_engine_updated_at(value: Any) -> float | None:
@@ -278,10 +283,15 @@ def build_snapshot(
         build_snapshot as _build_snapshot,
     )
 
-    return _build_snapshot(
-        state,
-        workspace=workspace,
-        cache_root=cache_root,
+    return cast(
+        "dict[str, Any]",
+        (
+            _build_snapshot(
+                state,
+                workspace=workspace,
+                cache_root=cache_root,
+            )
+        ),
     )
 
 
@@ -304,7 +314,7 @@ def build_success_stats_payload(
         build_success_stats_payload as _build_success_stats_payload,
     )
 
-    return _build_success_stats_payload(workspace, cache_root)
+    return cast("dict[str, Any]", (_build_success_stats_payload(workspace, cache_root)))
 
 
 def build_status_payload_sync(

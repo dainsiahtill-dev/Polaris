@@ -6,7 +6,7 @@ import re
 import shutil
 import subprocess
 import time
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.fs.encoding import build_utf8_env
 from polaris.kernelone.llm.providers import (
@@ -21,7 +21,7 @@ from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
 
 
 def _timeout_seconds(config: dict[str, Any], default: int, key: str = "timeout") -> int:
-    return normalize_timeout_seconds(config.get(key), default=default)
+    return cast("int", (normalize_timeout_seconds(config.get(key), default=default)))
 
 
 class GeminiCLIProvider(BaseProvider):

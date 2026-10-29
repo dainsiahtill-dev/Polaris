@@ -15,7 +15,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from polaris.cells.orchestration.workflow_runtime.public.service import (
@@ -184,7 +184,7 @@ async def get_health(
     if not _health_monitor:
         return {"healthy": False, "status": "unavailable"}
 
-    return _health_monitor.get_health_status()
+    return cast("dict[str, Any]", (_health_monitor.get_health_status()))
 
 
 @router.get("/health/backend", dependencies=[Depends(require_auth)])

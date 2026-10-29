@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.roles.profile.public.service import (
     RoleProfileRegistry,
@@ -115,7 +115,7 @@ class WorkflowRoleNode(ABC):
         """获取角色配置"""
         profile = self.registry.get_profile(self.role_id)
         if profile:
-            return profile_to_dict(profile)
+            return cast("dict[str, Any] | None", (profile_to_dict(profile)))
         return None
 
     def validate_tool_permission(self, tool_name: str, tool_args: dict[str, Any] | None = None) -> tuple[bool, str]:
@@ -127,7 +127,7 @@ class WorkflowRoleNode(ABC):
             return False, f"未知角色: {self.role_id}"
 
         gateway = RoleToolGateway(profile, self.workspace)
-        return gateway.check_tool_permission(tool_name, tool_args)
+        return cast("tuple[bool, str]", (gateway.check_tool_permission(tool_name, tool_args)))
 
 
 # 便捷函数：快速执行工作流角色

@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, Depends
 from polaris.cells.roles.session.internal.conversation import sanitize_conversation_message_payload
@@ -102,7 +102,7 @@ async def create_conversation_v2(
     db.commit()
     db.refresh(conversation)
 
-    return conversation.to_dict(include_messages=True)
+    return cast("dict[str, Any]", (conversation.to_dict(include_messages=True)))
 
 
 @router.get("/v2/conversations", response_model=ConversationListResponse, dependencies=[Depends(require_auth)])
@@ -147,9 +147,14 @@ async def get_conversation_v2(
     if not conversation:
         raise StructuredHTTPException(status_code=404, code="CONVERSATION_NOT_FOUND", message="Conversation not found")
 
-    return conversation.to_dict(
-        include_messages=include_messages,
-        message_limit=message_limit,
+    return cast(
+        "dict[str, Any]",
+        (
+            conversation.to_dict(
+                include_messages=include_messages,
+                message_limit=message_limit,
+            )
+        ),
     )
 
 
@@ -177,7 +182,7 @@ async def update_conversation_v2(
     db.commit()
     db.refresh(conversation)
 
-    return conversation.to_dict(include_messages=False)
+    return cast("dict[str, Any]", (conversation.to_dict(include_messages=False)))
 
 
 @router.delete(
@@ -250,7 +255,7 @@ async def add_message_v2(
     db.commit()
     db.refresh(msg)
 
-    return msg.to_dict()
+    return cast("dict[str, Any]", (msg.to_dict()))
 
 
 @router.get(

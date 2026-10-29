@@ -16,7 +16,7 @@ annotation was relaxed from the cell-local ``TaskContract`` to ``Any``
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.constants import MAX_WORKFLOW_TIMEOUT_SECONDS
 from polaris.kernelone.workflow.task_payload import _task_payload_list
@@ -45,7 +45,7 @@ def _director_child_workflow_timeout_seconds(
     )
     ready_seconds = _director_positive_int(director_config.get("ready_timeout_seconds"), 30)
     budget = ready_seconds + per_task_seconds * max(1, int(task_count or 0)) + 120
-    return min(max(120, budget), MAX_WORKFLOW_TIMEOUT_SECONDS)
+    return cast("int", (min(max(120, budget), MAX_WORKFLOW_TIMEOUT_SECONDS)))
 
 
 def _task_phase_timeout_seconds(task: Any, phase: str, base_timeout_seconds: int) -> int:
@@ -73,7 +73,7 @@ def _task_run_timeout_seconds(task: Any, base_timeout_seconds: int) -> int:
     floor_seconds = (
         30 + (estimated_rounds * _DIRECTOR_TASK_ROUND_TIMEOUT_SECONDS) + _DIRECTOR_TASK_TIMEOUT_MARGIN_SECONDS
     )
-    return min(MAX_WORKFLOW_TIMEOUT_SECONDS, max(int(base_timeout_seconds), floor_seconds))
+    return cast("int", (min(MAX_WORKFLOW_TIMEOUT_SECONDS, max(int(base_timeout_seconds), floor_seconds))))
 
 
 __all__ = [

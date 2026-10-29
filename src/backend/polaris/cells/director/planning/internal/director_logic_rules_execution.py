@@ -11,7 +11,7 @@ import json
 import logging
 import os
 import re
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ def _truncate_text(text: str, max_chars: int) -> str:
         logger.debug("Failed to import truncate_text, using fallback: %s", exc)
         from polaris.kernelone.shared.text_utils import truncate_text as _impl
 
-    return _impl(text, max_chars or 800)
+    return cast("str", (_impl(text, max_chars or 800)))
 
 
 def _compact_str(value: Any, max_chars: int) -> str:
@@ -33,7 +33,7 @@ def _compact_str(value: Any, max_chars: int) -> str:
         logger.debug("Failed to import compact_str, using fallback: %s", exc)
         from polaris.kernelone.shared.text_utils import compact_str as _impl
 
-    return _impl(value, max_chars)
+    return cast("str", (_impl(value, max_chars)))
 
 
 def _compact_list(values: Any, max_items: int, max_str_chars: int) -> list[str]:

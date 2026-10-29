@@ -381,7 +381,7 @@ class BaseEngine(ABC):
                 role=context.role,
                 max_tokens=max_tokens,
             )
-            return response
+            return cast("str", (response))
         # llm_caller 未注入（纯单元测试场景）——返回空字符串而非模拟数据，
         # 让调用方的解析逻辑走降级路径，便于测试覆盖真实降级行为。
         return ""

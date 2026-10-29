@@ -1,7 +1,7 @@
 """Task normalization helpers for loop-pm."""
 
 import hashlib
-from typing import Any
+from typing import Any, cast
 
 from polaris.delivery.cli.pm.config import SUPPORTED_ASSIGNEES
 from polaris.delivery.cli.pm.utils import _normalize_scope_list, normalize_path_list, normalize_str_list
@@ -22,7 +22,7 @@ def normalize_priority(value: Any, fallback: int) -> int:
     if token.startswith("p") and token[1:].isdigit():
         return int(token[1:])
     if token in PRIORITY_ALIASES:
-        return PRIORITY_ALIASES[token]
+        return cast("int", (PRIORITY_ALIASES[token]))
     try:
         return int(token)
     except (RuntimeError, ValueError):

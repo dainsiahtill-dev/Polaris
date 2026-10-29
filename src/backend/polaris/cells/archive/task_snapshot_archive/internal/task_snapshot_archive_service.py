@@ -14,7 +14,7 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.infrastructure.storage import LocalFileSystemAdapter
 from polaris.kernelone.fs import KernelFileSystem
@@ -168,10 +168,10 @@ class TaskSnapshotArchiveService:
         """List archived task snapshots from canonical index."""
         safe_limit = max(0, int(limit))
         safe_offset = max(0, int(offset))
-        return self._manifest_repo.read_tasks_index(limit=safe_limit, offset=safe_offset)
+        return cast("list[Any]", (self._manifest_repo.read_tasks_index(limit=safe_limit, offset=safe_offset)))
 
     def _workspace_rel(self, path: Path) -> str:
-        return self._kernel_fs.to_workspace_relative_path(str(path))
+        return cast("str", (self._kernel_fs.to_workspace_relative_path(str(path))))
 
     @staticmethod
     def _safe_rel(path: Path, root: Path) -> str:

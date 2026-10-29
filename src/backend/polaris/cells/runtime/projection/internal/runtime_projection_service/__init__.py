@@ -305,9 +305,14 @@ async def _list_recent_orchestration_runs(workspace: str, limit: int = 50) -> li
         workflow_runtime_projection_owner_port,
     )
 
-    return await workflow_runtime_projection_owner_port().list_runs(
-        workspace=workspace,
-        limit=limit,
+    return cast(
+        "list[Any]",
+        (
+            await workflow_runtime_projection_owner_port().list_runs(
+                workspace=workspace,
+                limit=limit,
+            )
+        ),
     )
 
 
@@ -692,7 +697,7 @@ def build_resident_state(
                 exc,
             )
 
-        return status
+        return cast("dict[str, Any] | None", (status))
     except (AttributeError, ImportError, RuntimeError, ValueError) as exc:
         # Resident subsystem is optional - not installed in all deployments.
         logger.debug("build_resident_state: resident subsystem unavailable: %s", exc)
@@ -729,7 +734,7 @@ class ProjectionCache:
             return None
         if (time.time() - cached.get("_timestamp", 0)) > self._ttl:
             return None
-        return cached.get("projection")
+        return cast("RuntimeProjection | None", (cached.get("projection")))
 
     def set(self, workspace: str, projection: RuntimeProjection) -> None:
         """写入缓存并打上时间戳。"""

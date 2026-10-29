@@ -7,7 +7,7 @@ import contextlib
 import json
 from collections.abc import AsyncGenerator
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.llm.engine.contracts import AIStreamEvent, StreamEventType
 
@@ -72,7 +72,7 @@ class EventStreamer:
         if self._serialization_format == SerializationFormat.MSGPACK:
             if msgpack is None:
                 raise RuntimeError("msgpack serialization requested but msgpack is not installed")
-            return msgpack.packb(payload, use_bin_type=True)
+            return cast("bytes", (msgpack.packb(payload, use_bin_type=True)))
 
         return (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
 

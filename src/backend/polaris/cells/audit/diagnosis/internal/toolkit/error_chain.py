@@ -15,7 +15,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
 
@@ -635,19 +635,19 @@ class ChainBuilder:
         # Check error field (runtime events)
         error = failed_event.get("error", "")
         if error:
-            return error
+            return cast("str", (error))
 
         # Check output.error (runtime events)
         output = failed_event.get("output", {})
         if isinstance(output, dict):
             output_error = output.get("error", "")
             if output_error:
-                return output_error
+                return cast("str", (output_error))
 
         # Check message field (factory events)
         message = failed_event.get("message", "")
         if message:
-            return message
+            return cast("str", (message))
 
         # Check result.output field (factory events)
         result = failed_event.get("result", {})

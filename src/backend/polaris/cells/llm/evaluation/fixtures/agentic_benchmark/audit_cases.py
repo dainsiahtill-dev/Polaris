@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # Path to cases directories (audit_cases.py is in fixtures/agentic_benchmark/)
 FIXTURES_ROOT = Path(__file__).parent.parent.parent / "fixtures"
@@ -17,7 +17,7 @@ CASES_DIRS = [
 
 def load_case(path: Path) -> dict[str, Any]:
     with open(path, encoding="utf-8") as f:
-        return json.load(f)
+        return cast("dict[str, Any]", (json.load(f)))
 
 
 def load_all_cases() -> list[tuple[Path, dict[str, Any]]]:

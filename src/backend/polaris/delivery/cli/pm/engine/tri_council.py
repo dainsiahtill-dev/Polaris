@@ -169,7 +169,7 @@ def _clamp_coordination_stage(value: Any) -> int:
         return 0
     if stage > max_stage:
         return max_stage
-    return stage
+    return cast("int", (stage))
 
 
 def _coordination_role_for_stage(stage: int) -> str:

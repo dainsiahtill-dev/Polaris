@@ -9,7 +9,7 @@ import stat
 import sys
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from polaris.kernelone.quality.artifact_quality._constants import (
     _ARTIFACT_QUALITY_SKIP_DIRS,
@@ -566,7 +566,7 @@ def _artifact_quality_task_id(
     if explicit:
         return explicit
     if isinstance(interface_contract, CrossArtifactInterfaceContract):
-        return interface_contract.task_id
+        return cast("str", (interface_contract.task_id))
     if isinstance(interface_contract, Mapping):
         return str(interface_contract.get("task_id") or "").strip()
     return ""

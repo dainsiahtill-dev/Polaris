@@ -17,7 +17,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator, cast
 
 from polaris.kernelone.events.final_request_evidence import (
     ContextSnapshotReferenceOwnerV1,
@@ -1381,7 +1381,7 @@ class AIExecutor:
             import logging as _logging
 
             _logging.getLogger(__name__).debug("context_retention: on_read_gate failed: %s", _retention_exc)
-        return hash_key
+        return cast("str", (hash_key))
 
     @staticmethod
     async def _store_context_messages(

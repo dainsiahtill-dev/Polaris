@@ -7,7 +7,7 @@ import hashlib
 import json
 import logging
 import re
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.context._token_estimator import estimate_tokens as _estimate_tokens
 from polaris.kernelone.context.text_normalization import normalize_quoted_text
@@ -18,7 +18,7 @@ from .patterns import _CODE_PATH_RE, _LOW_SIGNAL_PATTERNS
 
 def _normalize_text(value: Any) -> str:
     """Fold prose whitespace without rewriting quoted data or removing tags."""
-    return normalize_quoted_text(str(value or ""))
+    return cast("str", (normalize_quoted_text(str(value or ""))))
 
 
 def _trim_text(text: str, *, max_chars: int) -> str:

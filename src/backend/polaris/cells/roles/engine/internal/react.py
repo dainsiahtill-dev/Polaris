@@ -12,7 +12,7 @@ import json
 import logging
 import re
 import time
-from typing import Any
+from typing import Any, cast
 
 from .base import (
     BaseEngine,
@@ -296,7 +296,7 @@ class ReActEngine(BaseEngine):
         """解析 LLM 响应"""
         # 方案1: 尝试解析整个响应为 JSON
         try:
-            return json.loads(response)
+            return cast("dict[str, Any]", (json.loads(response)))
         except json.JSONDecodeError as exc:
             logger.debug("react: primary JSON parse failed (trying fallbacks): %s", exc)
 
@@ -312,7 +312,7 @@ class ReActEngine(BaseEngine):
         try:
             json_match = self._find_json_object(response)
             if json_match:
-                return json.loads(json_match)
+                return cast("dict[str, Any]", (json.loads(json_match)))
         except json.JSONDecodeError as exc:
             logger.debug("react: json object slice parse failed: %s", exc)
 
@@ -363,7 +363,7 @@ class ReActEngine(BaseEngine):
             end = self._find_matching_bracket(text, start, "{", "}")
             if end != -1:
                 try:
-                    return json.loads(text[start : end + 1])
+                    return cast("dict[str, Any] | None", (json.loads(text[start : end + 1])))
                 except json.JSONDecodeError as exc:
                     logger.debug("react: balanced object JSON decode failed: %s", exc)
 
@@ -373,7 +373,7 @@ class ReActEngine(BaseEngine):
             end = self._find_matching_bracket(text, start, "[", "]")
             if end != -1:
                 try:
-                    return json.loads(text[start : end + 1])
+                    return cast("dict[str, Any] | None", (json.loads(text[start : end + 1])))
                 except json.JSONDecodeError as exc:
                     logger.debug("react: balanced array JSON decode failed: %s", exc)
 
@@ -424,7 +424,7 @@ class ReActEngine(BaseEngine):
         if context.tool_gateway:
             # 使用工具网关
             result = await context.tool_gateway.execute(tool_name, tool_args)
-            return result
+            return cast("dict[str, Any]", (result))
         else:
             # 模拟工具执行（用于测试）
             return {"success": True, "message": f"Simulated: {tool_name}"}

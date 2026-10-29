@@ -4,7 +4,7 @@ This module provides backend interfaces for the court-style 3D UI projection, in
 All interfaces are read-only and do not modify existing execution loops or write paths.
 """
 
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Request
 from polaris.cells.docs.court_workflow.public.service import (
@@ -54,14 +54,14 @@ def _get_engine_status(app_state: AppState) -> dict[str, Any] | None:
 
 async def _get_pm_status(app_state: AppState) -> dict[str, Any]:
     """构建 PM 状态."""
-    return await build_pm_status_async(app_state)
+    return cast("dict[str, Any]", (await build_pm_status_async(app_state)))
 
 
 async def _get_director_status(app_state: AppState) -> dict[str, Any]:
     """构建 Director 状态."""
     workspace = app_state.settings.workspace or DEFAULT_WORKSPACE
     cache_root = build_cache_root("", str(workspace))
-    return await build_director_status(app_state, str(workspace), str(cache_root))
+    return cast("dict[str, Any]", (await build_director_status(app_state, str(workspace), str(cache_root))))
 
 
 @router.get("/v2/court/topology", response_model=CourtTopologyResponse)
@@ -120,7 +120,7 @@ async def get_state_v2(
         director_status=director_status,
     )
 
-    return court_state
+    return cast("dict[str, Any]", (court_state))
 
 
 @router.get("/v2/court/actors/{role_id}", response_model=CourtActorResponse)
@@ -163,7 +163,7 @@ async def get_actor_detail_v2(
     if role_id in topology_nodes:
         actor["topology"] = topology_nodes[role_id]
 
-    return actor
+    return cast("dict[str, Any]", (actor))
 
 
 @router.get("/v2/court/scenes/{scene_id}", response_model=CourtSceneResponse)
@@ -185,7 +185,7 @@ async def get_scene_detail_v2(scene_id: str) -> dict[str, Any]:
             message=f"Scene '{scene_id}' not found",
         )
 
-    return scenes[scene_id]
+    return cast("dict[str, Any]", (scenes[scene_id]))
 
 
 @router.get("/v2/court/mapping", response_model=CourtMappingResponse)

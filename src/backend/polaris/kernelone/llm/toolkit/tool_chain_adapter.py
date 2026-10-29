@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.workflow.task_status import WorkflowTaskStatus
 
@@ -59,67 +59,67 @@ class AgentAccelToolChainAdapter:
 
     def _handle_read_file(self, **kwargs) -> dict[str, Any]:
         """处理文件读取."""
-        return self.executor.execute("read_file", kwargs)
+        return cast("dict[str, Any]", (self.executor.execute("read_file", kwargs)))
 
     def _handle_write_file(self, **kwargs) -> dict[str, Any]:
         """处理文件写入."""
-        return self.executor.execute("write_file", kwargs)
+        return cast("dict[str, Any]", (self.executor.execute("write_file", kwargs)))
 
     def _handle_execute_command(self, **kwargs) -> dict[str, Any]:
         """处理命令执行."""
-        return self.executor.execute("execute_command", kwargs)
+        return cast("dict[str, Any]", (self.executor.execute("execute_command", kwargs)))
 
     def _handle_search_code(self, **kwargs) -> dict[str, Any]:
         """处理代码搜索."""
-        return self.executor.execute("search_code", kwargs)
+        return cast("dict[str, Any]", (self.executor.execute("search_code", kwargs)))
 
     def _handle_glob(self, **kwargs) -> dict[str, Any]:
         """处理 glob 文件匹配."""
-        return self.executor.execute("glob", kwargs)
+        return cast("dict[str, Any]", (self.executor.execute("glob", kwargs)))
 
     def _handle_list_directory(self, **kwargs) -> dict[str, Any]:
         """处理目录列表."""
-        return self.executor.execute("list_directory", kwargs)
+        return cast("dict[str, Any]", (self.executor.execute("list_directory", kwargs)))
 
     def _handle_file_exists(self, **kwargs) -> dict[str, Any]:
         """处理文件存在检查."""
-        return self.executor.execute("file_exists", kwargs)
+        return cast("dict[str, Any]", (self.executor.execute("file_exists", kwargs)))
 
     def _handle_grep(self, **kwargs) -> dict[str, Any]:
         """处理 grep 搜索."""
-        return self.executor.execute("grep", kwargs)
+        return cast("dict[str, Any]", (self.executor.execute("grep", kwargs)))
 
     def _handle_ripgrep(self, **kwargs) -> dict[str, Any]:
         """处理 ripgrep 搜索."""
-        return self.executor.execute("ripgrep", kwargs)
+        return cast("dict[str, Any]", (self.executor.execute("ripgrep", kwargs)))
 
     def _handle_search_replace(self, **kwargs) -> dict[str, Any]:
         """处理搜索替换."""
-        return self.executor.execute("search_replace", kwargs)
+        return cast("dict[str, Any]", (self.executor.execute("search_replace", kwargs)))
 
     def _handle_edit_file(self, **kwargs) -> dict[str, Any]:
         """处理文件编辑."""
-        return self.executor.execute("edit_file", kwargs)
+        return cast("dict[str, Any]", (self.executor.execute("edit_file", kwargs)))
 
     def _handle_append_to_file(self, **kwargs) -> dict[str, Any]:
         """处理文件追加."""
-        return self.executor.execute("append_to_file", kwargs)
+        return cast("dict[str, Any]", (self.executor.execute("append_to_file", kwargs)))
 
     def _handle_search_memory(self, **kwargs) -> dict[str, Any]:
         """处理 session memory 搜索."""
-        return self.executor.execute("search_memory", kwargs)
+        return cast("dict[str, Any]", (self.executor.execute("search_memory", kwargs)))
 
     def _handle_read_artifact(self, **kwargs) -> dict[str, Any]:
         """处理 artifact 读取."""
-        return self.executor.execute("read_artifact", kwargs)
+        return cast("dict[str, Any]", (self.executor.execute("read_artifact", kwargs)))
 
     def _handle_read_episode(self, **kwargs) -> dict[str, Any]:
         """处理 episode 读取."""
-        return self.executor.execute("read_episode", kwargs)
+        return cast("dict[str, Any]", (self.executor.execute("read_episode", kwargs)))
 
     def _handle_get_state(self, **kwargs) -> dict[str, Any]:
         """处理 session state 读取."""
-        return self.executor.execute("get_state", kwargs)
+        return cast("dict[str, Any]", (self.executor.execute("get_state", kwargs)))
 
 
 class AgentAccelToolChainStep:

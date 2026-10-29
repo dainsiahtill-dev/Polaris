@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.editing.editblock_engine import extract_edit_blocks
 from polaris.kernelone.editing.patch_engine import RoutedOperation, extract_apply_patch_operations
@@ -26,7 +26,7 @@ def route_edit_operations(
     """
     patch_ops = extract_apply_patch_operations(text)
     if patch_ops:
-        return patch_ops
+        return cast("list[Any]", (patch_ops))
 
     edit_blocks = extract_edit_blocks(text, valid_filenames=list(inchat_files))
     if edit_blocks:

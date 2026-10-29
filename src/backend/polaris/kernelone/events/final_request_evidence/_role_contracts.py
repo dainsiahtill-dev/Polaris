@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.events.final_request_evidence._constants import (
     _EXACT_HASH_64_RE,
@@ -548,7 +548,7 @@ def render_role_final_request_policy_facts(facts: RoleFinalRequestPolicyFactsV1)
             for slot in facts.slots
         ],
     }
-    return canonical_role_final_request_json(prompt_projection)
+    return cast("str", (canonical_role_final_request_json(prompt_projection)))
 
 
 def validate_role_final_request_policy_prompt_projection(

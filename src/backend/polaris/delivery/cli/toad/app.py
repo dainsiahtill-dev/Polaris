@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import cast
 
 
 def _bootstrap_backend_import_path():
@@ -36,15 +37,20 @@ def run_role_console(
 ) -> int:
     """Module-level console hook retained for toad adapter tests and callers."""
     _, console_entrypoint = _bootstrap_backend_import_path()
-    return console_entrypoint(
-        workspace=workspace,
-        role=role,
-        backend=backend,
-        session_id=session_id,
-        session_title=session_title,
-        prompt_style=prompt_style,
-        omp_config=omp_config,
-        json_render=json_render,
+    return cast(
+        "int",
+        (
+            console_entrypoint(
+                workspace=workspace,
+                role=role,
+                backend=backend,
+                session_id=session_id,
+                session_title=session_title,
+                prompt_style=prompt_style,
+                omp_config=omp_config,
+                json_render=json_render,
+            )
+        ),
     )
 
 

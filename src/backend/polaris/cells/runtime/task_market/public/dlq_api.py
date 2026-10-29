@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.runtime.task_market.internal.dlq import DLQManager
 from polaris.cells.runtime.task_market.internal.store import get_store
@@ -61,7 +61,7 @@ def get_dlq_stats(workspace: str) -> dict[str, Any]:
     """
     store = get_store(workspace)
     dlq = DLQManager(store)
-    return dlq.get_dlq_stats(workspace)
+    return cast("dict[str, Any]", (dlq.get_dlq_stats(workspace)))
 
 
 def list_dlq_items(workspace: str, limit: int = 200) -> list[dict[str, Any]]:
@@ -76,7 +76,7 @@ def list_dlq_items(workspace: str, limit: int = 200) -> list[dict[str, Any]]:
     """
     store = get_store(workspace)
     dlq = DLQManager(store)
-    return dlq.load_dlq_items(workspace=workspace, limit=limit)
+    return cast("list[dict[str, Any]]", (dlq.load_dlq_items(workspace=workspace, limit=limit)))
 
 
 __all__ = [

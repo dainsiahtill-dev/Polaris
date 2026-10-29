@@ -4,7 +4,7 @@ import importlib.metadata
 import logging
 import time
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from polaris.infrastructure.llm.sdk import CodexSDK, SDKConfig, SDKMessage, SDKUnavailableError
 from polaris.kernelone.constants import DEFAULT_MAX_RETRIES
@@ -40,7 +40,7 @@ def _thaw_sdk_dispatch_value(value: Any) -> Any:
 
 
 def _normalize_timeout(value: Any, default: int = 60) -> int:
-    return normalize_timeout_seconds(value, default=default)
+    return cast("int", (normalize_timeout_seconds(value, default=default)))
 
 
 def _normalize_retries(value: Any, default: int = DEFAULT_MAX_RETRIES) -> int:

@@ -7,7 +7,7 @@ moved verbatim from the original ``dispatch_pipeline.py``."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -19,7 +19,7 @@ def _get_chief_engineer_service() -> Callable[..., Any]:
         run_pre_dispatch_chief_engineer,
     )
 
-    return run_pre_dispatch_chief_engineer
+    return cast("Callable[..., Any]", (run_pre_dispatch_chief_engineer))
 
 
 def _get_chief_engineer_blueprint_services() -> tuple[type, Callable[..., Any]]:

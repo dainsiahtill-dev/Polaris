@@ -9,7 +9,7 @@ parameters here. This keeps the internal module free of Settings coupling.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.llm.provider_config.public.contracts import (
     ProviderConfigValidationError,
@@ -37,7 +37,7 @@ def load_llm_config_port(workspace: str, cache_root: str) -> dict[str, Any]:
     """
     from polaris.kernelone.llm import config_store
 
-    return config_store.load_llm_config(workspace, cache_root)
+    return cast("dict[str, Any]", (config_store.load_llm_config(workspace, cache_root)))
 
 
 @dataclass(frozen=True)

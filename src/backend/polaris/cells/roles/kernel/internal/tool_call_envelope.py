@@ -10,7 +10,7 @@ failure evidence. Callers should use this module instead of carrying local
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     build_native_tool_call_envelope_payloads,
@@ -65,7 +65,7 @@ def native_tool_calls_from_response(response: Any) -> list[dict[str, Any]]:
 def native_tool_call_envelopes_from_metadata(metadata: Mapping[str, Any] | None) -> tuple[Mapping[str, Any], ...]:
     """Return authoritative native tool-call envelope payloads from metadata."""
 
-    return native_tool_call_envelope_refs_from_metadata(metadata)
+    return cast("tuple[Mapping[str, Any], ...]", (native_tool_call_envelope_refs_from_metadata(metadata)))
 
 
 def native_tool_call_provider_from_metadata(metadata: Mapping[str, Any] | None) -> str:
@@ -98,9 +98,14 @@ def native_tool_call_envelopes_from_response(
     if not raw_calls:
         return []
 
-    return build_native_tool_call_envelope_payloads(
-        raw_calls,
-        provider=native_tool_call_provider_from_metadata(metadata),
+    return cast(
+        "list[dict[str, Any]]",
+        (
+            build_native_tool_call_envelope_payloads(
+                raw_calls,
+                provider=native_tool_call_provider_from_metadata(metadata),
+            )
+        ),
     )
 
 

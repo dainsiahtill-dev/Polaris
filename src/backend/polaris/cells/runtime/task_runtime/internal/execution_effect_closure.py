@@ -6,7 +6,7 @@ import hashlib
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from polaris.cells.events.fact_stream.public import (
     FactPayloadReferenceV1,
@@ -883,11 +883,14 @@ def _negative_operation_binding_matches(arguments: dict[str, Any], attempt: Any,
             prospective_operation_hash=member.intended_effect_fingerprint,
         )
         operation_hash = hash_directed_effect_operation_subject(subject)
-        return (
-            operation_hash
-            == member.intended_effect_fingerprint
-            == member.policy_verdict_hash
-            == member.expected_receipt_binding_hash
+        return cast(
+            "bool",
+            (
+                operation_hash
+                == member.intended_effect_fingerprint
+                == member.policy_verdict_hash
+                == member.expected_receipt_binding_hash
+            ),
         )
     except (AttributeError, TypeError, ValueError):
         return False
@@ -934,9 +937,13 @@ def _negative_invocation_matches(
     ):
         return False
     try:
-        return _canonical_sha256(
-            normalize_tool_arguments_from_snapshot(snapshot, native_arguments)
-        ) == _canonical_sha256(arguments)
+        return cast(
+            "bool",
+            (
+                _canonical_sha256(normalize_tool_arguments_from_snapshot(snapshot, native_arguments))
+                == _canonical_sha256(arguments)
+            ),
+        )
     except (TypeError, ValueError):
         return False
 

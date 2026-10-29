@@ -11,6 +11,7 @@ Key Design Principle:
 from __future__ import annotations
 
 import logging
+from typing import cast
 
 from polaris.kernelone.context.context_os.decision_log import AttentionScore, ReasonCode
 from polaris.kernelone.context.context_os.phase_detection import TaskPhase
@@ -195,4 +196,4 @@ class ReasonCodeGenerator:
 
     def get_reason_description(self, reason_code: ReasonCode) -> str:
         """Get human-readable description for a reason code."""
-        return self.REASON_DESCRIPTIONS.get(reason_code, reason_code.value)
+        return cast("str", (self.REASON_DESCRIPTIONS.get(reason_code, reason_code.value)))

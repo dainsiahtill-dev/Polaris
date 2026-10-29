@@ -554,7 +554,7 @@ def _snapshot_messages_for_request(*, request: Any, prepared: PreparedLLMRequest
         # Extra caller fields/names must match that whole source exactly.
         if raw_messages != active_projection and raw_messages != messages:
             raise RuntimeError("factory_snapshot_active_messages_mismatch")
-        return messages
+        return cast("list[Any]", (messages))
     if isinstance(raw_messages, list) and raw_messages:
         messages = [dict(item) for item in raw_messages if isinstance(item, dict)]
         if messages:

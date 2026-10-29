@@ -11,7 +11,7 @@ import time
 import uuid
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any  # Protocol re-exported for lossless surface
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.control_plane.run_ledger.public import (
     FactorySettlementBarrierResultV1,
@@ -168,7 +168,7 @@ class _FactoryRunServiceCore:
         使用哈希分片确保同一 run 的操作串行化，不同 run 可并行。
         """
         bucket = hash(run_id) % self._LOCK_BUCKETS
-        return self._run_locks[bucket]
+        return cast("asyncio.Lock", (self._run_locks[bucket]))
 
     def _physical_attempt_coordinator(self: Any, factory_run_id: str) -> FactoryPhysicalAttemptLiveControlPort:
         """Return the one process-local coordinator owned by this Factory run.
@@ -184,7 +184,7 @@ class _FactoryRunServiceCore:
         coordinator = self._physical_attempt_coordinators.get(normalized_run_id)
         if coordinator is None:
             raise FactoryPhysicalAttemptControlError("factory_physical_attempt_replay_required")
-        return coordinator
+        return cast("FactoryPhysicalAttemptLiveControlPort", (coordinator))
 
     def _revalidate_active_physical_attempt_stage_claim(
         self: Any,
@@ -221,7 +221,7 @@ class _FactoryRunServiceCore:
         coordinator = self._physical_attempt_coordinator(factory_run_id)
         if coordinator.admission_closed:
             raise FactoryPhysicalAttemptControlError("factory_physical_attempt_recovered_run_permanently_closed")
-        return coordinator
+        return cast("FactoryPhysicalAttemptLiveControlPort", (coordinator))
 
     def _ensure_physical_attempt_replay_ledgers(self: Any, factory_run_id: str) -> None:
         """Pre-enrol both replay streams while the new run is being created."""
@@ -609,7 +609,7 @@ class _FactoryRunServiceCore:
             raise RuntimeError("factory_role_evidence_stage_claim_missing_after_claim")
 
         async def load_current_run() -> FactoryRun | None:
-            return await self.store.get_run(run.id)
+            return cast("FactoryRun | None", (await self.store.get_run(run.id)))
 
         return FactoryRoleEvidenceAuthorityPort(
             workspace=self.workspace,
@@ -708,7 +708,7 @@ class _FactoryRunServiceCore:
                 operation=operation,
             )
             await self._reconcile_stage_execution_claim(run, settlement=settlement)
-            return run
+            return cast("FactoryRun", (run))
 
     async def _reconcile_stage_execution_claim(
         self: Any,
@@ -792,9 +792,14 @@ class _FactoryRunServiceCore:
         return run
 
     def _query_child_session_settlement(self: Any, run_id: str) -> dict[str, object]:
-        return query_factory_run_settlement(
-            str(self.workspace),
-            factory_run_id=run_id,
+        return cast(
+            "dict[str, object]",
+            (
+                query_factory_run_settlement(
+                    str(self.workspace),
+                    factory_run_id=run_id,
+                )
+            ),
         )
 
     @staticmethod
@@ -842,7 +847,7 @@ class _FactoryRunServiceCore:
         run.metadata[_CHILD_SESSION_SETTLEMENT_EVIDENCE_METADATA_KEY] = evidence
         if settled:
             run.metadata.pop("factory_child_session_conflict", None)
-            return evidence
+            return cast("dict[str, object]", (evidence))
 
         observed_at = self._now()
         conflict: dict[str, Any] = {
@@ -893,11 +898,11 @@ class _FactoryRunServiceCore:
     async def get_run(self: Any, run_id: str) -> FactoryRun | None:
         """Return one persisted run without mutation, cleanup, or events."""
 
-        return await self.store.get_run(run_id)
+        return cast("FactoryRun | None", (await self.store.get_run(run_id)))
 
     async def get_run_events(self: Any, run_id: str) -> list[dict[str, Any]]:
         """Get all events for a run."""
-        return await self.store.get_events(run_id)
+        return cast("list[dict[str, Any]]", (await self.store.get_events(run_id)))
 
     async def assert_mutation_allowed(
         self: Any,
@@ -984,7 +989,7 @@ class _FactoryRunServiceCore:
         self._require_writable()
         self._automatic_router_mutation_families(operation)
         async with self._get_run_lock(run_id):
-            return await self.assert_mutation_allowed(run_id, current_run=current_run)
+            return cast("FactoryRun", (await self.assert_mutation_allowed(run_id, current_run=current_run)))
 
     async def apply_automatic_router_mutation(
         self: Any,
@@ -1037,7 +1042,7 @@ class _FactoryRunServiceCore:
                 stage_context[PM_STAGE_ARTIFACT_BINDING_CONTEXT_KEY] = proof
             else:
                 stage_context.pop(PM_STAGE_ARTIFACT_BINDING_CONTEXT_KEY, None)
-        return await self._executor.execute(stage, run, stage_context)
+        return cast("StageResult", (await self._executor.execute(stage, run, stage_context)))
 
     async def _find_last_successful_stage(self: Any, run_id: str) -> str | None:
         """Find the last checkpoint-backed, commit-ACKed successful stage."""
@@ -1121,7 +1126,7 @@ class _FactoryRunServiceCore:
             )
         if publish:
             await self._publish_factory_event(run_id, committed)
-        return committed
+        return cast("dict[str, Any]", (committed))
 
     async def _publish_factory_event(self: Any, run_id: str, event: Mapping[str, Any]) -> None:
         payload = dict(event)
@@ -1208,4 +1213,4 @@ class _FactoryRunServiceCore:
 
     @staticmethod
     def _now() -> str:
-        return utc_now_iso()
+        return cast("str", (utc_now_iso()))

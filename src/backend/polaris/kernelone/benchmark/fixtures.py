@@ -351,7 +351,7 @@ try:
         Returns:
             Factory function that creates MemoryStats instances.
         """
-        return MemoryStats
+        return cast("Callable[[], Any]", (MemoryStats))
 
 except ImportError:
     ...

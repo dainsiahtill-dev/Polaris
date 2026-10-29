@@ -7,7 +7,7 @@ Exposed through public/service.py which re-exports this module.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.policy.workspace_guard.service import (
     SELF_UPGRADE_MODE_ENV,
@@ -48,7 +48,7 @@ class WorkspaceGuardService:
     @property
     def meta_project_root(self) -> Path:
         """Return the Polaris meta-project root."""
-        return get_meta_project_root()
+        return cast("Path", (get_meta_project_root()))
 
     def check_write_allowed(self, path: str | Path) -> GuardCheckResult:
         """Check if a write to the given path is allowed.
@@ -108,7 +108,7 @@ class WorkspaceGuardService:
         Returns:
             True if workspace is the meta-project root
         """
-        return is_meta_project_target(workspace)
+        return cast("bool", (is_meta_project_target(workspace)))
 
     def get_guard_message(self, path: str | Path) -> str:
         """Build a human-readable guard violation message.
@@ -119,7 +119,7 @@ class WorkspaceGuardService:
         Returns:
             Human-readable error message
         """
-        return build_workspace_guard_message(path)
+        return cast("str", (build_workspace_guard_message(path)))
 
 
 __all__ = [

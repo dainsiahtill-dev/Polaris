@@ -9,7 +9,7 @@ from contextvars import ContextVar, Token
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, TypedDict
+from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, TypedDict, cast
 
 from polaris.cells.events.fact_stream.public.contracts import (
     FactStreamError,
@@ -185,7 +185,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
             normalized = self.normalize_task_id(task_id)
             if normalized is None:
                 return None
-            return self._directed_effect_inactive_block_record(normalized, blocker)
+            return cast("dict[str, Any] | None", (self._directed_effect_inactive_block_record(normalized, blocker)))
         if row is None:
             return None
         execution_events = ((execution_event,) if execution_event is not None else ()) + tuple(downstream_events)
@@ -227,7 +227,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
             metadata=metadata,
         )
         if blocker is not None:
-            return self._directed_effect_inactive_block_record(normalized, blocker)
+            return cast("dict[str, Any] | None", (self._directed_effect_inactive_block_record(normalized, blocker)))
         if _reopened_row is None:
             return None
 
@@ -301,9 +301,14 @@ class _TaskRowsMixin(_ServiceMixinBase):
             if session is not None:
                 pre_barrier = self._directed_effect_inactive_pre_barrier_locked(session)
                 if not pre_barrier.allowed:
-                    return self._directed_effect_inactive_block_record(
-                        normalized,
-                        pre_barrier,
+                    return cast(
+                        "dict[str, Any] | None",
+                        (
+                            self._directed_effect_inactive_block_record(
+                                normalized,
+                                pre_barrier,
+                            )
+                        ),
                     )
             if session is not None and not is_terminal_session_status(session.status):
                 session.mark_suspended(reason=cancel_reason, resumable=False)
@@ -409,9 +414,14 @@ class _TaskRowsMixin(_ServiceMixinBase):
             if session is not None:
                 pre_barrier = self._directed_effect_inactive_pre_barrier_locked(session)
                 if not pre_barrier.allowed:
-                    return self._directed_effect_inactive_block_record(
-                        normalized,
-                        pre_barrier,
+                    return cast(
+                        "dict[str, Any] | None",
+                        (
+                            self._directed_effect_inactive_block_record(
+                                normalized,
+                                pre_barrier,
+                            )
+                        ),
                     )
             # The inactive pre-barrier above authenticates a fulfilled suspended
             # intent and its exact effect-close proof. Preserve that settled
@@ -768,9 +778,14 @@ class _TaskRowsMixin(_ServiceMixinBase):
             if session is not None:
                 pre_barrier = self._directed_effect_inactive_pre_barrier_locked(session)
                 if not pre_barrier.allowed:
-                    return self._directed_effect_inactive_block_record(
-                        normalized,
-                        pre_barrier,
+                    return cast(
+                        "dict[str, Any] | None",
+                        (
+                            self._directed_effect_inactive_block_record(
+                                normalized,
+                                pre_barrier,
+                            )
+                        ),
                     )
             if session is not None and not is_terminal_session_status(session.status):
                 session.mark_failed(error=failure_reason)

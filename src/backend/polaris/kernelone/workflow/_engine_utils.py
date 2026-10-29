@@ -16,7 +16,7 @@ import inspect
 import logging
 import random
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.utils.time_utils import _now
 
@@ -95,7 +95,7 @@ async def unwrap_task_outcome(
     try:
         result = fut.result()
         # The task result should be TaskExecutionOutcome but is typed as Any
-        return result
+        return cast("TaskExecutionOutcome", (result))
     except asyncio.CancelledError:
         now = _now_func()
         return TaskExecutionOutcome(task_id, WorkflowTaskStatus.CANCELLED.value, 0, now, now, error="Task cancelled")

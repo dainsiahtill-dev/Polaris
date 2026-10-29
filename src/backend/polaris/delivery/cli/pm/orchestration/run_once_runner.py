@@ -28,7 +28,7 @@ import hashlib
 import json
 import os
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from polaris.application.traceability_admin import TraceabilityAdminService
 from polaris.kernelone.storage import resolve_runtime_path
@@ -63,7 +63,7 @@ def run_once_impl(args: argparse.Namespace, iteration: int = 1) -> int:
     # Ensure docs are ready
     docs_exit = _oe.ensure_docs_ready(workspace_full)
     if docs_exit is not None:
-        return docs_exit
+        return cast("int", (docs_exit))
 
     # Initialize PMPM system
     from polaris.delivery.cli.pm.orchestration_core import ensure_shangshuling_pm_initialized
@@ -1042,4 +1042,4 @@ def run_once_impl(args: argparse.Namespace, iteration: int = 1) -> int:
         result=director_result,
     )
 
-    return exit_code
+    return cast("int", (exit_code))

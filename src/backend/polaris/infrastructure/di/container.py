@@ -142,13 +142,13 @@ class DIContainer:
                 if inspect.isawaitable(instance):
                     instance = await instance
                 reg.instance = instance
-                return instance
+                return cast("T", (instance))
         else:
             # Transient
             instance = reg.factory(self)
             if inspect.isawaitable(instance):
                 instance = await instance
-            return instance
+            return cast("T", (instance))
 
     def has_registration(self, interface: type) -> bool:
         """Check if interface is registered."""

@@ -12,7 +12,7 @@ import sys
 from collections.abc import Iterable
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from polaris.kernelone.quality.artifact_quality._constants import (
     _ARTIFACT_QUALITY_ERROR_PREFIX,
@@ -1030,7 +1030,7 @@ def _check_javascript_snippet_syntax(source: str) -> str:
         return f"syntax check could not run: {exc}"
     if proc.returncode == 0:
         return ""
-    return _compress_node_syntax_error(proc.stderr or proc.stdout, "[stdin]")
+    return cast("str", (_compress_node_syntax_error(proc.stderr or proc.stdout, "[stdin]")))
 
 
 def _package_declares_dependency(payload: dict[str, Any], package_name: str) -> bool:

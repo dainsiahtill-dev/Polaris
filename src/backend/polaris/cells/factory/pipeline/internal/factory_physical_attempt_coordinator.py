@@ -207,28 +207,33 @@ def canonical_factory_physical_attempt_composite_hash(
     if type(ordinal) is not int or ordinal <= 0:
         raise ValueError("authority_attempt_ordinal_invalid")
     grant = cutoff.grant
-    return canonical_role_final_request_hash(
-        {
-            "schema_version": "factory.physical_attempt.composite_request.v1",
-            "verification_scope": grant.verification_scope,
-            "factory_run_id": grant.factory_run_id,
-            "run_id": cutoff.run_id,
-            "role": grant.role,
-            "turn_id": cutoff.turn_id,
-            "call_id": cutoff.call_id,
-            "request_freeze_id": cutoff.request_freeze_id,
-            "stage": grant.stage,
-            "workspace_fencing_token": grant.workspace_fencing_token,
-            "stage_claim_attempt": grant.stage_claim_attempt,
-            "stage_claim_nonce": grant.stage_claim_nonce,
-            "execution_authority_hash": grant.execution_authority_hash,
-            "attempt_budget": grant.attempt_budget,
-            "provider": cutoff.provider,
-            "model": cutoff.model,
-            "semantic_request_hash": cutoff.semantic_request_hash,
-            "physical_wire_hash": cutoff.physical_wire_hash,
-            "authority_attempt_ordinal": ordinal,
-        }
+    return cast(
+        "str",
+        (
+            canonical_role_final_request_hash(
+                {
+                    "schema_version": "factory.physical_attempt.composite_request.v1",
+                    "verification_scope": grant.verification_scope,
+                    "factory_run_id": grant.factory_run_id,
+                    "run_id": cutoff.run_id,
+                    "role": grant.role,
+                    "turn_id": cutoff.turn_id,
+                    "call_id": cutoff.call_id,
+                    "request_freeze_id": cutoff.request_freeze_id,
+                    "stage": grant.stage,
+                    "workspace_fencing_token": grant.workspace_fencing_token,
+                    "stage_claim_attempt": grant.stage_claim_attempt,
+                    "stage_claim_nonce": grant.stage_claim_nonce,
+                    "execution_authority_hash": grant.execution_authority_hash,
+                    "attempt_budget": grant.attempt_budget,
+                    "provider": cutoff.provider,
+                    "model": cutoff.model,
+                    "semantic_request_hash": cutoff.semantic_request_hash,
+                    "physical_wire_hash": cutoff.physical_wire_hash,
+                    "authority_attempt_ordinal": ordinal,
+                }
+            )
+        ),
     )
 
 
@@ -1287,7 +1292,7 @@ class FactoryPhysicalAttemptLiveControlPort:
 
     @property
     def inflight_request_ids(self) -> tuple[str, ...]:
-        return self.snapshot().inflight_request_ids
+        return cast("tuple[str, ...]", (self.snapshot().inflight_request_ids))
 
     @property
     def admission_closed(self) -> bool:

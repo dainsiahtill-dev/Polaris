@@ -12,7 +12,7 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.orchestration.pm_dispatch.internal.dispatch._lazy_imports import (
@@ -700,7 +700,7 @@ def _resolve_verify_runner(
         run_integration_verify_runner,
     )
 
-    return run_integration_verify_runner
+    return cast("Callable[[str], tuple[bool, str, list[str]]]", (run_integration_verify_runner))
 
 
 def _execute_post_dispatch_integration_qa(

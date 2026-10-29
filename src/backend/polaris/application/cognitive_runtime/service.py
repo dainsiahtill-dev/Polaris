@@ -8,7 +8,7 @@ import uuid
 from collections.abc import Mapping
 from datetime import timedelta
 from fnmatch import fnmatch
-from typing import Any
+from typing import Any, cast
 
 import yaml
 from polaris.cells.context.engine.public.service import get_anthropomorphic_context_v2
@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 
 def _iso_now() -> str:
-    return _utc_now().replace(microsecond=0).isoformat()
+    return cast("str", (_utc_now().replace(microsecond=0).isoformat()))
 
 
 def _normalize_paths(paths: tuple[str, ...] | list[str]) -> tuple[str, ...]:

@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 # Import core types from KernelOne (no Cells dependency)
 from polaris.kernelone.multi_agent.bus_port import (
@@ -333,7 +333,7 @@ class NATSBroker:
         Returns:
             List of DeadLetterRecord
         """
-        return self._bus_port.dead_letters
+        return cast("list[Any]", (self._bus_port.dead_letters))
 
     def get_stats(self) -> dict[str, Any]:
         """Get broker statistics.
@@ -359,7 +359,7 @@ class NATSBroker:
         """
         connected = self._bus_port.ensure_nats_connected()
         self._nats_connected = connected
-        return connected
+        return cast("bool", (connected))
 
     def disconnect_nats(self) -> None:
         """Disconnect from NATS (for graceful shutdown)."""
@@ -380,7 +380,7 @@ class NATSBroker:
         Returns:
             True if subscribed successfully
         """
-        return self._bus_port.subscribe(topic)
+        return cast("bool", (self._bus_port.subscribe(topic)))
 
     # ─── Internal Methods ─────────────────────────────────────────────────────
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence, Set
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     extract_invocation_tool_name,
@@ -225,7 +225,7 @@ def _normalize_safe_write_path(path: str) -> str | None:
         return None
     if any(token in normalized for token in ("`", "$(", "${", ";", "|", "&")):
         return None
-    return normalized
+    return cast("str | None", (normalized))
 
 
 def _mkdir_matches_target_parent(mkdir_path: str, target_file: str) -> bool:

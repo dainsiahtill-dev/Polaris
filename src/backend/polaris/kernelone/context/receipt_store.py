@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Mapping, cast
 
 if TYPE_CHECKING:
     from polaris.kernelone.context.context_os.content_store import ContentRef
@@ -40,14 +40,14 @@ class ReceiptStore:
         """Store receipt content and return its content hash."""
         ref = self._content_store.intern(content)
         self._index[receipt_id] = ref
-        return ref.hash
+        return cast("str", (ref.hash))
 
     def get(self, receipt_id: str) -> str | None:
         """Retrieve receipt content by receipt_id."""
         ref = self._index.get(receipt_id)
         if ref is None:
             return None
-        return self._content_store.get_if_present(ref)
+        return cast("str | None", (self._content_store.get_if_present(ref)))
 
     def offload_content(
         self,
@@ -110,7 +110,7 @@ class ReceiptStore:
                     import json
 
                     try:
-                        return json.loads(content)
+                        return cast("dict[str, Any] | None", (json.loads(content)))
                     except json.JSONDecodeError:
                         return {"content": content, "receipt_id": receipt_id}
         return None

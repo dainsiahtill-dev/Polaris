@@ -12,7 +12,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 from polaris.delivery.cli.pm.state_manager import (
     _now_iso,
@@ -169,7 +169,7 @@ class TaskOrchestrator:
                 },
                 "next_id": 1,
             }
-        return data
+        return cast("dict[str, Any]", (data))
 
     def _save_registry(self, registry: dict[str, Any]) -> None:
         """Save task registry atomically."""
@@ -180,7 +180,7 @@ class TaskOrchestrator:
         data = self.state_manager.read_subsystem_data("tasks", self.ASSIGNMENTS_FILE)
         if data is None:
             return {"version": "1.0", "assignments": []}
-        return data
+        return cast("dict[str, Any]", (data))
 
     def _save_assignments(self, assignments: dict[str, Any]) -> None:
         """Save task assignments."""
@@ -191,7 +191,7 @@ class TaskOrchestrator:
         data = self.state_manager.read_subsystem_data("tasks", self.STATS_FILE)
         if data is None:
             return {"version": "1.0", "executors": {}}
-        return data
+        return cast("dict[str, Any]", (data))
 
     def _save_stats(self, stats: dict[str, Any]) -> None:
         """Save executor stats."""
@@ -1119,7 +1119,7 @@ class TaskOrchestrator:
         # Sort by assigned_at descending
         filtered.sort(key=lambda x: x.get("assigned_at", ""), reverse=True)
 
-        return filtered[:limit]
+        return cast("list[dict[str, Any]]", (filtered[:limit]))
 
     def search_tasks(
         self,

@@ -117,7 +117,7 @@ class KernelFileSystem:
             raise ValueError("logical path is required")
         if os.path.isabs(raw):
             return self._logical_from_absolute_path(raw)
-        return normalize_logical_rel_path(raw)
+        return cast("str", (normalize_logical_rel_path(raw)))
 
     def exists(self, logical_path: str) -> bool:
         return self._adapter.exists(str(self.resolve_path(logical_path)))
@@ -687,4 +687,4 @@ class KernelFileSystem:
             raise ValueError("KernelFileSystem only allows UTF-8 text encoding")
 
     def _utc_now_iso(self) -> str:
-        return utc_now_str()
+        return cast("str", (utc_now_str()))

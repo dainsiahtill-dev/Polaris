@@ -12,7 +12,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from polaris.cells.audit.evidence.public.service import RoleSessionAuditService
@@ -326,7 +326,7 @@ def _audit_total(audit_service: Any, session_id: str, event_type: str | None, ev
 
 def _workspace_value(settings: Any) -> str:
     """Resolve active desktop workspace from compatible settings fields."""
-    return active_workspace_value(settings)
+    return cast("str", (active_workspace_value(settings)))
 
 
 def _active_workspace(request: Request) -> str:

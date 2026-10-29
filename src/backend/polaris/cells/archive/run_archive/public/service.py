@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.archive.run_archive.internal.archive_sink import ArchiveSink
 from polaris.cells.archive.run_archive.public.contracts import (
@@ -68,7 +68,7 @@ def archive_run(
 ) -> dict[str, Any]:
     service = create_run_archive_service(workspace)
     manifest = service.archive_run(run_id=run_id, reason=reason, status=status)
-    return manifest.to_dict()
+    return cast("dict[str, Any]", (manifest.to_dict()))
 
 
 def trigger_run_archive(
@@ -102,7 +102,7 @@ def get_run_manifest(workspace: str, run_id: str) -> dict[str, Any] | None:
 
 def get_run_events(workspace: str, run_id: str) -> list[dict[str, Any]]:
     service = create_run_archive_service(workspace)
-    return service.get_run_events(run_id)
+    return cast("list[dict[str, Any]]", (service.get_run_events(run_id)))
 
 
 def trigger_factory_archive(workspace: str, run_id: str, *, reason: str) -> None:

@@ -263,7 +263,7 @@ def _semantic_exporter_scope_discrepancy_evidence(
             "task_interface_contract_keys": sorted(str(key) for key in task_interface_contract),
         }
     )
-    return receipt
+    return cast("dict[str, Any]", (receipt))
 
 
 def _artifact_quality_issue_paths_by_raw(
@@ -600,7 +600,7 @@ def _collect_materialization_quality_errors(
         context=context,
         task_boundary=task_boundary,
     )
-    return errors
+    return cast("list[str]", (errors))
 
 
 def _collect_materialization_quality_findings(
@@ -956,14 +956,21 @@ def _has_materialization_quality_runtime_repair_coverage(
     artifact_quality_issues: tuple[dict[str, Any], ...] = (),
 ) -> bool:
     try:
-        return package_attr("has_materialization_quality_runtime_repair_coverage")(
-            artifact_quality_errors,
-            artifact_quality_issues=artifact_quality_issues,
+        return cast(
+            "bool",
+            (
+                package_attr("has_materialization_quality_runtime_repair_coverage")(
+                    artifact_quality_errors,
+                    artifact_quality_issues=artifact_quality_issues,
+                )
+            ),
         )
     except TypeError as exc:
         if "artifact_quality_issues" not in str(exc):
             raise
-        return package_attr("has_materialization_quality_runtime_repair_coverage")(artifact_quality_errors)
+        return cast(
+            "bool", (package_attr("has_materialization_quality_runtime_repair_coverage")(artifact_quality_errors))
+        )
 
 
 __all__ = [

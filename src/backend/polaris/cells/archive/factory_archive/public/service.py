@@ -14,7 +14,7 @@ import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.archive.factory_archive.public.contracts import (
     ArchiveFactoryRunCommandV1,
@@ -172,10 +172,10 @@ class FactoryArchiveService:
     def list_factory_runs(self, limit: int = 50, offset: int = 0) -> list[FactoryIndexEntry]:
         safe_limit = max(0, int(limit))
         safe_offset = max(0, int(offset))
-        return self._manifest_repo.read_factory_index(limit=safe_limit, offset=safe_offset)
+        return cast("list[Any]", (self._manifest_repo.read_factory_index(limit=safe_limit, offset=safe_offset)))
 
     def _workspace_rel(self, path: Path) -> str:
-        return self._kernel_fs.to_workspace_relative_path(str(path))
+        return cast("str", (self._kernel_fs.to_workspace_relative_path(str(path))))
 
     @staticmethod
     def _safe_rel(path: Path, root: Path) -> str:

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from typing import cast
 
 from polaris.domain.verification.business_validators import (
     validate_director_safe_scope,
@@ -66,7 +67,7 @@ def _validator_pm_plan_json(
     Returns:
         Tuple of (is_valid, message).
     """
-    return validate_pm_plan_json(output_text)
+    return cast("tuple[bool, str]", (validate_pm_plan_json(output_text)))
 
 
 def _validator_qa_passfail_json(
@@ -87,7 +88,7 @@ def _validator_qa_passfail_json(
     payload = _extract_json_dict(output_text)
     if payload is None:
         return False, "qa verdict must be a JSON object"
-    return validate_qa_passfail(payload)
+    return cast("tuple[bool, str]", (validate_qa_passfail(payload)))
 
 
 def _validator_director_safe_scope(
@@ -105,7 +106,7 @@ def _validator_director_safe_scope(
     Returns:
         Tuple of (is_valid, message).
     """
-    return validate_director_safe_scope(output_text)
+    return cast("tuple[bool, str]", (validate_director_safe_scope(output_text)))
 
 
 def _validator_no_hallucinated_paths(
@@ -123,7 +124,7 @@ def _validator_no_hallucinated_paths(
     Returns:
         Tuple of (is_valid, message).
     """
-    return validate_no_hallucinated_paths(output_text, known_paths=known_paths)
+    return cast("tuple[bool, str]", (validate_no_hallucinated_paths(output_text, known_paths=known_paths)))
 
 
 def _validator_structured_steps(
@@ -1120,7 +1121,7 @@ def _register_scout_validators_from_builtin() -> None:
 
     def _wrap(port: object) -> ValidatorFunc:
         def _validator(output_text: str, observed: ObservedBenchmarkRun, known_paths: list[str]) -> tuple[bool, str]:
-            return port.validate(output_text, observed, known_paths)  # type: ignore[attr-defined]
+            return cast("tuple[bool, str]", (port.validate(output_text, observed, known_paths)))  # type: ignore[attr-defined]
 
         return _validator
 

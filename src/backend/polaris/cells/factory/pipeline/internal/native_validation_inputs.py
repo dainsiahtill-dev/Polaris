@@ -11,7 +11,7 @@ import hashlib
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Sequence, cast
 
 from polaris.cells.chief_engineer.blueprint.public import (
     ChiefEngineerBlueprintErrorV1,
@@ -101,26 +101,31 @@ def _source_path(value: str) -> str:
 def _baseline_hash(
     workspace: str, contract: ProjectCompletionContractV1, files: tuple[NativeValidationSourceFile, ...]
 ) -> str:
-    return stable_hash(
-        {
-            "schema_version": "factory.native_validation.source_baseline.v1",
-            "workspace": workspace,
-            "project_id": contract.project_id,
-            "run_id": contract.run_id,
-            "completion_contract_hash": contract.contract_hash,
-            "files": [
+    return cast(
+        "str",
+        (
+            stable_hash(
                 {
-                    "path": item.path,
-                    "obligation_id": item.obligation_id,
-                    "owner_task_id": item.owner_task_id,
-                    "content_hash": item.content_hash,
-                    "source_receipt_hash": item.source_evidence.receipt_hash
-                    if type(item.source_evidence) is ProjectArtifactReceiptV1
-                    else item.source_evidence.source_receipt_hash,
+                    "schema_version": "factory.native_validation.source_baseline.v1",
+                    "workspace": workspace,
+                    "project_id": contract.project_id,
+                    "run_id": contract.run_id,
+                    "completion_contract_hash": contract.contract_hash,
+                    "files": [
+                        {
+                            "path": item.path,
+                            "obligation_id": item.obligation_id,
+                            "owner_task_id": item.owner_task_id,
+                            "content_hash": item.content_hash,
+                            "source_receipt_hash": item.source_evidence.receipt_hash
+                            if type(item.source_evidence) is ProjectArtifactReceiptV1
+                            else item.source_evidence.source_receipt_hash,
+                        }
+                        for item in files
+                    ],
                 }
-                for item in files
-            ],
-        }
+            )
+        ),
     )
 
 

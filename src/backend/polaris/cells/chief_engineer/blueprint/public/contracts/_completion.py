@@ -7,7 +7,7 @@ import json
 import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from polaris.cells.chief_engineer.blueprint.public.contracts._helpers import (
     _PROJECT_COMPLETION_CONTRACT_ID_PREFIX,
@@ -56,7 +56,7 @@ def _require_literal(name: str, value: str, allowed: frozenset[str]) -> str:
     token = _require_exact_non_empty(name, value)
     if token not in allowed:
         raise ValueError(f"{name} must be one of {sorted(allowed)}")
-    return token
+    return cast("str", (token))
 
 
 def _canonicalize_completion_id_tuple(

@@ -21,7 +21,7 @@ import threading
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.fs.fsync_mode import is_fsync_enabled
 from polaris.kernelone.storage import resolve_storage_roots
@@ -150,7 +150,7 @@ def get_log_jetstream_publisher() -> Any:
 
 def _fsync_enabled() -> bool:
     """Check if fsync is enabled via shared fsync-mode helper."""
-    return is_fsync_enabled()
+    return cast("bool", (is_fsync_enabled()))
 
 
 def _get_run_lock(run_id: str) -> threading.Lock:

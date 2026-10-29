@@ -14,7 +14,7 @@ Only this adapter (loaded lazily by pipeline_ports.py) imports delivery.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +40,17 @@ class DeliveryPmInvokePort:
         """Invoke the PM LLM backend via delivery layer."""
         from polaris.delivery.cli.pm.backend import invoke_pm_backend
 
-        return invoke_pm_backend(
-            state=state,
-            prompt=prompt,
-            backend_kind=backend_kind,
-            args=args,
-            usage_ctx=usage_ctx,
+        return cast(
+            "str",
+            (
+                invoke_pm_backend(
+                    state=state,
+                    prompt=prompt,
+                    backend_kind=backend_kind,
+                    args=args,
+                    usage_ctx=usage_ctx,
+                )
+            ),
         )
 
     def build_prompt(
@@ -65,22 +70,27 @@ class DeliveryPmInvokePort:
         """Build PM planning prompt via delivery layer."""
         from polaris.delivery.cli.pm.backend import build_pm_prompt
 
-        return build_pm_prompt(
-            requirements=requirements,
-            plan_text=plan_text,
-            gap_report=gap_report,
-            last_qa=last_qa,
-            last_tasks=last_tasks,
-            director_result=director_result,
-            pm_state=pm_state,
-            iteration=iteration,
-            run_id=run_id,
-            events_path=events_path,
-            workspace_root=workspace_root,
+        return cast(
+            "str",
+            (
+                build_pm_prompt(
+                    requirements=requirements,
+                    plan_text=plan_text,
+                    gap_report=gap_report,
+                    last_qa=last_qa,
+                    last_tasks=last_tasks,
+                    director_result=director_result,
+                    pm_state=pm_state,
+                    iteration=iteration,
+                    run_id=run_id,
+                    events_path=events_path,
+                    workspace_root=workspace_root,
+                )
+            ),
         )
 
     def extract_json(self, raw_output: str) -> dict[str, Any] | None:
         """Extract JSON from LLM output via delivery layer."""
         from polaris.delivery.cli.pm.backend import _extract_json_from_llm_output
 
-        return _extract_json_from_llm_output(raw_output)
+        return cast("dict[str, Any] | None", (_extract_json_from_llm_output(raw_output)))

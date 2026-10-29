@@ -11,7 +11,7 @@ import json
 import logging
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.roles.session.internal.storage_paths import (
     resolve_preferred_logical_prefix,
@@ -75,7 +75,7 @@ class SnapshotService:
         return f"{self._base_rel}/{session_id}/snapshots.jsonl"
 
     def _snapshots_path(self, session_id: str) -> Path:
-        return self._kernel_fs.resolve_path(self._snapshots_rel(session_id))
+        return cast("Path", (self._kernel_fs.resolve_path(self._snapshots_rel(session_id))))
 
     # -------------------------------------------------------------------------
     # Core snapshot API

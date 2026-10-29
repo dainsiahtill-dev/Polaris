@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.benchmark.reporting.structs import (
     AlertSeverity,
@@ -464,7 +464,7 @@ class AlertDispatcher:
         )
 
         with urllib.request.urlopen(req, timeout=10) as response:
-            return response.status == 200
+            return cast("bool", (response.status == 200))
 
     def _dispatch_slack(
         self,
@@ -489,7 +489,7 @@ class AlertDispatcher:
 
         try:
             with urllib.request.urlopen(req, timeout=10) as response:
-                return response.status == 200
+                return cast("bool", (response.status == 200))
         except (RuntimeError, ValueError):
             _logger.debug("Slack webhook dispatch failed for %d alerts", len(alerts))
             return False
@@ -517,7 +517,7 @@ class AlertDispatcher:
 
         try:
             with urllib.request.urlopen(req, timeout=10) as response:
-                return response.status == 200
+                return cast("bool", (response.status == 200))
         except (RuntimeError, ValueError):
             _logger.debug("Teams webhook dispatch failed for %d alerts", len(alerts))
             return False

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import cast
 
 from polaris.kernelone.context._token_estimator import estimate_tokens as _estimate_tokens
 
@@ -74,7 +75,7 @@ def estimate_tokens(text: str) -> int:
     Returns:
         Estimated token count (>= 0).
     """
-    return _estimate_tokens(text)
+    return cast("int", (_estimate_tokens(text)))
 
 
 def no_op(text: str) -> CrushResult:

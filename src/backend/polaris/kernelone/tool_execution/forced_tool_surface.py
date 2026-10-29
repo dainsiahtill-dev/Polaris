@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from typing import Any, Final
+from typing import Any, Final, cast
 
 _WRITE_FILE_PATH_PROPERTY_NAMES: Final[tuple[str, ...]] = (
     "file",
@@ -79,7 +79,7 @@ def resolve_registry_tool_schema(
     if not isinstance(schema, dict):
         raise ForcedToolSurfaceError("tool_registry_contract_missing", name)
     # Deep copy so callers can pin enums without mutating registry cache.
-    return json.loads(json.dumps(schema, ensure_ascii=False))
+    return cast("dict[str, Any]", (json.loads(json.dumps(schema, ensure_ascii=False))))
 
 
 def pin_write_file_paths(definition: Mapping[str, Any], target_files: Sequence[str]) -> dict[str, Any]:
@@ -102,18 +102,18 @@ def pin_write_file_paths(definition: Mapping[str, Any], target_files: Sequence[s
     enum_values = [str(path).strip() for path in target_files if str(path or "").strip()]
     enum_values = list(dict.fromkeys(enum_values[:32]))
     if not enum_values:
-        return pinned
+        return cast("dict[str, Any]", (pinned))
     parameters = function_payload.get("parameters")
     if not isinstance(parameters, dict):
-        return pinned
+        return cast("dict[str, Any]", (pinned))
     properties = parameters.get("properties")
     if not isinstance(properties, dict):
-        return pinned
+        return cast("dict[str, Any]", (pinned))
     for property_name in _WRITE_FILE_PATH_PROPERTY_NAMES:
         property_schema = properties.get(property_name)
         if isinstance(property_schema, dict):
             property_schema["enum"] = list(enum_values)
-    return pinned
+    return cast("dict[str, Any]", (pinned))
 
 
 def build_forced_tool_surface(

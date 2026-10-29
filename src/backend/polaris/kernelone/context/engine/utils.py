@@ -9,7 +9,7 @@ import hashlib
 import json
 import logging
 import os
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.fs.text_ops import read_file_safe
 from polaris.kernelone.llm.engine.token_estimator import estimate_tokens as _canonical_estimate_tokens
@@ -27,7 +27,7 @@ def _estimate_tokens(text: str) -> int:
     """Estimate token count for text (P1-CTX-006 convergence: delegates to canonical)."""
     if not text:
         return 0
-    return _canonical_estimate_tokens(text)
+    return cast("int", (_canonical_estimate_tokens(text)))
 
 
 def _safe_json(obj: Any) -> str:

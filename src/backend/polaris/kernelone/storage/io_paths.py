@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import cast
 
 from polaris.kernelone.storage import (
     normalize_logical_rel_path,
@@ -124,13 +125,13 @@ def normalize_artifact_rel_path(rel_path: str) -> str:
         return ""
     if os.path.isabs(raw):
         return os.path.abspath(raw)
-    return normalize_logical_rel_path(raw)
+    return cast("str", (normalize_logical_rel_path(raw)))
 
 
 def _artifact_base_dir(workspace_full: str, cache_root_full: str) -> str:
     if cache_root_full:
         return cache_root_full
-    return resolve_storage_roots(workspace_full).runtime_root
+    return cast("str", (resolve_storage_roots(workspace_full).runtime_root))
 
 
 def _strip_artifact_root_prefix(rel_path: str) -> str:
@@ -146,7 +147,7 @@ def _strip_artifact_root_prefix(rel_path: str) -> str:
 
 def build_cache_root(ramdisk_root: str, workspace_full: str) -> str:
     roots = resolve_storage_roots(workspace_full, ramdisk_root=ramdisk_root or None)
-    return roots.runtime_root
+    return cast("str", (roots.runtime_root))
 
 
 def is_hot_artifact_path(rel_path: str) -> bool:
@@ -235,4 +236,4 @@ def resolve_artifact_path(
         if normalized == "runtime":
             return runtime_root
         return os.path.join(runtime_root, normalized[len("runtime/") :])
-    return resolve_logical_path(workspace_full, normalized)
+    return cast("str", (resolve_logical_path(workspace_full, normalized)))

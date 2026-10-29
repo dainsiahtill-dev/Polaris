@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.runtime.task_market.internal.projection import TaskMarketProjection
 
@@ -10,7 +10,7 @@ from polaris.cells.runtime.task_market.internal.projection import TaskMarketProj
 def get_dashboard(workspace: str) -> dict[str, Any]:
     """Get complete dashboard summary."""
     proj = TaskMarketProjection(workspace)
-    return proj.get_dashboard_summary()
+    return cast("dict[str, Any]", (proj.get_dashboard_summary()))
 
 
 def list_active_items(
@@ -20,10 +20,10 @@ def list_active_items(
 ) -> list[dict[str, Any]]:
     """List active (non-terminal) work items."""
     proj = TaskMarketProjection(workspace)
-    return proj.get_active_work_items(stage=stage, limit=limit)
+    return cast("list[dict[str, Any]]", (proj.get_active_work_items(stage=stage, limit=limit)))
 
 
 def get_worker_load(workspace: str) -> dict[str, dict[str, Any]]:
     """Get worker load summary."""
     proj = TaskMarketProjection(workspace)
-    return proj.get_worker_load()
+    return cast("dict[str, dict[str, Any]]", (proj.get_worker_load()))

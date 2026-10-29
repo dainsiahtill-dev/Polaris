@@ -19,7 +19,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public.committed_turn_receipts import query_committed_turn_receipts
 from polaris.cells.control_plane.run_ledger.public.contracts import (
@@ -707,9 +707,14 @@ def _task_runtime_tool_lifecycle_requirement_event(
         reason="director_materialization_claimed",
         evidence_refs=(evidence_ref,) if evidence_ref else (),
     )
-    return build_tool_lifecycle_requirement_run_ledger_event(
-        requirement,
-        project_id=str(fact.get("project_id") or "").strip(),
+    return cast(
+        "dict[str, Any] | None",
+        (
+            build_tool_lifecycle_requirement_run_ledger_event(
+                requirement,
+                project_id=str(fact.get("project_id") or "").strip(),
+            )
+        ),
     )
 
 
@@ -1763,7 +1768,10 @@ def _terminal_execution_effect_observations(workspace: Path, facts: list[dict[st
             attempt.run_id,
         )
         attempts[key] = attempt
-    return query_execution_effect_closures(QueryExecutionEffectClosuresV1(str(workspace), tuple(attempts.values())))
+    return cast(
+        "tuple[Any, ...]",
+        (query_execution_effect_closures(QueryExecutionEffectClosuresV1(str(workspace), tuple(attempts.values())))),
+    )
 
 
 def read_run_ledger_projection_barrier(
@@ -1885,9 +1893,14 @@ def _publish_run_ledger_projection_update(
             },
             "meta": {"source": "control_plane.run_ledger"},
         }
-        return get_log_jetstream_publisher().publish(
-            subject=f"hp.runtime.{workspace_key}.status.control_plane",
-            payload=envelope,
+        return cast(
+            "bool",
+            (
+                get_log_jetstream_publisher().publish(
+                    subject=f"hp.runtime.{workspace_key}.status.control_plane",
+                    payload=envelope,
+                )
+            ),
         )
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         logger.debug("Run Ledger projection JetStream publish failed: %s", exc)

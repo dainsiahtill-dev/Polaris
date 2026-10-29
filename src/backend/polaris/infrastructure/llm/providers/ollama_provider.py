@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import aiohttp
 import requests
@@ -39,7 +39,7 @@ _CONTRACT = AdapterProviderContract()
 
 
 def _timeout_seconds(config: dict[str, Any], default: int) -> int:
-    return normalize_timeout_seconds(config.get("timeout"), default=default)
+    return cast("int", (normalize_timeout_seconds(config.get("timeout"), default=default)))
 
 
 def _is_openai_compat_mode(config: dict[str, Any]) -> bool:
@@ -82,7 +82,7 @@ def _extract_messages(prompt: str, config: dict[str, Any]) -> list[dict[str, Any
 
     adapter_messages = _CONTRACT.extract_messages({"config": config})
     if adapter_messages:
-        return adapter_messages
+        return cast("list[dict[str, Any]]", (adapter_messages))
 
     messages = [{"role": "user", "content": prompt}]
     system_prompt = str(config.get("system_prompt") or config.get("system") or "").strip()

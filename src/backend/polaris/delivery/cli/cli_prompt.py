@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 try:
     from prompt_toolkit import PromptSession
@@ -180,7 +180,7 @@ class PromptInputSession:
             )
             self._session = session
             result = session.prompt()
-            return result
+            return cast("str", (result))
         except (EOFError, KeyboardInterrupt):
             raise
         except (RuntimeError, ValueError):

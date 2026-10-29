@@ -12,7 +12,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
 from polaris.kernelone.cognitive.evolution.models import Belief
@@ -48,7 +48,7 @@ class IntentGraphStore:
 
     def _graph_file_path(self, session_id: str) -> Path:
         """Get the file path for a session's intent graph."""
-        return self._store_path / f"{session_id}.json"
+        return cast("Path", (self._store_path / f"{session_id}.json"))
 
     def _load_all_from_disk(self) -> None:
         """Load all existing intent graphs from disk into cache."""

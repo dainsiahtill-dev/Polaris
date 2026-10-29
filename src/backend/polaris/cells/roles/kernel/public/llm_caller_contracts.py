@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.roles.kernel.internal.llm_caller.helpers import (
     _clamp_factory_director_timeout_to_deadline,
@@ -85,4 +85,4 @@ def clamp_role_execution_timeout_seconds_to_deadline(
     remaining_seconds = deadline_epoch - now
     if remaining_seconds <= 0:
         raise RuntimeError("factory_director_execution_deadline_exhausted")
-    return min(resolved_timeout, remaining_seconds)
+    return cast("float", (min(resolved_timeout, remaining_seconds)))

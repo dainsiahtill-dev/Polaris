@@ -22,7 +22,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.benchmark.factory_depth_contract import (
     build_factory_bench_level_contract,
@@ -401,7 +401,9 @@ def _resolve_level_contract(
         if isinstance(candidate, dict) and candidate.get("minimums"):
             return candidate
 
-    return build_factory_bench_level_contract(level, project=project_payload or catalog_contract)
+    return cast(
+        "dict[str, Any]", (build_factory_bench_level_contract(level, project=project_payload or catalog_contract))
+    )
 
 
 def _check_implementation_depth(

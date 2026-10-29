@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.roles.kernel.internal.debug_strategy import (
     DebugStrategyEngine,
@@ -134,7 +134,7 @@ class EnhancedErrorClassifier:
         Returns:
             策略信息列表
         """
-        return self.strategy_engine.get_available_strategies()
+        return cast("list[dict[str, str]]", (self.strategy_engine.get_available_strategies()))
 
 
 __all__ = ["EnhancedErrorClassifier"]

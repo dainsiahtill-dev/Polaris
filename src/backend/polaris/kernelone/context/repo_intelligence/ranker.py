@@ -17,7 +17,7 @@ import math
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from polaris.kernelone.context.repo_intelligence.tags import FileTag, TagKind
 
@@ -323,7 +323,7 @@ class RepoIntelligenceRanker:
             )
             return self._compute_simple_ranking()
 
-        return ranked
+        return cast("dict[str, float]", (ranked))
 
     def _compute_symbol_ranks(self) -> dict[tuple[str, str], float]:
         """Compute symbol-level ranks by distributing file ranks."""

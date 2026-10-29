@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.context.contracts import (
     ContextBuilderPort,
@@ -122,7 +122,7 @@ def _strip_structured_tags(text: str) -> str:
 
 
 def _timeout_seconds(config: dict[str, Any], default: int) -> float:
-    return normalize_timeout_seconds(config.get("timeout"), default=default)
+    return cast("float", (normalize_timeout_seconds(config.get("timeout"), default=default)))
 
 
 def _connect_timeout_seconds(config: dict[str, Any], *, request_timeout: float) -> int:
@@ -752,7 +752,7 @@ def invoke(prompt: str, model: str, config: dict[str, Any], api_key: str | None)
 
 
 def _extract_output(data: dict[str, Any]) -> str:
-    return LLMResponseParser.extract_text(data)
+    return cast("str", (LLMResponseParser.extract_text(data)))
 
 
 def _usage_from_response(prompt: str, output: str, data: dict[str, Any]) -> Usage:

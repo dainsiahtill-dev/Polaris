@@ -16,7 +16,7 @@ Design:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.audit.omniscient.bus import AuditEventEnvelope, AuditPriority
 from polaris.kernelone.audit.omniscient.interceptors.base import BaseAuditInterceptor
@@ -250,4 +250,4 @@ class TracingAuditInterceptor(BaseAuditInterceptor):
         Returns:
             Dictionary with tracing-specific metrics.
         """
-        return super().get_stats()
+        return cast("dict[str, Any]", (super().get_stats()))

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 _DOWNSTREAM_ARTIFACT_PATH_KEYS = (
     "downstream_pending_artifacts",
@@ -198,13 +198,20 @@ def committed_task_tool_results(request: Any, workspace: str) -> list[dict[str, 
     evidence = metadata.get(CONTINUATION_EVIDENCE_KEY)
     if evidence is None:
         return []
-    return load_committed_continuation_rows(
-        evidence,
-        workspace=workspace,
-        run_id=str(request.run_id or ""),
-        task_id=str(request.task_id or ""),
-        session_id=str(metadata.get("role_session_id") or ""),
-        source_targets=tuple(director_task_boundary_source_targets(request.context_override, workspace=workspace)),
+    return cast(
+        "list[dict[str, Any]]",
+        (
+            load_committed_continuation_rows(
+                evidence,
+                workspace=workspace,
+                run_id=str(request.run_id or ""),
+                task_id=str(request.task_id or ""),
+                session_id=str(metadata.get("role_session_id") or ""),
+                source_targets=tuple(
+                    director_task_boundary_source_targets(request.context_override, workspace=workspace)
+                ),
+            )
+        ),
     )
 
 
@@ -447,29 +454,34 @@ def build_director_task_boundary_verdict(
         return None
     from polaris.cells.control_plane.run_ledger.public import evaluate_task_boundary_verdict
 
-    return evaluate_task_boundary_verdict(
-        workspace=workspace,
-        task_id=task_id,
-        run_id=run_id,
-        target_files=target_files,
-        completed_artifacts=completed_artifacts,
-        downstream_pending_artifacts=downstream_pending_artifacts,
-        blocked_dependencies=blocked_dependencies,
-        required_evidence_modalities=evidence_policy.get("required_evidence_modalities")
-        or evidence_policy.get("required_modalities"),
-        present_evidence_modalities=evidence_policy.get("present_evidence_modalities")
-        or evidence_policy.get("present_modalities"),
-        missing_required_evidence_modalities=evidence_policy.get("missing_required_evidence_modalities")
-        or evidence_policy.get("missing_required_modalities"),
-        failed_required_evidence_modalities=evidence_policy.get("failed_required_evidence_modalities")
-        or evidence_policy.get("failed_required_modalities"),
-        required_verifiers=verifier_policy["required"],
-        completed_verifiers=verifier_policy["completed"],
-        missing_required_verifiers=verifier_policy["missing"],
-        failed_required_verifiers=verifier_policy["failed"],
-        tool_dispatch=dispatch,
-        evidence_refs=evidence_refs,
-    ).to_dict()
+    return cast(
+        "dict[str, Any] | None",
+        (
+            evaluate_task_boundary_verdict(
+                workspace=workspace,
+                task_id=task_id,
+                run_id=run_id,
+                target_files=target_files,
+                completed_artifacts=completed_artifacts,
+                downstream_pending_artifacts=downstream_pending_artifacts,
+                blocked_dependencies=blocked_dependencies,
+                required_evidence_modalities=evidence_policy.get("required_evidence_modalities")
+                or evidence_policy.get("required_modalities"),
+                present_evidence_modalities=evidence_policy.get("present_evidence_modalities")
+                or evidence_policy.get("present_modalities"),
+                missing_required_evidence_modalities=evidence_policy.get("missing_required_evidence_modalities")
+                or evidence_policy.get("missing_required_modalities"),
+                failed_required_evidence_modalities=evidence_policy.get("failed_required_evidence_modalities")
+                or evidence_policy.get("failed_required_modalities"),
+                required_verifiers=verifier_policy["required"],
+                completed_verifiers=verifier_policy["completed"],
+                missing_required_verifiers=verifier_policy["missing"],
+                failed_required_verifiers=verifier_policy["failed"],
+                tool_dispatch=dispatch,
+                evidence_refs=evidence_refs,
+            ).to_dict()
+        ),
+    )
 
 
 def _append_task_boundary_verdict_event(
@@ -560,7 +572,7 @@ def append_deferred_followup_task_boundary_verdict(
         run_id=run_id,
         verdict=verdict,
     )
-    return verdict
+    return cast("dict[str, Any]", (verdict))
 
 
 def append_role_turn_task_boundary_verdict(

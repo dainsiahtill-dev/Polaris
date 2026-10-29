@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Literal
+from typing import Any, Literal, cast
 
 from polaris.cells.director.runtime.public.directed_effect_contracts import (
     DirectedEffectImmutableItemsV1,
@@ -168,9 +168,14 @@ def _immutable_arguments(arguments: Mapping[str, object]) -> tuple[tuple[str, Di
     """Freeze tool arguments into sorted immutable DEO key/value pairs."""
 
     frozen = tuple((str(key), _freeze_value(value)) for key, value in arguments.items())
-    return require_directed_effect_immutable_items(
-        "normalized_arguments",
-        tuple(sorted(frozen, key=lambda item: item[0])),
+    return cast(
+        "tuple[tuple[str, Any], ...]",
+        (
+            require_directed_effect_immutable_items(
+                "normalized_arguments",
+                tuple(sorted(frozen, key=lambda item: item[0])),
+            )
+        ),
     )
 
 

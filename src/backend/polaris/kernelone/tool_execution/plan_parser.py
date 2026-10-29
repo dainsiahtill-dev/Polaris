@@ -6,7 +6,7 @@ Uses KernelOne public contracts for tool name normalization and argument validat
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments
 from polaris.kernelone.tool_execution.constants import KV_ALLOWED_KEYS, MAX_TOOL_READ_LINES
@@ -214,7 +214,7 @@ def _parse_repo_tree_tokens(tokens: list[str], make_step: Any) -> dict[str, Any]
     args: dict[str, Any] = {"path": path or "."}
     if depth is not None and depth > 0:
         args["depth"] = depth
-    return make_step(args)
+    return cast("dict[str, Any]", (make_step(args)))
 
 
 def _parse_repo_rg_tokens(tokens: list[str], make_step: Any) -> dict[str, Any]:
@@ -274,7 +274,7 @@ def _parse_repo_rg_tokens(tokens: list[str], make_step: Any) -> dict[str, Any]:
             paths.append(tok.strip("'\""))
         i += 1
     if not pattern:
-        return make_step({})
+        return cast("dict[str, Any]", (make_step({})))
     args: dict[str, Any] = {"pattern": pattern}
     if paths:
         args["paths"] = paths
@@ -282,7 +282,7 @@ def _parse_repo_rg_tokens(tokens: list[str], make_step: Any) -> dict[str, Any]:
         args["max_results"] = max_results
     if glob_pat:
         args["glob"] = glob_pat
-    return make_step(args)
+    return cast("dict[str, Any]", (make_step(args)))
 
 
 def _parse_repo_map_tokens(tokens: list[str], make_step: Any) -> dict[str, Any]:
@@ -363,7 +363,7 @@ def _parse_repo_map_tokens(tokens: list[str], make_step: Any) -> dict[str, Any]:
         args["include"] = include
     if exclude:
         args["exclude"] = exclude
-    return make_step(args)
+    return cast("dict[str, Any]", (make_step(args)))
 
 
 def _parse_repo_read_tokens(tool: str, tokens: list[str], make_step: Any) -> dict[str, Any]:
@@ -432,7 +432,7 @@ def _parse_repo_read_tokens(tool: str, tokens: list[str], make_step: Any) -> dic
 
     if tool == "repo_diff":
         args: dict[str, Any] = {"stat": stat}
-        return make_step(args)
+        return cast("dict[str, Any]", (make_step(args)))
 
     if not file_arg and positional:
         file_arg = positional[0].strip("'\"")
@@ -444,19 +444,19 @@ def _parse_repo_read_tokens(tool: str, tokens: list[str], make_step: Any) -> dic
         step_args: dict[str, Any] = {"file": file_arg or "", "line": line_no}
         if radius is not None and radius > 0:
             step_args["radius"] = radius
-        return make_step(step_args)
+        return cast("dict[str, Any]", (make_step(step_args)))
     if tool == "repo_read_slice":
         if (start is None or start <= 0) and len(positional) >= 2:
             start = safe_int(positional[1], -1)
         if (end is None or end <= 0) and len(positional) >= 3:
             end = safe_int(positional[2], -1)
-        return make_step({"file": file_arg or "", "start": start, "end": end})
+        return cast("dict[str, Any]", (make_step({"file": file_arg or "", "start": start, "end": end})))
     if tool in ("repo_read_head", "repo_read_tail"):
         if (count is None or count <= 0) and len(positional) >= 2:
             count = safe_int(positional[1], -1)
         read_args: dict[str, Any] = {"file": file_arg or ""}
         if count is not None and count > 0:
             read_args["n"] = count
-        return make_step(read_args)
+        return cast("dict[str, Any]", (make_step(read_args)))
 
-    return make_step({})
+    return cast("dict[str, Any]", (make_step({})))

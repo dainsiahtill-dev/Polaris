@@ -18,7 +18,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.runtime.artifact_store.public.service import resolve_artifact_path
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
@@ -75,7 +75,7 @@ def _read_file_safe(path: str, *, workspace: str = ".") -> str:
         return ""
     fs = _get_fs(workspace)
     try:
-        return fs.read_text(path)
+        return cast("str", (fs.read_text(path)))
     except FileNotFoundError:
         return ""
     except UnicodeDecodeError as exc:
@@ -706,7 +706,7 @@ class ArtifactService:
     def _resolve(self, key: str) -> str:
         """Resolve artifact key to absolute path."""
         rel_path = get_artifact_path(key)
-        return resolve_artifact_path(self.workspace, self.cache_root, rel_path)
+        return cast("str", (resolve_artifact_path(self.workspace, self.cache_root, rel_path)))
 
     def _resolve_for_write(self, key: str) -> str:
         """Resolve artifact key to absolute path for writing.
@@ -718,7 +718,7 @@ class ArtifactService:
         parent = os.path.dirname(path)
         if parent:
             os.makedirs(parent, exist_ok=True)
-        return path
+        return cast("str", (path))
 
     def _write_text(self, path: str, content: str) -> None:
         _write_text_atomic(path, content, workspace=self.workspace)

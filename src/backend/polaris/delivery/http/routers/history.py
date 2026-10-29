@@ -2,7 +2,7 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Request
 from polaris.cells.archive.factory_archive.public.service import (
@@ -98,7 +98,7 @@ def _read_task_rounds(workspace: str, cache_root: str) -> list[dict[str, Any]]:
 
 
 def _resolve_runs_dir(workspace: str, cache_root: str) -> str:
-    return resolve_artifact_path(workspace, cache_root, "runtime/runs")
+    return cast("str", (resolve_artifact_path(workspace, cache_root, "runtime/runs")))
 
 
 def _read_director_result(path: str) -> dict[str, Any]:

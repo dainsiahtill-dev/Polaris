@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.runtime.projection.public.service import (
     build_director_status,
@@ -379,7 +379,7 @@ async def build_status_payload(
     if not isinstance(payload, dict):
         payload = {"type": "status"}
     payload.setdefault("type", "status")
-    return filter_status_payload_by_roles(payload, roles)
+    return cast("dict[str, Any]", (filter_status_payload_by_roles(payload, roles)))
 
 
 __all__ = [

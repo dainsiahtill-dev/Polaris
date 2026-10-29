@@ -36,7 +36,7 @@ import asyncio
 import json
 import logging
 import sys
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +122,7 @@ async def _run_task_execution(task_data: dict[str, Any]) -> dict[str, Any]:
     result = await executor.execute(task)
 
     # Serialize TaskResult to dict
-    return result.to_dict()
+    return cast("dict[str, Any]", (result.to_dict()))
 
 
 def main() -> int:

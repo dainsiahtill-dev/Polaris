@@ -11,7 +11,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.fs.contracts import (
     DurabilityMode,
@@ -201,28 +201,28 @@ class LocalFileSystemAdapter:
         self._require_managed_text_atomic_opt_in()
         if encoding.strip().lower().replace("_", "-") != "utf-8":
             raise ValueError("managed atomic writes require UTF-8")
-        return guarded_atomic_write(binding, content.encode("utf-8"))
+        return cast("int", (guarded_atomic_write(binding, content.encode("utf-8"))))
 
     def read_managed_namespace_bytes(self, binding: NamespaceBindingV1) -> bytes:
         """Read one namespace-bound leaf through retained no-follow descriptors."""
         from polaris.kernelone.fs.guarded_namespace_ops import guarded_namespace_read_bytes
 
         self._require_namespace_opt_in("read_managed_namespace_bytes")
-        return guarded_namespace_read_bytes(binding)
+        return cast("bytes", (guarded_namespace_read_bytes(binding)))
 
     def write_managed_namespace_bytes(self, binding: NamespaceBindingV1, content: bytes) -> int:
         """Replace one namespace-bound leaf through a retained parent descriptor."""
         from polaris.kernelone.fs.guarded_namespace_ops import guarded_namespace_write_bytes
 
         self._require_namespace_opt_in("write_managed_namespace_bytes")
-        return guarded_namespace_write_bytes(binding, content)
+        return cast("int", (guarded_namespace_write_bytes(binding, content)))
 
     def write_managed_namespace_bytes_atomic(self, binding: NamespaceBindingV1, content: bytes) -> int:
         """Atomically replace one namespace-bound leaf inside its own parent."""
         from polaris.kernelone.fs.guarded_namespace_ops import guarded_namespace_write_bytes_atomic
 
         self._require_namespace_opt_in("write_managed_namespace_bytes_atomic")
-        return guarded_namespace_write_bytes_atomic(binding, content)
+        return cast("int", (guarded_namespace_write_bytes_atomic(binding, content)))
 
     def append_managed_namespace_bytes(
         self,
@@ -235,14 +235,14 @@ class LocalFileSystemAdapter:
         from polaris.kernelone.fs.guarded_namespace_ops import guarded_namespace_append_bytes
 
         self._require_namespace_opt_in("append_managed_namespace_bytes")
-        return guarded_namespace_append_bytes(binding, content, durability=durability)
+        return cast("int", (guarded_namespace_append_bytes(binding, content, durability=durability)))
 
     def remove_managed_namespace(self, binding: NamespaceBindingV1, *, missing_ok: bool = True) -> bool:
         """Remove one namespace-bound leaf entry without following any link."""
         from polaris.kernelone.fs.guarded_namespace_ops import guarded_namespace_remove
 
         self._require_namespace_opt_in("remove_managed_namespace")
-        return guarded_namespace_remove(binding, missing_ok=missing_ok)
+        return cast("bool", (guarded_namespace_remove(binding, missing_ok=missing_ok)))
 
     def create_managed_namespace_bytes(
         self,

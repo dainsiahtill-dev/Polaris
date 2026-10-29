@@ -29,7 +29,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from polaris.delivery.cli.logging_policy import (
     CLI_LOG_LEVEL_CHOICES,
@@ -990,7 +990,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if retired:
         from polaris.delivery.cli.engineering import reject_legacy_execution
 
-        return reject_legacy_execution()
+        return cast("int", (reject_legacy_execution()))
 
     # Normalise workspace
     workspace = _resolve_workspace(str(getattr(args, "workspace", ".") or "."))
@@ -1011,7 +1011,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Dispatch
     router = _get_router()
     try:
-        return router.route(args)
+        return cast("int", (router.route(args)))
     except KeyboardInterrupt:
         print("\n[polaris] Interrupted", file=sys.stderr)
         return 130

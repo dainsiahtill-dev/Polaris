@@ -45,7 +45,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from polaris.kernelone.audit.omniscient.adapters.sanitization_hook import (
     get_default_sanitizer,
@@ -605,7 +605,7 @@ async def emit_llm_event(
     if error:
         priority = AuditPriority.ERROR
 
-    return await bus.emit(event, priority=priority)
+    return cast("str", (await bus.emit(event, priority=priority)))
 
 
 __all__ = [

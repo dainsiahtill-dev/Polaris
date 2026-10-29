@@ -6,7 +6,7 @@ import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.events.final_request_evidence._constants import (
     _ROLE_FINAL_REQUEST_POLICY_FIELDS,
@@ -126,4 +126,4 @@ def role_final_request_source_keys(ref_kind: str) -> tuple[str, ...]:
     keys = _ROLE_FINAL_REQUEST_SOURCE_KEYS.get(normalized)
     if keys is None:
         raise ValueError(f"role_final_request_source_unknown_slot:{normalized or '<empty>'}")
-    return keys
+    return cast("tuple[str, ...]", (keys))

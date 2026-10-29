@@ -9,7 +9,7 @@ import asyncio
 import time
 from collections.abc import Mapping
 from copy import deepcopy
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public import (
     build_tool_batch_lifecycle_receipt_from_sources,
@@ -261,7 +261,7 @@ class _ToolBatchExecuteMixin:
         cached_receipt = self._check_idempotency(batch_idempotency_key)
         if cached_receipt is not None:
             logger.info("Idempotency hit for batch %s, returning cached receipt", batch_idempotency_key)
-            return cached_receipt
+            return cast("dict[str, Any]", (cached_receipt))
 
         metadata = decision.get("metadata", {})
         workspace, execution_run_id, execution_task_id = _resolve_tool_batch_execution_identity(
@@ -918,12 +918,17 @@ class _ToolBatchExecuteMixin:
                     FinalizationHandler,
                 )
 
-                return FinalizationHandler.complete_with_tool_results(
-                    decision,
-                    normalization_failed_receipts,
-                    state_machine,
-                    ledger,
-                    self.emit_event,
+                return cast(
+                    "dict[str, Any]",
+                    (
+                        FinalizationHandler.complete_with_tool_results(
+                            decision,
+                            normalization_failed_receipts,
+                            state_machine,
+                            ledger,
+                            self.emit_event,
+                        )
+                    ),
                 )
             raise
 
@@ -1529,15 +1534,20 @@ class _ToolBatchExecuteMixin:
                     "batch_receipt": merged_batch_receipt,
                     "workflow_context": workflow_context,
                 }
-            return await self.handoff_handler.handle_handoff(
-                decision,
-                state_machine,
-                ledger,
-                workflow_context=workflow_context,
-                handoff_reason="async_operation"
-                if pending_async_count
-                else str(metadata.get("handoff_reason") or "unknown"),
-                batch_receipt=merged_batch_receipt,
+            return cast(
+                "dict[str, Any]",
+                (
+                    await self.handoff_handler.handle_handoff(
+                        decision,
+                        state_machine,
+                        ledger,
+                        workflow_context=workflow_context,
+                        handoff_reason="async_operation"
+                        if pending_async_count
+                        else str(metadata.get("handoff_reason") or "unknown"),
+                        batch_receipt=merged_batch_receipt,
+                    )
+                ),
             )
 
         # === Phase 5: 确定下一步 ===
@@ -1576,8 +1586,13 @@ class _ToolBatchExecuteMixin:
                 FinalizationHandler,
             )
 
-            return FinalizationHandler.complete_with_tool_results(
-                decision, receipts_as_dicts, state_machine, ledger, self.emit_event
+            return cast(
+                "dict[str, Any]",
+                (
+                    FinalizationHandler.complete_with_tool_results(
+                        decision, receipts_as_dicts, state_machine, ledger, self.emit_event
+                    )
+                ),
             )
 
         elif finalize_mode == FinalizeMode.LOCAL:
@@ -1585,8 +1600,13 @@ class _ToolBatchExecuteMixin:
                 FinalizationHandler,
             )
 
-            return FinalizationHandler.finalize_local(
-                decision, receipts_as_dicts, state_machine, ledger, self.emit_event
+            return cast(
+                "dict[str, Any]",
+                (
+                    FinalizationHandler.finalize_local(
+                        decision, receipts_as_dicts, state_machine, ledger, self.emit_event
+                    )
+                ),
             )
 
         elif finalize_mode == FinalizeMode.LLM_ONCE:
@@ -1596,11 +1616,21 @@ class _ToolBatchExecuteMixin:
             # 返回 BLOCKED 状态让上层决定后续动作。
             latest_user_request = extract_task_instruction(context)
             if self._should_block_llm_once_finalization(ledger, invocations, latest_user_request):
-                return self._build_mutation_bypass_result(
-                    decision, state_machine, ledger, receipts_as_dicts, stream=stream
+                return cast(
+                    "dict[str, Any]",
+                    (
+                        self._build_mutation_bypass_result(
+                            decision, state_machine, ledger, receipts_as_dicts, stream=stream
+                        )
+                    ),
                 )
-            return await self.finalization_handler.execute_llm_once(
-                decision, receipts_as_dicts, state_machine, ledger, context, stream=stream
+            return cast(
+                "dict[str, Any]",
+                (
+                    await self.finalization_handler.execute_llm_once(
+                        decision, receipts_as_dicts, state_machine, ledger, context, stream=stream
+                    )
+                ),
             )
 
         else:

@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.orchestration.pm_planning.internal.live_wiring import (
     reorder_tasks_by_wsjf,
@@ -351,10 +351,15 @@ def _evaluate_pm_task_quality(
     docs_stage: dict[str, Any] | None,
     workspace_full: str = "",
 ) -> dict[str, Any]:
-    return evaluate_shared_pm_task_quality(
-        normalized,
-        docs_stage=docs_stage,
-        workspace_full=workspace_full,
+    return cast(
+        "dict[str, Any]",
+        (
+            evaluate_shared_pm_task_quality(
+                normalized,
+                docs_stage=docs_stage,
+                workspace_full=workspace_full,
+            )
+        ),
     )
 
 
@@ -376,7 +381,7 @@ def _build_pm_json_retry_prompt(invalid_output: str) -> str:
 def _build_domain_retry_guidance(critical_issues: list[str]) -> str:
     joined = "\n".join(critical_issues).lower()
     if "card3d" in joined:
-        return build_card3d_pm_required_domain_contract()
+        return cast("str", (build_card3d_pm_required_domain_contract()))
     if "game pm decomposition" in joined or "game_domain" in joined:
         lines = [
             "GAME HARD CONTRACT:",

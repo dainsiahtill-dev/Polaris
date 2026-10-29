@@ -10,7 +10,7 @@ import os
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.storage import resolve_storage_roots
 
@@ -206,7 +206,7 @@ def resolve_current_run_id() -> str:
 
             with open(latest_file, encoding="utf-8") as f:
                 data = json.load(f)
-                return data.get("run_id", "")
+                return cast("str", (data.get("run_id", "")))
     except (RuntimeError, ValueError):
         import logging
 

@@ -10,7 +10,7 @@ UTF-8 编码验证: 本文所有文本使用 UTF-8
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.context.contracts import TurnEngineContextRequest as ContextRequest
 from polaris.kernelone.tasks.task_tokens import normalize_task_token as _normalize_task_token_sso
@@ -31,7 +31,7 @@ def normalize_task_token(value: Any) -> str:
     # Delegated to the canonical SSoT in polaris.kernelone.tasks.task_tokens
     # (§9.5). Kept as a thin wrapper so existing call sites + monkeypatch
     # targets resolve unchanged.
-    return _normalize_task_token_sso(value)
+    return cast("str", (_normalize_task_token_sso(value)))
 
 
 def context_task_sources(context_override: Mapping[str, Any]) -> list[Mapping[str, Any]]:

@@ -2239,7 +2239,7 @@ def compose_chief_engineer_semantic_repair(
 def persist_chief_engineer_semantic_repair_candidate(
     candidate: ChiefEngineerSemanticRepairCandidateV1,
 ) -> str:
-    return ChiefEngineerSemanticRepairCandidateStore(candidate.workspace).persist(candidate)
+    return cast("str", (ChiefEngineerSemanticRepairCandidateStore(candidate.workspace).persist(candidate)))
 
 
 def load_chief_engineer_semantic_repair_candidate(

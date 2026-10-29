@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.runtime.task_market.internal.human_review import (
     ESCALATION_CHAIN,
@@ -157,7 +157,7 @@ def get_next_role(current_role: str) -> str | None:
     Returns:
         The next role in the chain, or None if ``current_role`` is the last.
     """
-    return get_next_escalation_role(current_role)
+    return cast("str | None", (get_next_escalation_role(current_role)))
 
 
 __all__ = [

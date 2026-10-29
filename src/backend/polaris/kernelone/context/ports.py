@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 
 @runtime_checkable
@@ -218,7 +218,7 @@ class DefaultReasoningStripperPort:
         history: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         """Strip reasoning content from history using the loaded stripper."""
-        return self._stripper.strip_from_history(history)
+        return cast("list[dict[str, Any]]", (self._stripper.strip_from_history(history)))
 
 
 class _MinimalStripper:
@@ -287,7 +287,7 @@ class DefaultModelContextProvider:
             catalog = self._get_catalog()
             spec = catalog.resolve(provider_id=provider_id, model=model)
             if spec.max_context_tokens > 0:
-                return spec.max_context_tokens
+                return cast("int | None", (spec.max_context_tokens))
         except (RuntimeError, ValueError):
             pass
 
@@ -297,7 +297,7 @@ class DefaultModelContextProvider:
 
             window = _resolve_model_window_from_spec(provider_id, model, self._workspace)
             if window > 0:
-                return window
+                return cast("int | None", (window))
         except (RuntimeError, ValueError):
             pass
 

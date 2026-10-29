@@ -8,7 +8,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.akashic.knowledge_pipeline.extractors.base import (
     BaseExtractor,
@@ -105,7 +105,7 @@ class CsvExtractor(BaseExtractor):
         except csv.Error as exc:
             logger.warning("CSV parsing error: %s", exc)
             # Fall back to line-based extraction
-            return self._extract_lines(text, options)
+            return cast("list[Any]", (self._extract_lines(text, options)))
 
         return fragments
 

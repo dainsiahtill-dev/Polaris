@@ -20,7 +20,7 @@ import logging
 import re
 from collections.abc import Mapping
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.factory.pipeline.public import FactoryRun
 from polaris.cells.runtime.task_runtime.public.evidence import task_row_execution_event_failure
@@ -410,7 +410,7 @@ def _quality_gate_handoff_summary_from_payload(
     repair_raw = payload.get("repair")
     repair: dict[str, Any] = repair_raw if isinstance(repair_raw, dict) else {}
     owner_handoff_routing = _quality_gate_owner_handoff_routing(repair, entries)
-    return owner_handoff_routing.summary
+    return cast("dict[str, Any]", (owner_handoff_routing.summary))
 
 
 def _read_quality_gate_rework_summary(workspace: str) -> dict[str, Any]:

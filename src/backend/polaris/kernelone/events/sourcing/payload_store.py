@@ -11,7 +11,7 @@ import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.fs import LockedRegularFileError, LockedRegularFileSetV1
 from polaris.kernelone.fs.locked_regular_file import default_platform_lock_root
@@ -124,7 +124,7 @@ class DurablePayloadStore:
                 raise ValueError("payload canonical bytes drift")
         except (UnicodeError, ValueError, TypeError) as exc:
             raise PayloadStoreError("payload schema or encoding is invalid", code="payload_schema_mismatch") from exc
-        return payload
+        return cast("dict[str, Any]", (payload))
 
     def prepare(
         self, payload: Mapping[str, Any], *, payload_schema: str, maintenance_reason: str

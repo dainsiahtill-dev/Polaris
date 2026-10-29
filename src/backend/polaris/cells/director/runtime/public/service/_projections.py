@@ -6,7 +6,7 @@ import json
 import re
 from collections.abc import Sequence
 from dataclasses import replace
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from polaris.cells.director.runtime.internal.repair_kernel.contracts import (
     FILE_ABSENT_HASH,
@@ -639,7 +639,7 @@ def _repair_diagnostics_from_artifact_quality_issues(
 
 
 def _repair_diagnostic_has_explicit_id(diagnostic: RepairDiagnostic) -> bool:
-    return diagnostic.diagnostic_id != replace(diagnostic, diagnostic_id="").diagnostic_id
+    return cast("bool", (diagnostic.diagnostic_id != replace(diagnostic, diagnostic_id="").diagnostic_id))
 
 
 def _repair_diagnostic_specifier(diagnostic: RepairDiagnostic) -> str:
@@ -789,15 +789,20 @@ def _repair_diagnostic_structural_key(diagnostic: RepairDiagnostic) -> str | Non
     specifier = _repair_diagnostic_specifier(diagnostic)
     # Reuse the contract's case-sensitive semantic discriminator. For a known
     # import target, differing display messages do not create a new finding.
-    return RepairDiagnostic(
-        source="quality_input_identity",
-        code=code,
-        path=path,
-        line=diagnostic.line,
-        column=diagnostic.column,
-        message="" if specifier else diagnostic.message,
-        metadata={"specifier": specifier} if specifier else {},
-    ).diagnostic_id
+    return cast(
+        "str | None",
+        (
+            RepairDiagnostic(
+                source="quality_input_identity",
+                code=code,
+                path=path,
+                line=diagnostic.line,
+                column=diagnostic.column,
+                message="" if specifier else diagnostic.message,
+                metadata={"specifier": specifier} if specifier else {},
+            ).diagnostic_id
+        ),
+    )
 
 
 def _repair_diagnostics_from_quality_inputs(

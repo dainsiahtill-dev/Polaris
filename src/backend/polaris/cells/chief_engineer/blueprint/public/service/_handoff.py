@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public import stable_hash
 
@@ -78,7 +78,7 @@ def _binding_hash_or_missing(payload: dict[str, Any], *keys: str, fallback: Any 
         if value:
             return value
     if fallback:
-        return stable_hash(fallback)
+        return cast("str", (stable_hash(fallback)))
     return f"{_MISSING_HASH_PREFIX}{keys[0]}"
 
 
@@ -94,7 +94,7 @@ def _execution_profile_hash_from_blueprint(blueprint: dict[str, Any]) -> str:
     for key in ("execution_profile", "task_execution_profile", "director_execution_profile"):
         candidate = blueprint.get(key)
         if isinstance(candidate, dict) and candidate:
-            return stable_hash(candidate)
+            return cast("str", (stable_hash(candidate)))
     return "missing:execution_profile_hash"
 
 

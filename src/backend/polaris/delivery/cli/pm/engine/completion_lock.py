@@ -7,7 +7,7 @@ preventing re-execution of already completed tasks.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.delivery.cli.pm.engine.helpers import (
     _collect_completed_task_ids,
@@ -28,10 +28,15 @@ logger = logging.getLogger(__name__)
 
 def _completion_lock_state_path(workspace_full: str) -> str:
     """Resolve completion lock state file path."""
-    return resolve_artifact_path(
-        workspace_full,
-        "",
-        "runtime/state/director.completed_tasks.lock.json",
+    return cast(
+        "str",
+        (
+            resolve_artifact_path(
+                workspace_full,
+                "",
+                "runtime/state/director.completed_tasks.lock.json",
+            )
+        ),
     )
 
 

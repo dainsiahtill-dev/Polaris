@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import subprocess
 import time
-from typing import Any
+from typing import Any, cast
 
 from polaris.delivery.cli.pm.command_runner import parse_command_args
 from polaris.delivery.cli.pm.nodes.base import BaseRoleNode
@@ -221,7 +221,7 @@ class QANode(BaseRoleNode):
         """Detect the appropriate verification command for the project."""
         from polaris.cells.orchestration.pm_planning.public import detect_integration_verify_command
 
-        return detect_integration_verify_command(workspace)
+        return cast("str | None", (detect_integration_verify_command(workspace)))
 
 
 __all__ = ["QANode"]

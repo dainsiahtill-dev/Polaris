@@ -17,7 +17,7 @@ import logging
 import uuid
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.domain.entities.evidence_bundle import (
     ChangeType,
@@ -48,7 +48,7 @@ def _get_bundle_storage_path(workspace: str, bundle_id: str) -> Path:
     """Get bundle storage path."""
     from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
 
-    return Path(workspace) / get_workspace_metadata_dir_name() / "bundles" / bundle_id
+    return cast("Path", (Path(workspace) / get_workspace_metadata_dir_name() / "bundles" / bundle_id))
 
 
 def _get_bundle_index_path(workspace: str) -> Path:
@@ -61,7 +61,7 @@ def _workspace_fs(workspace: str) -> KernelFileSystem:
 
 
 def _workspace_rel(fs: KernelFileSystem, absolute_or_relative_path: Path | str) -> str:
-    return fs.to_workspace_relative_path(str(absolute_or_relative_path))
+    return cast("str", (fs.to_workspace_relative_path(str(absolute_or_relative_path))))
 
 
 class EvidenceBundleService:
@@ -381,7 +381,7 @@ class EvidenceBundleService:
             if result.get("ok") and result.get("returncode", -1) == 0:
                 sha = result.get("stdout", "").strip()
                 if sha:
-                    return sha
+                    return cast("str", (sha))
             logger.warning(
                 "git rev-parse HEAD returned non-zero or empty output in workspace %s; "
                 "bundle base_sha will be set to 'sha-unknown'",

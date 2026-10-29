@@ -5,7 +5,7 @@ import logging
 import os
 import shutil
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from polaris.delivery.cli.pm.utils import read_json_file
 from polaris.kernelone.fs.text_ops import read_file_safe, write_json_atomic, write_text_atomic
@@ -36,7 +36,7 @@ def _resolve_docs_autoinit_root(workspace_full: str) -> str:
     try:
         from polaris.kernelone.storage import resolve_workspace_persistent_path
 
-        return os.path.abspath(resolve_workspace_persistent_path(workspace_full, "workspace/docs"))
+        return cast("str", (os.path.abspath(resolve_workspace_persistent_path(workspace_full, "workspace/docs"))))
     except (RuntimeError, ValueError) as exc:
         logger.warning(
             "Failed to resolve docs autoinit root from workspace %r, falling back to <workspace>/docs: %s",

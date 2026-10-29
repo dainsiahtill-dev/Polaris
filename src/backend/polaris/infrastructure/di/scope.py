@@ -31,7 +31,7 @@ import asyncio
 import threading
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -223,12 +223,12 @@ class DIContainerScope:
                 raise KeyError(f"No registration for {interface}")
 
             if reg.instance is not None:
-                return reg.instance
+                return cast("T", (reg.instance))
 
             # Create instance under lock
             instance = reg.factory()
             reg.instance = instance
-            return instance
+            return cast("T", (instance))
 
     async def resolve_async(self, interface: type[T]) -> T:
         """Resolve a registration (supports both sync and async factories).
@@ -249,7 +249,7 @@ class DIContainerScope:
         with self._lock:
             async_reg = self._async_registrations.get(interface)
             if async_reg is not None and async_reg.instance is not None:
-                return async_reg.instance
+                return cast("T", (async_reg.instance))
 
         # Async lock needed - release sync lock first
         if async_reg is not None:
@@ -260,7 +260,7 @@ class DIContainerScope:
                     if asyncio.iscoroutine(instance):
                         instance = await instance
                     async_reg.instance = instance
-                return async_reg.instance
+                return cast("T", (async_reg.instance))
 
         # Fall back to sync registrations (still under sync lock)
         with self._lock:
@@ -269,14 +269,14 @@ class DIContainerScope:
                 raise KeyError(f"No registration for {interface}")
 
             if reg.instance is not None:
-                return reg.instance
+                return cast("T", (reg.instance))
 
             if reg.instance is None:
                 instance = reg.factory()
                 if asyncio.iscoroutine(instance):
                     instance = await instance
                 reg.instance = instance
-            return reg.instance
+            return cast("T", (reg.instance))
 
     def has_registration(self, interface: type) -> bool:
         """Check if interface is registered in this scope."""

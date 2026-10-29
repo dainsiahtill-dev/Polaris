@@ -9,7 +9,7 @@ execution services.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.llm.toolkit import (
     ApplyReport,
@@ -73,7 +73,7 @@ def parse_full_file_blocks(text: str) -> list[FileOperation]:
 
 def parse_all_operations(text: str) -> list[FileOperation]:
     """Parse all supported tasking protocol operations."""
-    return parse_protocol_output(text)
+    return cast("list[Any]", (parse_protocol_output(text)))
 
 
 def validate_before_apply(

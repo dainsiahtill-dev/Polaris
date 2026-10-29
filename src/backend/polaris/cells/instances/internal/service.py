@@ -26,7 +26,7 @@ from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator, TextIO
+from typing import Any, Iterator, TextIO, cast
 
 from polaris.cells.storage.layout.public import canonical_project_runtime_root
 from polaris.kernelone.fs import (
@@ -710,7 +710,7 @@ class InstanceRegistry:
         fields = ("device", "inode", "size", "mtime_ns", "ctime_ns", "root_device", "root_inode")
         if any(getattr(metadata, field) != getattr(snapshot, field) for field in fields):
             raise RegistryReadError(self.registry_path, reason="registry_identity_drift")
-        return snapshot.content.decode("utf-8")
+        return cast("str | None", (snapshot.content.decode("utf-8")))
 
     def _write_raw(self, data: dict[str, Any]) -> None:
         self._require_writable()
@@ -763,9 +763,14 @@ def publish_instances_update(
         "meta": {"source": "polaris.instances"},
     }
     try:
-        return get_log_jetstream_publisher().publish(
-            subject="hp.runtime.instances.status.instances",
-            payload=envelope,
+        return cast(
+            "bool",
+            (
+                get_log_jetstream_publisher().publish(
+                    subject="hp.runtime.instances.status.instances",
+                    payload=envelope,
+                )
+            ),
         )
     except (OSError, RuntimeError, ValueError):
         return False
@@ -1736,7 +1741,7 @@ class InstanceSupervisor:
             runtime_owner_workspace=record.workspace,
         )
         fs.workspace_mkdir(str(log_path.parent), parents=True, exist_ok=True)
-        return fs.workspace_open_log_append(str(log_path))
+        return cast("TextIO", (fs.workspace_open_log_append(str(log_path))))
 
     @staticmethod
     def _wait_for_port_free(port: int, *, timeout_seconds: float = PORT_RELEASE_TIMEOUT_SECONDS) -> None:
@@ -1921,7 +1926,7 @@ class InstanceSupervisor:
 
     @staticmethod
     def _wait_for_pid_exit(pid: int, *, timeout_seconds: float = PROCESS_TERMINATE_TIMEOUT_SECONDS) -> bool:
-        return wait_for_process_exit(pid, deadline=time.monotonic() + timeout_seconds)
+        return cast("bool", (wait_for_process_exit(pid, deadline=time.monotonic() + timeout_seconds)))
 
     @staticmethod
     def _terminate_pid(pid: int | None) -> None:

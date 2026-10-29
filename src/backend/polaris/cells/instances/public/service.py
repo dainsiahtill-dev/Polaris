@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, TypedDict, cast
 
 from polaris.cells.instances.internal.service import (
     InstanceRegistry,
@@ -34,7 +34,7 @@ class PublicInstanceSupervisor:
 
     def list_instances(self) -> InstanceListResult:
         try:
-            return self._delegate.list_instances()
+            return cast("list[dict[str, Any]] | DegradedInstanceListProjection", (self._delegate.list_instances()))
         except InstanceRegistryError as exc:
             return {
                 "degraded": True,
@@ -43,25 +43,27 @@ class PublicInstanceSupervisor:
             }
 
     def start_instance(self, request: dict[str, Any]) -> dict[str, Any]:
-        return self._delegate.start_instance(request)
+        return cast("dict[str, Any]", (self._delegate.start_instance(request)))
 
     def stop_instance(
         self, instance_id: str, *, engineering_settlement: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """Forward optional engineering.resource_settlement.v1 proof to the owner."""
-        return self._delegate.stop_instance(instance_id, engineering_settlement=engineering_settlement)
+        return cast(
+            "dict[str, Any]", (self._delegate.stop_instance(instance_id, engineering_settlement=engineering_settlement))
+        )
 
     def restart_instance(self, instance_id: str) -> dict[str, Any]:
-        return self._delegate.restart_instance(instance_id)
+        return cast("dict[str, Any]", (self._delegate.restart_instance(instance_id)))
 
     def delete_instance(self, instance_id: str) -> bool:
-        return self._delegate.delete_instance(instance_id)
+        return cast("bool", (self._delegate.delete_instance(instance_id)))
 
     def health(self, instance_id: str) -> dict[str, Any]:
-        return self._delegate.health(instance_id)
+        return cast("dict[str, Any]", (self._delegate.health(instance_id)))
 
     def get_logs(self, instance_id: str, stream: str, lines: int = 200) -> str:
-        return self._delegate.get_logs(instance_id, stream, lines)
+        return cast("str", (self._delegate.get_logs(instance_id, stream, lines)))
 
 
 def get_instance_supervisor(home: Path | None = None) -> PublicInstanceSupervisor:

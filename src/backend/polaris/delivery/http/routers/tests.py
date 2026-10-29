@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Request
@@ -134,7 +134,7 @@ async def _run_llm_test(request: Request, payload: LlmTestPayload) -> dict[str, 
         provider_cfg=test_context.provider_cfg if test_context.use_direct_config else None,
         skip_persistence=False,  # Always persist test results (connectivity matters!)
     )
-    return report
+    return cast("dict[str, Any]", (report))
 
 
 async def _load_llm_test_report(request: Request, test_run_id: str) -> dict[str, Any]:

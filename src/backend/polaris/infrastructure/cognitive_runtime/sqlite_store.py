@@ -8,7 +8,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.domain.cognitive_runtime import (
     ContextHandoffPack,
@@ -80,7 +80,7 @@ class CognitiveRuntimeSqliteStore:
 
     @property
     def workspace(self) -> str:
-        return self._kernel_db.workspace
+        return cast("str", (self._kernel_db.workspace))
 
     @classmethod
     def open_existing_read_only(cls, workspace: str) -> CognitiveRuntimeSqliteStore | None:
@@ -94,28 +94,38 @@ class CognitiveRuntimeSqliteStore:
         if self._closed:
             raise RuntimeError("Cognitive Runtime SQLite store is closed")
         uri = Path(self._db_path).absolute().as_uri() + "?mode=ro"
-        return self._kernel_db.sqlite(
-            uri,
-            timeout_seconds=DEFAULT_SHORT_TIMEOUT_SECONDS,
-            check_same_thread=False,
-            row_factory="row",
-            uri=True,
-            pragmas={"query_only": True, "busy_timeout": 30000},
-            ensure_parent=False,
+        return cast(
+            "sqlite3.Connection",
+            (
+                self._kernel_db.sqlite(
+                    uri,
+                    timeout_seconds=DEFAULT_SHORT_TIMEOUT_SECONDS,
+                    check_same_thread=False,
+                    row_factory="row",
+                    uri=True,
+                    pragmas={"query_only": True, "busy_timeout": 30000},
+                    ensure_parent=False,
+                )
+            ),
         )
 
     def _connect(self) -> sqlite3.Connection:
-        return self._kernel_db.sqlite(
-            self._db_path,
-            timeout_seconds=DEFAULT_SHORT_TIMEOUT_SECONDS,
-            check_same_thread=False,
-            row_factory="row",
-            pragmas={
-                "journal_mode": "WAL",
-                "busy_timeout": 30000,
-                "synchronous": "NORMAL",
-            },
-            ensure_parent=True,
+        return cast(
+            "sqlite3.Connection",
+            (
+                self._kernel_db.sqlite(
+                    self._db_path,
+                    timeout_seconds=DEFAULT_SHORT_TIMEOUT_SECONDS,
+                    check_same_thread=False,
+                    row_factory="row",
+                    pragmas={
+                        "journal_mode": "WAL",
+                        "busy_timeout": 30000,
+                        "synchronous": "NORMAL",
+                    },
+                    ensure_parent=True,
+                )
+            ),
         )
 
     def _init_schema(self) -> None:

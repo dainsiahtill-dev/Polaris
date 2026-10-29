@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.llm.engine.provider_native_request import build_openai_native_messages
 
@@ -102,7 +102,7 @@ def build_chat_messages_payload(
         )
     # Same pure KernelOne owner as Factory's native request authority. Keep
     # legacy fallback admission here, never a second role/merge algorithm.
-    return build_openai_native_messages(populated, fallback_prompt=prompt)
+    return cast("list[dict[str, Any]]", (build_openai_native_messages(populated, fallback_prompt=prompt)))
 
 
 __all__ = [

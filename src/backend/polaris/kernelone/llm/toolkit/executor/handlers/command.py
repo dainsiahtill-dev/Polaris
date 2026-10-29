@@ -9,7 +9,7 @@ import logging
 import re
 import shlex
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.llm.toolkit.executor.command_capability import (
     CommandCapabilityValidationInputV1,
@@ -552,7 +552,7 @@ def _write_redirect_output(
         tool_kwargs=None,
     )
     if not policy_result.get("ok"):
-        return policy_result
+        return cast("dict[str, Any]", (policy_result))
 
     try:
         receipt = self._kernel_fs.workspace_write_text(rel, output_text, encoding="utf-8")
@@ -571,7 +571,7 @@ def _write_redirect_output(
             "encoding": "utf-8",
         },
     }
-    return _attach_director_policy_evidence(result, policy_result.get("director_policy"))
+    return cast("dict[str, Any]", (_attach_director_policy_evidence(result, policy_result.get("director_policy"))))
 
 
 def _read_input_redirect_file(

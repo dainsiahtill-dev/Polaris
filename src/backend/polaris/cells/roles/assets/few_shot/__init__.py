@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 
 def load_edit_blocks_examples(
@@ -36,7 +36,7 @@ def load_edit_blocks_examples(
     if difficulty:
         examples = [e for e in examples if e.get("difficulty") == difficulty]
 
-    return examples
+    return cast("list[dict[str, Any]]", (examples))
 
 
 def get_example_by_id(example_id: str) -> dict[str, Any] | None:

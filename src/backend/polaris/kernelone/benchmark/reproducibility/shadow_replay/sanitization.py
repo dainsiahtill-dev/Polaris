@@ -6,7 +6,7 @@ from cassettes before persistence.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.audit.omniscient.adapters.sanitization_hook import (
     SanitizationConfig,
@@ -80,7 +80,7 @@ def sanitize_headers(headers: dict[str, str]) -> dict[str, str]:
         Sanitized headers dict (new copy, original unchanged)
     """
     sanitizer = get_sanitizer()
-    return sanitizer.sanitize(dict(headers))
+    return cast("dict[str, str]", (sanitizer.sanitize(dict(headers))))
 
 
 def sanitize_cassette_entry(entry: dict[str, Any]) -> dict[str, Any]:
@@ -105,7 +105,7 @@ def sanitize_cassette_entry(entry: dict[str, Any]) -> dict[str, Any]:
     if "response" in sanitized and "headers" in sanitized["response"]:
         sanitized["response"]["headers"] = sanitizer.sanitize(sanitized["response"]["headers"])
 
-    return sanitized
+    return cast("dict[str, Any]", (sanitized))
 
 
 def reset_sanitizer() -> None:

@@ -24,7 +24,7 @@ import os
 import uuid
 from hashlib import sha256
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.utils.time_utils import utc_now as _utc_now
 
@@ -340,7 +340,7 @@ class RoleSessionService:
         if self.persistence is None:
             return False
         try:
-            return self.persistence.persist_session(session)
+            return cast("bool", (self.persistence.persist_session(session)))
         except (RuntimeError, ValueError) as e:
             logger.warning(
                 "Failed to persist session: id=%s, error=%s",
@@ -562,7 +562,7 @@ class RoleSessionService:
         if state:
             query = query.filter(Conversation.state == state)
 
-        return query.order_by(Conversation.updated_at.desc()).offset(offset).limit(limit).all()
+        return cast("list[Any]", (query.order_by(Conversation.updated_at.desc()).offset(offset).limit(limit).all()))
 
     def update_session(
         self,
@@ -840,11 +840,14 @@ class RoleSessionService:
         Returns:
             附着列表
         """
-        return (
-            self.db.query(SessionAttachment)
-            .filter(SessionAttachment.session_id == session_id)
-            .order_by(SessionAttachment.attached_at.desc())
-            .all()
+        return cast(
+            "list[Any]",
+            (
+                self.db.query(SessionAttachment)
+                .filter(SessionAttachment.session_id == session_id)
+                .order_by(SessionAttachment.attached_at.desc())
+                .all()
+            ),
         )
 
     # ==================== Capabilities ====================
@@ -863,7 +866,7 @@ class RoleSessionService:
             return None
 
         try:
-            return json.loads(str(session.capability_profile))
+            return cast("dict[str, Any] | None", (json.loads(str(session.capability_profile))))
         except json.JSONDecodeError:
             return None
 
@@ -1004,13 +1007,16 @@ class RoleSessionService:
         """
         from polaris.cells.roles.session.internal.conversation import ConversationMessage
 
-        return (
-            self.db.query(ConversationMessage)
-            .filter(ConversationMessage.conversation_id == session_id)
-            .order_by(ConversationMessage.sequence.asc())
-            .offset(offset)
-            .limit(limit)
-            .all()
+        return cast(
+            "list[Any]",
+            (
+                self.db.query(ConversationMessage)
+                .filter(ConversationMessage.conversation_id == session_id)
+                .order_by(ConversationMessage.sequence.asc())
+                .offset(offset)
+                .limit(limit)
+                .all()
+            ),
         )
 
     # ==================== Export ====================
@@ -1035,7 +1041,7 @@ class RoleSessionService:
         attachments = self.get_session_attachments(session_id)
         result["attachments"] = [a.to_dict() for a in attachments]
 
-        return result
+        return cast("dict[str, Any] | None", (result))
 
     # ==================== TTL Cleanup (M3) ====================
 
@@ -1048,7 +1054,7 @@ class RoleSessionService:
         self._require_writable()
         try:
             cleanup_service = _get_ttl_cleanup_service(self.workspace)
-            return cleanup_service.cleanup_expired()
+            return cast("list[str]", (cleanup_service.cleanup_expired()))
         except (RuntimeError, ValueError) as e:
             logger.warning(
                 "Failed to cleanup expired sessions: error=%s",

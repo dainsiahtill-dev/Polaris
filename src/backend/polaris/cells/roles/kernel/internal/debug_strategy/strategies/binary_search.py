@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import ClassVar
+from typing import ClassVar, cast
 
 from polaris.cells.roles.kernel.internal.debug_strategy.models import (
     DebugPlan,
@@ -255,7 +255,7 @@ class BinarySearchStrategy(BaseDebugStrategy):
     def _estimate_time(self, steps: list[DebugStep]) -> int:
         """估算调试时间。"""
         total_seconds = sum(step.timeout_seconds for step in steps)
-        return max(10, total_seconds // 60)  # 二分搜索通常需要更多时间
+        return cast("int", (max(10, total_seconds // 60)))  # 二分搜索通常需要更多时间
 
 
 __all__ = ["BinarySearchStrategy"]

@@ -4,7 +4,7 @@ import asyncio
 import logging
 import re
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import requests
 from polaris.kernelone.llm.providers import (
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 def _timeout_seconds(config: dict[str, Any], default: int) -> int:
-    return normalize_timeout_seconds(config.get("timeout"), default=default)
+    return cast("int", (normalize_timeout_seconds(config.get("timeout"), default=default)))
 
 
 def _resolve_max_tokens(config: dict[str, Any], default: int) -> int:

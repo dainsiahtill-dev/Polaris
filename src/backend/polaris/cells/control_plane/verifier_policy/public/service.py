@@ -14,7 +14,7 @@ import shlex
 import shutil
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.control_plane.verifier_policy.internal.trusted_command_profiles import (
     describe_builtin_command_profile,
@@ -683,7 +683,7 @@ def _infer_project_profile(command: CompileEvidencePolicyCommandV1) -> str:
     project_type = command.project_type
     text = _task_text(command)
     if project_type:
-        return project_type
+        return cast("str", (project_type))
     if any(term in text for term in ("canvas", "webgl", "html5", "interactive_visual", "browser")):
         return "web_ui"
     if any(term in text for term in ("game", "游戏", "physics", "collision", "fps")):
@@ -1082,7 +1082,7 @@ def evaluate_verifier_proof(
 ) -> bool:
     """Evaluate physical verifier output using platform-owned profile semantics."""
 
-    return evaluate_builtin_proof(profile_id, modality, exit_code, timed_out, output_bytes)
+    return cast("bool", (evaluate_builtin_proof(profile_id, modality, exit_code, timed_out, output_bytes)))
 
 
 def _write_config(workspace: Path, config: dict[str, Any]) -> None:

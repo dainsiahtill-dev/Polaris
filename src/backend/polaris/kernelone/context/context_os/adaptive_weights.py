@@ -17,7 +17,7 @@ import math
 import random
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     pass
@@ -200,7 +200,7 @@ class AdaptiveWeightLearner:
     def _gamma_sample(self, shape: float) -> float:
         """从 Gamma 分布采样 (使用 Marsaglia 和 Tsang 的方法)"""
         if shape < 1:
-            return self._gamma_sample(shape + 1) * random.random() ** (1 / shape)
+            return cast("float", (self._gamma_sample(shape + 1) * random.random() ** (1 / shape)))
 
         d = shape - 1 / 3
         c = 1 / math.sqrt(9 * d)

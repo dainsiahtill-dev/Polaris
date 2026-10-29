@@ -10,7 +10,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path, PurePosixPath
-from typing import Any, NoReturn
+from typing import Any, NoReturn, cast
 
 import tomllib
 from polaris.cells.control_plane.run_ledger.public.failure_evidence import FailureClassV1, normalize_failure_class
@@ -115,9 +115,16 @@ def _normalize_task_boundary_failure_class(value: Any) -> str:
     if not raw:
         return TaskBoundaryFailureClassV1.TASK_BOUNDARY_UNKNOWN.value
     run_ledger_token = normalize_failure_class(raw)
-    return _TASK_BOUNDARY_FAILURE_CLASS_ALIASES.get(
-        _task_boundary_failure_class_key(run_ledger_token),
-        _TASK_BOUNDARY_FAILURE_CLASS_ALIASES.get(_task_boundary_failure_class_key(raw), run_ledger_token.upper()),
+    return cast(
+        "str",
+        (
+            _TASK_BOUNDARY_FAILURE_CLASS_ALIASES.get(
+                _task_boundary_failure_class_key(run_ledger_token),
+                _TASK_BOUNDARY_FAILURE_CLASS_ALIASES.get(
+                    _task_boundary_failure_class_key(raw), run_ledger_token.upper()
+                ),
+            )
+        ),
     )
 
 

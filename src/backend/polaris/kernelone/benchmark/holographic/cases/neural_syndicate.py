@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.benchmark.holographic.stats import _perf_ms
 from polaris.kernelone.benchmark.holographic_models import HolographicCase
@@ -181,7 +181,7 @@ class _MailboxBenchmarkAgent(BaseAgent):
 
     def enqueue(self, message: AgentMessage) -> bool:
         envelope = self._message_to_envelope(message)
-        return self._bus_port.publish(envelope)
+        return cast("bool", (self._bus_port.publish(envelope)))
 
 
 async def _exec_tc_ns_001(case: HolographicCase) -> dict[str, float]:

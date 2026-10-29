@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public import task_boundary_tool_dispatch_from_lifecycle_metadata
 from polaris.cells.roles.kernel.internal.kernel.commit_protocol import _build_turn_history_and_events
@@ -466,16 +466,21 @@ class StreamEventProjector:
                 *tool_results,
             ]
         try:
-            return append_role_turn_task_boundary_verdict(
-                role=self.role,
-                workspace=str(self.request.workspace or self.kernel.workspace or "."),
-                task_id=str(self.request.task_id or ""),
-                run_id=str(self.request.run_id or turn_id),
-                context_override=getattr(self.request, "context_override", None),
-                tool_results=tool_results,
-                tool_dispatch=tool_dispatch,
-                needs_followup_workflow=bool(metadata.get("needs_followup_workflow")),
-                evidence_refs=task_boundary_evidence_refs_from_metadata(metadata),
+            return cast(
+                "dict[str, Any] | None",
+                (
+                    append_role_turn_task_boundary_verdict(
+                        role=self.role,
+                        workspace=str(self.request.workspace or self.kernel.workspace or "."),
+                        task_id=str(self.request.task_id or ""),
+                        run_id=str(self.request.run_id or turn_id),
+                        context_override=getattr(self.request, "context_override", None),
+                        tool_results=tool_results,
+                        tool_dispatch=tool_dispatch,
+                        needs_followup_workflow=bool(metadata.get("needs_followup_workflow")),
+                        evidence_refs=task_boundary_evidence_refs_from_metadata(metadata),
+                    )
+                ),
             )
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             run_id = str(self.request.run_id or turn_id)
@@ -486,10 +491,15 @@ class StreamEventProjector:
                 type(exc).__name__,
                 exc_info=True,
             )
-            return build_task_boundary_ledger_append_failure_verdict(
-                error=exc,
-                run_id=run_id,
-                turn_id=turn_id,
+            return cast(
+                "dict[str, Any] | None",
+                (
+                    build_task_boundary_ledger_append_failure_verdict(
+                        error=exc,
+                        run_id=run_id,
+                        turn_id=turn_id,
+                    )
+                ),
             )
 
     async def _publish_result(
@@ -522,4 +532,4 @@ def _task_boundary_error_message(verdict: dict[str, Any] | None, metadata: dict[
     task_boundary_error = project_task_boundary_failure_to_metadata(metadata, verdict)
     if task_boundary_error is None:
         return None
-    return task_boundary_ledger_append_failure_error(verdict) or task_boundary_error
+    return cast("str | None", (task_boundary_ledger_append_failure_error(verdict) or task_boundary_error))

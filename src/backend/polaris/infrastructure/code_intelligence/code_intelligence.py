@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # 导入 agent-accel 组件
 from polaris.infrastructure.accel.config import resolve_effective_config
@@ -58,7 +58,7 @@ class CodeIntelligenceService:
             full=full,
         )
         self._index_initialized = True
-        return manifest
+        return cast("dict[str, Any]", (manifest))
 
     def get_context_for_task(
         self,
@@ -82,7 +82,7 @@ class CodeIntelligenceService:
             hints=hints or [],
             budget_override=budget_override,
         )
-        return pack
+        return cast("dict[str, Any]", (pack))
 
     def verify_changes(
         self,
@@ -92,10 +92,15 @@ class CodeIntelligenceService:
         """运行增量验证."""
         # Note: evidence_run mode is no longer a parameter in run_verify
         # The verification behavior is controlled via config
-        return run_verify(
-            project_dir=self.workspace,
-            config=self.config,
-            changed_files=changed_files,
+        return cast(
+            "dict[str, Any]",
+            (
+                run_verify(
+                    project_dir=self.workspace,
+                    config=self.config,
+                    changed_files=changed_files,
+                )
+            ),
         )
 
     def get_relevant_files(
@@ -108,4 +113,4 @@ class CodeIntelligenceService:
             task_description=task_description,
             budget_override={"top_n_files": top_n},
         )
-        return context.get("top_files", [])
+        return cast("list[dict[str, Any]]", (context.get("top_files", [])))

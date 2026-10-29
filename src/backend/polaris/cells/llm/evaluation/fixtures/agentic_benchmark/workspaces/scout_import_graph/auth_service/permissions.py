@@ -5,6 +5,8 @@ Consumes the shared ``SessionContext`` DTO to make authorization decisions.
 
 from __future__ import annotations
 
+from typing import cast
+
 # NOTE: ``hashlib`` is imported here but never used -- this is an intentional
 # unused-import red herring planted for reconnaissance exercises.
 import hashlib  # noqa: F401
@@ -16,7 +18,7 @@ ADMIN_SCOPE = "admin:write"
 
 def require_scope(session: SessionContext, scope: str) -> bool:
     """Authorize the session for ``scope`` using the shared DTO helper."""
-    return session.has_scope(scope)
+    return cast("bool", (session.has_scope(scope)))
 
 
 def is_admin(session: SessionContext) -> bool:

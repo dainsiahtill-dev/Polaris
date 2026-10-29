@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import random
 from pathlib import Path
+from typing import cast
 
 from polaris.kernelone.storage.layout import resolve_workspace_persistent_path
 
@@ -49,7 +50,7 @@ def load_workspace_persona(workspace: str, persona_ids: list[str]) -> str:
                 data = json.load(f)
             saved_id = data.get("persona_id", "")
             if saved_id and saved_id in persona_ids:
-                return saved_id
+                return cast("str", (saved_id))
         except (json.JSONDecodeError, OSError):
             pass
 

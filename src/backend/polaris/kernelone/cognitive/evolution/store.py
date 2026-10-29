@@ -6,7 +6,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
 from polaris.kernelone.cognitive.evolution.integrity import EvolutionIntegrityGuard
@@ -50,7 +50,9 @@ class EvolutionStore:
         except (RuntimeError, ValueError):
             # Fallback for when storage is not available
             metadata_dir = get_workspace_metadata_dir_name()
-            return Path(self._workspace) / metadata_dir / "runtime" / "evolution" / "evolution_state.jsonl"
+            return cast(
+                "Path", (Path(self._workspace) / metadata_dir / "runtime" / "evolution" / "evolution_state.jsonl")
+            )
 
     def _ensure_initialized(self) -> None:
         """Lazily initialize state."""
@@ -251,7 +253,7 @@ class EvolutionStore:
             return ()
 
         history = self._state.update_history
-        return history[-limit:] if len(history) > limit else history
+        return cast("tuple[Any, ...]", (history[-limit:] if len(history) > limit else history))
 
     async def search_beliefs(self, query: str, top_k: int = 10) -> list[Belief]:
         """Search beliefs by content similarity (simple substring match for v1.0)."""
@@ -463,4 +465,4 @@ class EvolutionStore:
         if self._state is None:
             return []
 
-        return self._integrity.verify_chain(list(self._state.update_history))
+        return cast("list[str]", (self._integrity.verify_chain(list(self._state.update_history))))

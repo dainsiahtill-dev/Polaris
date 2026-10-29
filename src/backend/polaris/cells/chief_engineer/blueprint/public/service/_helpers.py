@@ -7,7 +7,7 @@ import re
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any, cast, get_args
 
 from polaris.cells.control_plane.run_ledger.public import stable_hash
 from polaris.kernelone.tasks.task_tokens import normalize_task_token
@@ -311,7 +311,7 @@ def _hashable_blueprint_payload(value: Any) -> Any:
 
 
 def _blueprint_hash(payload: dict[str, Any]) -> str:
-    return stable_hash(_hashable_blueprint_payload(payload))
+    return cast("str", (stable_hash(_hashable_blueprint_payload(payload))))
 
 
 def _blueprint_provenance_text(
@@ -620,7 +620,7 @@ def _hashable_portfolio_payload(value: Any) -> Any:
 def _portfolio_hash(payload: Mapping[str, Any]) -> str:
     """Hash canonical portfolio content without self-referential hash fields."""
 
-    return stable_hash(_hashable_portfolio_payload(dict(payload)))
+    return cast("str", (stable_hash(_hashable_portfolio_payload(dict(payload)))))
 
 
 def _string_list(value: Any) -> list[str]:
@@ -1817,7 +1817,7 @@ def _normalize_task_token(token: str) -> str:
     equal. This bridges the PM taskboard (numeric IDs) and CE blueprints
     (``TASK-N`` prefixed IDs).
     """
-    return normalize_task_token(token)
+    return cast("str", (normalize_task_token(token)))
 
 
 def _latest_blueprint_for_task(

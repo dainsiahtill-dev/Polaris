@@ -352,7 +352,9 @@ class EngineeringRunService:
     def current_session_id(self, *, workspace: Path) -> str | None:
         """Resolve committed current identity without claiming fresh acceptance."""
         self._assert_workspace(workspace)
-        return self.store.find_current_session_id(workspace=workspace, engine_version=self.engine_version)
+        return cast(
+            "str | None", (self.store.find_current_session_id(workspace=workspace, engine_version=self.engine_version))
+        )
 
     def request_identity(self, request_key: str, *, workspace: Path) -> dict[str, Any] | None:
         """Read committed request identity only; it carries no current verdict."""
@@ -577,7 +579,7 @@ class EngineeringRunService:
         )
         row = self.observe(session_id, workspace=self.workspace)
         if session_id in self._tasks or row["status"] in _TERMINAL or row["status"] == "running":
-            return session_id
+            return cast("str", (session_id))
         command = self._command(row)
         if row.get("permission_profile_id") is not None:
             scope = self._revalidated_scope(row)
@@ -609,7 +611,7 @@ class EngineeringRunService:
             self._cancellations.pop(session_id, None)
             lock.__exit__(None, None, None)
             raise
-        return session_id
+        return cast("str", (session_id))
 
     async def run_role(
         self, command: RoleRunCommand, *, scope: PermissionScope, limits: RunLimits, cancel: asyncio.Event
@@ -941,7 +943,9 @@ class EngineeringRunService:
             tools = EngineeringTools(self.workspace, readonly, limits, cancel)
 
             async def run_process(argv: list[str], timeout: float) -> subprocess.CompletedProcess[str]:
-                return await tools._process(argv, timeout=timeout, writes=())
+                return cast(
+                    "subprocess.CompletedProcess[str]", (await tools._process(argv, timeout=timeout, writes=()))
+                )
 
             saved_artifact = (
                 self._saved_artifact(command.session_id, arguments["artifact_ref"], binding)
@@ -1068,7 +1072,7 @@ class EngineeringRunService:
             raise asyncio.CancelledError
         if result.status != "completed":
             raise ValueError(f"{role} consultation {result.status}: {result.text}")
-        return result.text
+        return cast("str", (result.text))
 
     async def run_collaborative(self, instruction: str, *, session_id: str) -> RoleRunResult:
         """Run actual PM, CE and Director loops once, retaining ordinary advice."""

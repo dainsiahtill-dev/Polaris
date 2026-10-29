@@ -9,7 +9,7 @@ from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.llm.control_plane.internal.llm_config_agent import (
     LLMConfig,
@@ -455,7 +455,7 @@ def load_llm_config_port(
     """
     from polaris.kernelone.llm import config_store as _impl
 
-    return _impl.load_llm_config(workspace, cache_root)
+    return cast("dict[str, Any]", (_impl.load_llm_config(workspace, cache_root)))
 
 
 __all__ = [

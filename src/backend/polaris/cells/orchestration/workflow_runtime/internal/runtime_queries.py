@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.orchestration.workflow_runtime.internal.models import ExecutionEvent, TaskExecutionStatus
 from polaris.cells.orchestration.workflow_runtime.internal.workflow_client import get_workflow_api
@@ -51,7 +51,7 @@ class WorkflowQueryState:
         status = self._task_statuses.get(str(task_id or "").strip())
         if status is None:
             return None
-        return status.to_dict()
+        return cast("dict[str, Any] | None", (status.to_dict()))
 
     @workflow.query
     def get_execution_history(self) -> list[dict[str, Any]]:

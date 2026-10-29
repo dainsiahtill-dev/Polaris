@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.constants import DEFAULT_OPERATION_TIMEOUT_SECONDS
 
@@ -465,7 +465,7 @@ class Task:
 
 
 def _now_seconds() -> float:
-    return utc_now().timestamp()
+    return cast("float", (utc_now().timestamp()))
 
 
 # ---------------------------------------------------------------------------

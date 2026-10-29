@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Self
+from typing import Any, Self, cast
 
 from polaris.kernelone.audit.omniscient.schemas.base import (
     AuditEvent,
@@ -225,7 +225,7 @@ class ToolEvent(AuditEvent, frozen=True):  # type: ignore[call-arg]  # frozen=Tr
                 "is_success": self.is_success,
             }
         )
-        return base
+        return cast("dict[str, Any]", (base))
 
     @classmethod
     def from_audit_dict(cls, data: dict[str, Any]) -> Self:

@@ -23,7 +23,7 @@ from __future__ import annotations
 import os
 import re
 from collections import Counter
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.chief_engineer.blueprint.internal.step_contract import (
     _MAX_STEP_LINES,
@@ -79,7 +79,7 @@ def _within_step_contract_line_ceiling(step: dict[str, Any]) -> bool:
         est_lines = int(step.get("est_lines") or 0)
     except (TypeError, ValueError):
         return False
-    return 0 < est_lines <= _MAX_STEP_LINES
+    return cast("bool", (0 < est_lines <= _MAX_STEP_LINES))
 
 
 def _read_positive_int_env(name: str, default: int) -> int:

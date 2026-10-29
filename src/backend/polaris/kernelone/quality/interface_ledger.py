@@ -34,7 +34,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.fs.jsonl.locking import file_lock
 from polaris.kernelone.fs.text_ops import write_json_atomic
@@ -78,7 +78,7 @@ def _ledger_write_lock(ledger_path: str) -> Iterator[None]:
 def _normalize_target(raw: Any) -> str:
     """Use the same lexical key as the file-ownership ledger."""
 
-    return normalize_file_ownership_target(raw)
+    return cast("str", (normalize_file_ownership_target(raw)))
 
 
 def _string_list(value: Any) -> list[str]:
@@ -131,7 +131,7 @@ class DeclaredInterfaceValidationIssue:
 
 
 def _ledger_path(workspace: str, cache_root: str) -> str:
-    return resolve_artifact_path(workspace, cache_root, _LEDGER_REL_PATH)
+    return cast("str", (resolve_artifact_path(workspace, cache_root, _LEDGER_REL_PATH)))
 
 
 @dataclass(frozen=True)

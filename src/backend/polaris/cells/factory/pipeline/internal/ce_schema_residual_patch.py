@@ -75,7 +75,7 @@ class CESchemaResidualPatchPlan:
 
     @property
     def patch_schema(self) -> dict[str, Any]:
-        return json.loads(self._patch_schema_json)
+        return cast("dict[str, Any]", (json.loads(self._patch_schema_json)))
 
     def provider_context(self) -> dict[str, Any]:
         """Return fresh copies, explicitly untrusted, with no capability claim."""
@@ -129,7 +129,7 @@ class CESchemaResidualPatchPlan:
         full_errors = list(Draft202012Validator(json.loads(self._full_schema_json)).iter_errors(candidate))
         if full_errors:
             raise ValueError("ce_schema_patch_full_schema_rejected:" + full_errors[0].message)
-        return candidate
+        return cast("dict[str, Any]", (candidate))
 
 
 def plan_ce_schema_residual_patch(

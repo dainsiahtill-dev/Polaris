@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.chief_engineer.blueprint.internal.adr_store import ADRStore
 from polaris.cells.chief_engineer.blueprint.internal.architecture_decisions import (
@@ -80,13 +80,13 @@ _CE_REQUEUE_CONTEXT_KEYS = frozenset(
 
 def _ce_fission_max_output_tokens() -> int:
     """Reuse the structured CE default and explicit deployment override."""
-    return chief_engineer_structured_output_tokens()
+    return cast("int", (chief_engineer_structured_output_tokens()))
 
 
 def _normalize_owned_target(raw: Any) -> str:
     """Return the file-ownership ledger key used by publish-time lookups."""
 
-    return normalize_file_ownership_target(raw)
+    return cast("str", (normalize_file_ownership_target(raw)))
 
 
 def _blueprint_runtime_path(blueprint_id: str) -> str:
@@ -118,7 +118,7 @@ def _hashable_payload(value: Any) -> Any:
 
 
 def _payload_hash(value: Any) -> str:
-    return stable_hash(_hashable_payload(value))
+    return cast("str", (stable_hash(_hashable_payload(value))))
 
 
 def _default_gate_policy() -> dict[str, Any]:
@@ -331,23 +331,28 @@ def _control_plane_job_token(
         gate_policy["project_completion_contract_hash"] = completion_contract_hash
         gate_policy["command_authority_hashes"] = command_authority_hashes
         capability_audit["command_authority_hashes"] = command_authority_hashes
-    return JobToken(
-        schema_version=1,
-        token_id=token_id,
-        run_id=run_id,
-        factory_run_id=str(payload.get("factory_run_id") or run_id).strip(),
-        project_id=project_id,
-        stage="pending_exec",
-        target_files=list(target_files),
-        allowed_paths=allowed_read_paths,
-        allowed_write_paths=allowed_write_paths,
-        allowed_read_paths=allowed_read_paths,
-        required_artifacts=[blueprint_path, *required_write_targets],
-        gate_policy=gate_policy,
-        capability_audit=capability_audit,
-        contract_hash=contract_hash,
-        blueprint_hash=blueprint_hash,
-    ).to_dict()
+    return cast(
+        "dict[str, Any]",
+        (
+            JobToken(
+                schema_version=1,
+                token_id=token_id,
+                run_id=run_id,
+                factory_run_id=str(payload.get("factory_run_id") or run_id).strip(),
+                project_id=project_id,
+                stage="pending_exec",
+                target_files=list(target_files),
+                allowed_paths=allowed_read_paths,
+                allowed_write_paths=allowed_write_paths,
+                allowed_read_paths=allowed_read_paths,
+                required_artifacts=[blueprint_path, *required_write_targets],
+                gate_policy=gate_policy,
+                capability_audit=capability_audit,
+                contract_hash=contract_hash,
+                blueprint_hash=blueprint_hash,
+            ).to_dict()
+        ),
+    )
 
 
 def _string_list(value: Any) -> list[str]:

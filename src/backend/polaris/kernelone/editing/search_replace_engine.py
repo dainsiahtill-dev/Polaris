@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import difflib
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -375,7 +375,7 @@ def _try_strategy_with_preproc(
         except ValueError:
             return None
 
-    return res
+    return cast("str | None", (res))
 
 
 def _precise_matcher_apply(
@@ -392,7 +392,7 @@ def _precise_matcher_apply(
     """
     result, metadata = fuzzy_replace(original_text, search_text, replace_text)
     if metadata.get("success"):
-        return result
+        return cast("str | None", (result))
     return None
 
 

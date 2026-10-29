@@ -11,7 +11,7 @@ involved. This module performs no file I/O.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.director.tasking.internal.execution_profile import resolve_director_execution_profile
 from polaris.cells.director.tasking.public.contracts import TaskExecutionProfileV1
@@ -45,7 +45,7 @@ def _profile_for_task(task: Task) -> TaskExecutionProfileV1:
 def classify_task(task: Task) -> str:
     """Return the dispatch type from the canonical execution profile."""
 
-    return _profile_for_task(task).dispatch_type
+    return cast("str", (_profile_for_task(task).dispatch_type))
 
 
 def extract_tech_stack(task: Task) -> dict[str, str]:

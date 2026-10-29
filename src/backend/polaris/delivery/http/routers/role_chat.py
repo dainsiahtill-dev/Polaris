@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Request
 from polaris.cells.llm.dialogue.public import (
@@ -72,7 +72,7 @@ async def _load_llm_config_async(workspace: str, cache_root: str, settings: Any)
 
 def _workspace_value(settings: Any) -> str:
     """Resolve the active desktop workspace from compatible settings fields."""
-    return active_workspace_value(settings)
+    return cast("str", (active_workspace_value(settings)))
 
 
 def _context_workspace(payload: dict[str, Any]) -> str:
@@ -86,7 +86,7 @@ def _context_workspace(payload: dict[str, Any]) -> str:
 
 def _workspace_for_role_request(settings: Any, requested: str = "", payload: dict[str, Any] | None = None) -> str:
     """Resolve workspace from query/body context before falling back to active desktop state."""
-    return requested_or_active_workspace(settings, requested or _context_workspace(payload or {}))
+    return cast("str", (requested_or_active_workspace(settings, requested or _context_workspace(payload or {}))))
 
 
 def _state_for_workspace(state: Any, workspace: str) -> Any:
@@ -298,7 +298,7 @@ async def get_llm_cache_stats() -> dict[str, Any]:
     from polaris.cells.roles.kernel.public.service import get_global_llm_cache
 
     cache = get_global_llm_cache()
-    return cache.get_stats()
+    return cast("dict[str, Any]", (cache.get_stats()))
 
 
 @router.post(

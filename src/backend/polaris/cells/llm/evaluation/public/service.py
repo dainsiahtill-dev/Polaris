@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.llm.evaluation.internal.baseline_library import (
     list_baseline_library_sources,
@@ -500,7 +500,7 @@ def _load_context_benchmark_cases(
     proper context benchmark cases.
     """
     # TODO(包8): Use proper context benchmark cases
-    return load_builtin_agentic_benchmark_cases(role=role, case_ids=case_ids)
+    return cast("list[Any]", (load_builtin_agentic_benchmark_cases(role=role, case_ids=case_ids)))
 
 
 def _load_strategy_benchmark_cases(
@@ -513,7 +513,7 @@ def _load_strategy_benchmark_cases(
     proper strategy benchmark cases.
     """
     # TODO(包8): Use proper strategy benchmark cases
-    return load_builtin_agentic_benchmark_cases(role=role, case_ids=case_ids)
+    return cast("list[Any]", (load_builtin_agentic_benchmark_cases(role=role, case_ids=case_ids)))
 
 
 def _convert_suite_result_to_public_summary(result: BenchmarkSuiteResult) -> dict[str, Any]:

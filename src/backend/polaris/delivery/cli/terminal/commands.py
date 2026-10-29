@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.delivery.cli.terminal._base import (
     _EXIT_COMMANDS,
@@ -280,7 +280,7 @@ def _resolve_role_session(
     if not resolved:
         raise RuntimeError(f"failed to resolve role session id for role={role}")
     role_sessions[role] = resolved
-    return resolved
+    return cast("str", (resolved))
 
 
 def _build_role_capability_profile(*, role: str, host_kind: str) -> dict[str, Any]:
@@ -297,7 +297,7 @@ def _build_role_capability_profile(*, role: str, host_kind: str) -> dict[str, An
     )
     profile["metadata"] = metadata
     profile["role"] = role
-    return profile
+    return cast("dict[str, Any]", (profile))
 
 
 def _console_display_role(*, role: str, super_mode: bool, super_role: str = "super") -> str:

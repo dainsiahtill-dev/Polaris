@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Request
 from polaris.cells.llm.provider_config.public.contracts import (
@@ -103,11 +103,16 @@ def v2_provider_health(request: Request, provider_id: str, payload: ProviderActi
     api_key = provider_context.api_key
 
     try:
-        return run_provider_action(
-            action="health",
-            provider_type=provider_type,
-            provider_cfg=provider_cfg,
-            api_key=api_key,
+        return cast(
+            "dict[str, Any]",
+            (
+                run_provider_action(
+                    action="health",
+                    provider_type=provider_type,
+                    provider_cfg=provider_cfg,
+                    api_key=api_key,
+                )
+            ),
         )
     except LlmProviderRuntimeError as exc:
         raise _map_provider_runtime_error(exc) from exc
@@ -129,11 +134,16 @@ def v2_provider_models(request: Request, provider_id: str, payload: ProviderActi
     api_key = provider_context.api_key
 
     try:
-        return run_provider_action(
-            action="models",
-            provider_type=provider_type,
-            provider_cfg=provider_cfg,
-            api_key=api_key,
+        return cast(
+            "dict[str, Any]",
+            (
+                run_provider_action(
+                    action="models",
+                    provider_type=provider_type,
+                    provider_cfg=provider_cfg,
+                    api_key=api_key,
+                )
+            ),
         )
     except LlmProviderRuntimeError as exc:
         raise _map_provider_runtime_error(exc) from exc
@@ -210,7 +220,7 @@ def v2_get_provider_default_config(request: Request, provider_type: str) -> dict
         config = _provider_manager.get_provider_default_config(provider_type)
         if config is None:
             raise StructuredHTTPException(status_code=404, code="PROVIDER_NOT_FOUND", message="Provider not found")
-        return config
+        return cast("dict[str, Any]", (config))
     except StructuredHTTPException:
         raise
     except (RuntimeError, ValueError) as exc:
@@ -256,7 +266,7 @@ def v2_health_check_all(request: Request, payload: dict[str, Any]) -> dict[str, 
     try:
         configs = payload.get("providers", {})
         results = _provider_manager.health_check_all(configs)
-        return results
+        return cast("dict[str, Any]", (results))
     except (RuntimeError, ValueError) as exc:
         logger.error("health_check_all failed: %s", exc)
         raise StructuredHTTPException(status_code=500, code="INTERNAL_ERROR", message="internal error") from exc

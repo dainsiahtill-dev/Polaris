@@ -18,7 +18,7 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # No Domain entity imports: this Infrastructure layer accepts Dict[str, Any].
 # The caller (task_lifecycle_service) serializes TaskStateMachine.to_dict()
@@ -315,7 +315,7 @@ class StateStore:
             raise StateNotFoundError(f"State not found for task {task_id}")
 
         with open(state_file, encoding="utf-8") as f:
-            return json.load(f)
+            return cast("dict[str, Any]", (json.load(f)))
 
     def load_lifecycle(self, task_id: str) -> dict[str, Any]:
         """Load lifecycle for a task (compatible with old Director).
@@ -334,7 +334,7 @@ class StateStore:
 
         try:
             with open(lifecycle_file, encoding="utf-8") as f:
-                return json.load(f)
+                return cast("dict[str, Any]", (json.load(f)))
         except (OSError, json.JSONDecodeError):
             return {}
 

@@ -12,7 +12,7 @@ import json
 import logging
 import re
 import time
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.planning import (
     Plan,
@@ -436,7 +436,7 @@ class PlanSolveEngine(BaseEngine):
         """解析计划响应"""
         # 方案1: 尝试解析整个响应为 JSON
         try:
-            return json.loads(response)
+            return cast("dict[str, Any]", (json.loads(response)))
         except json.JSONDecodeError:
             logger.debug("Full response JSON parse failed, trying fallback")
 
@@ -452,7 +452,7 @@ class PlanSolveEngine(BaseEngine):
         try:
             json_match = self._find_json_object(response)
             if json_match:
-                return json.loads(json_match)
+                return cast("dict[str, Any]", (json.loads(json_match)))
         except json.JSONDecodeError:
             logger.debug("JSON block extraction failed")
 
@@ -468,7 +468,7 @@ class PlanSolveEngine(BaseEngine):
         """解析执行响应"""
         # 方案1: 尝试解析整个响应为 JSON
         try:
-            return json.loads(response)
+            return cast("dict[str, Any]", (json.loads(response)))
         except json.JSONDecodeError:
             logger.debug("Full response JSON parse failed, trying fallback")
 
@@ -484,7 +484,7 @@ class PlanSolveEngine(BaseEngine):
         try:
             json_match = self._find_json_object(response)
             if json_match:
-                return json.loads(json_match)
+                return cast("dict[str, Any]", (json.loads(json_match)))
         except json.JSONDecodeError:
             logger.debug("JSON block extraction failed")
 
@@ -507,7 +507,7 @@ class PlanSolveEngine(BaseEngine):
             end = self._find_matching_bracket(text, start, "[", "]")
             if end != -1:
                 try:
-                    return json.loads(text[start : end + 1])
+                    return cast("dict[str, Any] | None", (json.loads(text[start : end + 1])))
                 except json.JSONDecodeError:
                     pass
 
@@ -516,7 +516,7 @@ class PlanSolveEngine(BaseEngine):
             end = self._find_matching_bracket(text, start, "{", "}")
             if end != -1:
                 try:
-                    return json.loads(text[start : end + 1])
+                    return cast("dict[str, Any] | None", (json.loads(text[start : end + 1])))
                 except json.JSONDecodeError:
                     pass
 
@@ -566,7 +566,7 @@ class PlanSolveEngine(BaseEngine):
         """执行工具调用"""
         if context.tool_gateway:
             result = await context.tool_gateway.execute(tool_name, tool_args)
-            return result
+            return cast("dict[str, Any]", (result))
         else:
             return {"success": True, "message": f"Simulated: {tool_name}"}
 

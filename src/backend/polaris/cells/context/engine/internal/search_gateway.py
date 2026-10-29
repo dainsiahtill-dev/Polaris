@@ -14,7 +14,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.context.catalog.public.contracts import SearchCellsQueryV1
 from polaris.cells.context.catalog.service import ContextCatalogService
@@ -89,7 +89,7 @@ class SearchService:
     @property
     def available(self) -> bool:
         """True when the derived descriptor cache exists (``context.catalog`` output)."""
-        return self._catalog.cache_path.is_file()
+        return cast("bool", (self._catalog.cache_path.is_file()))
 
     def _generate_query_hash(self, query_str: str, limit: int) -> str:
         """Generate a unique hash for the query and limit."""

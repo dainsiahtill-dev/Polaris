@@ -16,7 +16,7 @@ import re
 import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from polaris.kernelone.security.dangerous_patterns import is_dangerous_command
 from polaris.kernelone.tool_execution.tool_categories import (
@@ -229,13 +229,13 @@ class ToolPolicy:
         return None
 
     def _is_code_write_tool(self, tool_name: str) -> bool:
-        return is_code_write_tool(tool_name)
+        return cast("bool", (is_code_write_tool(tool_name)))
 
     def _is_command_execution_tool(self, tool_name: str) -> bool:
-        return is_command_execution_tool(tool_name)
+        return cast("bool", (is_command_execution_tool(tool_name)))
 
     def _is_file_delete_tool(self, tool_name: str) -> bool:
-        return is_file_delete_tool(tool_name)
+        return cast("bool", (is_file_delete_tool(tool_name)))
 
     def _is_path_traversal(self, path: str) -> bool:
         """检查路径是否包含穿越序列。

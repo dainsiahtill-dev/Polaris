@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Mapping
+from typing import Mapping, cast
 
 from polaris.cells.roles.kernel.internal.speculation.contracts import SyntheticShadowToolKeyV1
 from polaris.cells.roles.kernel.public.turn_contracts import (
@@ -106,7 +106,7 @@ class WriteToolPhases:
             raise ValueError("write_prepare_path_required")
         read_spec = ToolSpecRegistry.capture_effective_spec(_PREPARE_SHADOW_EXECUTION_TOOL)
         shadow_args = normalize_tool_arguments_from_snapshot(read_spec, {"path": operands[0]})
-        return normalize_args(_PREPARE_SHADOW_EXECUTION_TOOL, shadow_args)
+        return cast("dict[str, object]", (normalize_args(_PREPARE_SHADOW_EXECUTION_TOOL, shadow_args)))
 
     @classmethod
     def prepare_shadow_execution_tool_name(cls) -> str:

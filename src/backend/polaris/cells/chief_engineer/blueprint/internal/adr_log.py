@@ -13,7 +13,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.chief_engineer.blueprint.public.contracts import (
     ADREventV1,
@@ -53,7 +53,7 @@ def _validate_record_id(value: str) -> str:
     wrapper so existing call sites and test monkeypatch targets resolve
     unchanged. Fail-closed: anything but a bare safe token raises.
     """
-    return validate_storage_record_id(value, label="adr_id")
+    return cast("str", (validate_storage_record_id(value, label="adr_id")))
 
 
 def _coerce_status(value: Any) -> ADRStatus:

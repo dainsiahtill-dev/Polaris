@@ -19,7 +19,7 @@ import sys
 import time
 import typing
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.audit.evidence.public.service import EvidenceService
 from polaris.cells.director.tasking.internal import path_predicates as _path_predicates
@@ -267,14 +267,14 @@ class WorkerExecutor:
 
         Delegates to ``task_classifier.classify_task``.
         """
-        return _classify_task_impl(task)
+        return cast("str", (_classify_task_impl(task)))
 
     def _extract_tech_stack(self, task: Task) -> dict[str, Any]:
         """Extract technology stack from task metadata (set by PM).
 
         Delegates to ``task_classifier.extract_tech_stack``.
         """
-        return _extract_tech_stack_impl(task)
+        return cast("dict[str, Any]", (_extract_tech_stack_impl(task)))
 
     # === Execution Methods ===
 
@@ -522,70 +522,70 @@ class WorkerExecutor:
 
         Delegates to ``TargetFileResolver.normalize_target_files``.
         """
-        return self._target_resolver.normalize_target_files(task)
+        return cast("list[str]", (self._target_resolver.normalize_target_files(task)))
 
     def _infer_target_files_from_scope_paths(self, task: Task) -> list[str]:
         """Infer concrete target files from PM directory scopes.
 
         Delegates to ``TargetFileResolver.infer_target_files_from_scope_paths``.
         """
-        return self._target_resolver.infer_target_files_from_scope_paths(task)
+        return cast("list[str]", (self._target_resolver.infer_target_files_from_scope_paths(task)))
 
     def _existing_files_for_scope(self, scope: str, task: Task) -> list[str]:
         """Return existing workspace files under a declared scope.
 
         Delegates to ``TargetFileResolver.existing_files_for_scope``.
         """
-        return self._target_resolver.existing_files_for_scope(scope, task)
+        return cast("list[str]", (self._target_resolver.existing_files_for_scope(scope, task)))
 
     def _is_scope_inference_candidate(self, path: str) -> bool:
         """Return whether an existing file is useful as an inferred target.
 
         Delegates to ``TargetFileResolver.is_scope_inference_candidate``.
         """
-        return self._target_resolver.is_scope_inference_candidate(path)
+        return cast("bool", (self._target_resolver.is_scope_inference_candidate(path)))
 
     def _scope_candidate_sort_key(self, path: str, tokens: list[str]) -> tuple[int, int, str]:
         """Prefer paths whose names match task tokens, then shorter paths.
 
         Delegates to ``path_predicates.scope_candidate_sort_key``.
         """
-        return _path_predicates.scope_candidate_sort_key(path, tokens)
+        return cast("tuple[int, int, str]", (_path_predicates.scope_candidate_sort_key(path, tokens)))
 
     def _synthesize_scope_target_file(self, scope: str, task: Task) -> str | None:
         """Create a conservative target filename inside an empty declared scope.
 
         Delegates to ``TargetFileResolver.synthesize_scope_target_file``.
         """
-        return self._target_resolver.synthesize_scope_target_file(scope, task)
+        return cast("str | None", (self._target_resolver.synthesize_scope_target_file(scope, task)))
 
     def _task_slug(self, task: Task) -> str:
         """Build an ASCII slug from task text for synthesized file names.
 
         Delegates to ``path_predicates.task_slug``.
         """
-        return _path_predicates.task_slug(task)
+        return cast("str", (_path_predicates.task_slug(task)))
 
     def _task_ascii_tokens(self, task: Task) -> list[str]:
         """Extract stable ASCII tokens from task fields.
 
         Delegates to ``path_predicates.task_ascii_tokens``.
         """
-        return _path_predicates.task_ascii_tokens(task)
+        return cast("list[str]", (_path_predicates.task_ascii_tokens(task)))
 
     def _preferred_source_extension(self) -> str:
         """Infer the most suitable source extension for new scope targets.
 
         Delegates to ``TargetFileResolver.preferred_source_extension``.
         """
-        return self._target_resolver.preferred_source_extension()
+        return cast("str", (self._target_resolver.preferred_source_extension()))
 
     def _looks_like_test_scope(self, scope: str) -> bool:
         """Return whether a scope is intended for tests.
 
         Delegates to ``path_predicates.looks_like_test_scope``.
         """
-        return _path_predicates.looks_like_test_scope(scope)
+        return cast("bool", (_path_predicates.looks_like_test_scope(scope)))
 
     def _test_filename(self, slug: str) -> str:
         """Return a conventional test filename for the current workspace.
@@ -593,72 +593,74 @@ class WorkerExecutor:
         Delegates to ``path_predicates.test_filename`` using the
         workspace-resolved source extension.
         """
-        return _path_predicates.test_filename(slug, self._preferred_source_extension())
+        return cast("str", (_path_predicates.test_filename(slug, self._preferred_source_extension())))
 
     def _extract_description_target_path(self, line: str) -> str | None:
         """Extract an explicit target path from one description line.
 
         Delegates to ``path_predicates.extract_description_target_path``.
         """
-        return _path_predicates.extract_description_target_path(line)
+        return cast("str | None", (_path_predicates.extract_description_target_path(line)))
 
     def _is_probable_file_path(self, path: str) -> bool:
         """Check if string looks like a file path.
 
         Delegates to ``path_predicates.is_probable_file_path``.
         """
-        return _path_predicates.is_probable_file_path(path)
+        return cast("bool", (_path_predicates.is_probable_file_path(path)))
 
     def _is_concrete_target_file_path(self, path: str) -> bool:
         """Return true when a PM target path names a file, not a directory scope.
 
         Delegates to ``path_predicates.is_concrete_target_file_path``.
         """
-        return _path_predicates.is_concrete_target_file_path(path)
+        return cast("bool", (_path_predicates.is_concrete_target_file_path(path)))
 
     def _normalize_scope_paths(self, task: Task) -> list[str]:
         """Return directory/module scopes declared by PM without treating them as files.
 
         Delegates to ``TargetFileResolver.normalize_scope_paths``.
         """
-        return self._target_resolver.normalize_scope_paths(task)
+        return cast("list[str]", (self._target_resolver.normalize_scope_paths(task)))
 
     def _verification_feedback(self, task: Task) -> dict[str, Any]:
         """Return previous verification diagnostics carried by the workflow retry.
 
         Delegates to ``VerificationRepair.feedback``.
         """
-        return self._verification_repair.feedback(task)
+        return cast("dict[str, Any]", (self._verification_repair.feedback(task)))
 
     @staticmethod
     def _parse_unresolved_import_entry(entry: Any) -> tuple[str, str] | None:
         """Delegates to ``verification_repair.parse_unresolved_import_entry``."""
-        return _parse_unresolved_import_entry_impl(entry)
+        return cast("tuple[str, str] | None", (_parse_unresolved_import_entry_impl(entry)))
 
     def _candidate_paths_for_unresolved_import(self, source_file: str, import_ref: str) -> list[str]:
         """Delegates to ``VerificationRepair.candidate_paths_for_unresolved_import``."""
-        return self._verification_repair.candidate_paths_for_unresolved_import(source_file, import_ref)
+        return cast(
+            "list[str]", (self._verification_repair.candidate_paths_for_unresolved_import(source_file, import_ref))
+        )
 
     @staticmethod
     def _path_under_scope(path: str, scope: str) -> bool:
         """Delegates to ``path_predicates.path_under_scope``."""
-        return _path_predicates.path_under_scope(path, scope)
+        return cast("bool", (_path_predicates.path_under_scope(path, scope)))
 
     def _repair_path_allowed(self, task: Task, path: str) -> bool:
         """Delegates to ``VerificationRepair.repair_path_allowed``."""
-        return self._verification_repair.repair_path_allowed(task, path)
+        return cast("bool", (self._verification_repair.repair_path_allowed(task, path)))
 
     def _unresolved_import_repair_records(self, task: Task) -> list[dict[str, Any]]:
         """Delegates to ``VerificationRepair.unresolved_import_repair_records``."""
-        return self._verification_repair.unresolved_import_repair_records(task)
+        return cast("list[dict[str, Any]]", (self._verification_repair.unresolved_import_repair_records(task)))
 
     def _verification_repair_target_paths(self, task: Task) -> list[str]:
         """Delegates to ``VerificationRepair.repair_target_paths``."""
-        return self._verification_repair.repair_target_paths(task)
+        return cast("list[str]", (self._verification_repair.repair_target_paths(task)))
 
     def _verification_repair_prompt_section(self, task: Task) -> str:
         """Delegates to ``VerificationRepair.repair_prompt_section``."""
-        return self._verification_repair.repair_prompt_section(task)
+        return cast("str", (self._verification_repair.repair_prompt_section(task)))
 
     def _bootstrap_target_file_content(self, *, path: str, task: Task, language: str) -> typing.NoReturn:
         """Blocked: bootstrap target files must be produced by runtime codegen."""
@@ -670,21 +672,21 @@ class WorkerExecutor:
 
         Delegates to ``CodegenRoundPlanner.construction_file_plans``.
         """
-        return self._codegen_rounds.construction_file_plans(task)
+        return cast("list[dict[str, Any]]", (self._codegen_rounds.construction_file_plans(task)))
 
     def _extract_architecture_context(self, task: Task) -> dict[str, Any]:
         """Extract architecture context from task metadata.
 
         Delegates to ``PromptBuilder.extract_architecture_context``.
         """
-        return self._prompt_builder.extract_architecture_context(task)
+        return cast("dict[str, Any]", (self._prompt_builder.extract_architecture_context(task)))
 
     def _get_module_for_task(self, task: Task) -> str:
         """Get current module name for task.
 
         Delegates to ``PromptBuilder.get_module_for_task``.
         """
-        return self._prompt_builder.get_module_for_task(task)
+        return cast("str", (self._prompt_builder.get_module_for_task(task)))
 
     def _build_code_generation_rounds(self, task: Task) -> list[list[dict[str, Any]]]:
         """Build code generation rounds from task metadata.
@@ -692,7 +694,7 @@ class WorkerExecutor:
         Delegates to ``CodegenRoundPlanner.build_code_generation_rounds``. This
         method MUST remain an instance method (live test-contract callers).
         """
-        return self._codegen_rounds.build_code_generation_rounds(task)
+        return cast("list[list[dict[str, Any]]]", (self._codegen_rounds.build_code_generation_rounds(task)))
 
     @staticmethod
     def _resolve_code_generation_round_chunk_size() -> int:
@@ -700,7 +702,7 @@ class WorkerExecutor:
 
         Delegates to ``CodegenRoundPlanner.resolve_code_generation_round_chunk_size``.
         """
-        return CodegenRoundPlanner.resolve_code_generation_round_chunk_size()
+        return cast("int", (CodegenRoundPlanner.resolve_code_generation_round_chunk_size()))
 
     @staticmethod
     def _code_generation_round_chunk_configured() -> bool:
@@ -709,14 +711,14 @@ class WorkerExecutor:
         Delegates to ``CodegenRoundPlanner.code_generation_round_chunk_configured``
         (dead code carried verbatim; zero callers).
         """
-        return CodegenRoundPlanner.code_generation_round_chunk_configured()
+        return cast("bool", (CodegenRoundPlanner.code_generation_round_chunk_configured()))
 
     def _effective_code_generation_round_chunk_size(self, file_plans: list[dict[str, Any]]) -> int:
         """Return the chunk size for this concrete file set.
 
         Delegates to ``CodegenRoundPlanner.effective_code_generation_round_chunk_size``.
         """
-        return self._codegen_rounds.effective_code_generation_round_chunk_size(file_plans)
+        return cast("int", (self._codegen_rounds.effective_code_generation_round_chunk_size(file_plans)))
 
     @staticmethod
     def _is_test_like_target_file(path: str) -> bool:
@@ -725,14 +727,14 @@ class WorkerExecutor:
         Delegates to ``CodegenRoundPlanner.is_test_like_target_file`` (dead class-level
         copy carried verbatim; zero callers).
         """
-        return CodegenRoundPlanner.is_test_like_target_file(path)
+        return cast("bool", (CodegenRoundPlanner.is_test_like_target_file(path)))
 
     def _generated_artifact_quality_error(self, files_created: list[dict[str, Any]], *, phase: str) -> str | None:
         """Return a fail-closed quality error for generated artifact receipts.
 
         Delegates to ``WorkspaceProbe.generated_artifact_quality_error``.
         """
-        return self._workspace_probe.generated_artifact_quality_error(files_created, phase=phase)
+        return cast("str | None", (self._workspace_probe.generated_artifact_quality_error(files_created, phase=phase)))
 
     @staticmethod
     def _generated_artifact_paths(files_created: list[dict[str, Any]]) -> list[str]:
@@ -740,21 +742,21 @@ class WorkerExecutor:
 
         Delegates to ``WorkspaceProbe.generated_artifact_paths``.
         """
-        return WorkspaceProbe.generated_artifact_paths(files_created)
+        return cast("list[str]", (WorkspaceProbe.generated_artifact_paths(files_created)))
 
     def _resolve_workspace_file_path(self, relative_path: str) -> str | None:
         """Resolve a workspace-relative file path without allowing traversal.
 
         Delegates to ``WorkspaceProbe.resolve_workspace_file_path``.
         """
-        return self._workspace_probe.resolve_workspace_file_path(relative_path)
+        return cast("str | None", (self._workspace_probe.resolve_workspace_file_path(relative_path)))
 
     def _snapshot_workspace_files(self, paths: list[str]) -> dict[str, tuple[bool, int, int]]:
         """Capture initial target-file signatures for over-completion detection.
 
         Delegates to ``WorkspaceProbe.snapshot_workspace_files``.
         """
-        return self._workspace_probe.snapshot_workspace_files(paths)
+        return cast("dict[str, tuple[bool, int, int]]", (self._workspace_probe.snapshot_workspace_files(paths)))
 
     def _round_files_changed_since(
         self,
@@ -765,28 +767,28 @@ class WorkerExecutor:
 
         Delegates to ``WorkspaceProbe.round_files_changed_since``.
         """
-        return self._workspace_probe.round_files_changed_since(paths, initial_signatures)
+        return cast("bool", (self._workspace_probe.round_files_changed_since(paths, initial_signatures)))
 
     def _collect_existing_file_records(self, paths: list[str]) -> list[dict[str, str]]:
         """Return lightweight records for existing workspace files.
 
         Delegates to ``WorkspaceProbe.collect_existing_file_records``.
         """
-        return self._workspace_probe.collect_existing_file_records(paths)
+        return cast("list[dict[str, str]]", (self._workspace_probe.collect_existing_file_records(paths)))
 
     def _code_generation_round_marker_path(self, task: Task, round_index: int) -> str:
         """Return the persisted progress marker path for one task round.
 
         Delegates to ``WorkspaceProbe.code_generation_round_marker_path``.
         """
-        return self._workspace_probe.code_generation_round_marker_path(task, round_index)
+        return cast("str", (self._workspace_probe.code_generation_round_marker_path(task, round_index)))
 
     def _workspace_file_signature(self, relative_path: str) -> dict[str, int | str] | None:
         """Return a stable file signature for a workspace-relative file.
 
         Delegates to ``WorkspaceProbe.workspace_file_signature``.
         """
-        return self._workspace_probe.workspace_file_signature(relative_path)
+        return cast("dict[str, int | str] | None", (self._workspace_probe.workspace_file_signature(relative_path)))
 
     def _write_code_generation_round_marker(
         self,
@@ -810,13 +812,15 @@ class WorkerExecutor:
 
         Delegates to ``WorkspaceProbe.code_generation_round_marker_satisfied``.
         """
-        return self._workspace_probe.code_generation_round_marker_satisfied(task, round_index, round_paths)
+        return cast(
+            "bool", (self._workspace_probe.code_generation_round_marker_satisfied(task, round_index, round_paths))
+        )
 
     def _write_files(self, files: list[dict[str, Any]], task_id: str = "") -> list[dict[str, Any]]:
         """Delegate to FileApplyService."""
         if self._file_service is None:
             return []
-        return self._file_service.write_files(files, task_id)
+        return cast("list[dict[str, Any]]", (self._file_service.write_files(files, task_id)))
 
     def _collect_workspace_files(
         self, paths: list[str], task_id: str = "", operation: str = "modify"
@@ -824,7 +828,7 @@ class WorkerExecutor:
         """Delegate to FileApplyService."""
         if self._file_service is None:
             return []
-        return self._file_service.collect_workspace_files(paths, task_id, operation)
+        return cast("list[dict[str, Any]]", (self._file_service.collect_workspace_files(paths, task_id, operation)))
 
     def _apply_response_operations(
         self,
@@ -836,11 +840,16 @@ class WorkerExecutor:
         """Delegate to FileApplyService."""
         if self._file_service is None:
             return [], []
-        return self._file_service.apply_response_operations(
-            response,
-            task_id,
-            llm_metadata,
-            allowed_scope_paths=allowed_scope_paths,
+        return cast(
+            "tuple[list[dict[str, Any]], list[str]]",
+            (
+                self._file_service.apply_response_operations(
+                    response,
+                    task_id,
+                    llm_metadata,
+                    allowed_scope_paths=allowed_scope_paths,
+                )
+            ),
         )
 
     def _compact_prompt_fragment(self, text: str, *, max_chars: int) -> str:
@@ -848,10 +857,15 @@ class WorkerExecutor:
         payload = str(text or "").strip()
         if max_chars <= 0 or len(payload) <= max_chars:
             return payload
-        return self.token_service.truncate_output(
-            payload,
-            max_size=max_chars,
-            add_notice=True,
+        return cast(
+            "str",
+            (
+                self.token_service.truncate_output(
+                    payload,
+                    max_size=max_chars,
+                    add_notice=True,
+                )
+            ),
         )
 
     def _extract_functional_requirements(self, description: str) -> list[str]:
@@ -860,7 +874,7 @@ class WorkerExecutor:
         Delegates to ``PromptBuilder.extract_functional_requirements`` (dead code
         carried verbatim; zero callers).
         """
-        return self._prompt_builder.extract_functional_requirements(description)
+        return cast("list[str]", (self._prompt_builder.extract_functional_requirements(description)))
 
     def _get_framework_guidance(self, language: str, framework: str | None) -> str:
         """Get framework-specific guidance.
@@ -868,7 +882,7 @@ class WorkerExecutor:
         Delegates to ``PromptBuilder.get_framework_guidance`` (dead §8 code carried
         verbatim; zero callers).
         """
-        return self._prompt_builder.get_framework_guidance(language, framework)
+        return cast("str", (self._prompt_builder.get_framework_guidance(language, framework)))
 
     def _build_code_generation_prompt(
         self,
@@ -883,11 +897,16 @@ class WorkerExecutor:
         Delegates to ``PromptBuilder.build_code_generation_prompt``. This method
         MUST remain an instance method (live test-contract callers).
         """
-        return self._prompt_builder.build_code_generation_prompt(
-            task,
-            round_index=round_index,
-            round_total=round_total,
-            round_files=round_files,
+        return cast(
+            "str",
+            (
+                self._prompt_builder.build_code_generation_prompt(
+                    task,
+                    round_index=round_index,
+                    round_total=round_total,
+                    round_files=round_files,
+                )
+            ),
         )
 
     def _extract_files_from_response(self, response: str) -> list[dict[str, Any]]:
@@ -895,7 +914,7 @@ class WorkerExecutor:
 
         Delegates to ``response_parser.extract_files_from_response``.
         """
-        return _extract_files_from_response_impl(response)
+        return cast("list[dict[str, Any]]", (_extract_files_from_response_impl(response)))
 
     def _fallback_code_files(self, task: Task, round_files: list[str] | None = None) -> list[dict[str, Any]]:
         """Blocked compatibility entry point retained only to fail closed."""
@@ -983,15 +1002,20 @@ class WorkerExecutor:
             return [], []
         import asyncio
 
-        return asyncio.run(
-            self._code_engine.invoke_generation_with_retries(
-                task=task,
-                prompt=prompt,
-                model=model,
-                per_call_timeout=per_call_timeout,
-                deadline_ts=deadline_ts,
-                round_label=round_label,
-                round_files=round_files,
-                spin_tracker=spin_tracker,
-            )
+        return cast(
+            "tuple[list[dict[str, Any]], list[str]]",
+            (
+                asyncio.run(
+                    self._code_engine.invoke_generation_with_retries(
+                        task=task,
+                        prompt=prompt,
+                        model=model,
+                        per_call_timeout=per_call_timeout,
+                        deadline_ts=deadline_ts,
+                        round_label=round_label,
+                        round_files=round_files,
+                        spin_tracker=spin_tracker,
+                    )
+                )
+            ),
         )

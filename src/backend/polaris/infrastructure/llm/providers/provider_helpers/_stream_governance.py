@@ -282,10 +282,15 @@ def _dispatch_async_stream_attempt(
     consume: Callable[[aiohttp.ClientResponse], AsyncIterator[Any]],
 ) -> AsyncIterator[Any]:
     if physical_dispatch_port is not None:
-        return physical_dispatch_port.dispatch_stream_async(
-            wire_request=wire_request,
-            open_stream=_open_frozen_aiohttp_stream,
-            consume=consume,
+        return cast(
+            "AsyncIterator[Any]",
+            (
+                physical_dispatch_port.dispatch_stream_async(
+                    wire_request=wire_request,
+                    open_stream=_open_frozen_aiohttp_stream,
+                    consume=consume,
+                )
+            ),
         )
 
     async def _legacy_dispatch() -> AsyncIterator[Any]:

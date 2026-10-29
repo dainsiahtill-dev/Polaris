@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, cast
 
 from polaris.cells.runtime.task_runtime.public.contracts import TaskRuntimeExecutionAttemptIdentityV1
 
@@ -108,7 +108,7 @@ def query_execution_effect_closure(query: QueryExecutionEffectClosureV1) -> Exec
     """
     from polaris.cells.runtime.task_runtime.internal.execution_effect_closure import observe_execution_effect_closure
 
-    return observe_execution_effect_closure(query)
+    return cast("ExecutionEffectClosureObservationV1", (observe_execution_effect_closure(query)))
 
 
 def query_execution_effect_closures(
@@ -122,4 +122,4 @@ def query_execution_effect_closures(
     """
     from polaris.cells.runtime.task_runtime.internal.execution_effect_closure import observe_execution_effect_closures
 
-    return observe_execution_effect_closures(query)
+    return cast("tuple[ExecutionEffectClosureObservationV1, ...]", (observe_execution_effect_closures(query)))

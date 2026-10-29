@@ -9,7 +9,7 @@ import json
 import re
 from dataclasses import replace
 from time import perf_counter
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.llm.contracts.tool import (
     ToolExecutionResult,
@@ -56,7 +56,7 @@ def _normalize_tool_name(value: str) -> str:
         return ""
     if not _TOOL_NAME_PATTERN.fullmatch(token):
         return ""
-    return token
+    return cast("str", (token))
 
 
 def _normalize_tool_arguments(value: Any, tool_name: str = "") -> dict[str, Any]:

@@ -25,7 +25,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 from .protocols import (
     WorkingMemoryConfig,
@@ -425,7 +425,7 @@ class WorkingMemoryWindow:
                 content_type = "code" if self._is_code_content(content) else "general"
                 result = estimator_cls.estimate(content, content_type=content_type)
                 if result > 0:
-                    return result
+                    return cast("int", (result))
             except (RuntimeError, ValueError) as exc:
                 logger.debug("TokenEstimator estimate failed: %s", exc)
 

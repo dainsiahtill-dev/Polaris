@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import AbstractContextManager
 from types import TracebackType
-from typing import Any
+from typing import Any, cast
 
 
 class NoOpSpan:
@@ -92,7 +92,10 @@ class CognitiveTelemetry:
         """
         if not self._enabled or self._tracer is None:
             return NoOpSpan()
-        return self._tracer.start_as_current_span(name, attributes=attributes)
+        return cast(
+            "AbstractContextManager[Any, bool | None]",
+            (self._tracer.start_as_current_span(name, attributes=attributes)),
+        )
 
     def record_event(
         self,

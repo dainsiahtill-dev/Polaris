@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from typing import cast
 
 from polaris.cells.delivery.cli.public.service import register_pm_management_handlers
 from polaris.delivery.cli.pm.pm_integration import get_pm
@@ -650,7 +651,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 1
 
-    return args.func(args)
+    return cast("int", (args.func(args)))
 
 
 # ── Register PM management handlers (after all cmd_* are defined) ─────────────────

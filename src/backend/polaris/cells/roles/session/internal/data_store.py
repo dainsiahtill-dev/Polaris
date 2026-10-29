@@ -11,7 +11,7 @@ import os
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.roles.session.internal.storage_paths import (
     resolve_preferred_logical_prefix,
@@ -85,7 +85,7 @@ class RoleDataStore:
             raise RoleDataStoreError("RoleDataStore only supports UTF-8 encoding")
 
     def _to_logical_path(self, filepath: Path) -> str:
-        return self._kernel_fs.to_logical_path(str(filepath))
+        return cast("str", (self._kernel_fs.to_logical_path(str(filepath))))
 
     def _ensure_directories(self) -> None:
         """确保子目录存在"""
@@ -95,22 +95,22 @@ class RoleDataStore:
     @property
     def data_dir(self) -> Path:
         """数据目录"""
-        return self.base_dir / "data"
+        return cast("Path", (self.base_dir / "data"))
 
     @property
     def logs_dir(self) -> Path:
         """日志目录"""
-        return self.base_dir / "logs"
+        return cast("Path", (self.base_dir / "logs"))
 
     @property
     def outputs_dir(self) -> Path:
         """输出目录"""
-        return self.base_dir / "outputs"
+        return cast("Path", (self.base_dir / "outputs"))
 
     @property
     def backups_dir(self) -> Path:
         """备份目录"""
-        return self.base_dir / "backups"
+        return cast("Path", (self.base_dir / "backups"))
 
     def _validate_path(self, filepath: str | Path) -> Path:
         """验证路径安全性
@@ -253,7 +253,7 @@ class RoleDataStore:
         """
         filepath = self._validate_path(filepath)
         filepath_rel = self._to_logical_path(filepath)
-        return self._kernel_fs.read_text(filepath_rel, encoding="utf-8")
+        return cast("str", (self._kernel_fs.read_text(filepath_rel, encoding="utf-8")))
 
     def read_json(self, filepath: str | Path) -> Any:
         """读取JSON文件

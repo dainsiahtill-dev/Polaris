@@ -148,14 +148,20 @@ def _get_http_pool() -> concurrent.futures.ThreadPoolExecutor:
     """Get or create the shared HTTP blocking pool."""
     from polaris.kernelone.concurrency import get_concurrency_manager
 
-    return get_concurrency_manager().get_http_pool(max_workers=_MAX_HTTP_WORKERS)
+    return cast(
+        "concurrent.futures.ThreadPoolExecutor",
+        (get_concurrency_manager().get_http_pool(max_workers=_MAX_HTTP_WORKERS)),
+    )
 
 
 def _get_sleep_pool() -> concurrent.futures.ThreadPoolExecutor:
     """Get or create the shared sleep pool."""
     from polaris.kernelone.concurrency import get_concurrency_manager
 
-    return get_concurrency_manager().get_sleep_pool(max_workers=_MAX_SLEEP_WORKERS)
+    return cast(
+        "concurrent.futures.ThreadPoolExecutor",
+        (get_concurrency_manager().get_sleep_pool(max_workers=_MAX_SLEEP_WORKERS)),
+    )
 
 
 # Backward compatibility: module-level pool references for external code that
@@ -459,7 +465,7 @@ class _LRUSessionRegistry:
             # Update access time and move to end (most recently used)
             entry["last_access"] = time.monotonic()
             self._sessions.move_to_end(key)
-            return session
+            return cast("aiohttp.ClientSession | None", (session))
 
     def set(self, key: tuple[str, int], session: aiohttp.ClientSession) -> None:
         """Set session, evicting LRU entries if needed."""
@@ -539,7 +545,7 @@ async def get_stream_session(
     )
     candidate = aiohttp_module.ClientSession(timeout=timeout, connector=connector)
     if not _is_reusable_stream_session(candidate):
-        return candidate
+        return cast("aiohttp.ClientSession", (candidate))
 
     # Double-check and register
     existing = _STREAM_SESSION_REGISTRY.get(key)
@@ -547,7 +553,7 @@ async def get_stream_session(
         await _close_session_if_possible(candidate)
         return existing
     _STREAM_SESSION_REGISTRY.set(key, candidate)
-    return candidate
+    return cast("aiohttp.ClientSession", (candidate))
 
 
 async def close_stream_sessions(provider_key: str | None = None) -> int:
@@ -687,7 +693,7 @@ async def _close_and_create_session(
         ttl_dns_cache=300,
         enable_cleanup_closed=True,
     )
-    return aiohttp_module.ClientSession(timeout=timeout, connector=connector)
+    return cast("aiohttp.ClientSession", (aiohttp_module.ClientSession(timeout=timeout, connector=connector)))
 
 
 __all__ = [

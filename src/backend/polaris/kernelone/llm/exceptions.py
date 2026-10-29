@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 import logging
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -71,70 +71,70 @@ def _get_kernelone_error() -> type:
     """Lazy import to avoid circular dependency."""
     from polaris.kernelone.errors import KernelOneError
 
-    return KernelOneError
+    return cast("type", (KernelOneError))
 
 
 def _get_rate_limit_error() -> type:
     """Lazy import to avoid circular dependency."""
     from polaris.kernelone.errors import RateLimitError as _RateLimitError
 
-    return _RateLimitError
+    return cast("type", (_RateLimitError))
 
 
 def _get_authentication_error() -> type:
     """Lazy import to avoid circular dependency."""
     from polaris.kernelone.errors import AuthenticationError as _AuthenticationError
 
-    return _AuthenticationError
+    return cast("type", (_AuthenticationError))
 
 
 def _get_timeout_error() -> type:
     """Lazy import to avoid circular dependency."""
     from polaris.kernelone.errors import TimeoutError as _TimeoutError
 
-    return _TimeoutError
+    return cast("type", (_TimeoutError))
 
 
 def _get_network_error() -> type:
     """Lazy import to avoid circular dependency."""
     from polaris.kernelone.errors import NetworkError as _NetworkError
 
-    return _NetworkError
+    return cast("type", (_NetworkError))
 
 
 def _get_tool_execution_error() -> type:
     """Lazy import to avoid circular dependency."""
     from polaris.kernelone.errors import ToolExecutionError as _ToolExecutionError
 
-    return _ToolExecutionError
+    return cast("type", (_ToolExecutionError))
 
 
 def _get_budget_exceeded_error() -> type:
     """Lazy import to avoid circular dependency."""
     from polaris.kernelone.errors import BudgetExceededError as _BudgetExceededError
 
-    return _BudgetExceededError
+    return cast("type", (_BudgetExceededError))
 
 
 def _get_configuration_error() -> type:
     """Lazy import to avoid circular dependency."""
     from polaris.kernelone.errors import ConfigurationError as _ConfigurationError
 
-    return _ConfigurationError
+    return cast("type", (_ConfigurationError))
 
 
 def _get_config_migration_error() -> type:
     """Lazy import to avoid circular dependency."""
     from polaris.kernelone.errors import ConfigMigrationError as _ConfigMigrationError
 
-    return _ConfigMigrationError
+    return cast("type", (_ConfigMigrationError))
 
 
 def _get_config_validation_error() -> type:
     """Lazy import to avoid circular dependency."""
     from polaris.kernelone.errors import ConfigValidationError as _ConfigValidationError
 
-    return _ConfigValidationError
+    return cast("type", (_ConfigValidationError))
 
 
 # ============================================================================
@@ -680,7 +680,7 @@ def is_retryable(error: Exception) -> bool:
         True if the error is retryable, False otherwise.
     """
     if isinstance(error, _LLMErrorType):
-        return error.retryable
+        return cast("bool", (error.retryable))
 
     # Default classifications for common exceptions
     error_str = str(error).lower()

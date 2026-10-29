@@ -9,7 +9,7 @@ import re
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.infrastructure.db.adapters import SqliteAdapter
 from polaris.kernelone.db import KernelDatabase
@@ -125,17 +125,22 @@ class SemanticCacheStore:
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        return self._kernel_db.sqlite(
-            str(self._db_path),
-            timeout_seconds=10.0,
-            isolation_level=None,
-            check_same_thread=False,
-            pragmas={
-                "busy_timeout": 5000,
-                "journal_mode": "WAL",
-                "synchronous": "NORMAL",
-            },
-            ensure_parent=True,
+        return cast(
+            "sqlite3.Connection",
+            (
+                self._kernel_db.sqlite(
+                    str(self._db_path),
+                    timeout_seconds=10.0,
+                    isolation_level=None,
+                    check_same_thread=False,
+                    pragmas={
+                        "busy_timeout": 5000,
+                        "journal_mode": "WAL",
+                        "synchronous": "NORMAL",
+                    },
+                    ensure_parent=True,
+                )
+            ),
         )
 
     def _init_schema(self) -> None:

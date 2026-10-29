@@ -15,7 +15,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 from .base import (
     BaseEngine,
@@ -516,7 +516,7 @@ class ToTEngine(BaseEngine):
         """解析评估响应"""
         # 方案1: 尝试解析整个响应
         try:
-            return json.loads(response)
+            return cast("dict[str, Any]", (json.loads(response)))
         except json.JSONDecodeError as exc:
             logger.debug("tot: evaluation JSON parse failed (trying fallbacks): %s", exc)
 
@@ -524,7 +524,7 @@ class ToTEngine(BaseEngine):
         try:
             parsed = self._extract_balanced_json(response)
             if parsed:
-                return parsed
+                return cast("dict[str, Any]", (parsed))
         except (RuntimeError, ValueError):
             logger.debug("tot: evaluation balanced extraction failed", exc_info=True)
 
@@ -532,7 +532,7 @@ class ToTEngine(BaseEngine):
         try:
             json_match = re.search(r"\{[\s\S]*\}", response)
             if json_match:
-                return json.loads(json_match.group())
+                return cast("dict[str, Any]", (json.loads(json_match.group())))
         except json.JSONDecodeError as exc:
             logger.debug("tot: evaluation regex JSON parse failed: %s", exc)
 
@@ -542,7 +542,7 @@ class ToTEngine(BaseEngine):
         """解析完成响应"""
         # 方案1: 尝试解析整个响应
         try:
-            return json.loads(response)
+            return cast("dict[str, Any]", (json.loads(response)))
         except json.JSONDecodeError as exc:
             logger.debug("tot: finish JSON parse failed (trying fallbacks): %s", exc)
 
@@ -550,7 +550,7 @@ class ToTEngine(BaseEngine):
         try:
             parsed = self._extract_balanced_json(response)
             if parsed:
-                return parsed
+                return cast("dict[str, Any]", (parsed))
         except (RuntimeError, ValueError):
             logger.debug("tot: finish balanced extraction failed", exc_info=True)
 
@@ -558,7 +558,7 @@ class ToTEngine(BaseEngine):
         try:
             json_match = re.search(r"\{[\s\S]*\}", response)
             if json_match:
-                return json.loads(json_match.group())
+                return cast("dict[str, Any]", (json.loads(json_match.group())))
         except json.JSONDecodeError as exc:
             logger.debug("tot: finish regex JSON parse failed: %s", exc)
 

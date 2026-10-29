@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.roles.kernel.internal.transaction.constants import ACTIVE_WRITE_TOOLS
 from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
@@ -481,8 +481,8 @@ def _build_scoped_write_file_tool_definition(tool_definitions: list[dict[str, An
             targets.extend(str(value).strip() for value in enum_values if str(value or "").strip())
             break
     if targets:
-        return pin_write_file_paths(schema, targets)
-    return schema
+        return cast("dict[str, Any]", (pin_write_file_paths(schema, targets)))
+    return cast("dict[str, Any]", (schema))
 
 
 _BOOTSTRAP_WHOLE_FILE_REPLACEMENT_MARKERS: tuple[str, ...] = (

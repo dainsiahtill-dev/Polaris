@@ -5,7 +5,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.fs.text_ops import ensure_parent_dir, write_json_atomic
 from polaris.kernelone.utils.time_utils import utc_now_iso as _utc_now_iso
@@ -31,7 +31,7 @@ def _emit_audit_internal_failure(error_type: str, error_details: dict[str, Any])
 def _safe_int(value: Any, default: int = 0) -> int:
     from polaris.kernelone.shared.text_utils import safe_int as _impl
 
-    return _impl(value, default)
+    return cast("int", (_impl(value, default)))
 
 
 def _is_dict(value: Any) -> bool:

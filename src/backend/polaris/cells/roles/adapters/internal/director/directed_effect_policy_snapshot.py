@@ -131,7 +131,9 @@ def _preview_edit_blocks_content(
     if "start" in values or "end" in values:
         if blocks_text.strip():
             raise ValueError("edit_blocks cannot combine a line range and SEARCH/REPLACE blocks")
-        return compose_line_range_edit(old_content, values.get("start"), values.get("end"), values.get("replace"))
+        return cast(
+            "str", (compose_line_range_edit(old_content, values.get("start"), values.get("end"), values.get("replace")))
+        )
     if not blocks_text.strip():
         return old_content
     normalized_target = str(target_path or "").replace("\\", "/").strip().lstrip("./")
@@ -202,23 +204,28 @@ def _operation_hash(
     effect_type: str,
     execution_mode: str,
 ) -> str:
-    return hash_directed_effect_arguments(
+    return cast(
+        "str",
         (
-            ("batch_id", batch_id),
-            ("effect_type", effect_type),
-            ("execution_mode", execution_mode),
-            ("inventory_ordinal", inventory_ordinal),
-            ("normalized_arguments", DirectedEffectImmutableMapV1(items=normalized_arguments)),
-            ("normalized_tool_name", normalized_tool_name),
-            ("tool_call_id", tool_call_id),
-            ("turn_id", turn_id),
-            ("workspace", workspace),
-        )
+            hash_directed_effect_arguments(
+                (
+                    ("batch_id", batch_id),
+                    ("effect_type", effect_type),
+                    ("execution_mode", execution_mode),
+                    ("inventory_ordinal", inventory_ordinal),
+                    ("normalized_arguments", DirectedEffectImmutableMapV1(items=normalized_arguments)),
+                    ("normalized_tool_name", normalized_tool_name),
+                    ("tool_call_id", tool_call_id),
+                    ("turn_id", turn_id),
+                    ("workspace", workspace),
+                )
+            )
+        ),
     )
 
 
 def _subject_operation_hash(subject: DirectorEffectPolicyOperationSubjectV1) -> str:
-    return hash_director_effect_policy_operation_subject(subject)
+    return cast("str", (hash_director_effect_policy_operation_subject(subject)))
 
 
 def _items_to_dict(items: DirectedEffectImmutableItemsV1) -> dict[str, object]:
@@ -232,7 +239,7 @@ def _tuple_tokens(value: object, *, field_name: str) -> tuple[str, ...]:
 
 
 def _scope_hash(field_name: str, values: tuple[str, ...]) -> str:
-    return hash_directed_effect_arguments(((field_name, values),))
+    return cast("str", (hash_directed_effect_arguments(((field_name, values),))))
 
 
 def _restriction_values(items: DirectedEffectImmutableItemsV1) -> _JobRestrictionEvidence:
@@ -575,7 +582,7 @@ class _DirectorEffectPolicySnapshotPort:
             )
         except (AttributeError, TypeError, ValueError):
             return False
-        return canonical == grant
+        return cast("bool", (canonical == grant))
 
     @staticmethod
     def _target_evidence_semantically_matches(
@@ -590,12 +597,15 @@ class _DirectorEffectPolicySnapshotPort:
         Semantic match is path + exists + content hash + agents policy + no-file.
         """
 
-        return (
-            current.target_path == baseline.target_path
-            and current.exists == baseline.exists
-            and current.is_no_file_state == baseline.is_no_file_state
-            and current.before_content_hash == baseline.before_content_hash
-            and current.agents_policy_hash == baseline.agents_policy_hash
+        return cast(
+            "bool",
+            (
+                current.target_path == baseline.target_path
+                and current.exists == baseline.exists
+                and current.is_no_file_state == baseline.is_no_file_state
+                and current.before_content_hash == baseline.before_content_hash
+                and current.agents_policy_hash == baseline.agents_policy_hash
+            ),
         )
 
     def _capture_policy_target_source(
@@ -1678,16 +1688,21 @@ def _target_state_hash(
     minimal_content_evidence: DirectedEffectImmutableItemsV1,
     agents_policy_hash: str,
 ) -> str:
-    return hash_directed_effect_target_state_components(
-        target_path=target_path,
-        exists=exists,
-        before_content_hash=before_content_hash,
-        minimal_content_evidence=minimal_content_evidence,
-        agents_policy_hash=agents_policy_hash,
-        is_no_file_state=not target_path,
+    return cast(
+        "str",
+        (
+            hash_directed_effect_target_state_components(
+                target_path=target_path,
+                exists=exists,
+                before_content_hash=before_content_hash,
+                minimal_content_evidence=minimal_content_evidence,
+                agents_policy_hash=agents_policy_hash,
+                is_no_file_state=not target_path,
+            )
+        ),
     )
 
 
 def snapshot_target_path(request: DirectorEffectPolicyRevalidationRequestV1) -> str:
     """Return the retained pre-seal target instead of trusting current arguments."""
-    return request.bound_snapshot.snapshot.baseline_target_state_evidence.target_path
+    return cast("str", (request.bound_snapshot.snapshot.baseline_target_state_evidence.target_path))

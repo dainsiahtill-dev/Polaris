@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Final, Literal, TypeAlias
+from typing import TYPE_CHECKING, Final, Literal, TypeAlias, cast
 
 from polaris.cells.runtime.task_runtime.public import (
     DirectedEffectClaimGrantV1,
@@ -235,33 +235,38 @@ def hash_director_effect_authorization_evidence(
     policy_hash: str,
 ) -> str:
     """Bind every authority-bearing authorization field in a distinct domain."""
-    return hash_directed_effect_arguments(
+    return cast(
+        "str",
         (
-            ("allowed_command_hash", allowed_command_hash),
-            ("arguments_hash", arguments_hash),
-            ("batch_id", batch_id),
-            ("bound_policy_snapshot_hash", bound_policy_snapshot_hash),
-            ("canonical_allow_list_hash", canonical_allow_list_hash),
-            ("capability_scope", capability_scope),
-            ("capability_scope_hash", capability_scope_hash),
-            ("domain", "director_effect_authorization_evidence_v1"),
-            ("execution_attempt_id", execution_attempt_id),
-            ("execution_envelope_hash", execution_envelope_hash),
-            ("job_token_evidence_hash", job_token_evidence_hash),
-            ("job_token_id", job_token_id),
-            ("mutation_guard_mode", mutation_guard_mode),
-            ("normalized_operation_hash", normalized_operation_hash),
-            ("normalized_tool_name", normalized_tool_name),
-            ("policy_hash", policy_hash),
-            ("policy_version", policy_version),
-            ("role_policy_hash", role_policy_hash),
-            ("role_policy_id", role_policy_id),
-            ("target_state_hash", target_state_hash),
-            ("tool_call_id", tool_call_id),
-            ("tool_spec_hash", tool_spec_hash),
-            ("turn_id", turn_id),
-            ("workspace", workspace),
-        )
+            hash_directed_effect_arguments(
+                (
+                    ("allowed_command_hash", allowed_command_hash),
+                    ("arguments_hash", arguments_hash),
+                    ("batch_id", batch_id),
+                    ("bound_policy_snapshot_hash", bound_policy_snapshot_hash),
+                    ("canonical_allow_list_hash", canonical_allow_list_hash),
+                    ("capability_scope", capability_scope),
+                    ("capability_scope_hash", capability_scope_hash),
+                    ("domain", "director_effect_authorization_evidence_v1"),
+                    ("execution_attempt_id", execution_attempt_id),
+                    ("execution_envelope_hash", execution_envelope_hash),
+                    ("job_token_evidence_hash", job_token_evidence_hash),
+                    ("job_token_id", job_token_id),
+                    ("mutation_guard_mode", mutation_guard_mode),
+                    ("normalized_operation_hash", normalized_operation_hash),
+                    ("normalized_tool_name", normalized_tool_name),
+                    ("policy_hash", policy_hash),
+                    ("policy_version", policy_version),
+                    ("role_policy_hash", role_policy_hash),
+                    ("role_policy_id", role_policy_id),
+                    ("target_state_hash", target_state_hash),
+                    ("tool_call_id", tool_call_id),
+                    ("tool_spec_hash", tool_spec_hash),
+                    ("turn_id", turn_id),
+                    ("workspace", workspace),
+                )
+            )
+        ),
     )
 
 
@@ -671,19 +676,24 @@ def hash_director_effect_classification_evidence(
     alias_binding_hash: str,
 ) -> str:
     """Hash one mutation classification captured from a single ToolSpec snapshot."""
-    return hash_directed_effect_arguments(
+    return cast(
+        "str",
         (
-            ("alias_binding_hash", alias_binding_hash),
-            ("arguments_hash", arguments_hash),
-            ("canonical_tool_name", canonical_tool_name),
-            ("domain", "director_effect_classification_evidence_v1"),
-            ("effect_type", effect_type),
-            ("execution_mode", execution_mode),
-            ("normalized_arguments", DirectedEffectImmutableMapV1(items=normalized_arguments)),
-            ("raw_tool_name", raw_tool_name),
-            ("tool_spec_hash", tool_spec_hash),
-            ("tool_spec_snapshot_hash", tool_spec_snapshot_hash),
-        )
+            hash_directed_effect_arguments(
+                (
+                    ("alias_binding_hash", alias_binding_hash),
+                    ("arguments_hash", arguments_hash),
+                    ("canonical_tool_name", canonical_tool_name),
+                    ("domain", "director_effect_classification_evidence_v1"),
+                    ("effect_type", effect_type),
+                    ("execution_mode", execution_mode),
+                    ("normalized_arguments", DirectedEffectImmutableMapV1(items=normalized_arguments)),
+                    ("raw_tool_name", raw_tool_name),
+                    ("tool_spec_hash", tool_spec_hash),
+                    ("tool_spec_snapshot_hash", tool_spec_snapshot_hash),
+                )
+            )
+        ),
     )
 
 
@@ -770,15 +780,20 @@ def hash_director_effect_authorization_binding(
     alias_binding_hash: str,
 ) -> str:
     """Bind immutable Task3 authority to immutable Task4 classification evidence."""
-    return hash_directed_effect_arguments(
+    return cast(
+        "str",
         (
-            ("alias_binding_hash", alias_binding_hash),
-            ("authorization_hash", authorization_hash),
-            ("classification_evidence_hash", classification_evidence_hash),
-            ("domain", "director_effect_authorization_binding_v1"),
-            ("tool_spec_hash", tool_spec_hash),
-            ("tool_spec_snapshot_hash", tool_spec_snapshot_hash),
-        )
+            hash_directed_effect_arguments(
+                (
+                    ("alias_binding_hash", alias_binding_hash),
+                    ("authorization_hash", authorization_hash),
+                    ("classification_evidence_hash", classification_evidence_hash),
+                    ("domain", "director_effect_authorization_binding_v1"),
+                    ("tool_spec_hash", tool_spec_hash),
+                    ("tool_spec_snapshot_hash", tool_spec_snapshot_hash),
+                )
+            )
+        ),
     )
 
 
@@ -924,27 +939,32 @@ class DirectorEffectPublicPolicyEvidenceV1:
 
 def hash_director_effect_public_policy_evidence(evidence: DirectorEffectPublicPolicyEvidenceV1) -> str:
     """Hash the complete baseline-only public policy projection."""
-    return hash_directed_effect_arguments(
+    return cast(
+        "str",
         (
-            ("alias_binding_hash", evidence.alias_binding_hash),
-            ("allowed_command_hash", evidence.allowed_command_hash),
-            ("canonical_allow_list_hash", evidence.canonical_allow_list_hash),
-            ("capability_scope", evidence.capability_scope),
-            ("capability_scope_hash", evidence.capability_scope_hash),
-            ("classification_evidence_hash", evidence.classification_evidence_hash),
-            ("domain", "director_effect_public_policy_evidence_v1"),
-            ("execution_envelope_hash", evidence.execution_envelope_hash),
-            ("job_token_evidence_hash", evidence.job_token_evidence_hash),
-            ("job_token_id", evidence.job_token_id),
-            ("mutation_guard_mode", evidence.mutation_guard_mode),
-            ("policy_hash", evidence.policy_hash),
-            ("policy_version", evidence.policy_version),
-            ("role_policy_hash", evidence.role_policy_hash),
-            ("role_policy_id", evidence.role_policy_id),
-            ("source_authorization_binding_hash", evidence.source_authorization_binding_hash),
-            ("tool_spec_hash", evidence.tool_spec_hash),
-            ("tool_spec_snapshot_hash", evidence.tool_spec_snapshot_hash),
-        )
+            hash_directed_effect_arguments(
+                (
+                    ("alias_binding_hash", evidence.alias_binding_hash),
+                    ("allowed_command_hash", evidence.allowed_command_hash),
+                    ("canonical_allow_list_hash", evidence.canonical_allow_list_hash),
+                    ("capability_scope", evidence.capability_scope),
+                    ("capability_scope_hash", evidence.capability_scope_hash),
+                    ("classification_evidence_hash", evidence.classification_evidence_hash),
+                    ("domain", "director_effect_public_policy_evidence_v1"),
+                    ("execution_envelope_hash", evidence.execution_envelope_hash),
+                    ("job_token_evidence_hash", evidence.job_token_evidence_hash),
+                    ("job_token_id", evidence.job_token_id),
+                    ("mutation_guard_mode", evidence.mutation_guard_mode),
+                    ("policy_hash", evidence.policy_hash),
+                    ("policy_version", evidence.policy_version),
+                    ("role_policy_hash", evidence.role_policy_hash),
+                    ("role_policy_id", evidence.role_policy_id),
+                    ("source_authorization_binding_hash", evidence.source_authorization_binding_hash),
+                    ("tool_spec_hash", evidence.tool_spec_hash),
+                    ("tool_spec_snapshot_hash", evidence.tool_spec_snapshot_hash),
+                )
+            )
+        ),
     )
 
 

@@ -5,7 +5,7 @@ import json
 import logging
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 from polaris.kernelone.fs import KernelFileSystem
@@ -281,7 +281,7 @@ class ContextCatalogService:
             return True
         if payload.get("embedding_runtime_fingerprint") != embedding_fingerprint:
             return True
-        return index_state.get("embedding_runtime_fingerprint") != embedding_fingerprint
+        return cast("bool", (index_state.get("embedding_runtime_fingerprint") != embedding_fingerprint))
 
     def search(self, query: SearchCellsQueryV1) -> SearchCellsResultV1:
         with Timer("catalog_search_timer") as timer:

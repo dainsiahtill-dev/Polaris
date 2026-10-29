@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from polaris.delivery.ws.runtime_subjects import resolve_v2_subject
 from polaris.infrastructure.messaging.nats.client import get_default_client, get_default_client_snapshot
@@ -198,4 +198,7 @@ async def publish_engineering_event(event: dict[str, Any]) -> bool:
         raise RuntimeError("engineering realtime publication unavailable: managed NATS client is disconnected")
     subject, envelope = engineering_event_envelope(event)
     client = await get_default_client()
-    return await client.publish_js(stream=JetStreamConstants.STREAM_NAME, subject=subject, payload=envelope.to_dict())
+    return cast(
+        "bool",
+        (await client.publish_js(stream=JetStreamConstants.STREAM_NAME, subject=subject, payload=envelope.to_dict())),
+    )

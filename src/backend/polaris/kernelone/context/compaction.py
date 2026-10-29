@@ -32,7 +32,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 if TYPE_CHECKING:
     from polaris.kernelone.llm.toolkit.abc import LLMClient
@@ -422,9 +422,9 @@ class RoleContextCompressor:
         """Token estimation using unified estimator."""
         estimator = ServiceLocator.get_token_estimator()
         if estimator is not None:
-            return estimator.estimate_messages_tokens(messages)
+            return cast("int", (estimator.estimate_messages_tokens(messages)))
         # Fallback
-        return len(str(messages)) // self.max_chars_per_token
+        return cast("int", (len(str(messages)) // self.max_chars_per_token))
 
     def _compute_hash(self, content: str) -> str:
         """Compute content hash for integrity tracking."""

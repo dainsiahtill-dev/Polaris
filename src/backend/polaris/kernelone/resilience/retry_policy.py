@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, TypeVar
+from typing import Any, Awaitable, Callable, TypeVar, cast
 
 from polaris.kernelone.errors import ErrorCategory, classify_error
 from polaris.kernelone.resilience.backoff import build_backoff_seconds
@@ -156,7 +156,7 @@ def compute_delay(policy: RetryPolicy, attempt: int) -> float:
     # build_backoff_seconds already applies up to 20% jitter.  If the policy
     # requests a different ratio we scale the jitter component accordingly.
     if policy.jitter_ratio == 0.2:
-        return raw
+        return cast("float", (raw))
 
     # Reverse-engineer the bounded exponential component (no jitter).
     exp_delay = policy.base_delay_seconds * (2 ** max(0, attempt - 1))
@@ -165,7 +165,7 @@ def compute_delay(policy: RetryPolicy, attempt: int) -> float:
     # The raw value is bounded + up to 0.2*bounded jitter.
     # Recompute with the policy's jitter_ratio.
     jitter = bounded * policy.jitter_ratio
-    return bounded + jitter
+    return cast("float", (bounded + jitter))
 
 
 async def execute_with_retry(

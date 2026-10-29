@@ -34,7 +34,7 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.fs.jsonl.locking import file_lock
 from polaris.kernelone.fs.text_ops import write_json_atomic
@@ -227,7 +227,7 @@ def _normalize_authoritative_task_target(raw: object) -> str:
 
 
 def _ledger_path(workspace: str, cache_root: str) -> str:
-    return resolve_artifact_path(workspace, cache_root, _LEDGER_REL_PATH)
+    return cast("str", (resolve_artifact_path(workspace, cache_root, _LEDGER_REL_PATH)))
 
 
 def _empty_ledger() -> dict[str, Any]:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.orchestration.workflow_runtime.public.service import (
     WorkflowConfig,
@@ -22,16 +22,16 @@ class WorkflowRuntimeProjectionOwnerAdapterV1:
         return WorkflowConfig.from_env(force_enable=True)
 
     def describe_workflow(self, workflow_id: str, config: Any) -> dict[str, Any]:
-        return describe_workflow_sync(workflow_id, config)
+        return cast("dict[str, Any]", (describe_workflow_sync(workflow_id, config)))
 
     def query_workflow(self, workflow_id: str, query_name: str, config: Any) -> dict[str, Any]:
-        return query_workflow_sync(workflow_id, query_name, config=config)
+        return cast("dict[str, Any]", (query_workflow_sync(workflow_id, query_name, config=config)))
 
     def director_workflow_id(self, run_id: str) -> str:
-        return director_workflow_id(run_id)
+        return cast("str", (director_workflow_id(run_id)))
 
     def qa_workflow_id(self, run_id: str) -> str:
-        return qa_workflow_id(run_id)
+        return cast("str", (qa_workflow_id(run_id)))
 
     async def list_runs(self, *, workspace: str, limit: int) -> list[Any]:
         service = await get_orchestration_service()

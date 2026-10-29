@@ -22,7 +22,7 @@ import re
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.tool_execution.contracts import (
     CapturedToolSpecSnapshotV1,
@@ -597,7 +597,7 @@ class ToolSpecRegistry:
                 format=format,
             )
         if deterministic:
-            return _sort_schema_keys(schema)
+            return cast("dict[str, Any] | None", (_sort_schema_keys(schema)))
         return schema
 
     @classmethod

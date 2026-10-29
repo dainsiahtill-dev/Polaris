@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Mapping
 from dataclasses import asdict  # re-exported for lossless surface
-from typing import TYPE_CHECKING, Any  # Protocol re-exported for lossless surface
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.runtime.task_runtime.public.contracts import (
     FenceExpiredFactoryRunSessionsCommandV1,
@@ -85,14 +85,19 @@ class _FactoryRunServiceLifecycleMixin:
                 }
                 await self.store.save_run(target_run)
             else:
-                return await self._record_drain_conflict(
-                    target_run,
-                    lease,
-                    code="factory_workspace_run_drain_unproven",
-                    message="Factory workspace drain cannot prove stage settlement",
-                    details={
-                        "stage_in_flight": stage_in_flight,
-                    },
+                return cast(
+                    "FactoryRun",
+                    (
+                        await self._record_drain_conflict(
+                            target_run,
+                            lease,
+                            code="factory_workspace_run_drain_unproven",
+                            message="Factory workspace drain cannot prove stage settlement",
+                            details={
+                                "stage_in_flight": stage_in_flight,
+                            },
+                        )
+                    ),
                 )
 
         failed_evidence_incomplete = bool(
@@ -204,12 +209,17 @@ class _FactoryRunServiceLifecycleMixin:
                             "by_authority": [asdict(state) for state in canonical_drain.by_authority],
                         }
                 except (OSError, RuntimeError, TypeError, ValueError) as exc:
-                    return await self._record_drain_conflict(
-                        target_run,
-                        lease,
-                        code="factory_physical_attempt_replay_required",
-                        message="Factory failed closeout requires stable canonical physical attempt closure",
-                        details={"error_type": type(exc).__name__, "error_message": str(exc)[:300]},
+                    return cast(
+                        "FactoryRun",
+                        (
+                            await self._record_drain_conflict(
+                                target_run,
+                                lease,
+                                code="factory_physical_attempt_replay_required",
+                                message="Factory failed closeout requires stable canonical physical attempt closure",
+                                details={"error_type": type(exc).__name__, "error_message": str(exc)[:300]},
+                            )
+                        ),
                     )
             if existing_map.get("settled") is True:
                 physical_drain_evidence = {
@@ -243,23 +253,33 @@ class _FactoryRunServiceLifecycleMixin:
             }
         target_run.metadata["factory_physical_attempt_drain"] = physical_drain_evidence
         if physical_drain_evidence.get("settled") is not True:
-            return await self._record_drain_conflict(
-                target_run,
-                lease,
-                code="factory_physical_attempt_drain_open",
-                message="Factory workspace drain found unsettled physical provider attempts",
-                details={"physical_attempt_drain": physical_drain_evidence},
+            return cast(
+                "FactoryRun",
+                (
+                    await self._record_drain_conflict(
+                        target_run,
+                        lease,
+                        code="factory_physical_attempt_drain_open",
+                        message="Factory workspace drain found unsettled physical provider attempts",
+                        details={"physical_attempt_drain": physical_drain_evidence},
+                    )
+                ),
             )
 
         settlement = self._query_child_session_settlement(target_run.id)
         target_run.metadata[_CHILD_SESSION_SETTLEMENT_EVIDENCE_METADATA_KEY] = settlement
         if require_quiescent_children and settlement.get("settled") is not True:
-            return await self._record_drain_conflict(
-                target_run,
-                lease,
-                code="factory_workspace_run_child_session_inflight",
-                message="Orphan terminal settlement observed child authority reopen during closure",
-                details={"settlement": settlement},
+            return cast(
+                "FactoryRun",
+                (
+                    await self._record_drain_conflict(
+                        target_run,
+                        lease,
+                        code="factory_workspace_run_child_session_inflight",
+                        message="Orphan terminal settlement observed child authority reopen during closure",
+                        details={"settlement": settlement},
+                    )
+                ),
             )
         # R64: Director settlement-barrier timeouts leave owned active sessions that
         # pin child-session settlement forever. On FAILED/CANCELLED factory drain,
@@ -286,12 +306,17 @@ class _FactoryRunServiceLifecycleMixin:
             target_run.metadata[_CHILD_SESSION_SETTLEMENT_EVIDENCE_METADATA_KEY] = settlement
         if settlement.get("settled") is not True:
             target_run.metadata[_CHILD_SESSIONS_SETTLED_METADATA_KEY] = False
-            return await self._record_drain_conflict(
-                target_run,
-                lease,
-                code="factory_workspace_run_child_session_inflight",
-                message="Factory workspace drain found an active or foreign child session",
-                details={"settlement": settlement},
+            return cast(
+                "FactoryRun",
+                (
+                    await self._record_drain_conflict(
+                        target_run,
+                        lease,
+                        code="factory_workspace_run_child_session_inflight",
+                        message="Factory workspace drain found an active or foreign child session",
+                        details={"settlement": settlement},
+                    )
+                ),
             )
 
         reconciled_lease = await self._reconcile_stage_execution_claim(
@@ -312,32 +337,42 @@ class _FactoryRunServiceLifecycleMixin:
         terminal_snapshot: FactoryTerminalTaskRuntimeProjectionV1 | None = None
         if terminal_snapshot_payload is not None:
             if not isinstance(terminal_snapshot_payload, Mapping):
-                return await self._record_drain_conflict(
-                    target_run,
-                    lease,
-                    code="factory_task_runtime_terminal_projection_invalid",
-                    message="Factory workspace drain found an invalid frozen TaskRuntime projection",
-                    details={
-                        "error_type": "TypeError",
-                        "error_message": "terminal projection payload must be a mapping",
-                        "factory_run_id": target_run.id,
-                    },
+                return cast(
+                    "FactoryRun",
+                    (
+                        await self._record_drain_conflict(
+                            target_run,
+                            lease,
+                            code="factory_task_runtime_terminal_projection_invalid",
+                            message="Factory workspace drain found an invalid frozen TaskRuntime projection",
+                            details={
+                                "error_type": "TypeError",
+                                "error_message": "terminal projection payload must be a mapping",
+                                "factory_run_id": target_run.id,
+                            },
+                        )
+                    ),
                 )
             try:
                 terminal_snapshot = FactoryTerminalTaskRuntimeProjectionV1.from_dict(
                     terminal_snapshot_payload,
                 )
             except (OSError, TypeError, ValueError) as exc:
-                return await self._record_drain_conflict(
-                    target_run,
-                    lease,
-                    code="factory_task_runtime_terminal_projection_invalid",
-                    message="Factory workspace drain found an invalid frozen TaskRuntime projection",
-                    details={
-                        "error_type": type(exc).__name__,
-                        "error_message": str(exc)[:300],
-                        "factory_run_id": target_run.id,
-                    },
+                return cast(
+                    "FactoryRun",
+                    (
+                        await self._record_drain_conflict(
+                            target_run,
+                            lease,
+                            code="factory_task_runtime_terminal_projection_invalid",
+                            message="Factory workspace drain found an invalid frozen TaskRuntime projection",
+                            details={
+                                "error_type": type(exc).__name__,
+                                "error_message": str(exc)[:300],
+                                "factory_run_id": target_run.id,
+                            },
+                        )
+                    ),
                 )
 
         live_task_count = int(str(settlement.get("observable_row_count") or 0))
@@ -408,12 +443,17 @@ class _FactoryRunServiceLifecycleMixin:
             )
             target_run.metadata["factory_run_ledger_settlement_barrier"] = barrier_evidence
             if not barrier.release_allowed:
-                return await self._record_drain_conflict(
-                    target_run,
-                    lease,
-                    code="factory_run_ledger_settlement_barrier_open",
-                    message="Factory workspace drain found open Run Ledger obligations",
-                    details={"settlement_barrier": barrier_evidence},
+                return cast(
+                    "FactoryRun",
+                    (
+                        await self._record_drain_conflict(
+                            target_run,
+                            lease,
+                            code="factory_run_ledger_settlement_barrier_open",
+                            message="Factory workspace drain found open Run Ledger obligations",
+                            details={"settlement_barrier": barrier_evidence},
+                        )
+                    ),
                 )
         else:
             target_run.metadata["factory_run_ledger_settlement_barrier"] = barrier_evidence
@@ -436,19 +476,24 @@ class _FactoryRunServiceLifecycleMixin:
                 )
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 target_run.metadata[_CHILD_SESSIONS_SETTLED_METADATA_KEY] = False
-                return await self._record_drain_conflict(
-                    target_run,
-                    lease,
-                    code="factory_task_runtime_terminal_projection_unavailable",
-                    message=(
-                        "Factory workspace drain could not freeze authoritative TaskRuntime evidence before reset"
+                return cast(
+                    "FactoryRun",
+                    (
+                        await self._record_drain_conflict(
+                            target_run,
+                            lease,
+                            code="factory_task_runtime_terminal_projection_unavailable",
+                            message=(
+                                "Factory workspace drain could not freeze authoritative TaskRuntime evidence before reset"
+                            ),
+                            details={
+                                "error_type": type(exc).__name__,
+                                "error_message": str(exc)[:300],
+                                "factory_run_id": target_run.id,
+                                "expected_row_count": task_count,
+                            },
+                        )
                     ),
-                    details={
-                        "error_type": type(exc).__name__,
-                        "error_message": str(exc)[:300],
-                        "factory_run_id": target_run.id,
-                        "expected_row_count": task_count,
-                    },
                 )
 
             # Persist before reset. A crash after this save can safely retry
@@ -463,12 +508,17 @@ class _FactoryRunServiceLifecycleMixin:
         )
         if reset_summary.get("ok") is not True or int(str(reset_summary.get("failed_count") or 0)) > 0:
             target_run.metadata[_CHILD_SESSIONS_SETTLED_METADATA_KEY] = False
-            return await self._record_drain_conflict(
-                target_run,
-                lease,
-                code="factory_workspace_run_task_runtime_drain_conflict",
-                message="TaskRuntime records did not settle under the Factory run authority",
-                details={"task_runtime_reset": reset_summary},
+            return cast(
+                "FactoryRun",
+                (
+                    await self._record_drain_conflict(
+                        target_run,
+                        lease,
+                        code="factory_workspace_run_task_runtime_drain_conflict",
+                        message="TaskRuntime records did not settle under the Factory run authority",
+                        details={"task_runtime_reset": reset_summary},
+                    )
+                ),
             )
 
         target_run.metadata[_CHILD_SESSIONS_SETTLED_METADATA_KEY] = True
@@ -614,7 +664,7 @@ class _FactoryRunServiceLifecycleMixin:
                 },
             )
             logger.info("Run %s metadata updated: keys=%s", run_id, sorted(str(key) for key in metadata))
-            return run
+            return cast("FactoryRun", (run))
 
     async def start_run(self: Any, run_id: str) -> FactoryRun:
         """Retired execution belongs only to its frozen historical process."""
@@ -685,7 +735,7 @@ class _FactoryRunServiceLifecycleMixin:
 
         run = await self.settle_terminal_run(run_id)
         self._trigger_archive(run_id, "cancelled")
-        return run
+        return cast("FactoryRun", (run))
 
     async def complete_run(self: Any, run_id: str, success: bool = True) -> FactoryRun:
         """Close the Factory orchestration session without granting verification.
@@ -859,7 +909,7 @@ class _FactoryRunServiceLifecycleMixin:
         if run.status == FactoryRunStatus.CANCELLED:
             archive_reason = "cancelled"
         self._trigger_archive(run_id, archive_reason)
-        return run
+        return cast("FactoryRun", (run))
 
     async def settle_terminal_run(
         self: Any,
@@ -881,9 +931,14 @@ class _FactoryRunServiceLifecycleMixin:
             if run is None:
                 raise ValueError(f"Run {run_id} not found")
             run = await self.assert_mutation_allowed(run_id, current_run=run)
-            return await self._settle_terminal_run_locked(
-                run,
-                expected_fencing_token=expected_fencing_token,
+            return cast(
+                "FactoryRun",
+                (
+                    await self._settle_terminal_run_locked(
+                        run,
+                        expected_fencing_token=expected_fencing_token,
+                    )
+                ),
             )
 
     async def _settle_terminal_run_locked(

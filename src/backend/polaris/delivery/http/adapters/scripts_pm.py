@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 _PM_INTEGRATION_MODULE = "polaris.delivery.cli.pm.pm_integration"
 
@@ -92,7 +92,7 @@ class ScriptsPMAdapter:
         """
         try:
             pm = self.get_pm()
-            return pm.is_initialized()
+            return cast("bool", (pm.is_initialized()))
         except (ImportError, RuntimeError, ValueError):
             return False
 
@@ -107,7 +107,7 @@ class ScriptsPMAdapter:
             Initialization result
         """
         pm = self.get_pm()
-        return pm.initialize(project_name=project_name, description=description)
+        return cast("dict[str, Any]", (pm.initialize(project_name=project_name, description=description)))
 
     def get_status(self) -> dict[str, Any]:
         """Get PM status.
@@ -118,7 +118,7 @@ class ScriptsPMAdapter:
         pm = self.get_pm()
         if not pm.is_initialized():
             return {"initialized": False, "workspace": str(self.workspace)}
-        return pm.get_status()
+        return cast("dict[str, Any]", (pm.get_status()))
 
     def list_documents(
         self,
@@ -139,7 +139,9 @@ class ScriptsPMAdapter:
             Dictionary with documents list
         """
         pm = self.get_pm()
-        return pm.list_documents(doc_type=doc_type, pattern=pattern, limit=limit, offset=offset)
+        return cast(
+            "dict[str, Any]", (pm.list_documents(doc_type=doc_type, pattern=pattern, limit=limit, offset=offset))
+        )
 
     def get_document(self, doc_path: str) -> dict[str, Any] | None:
         """Get document information.
@@ -151,7 +153,7 @@ class ScriptsPMAdapter:
             Document info or None
         """
         pm = self.get_pm()
-        return pm.get_document(doc_path)
+        return cast("dict[str, Any] | None", (pm.get_document(doc_path)))
 
     def get_document_content(self, doc_path: str, version: str | None = None) -> str | None:
         """Get document content.
@@ -164,7 +166,7 @@ class ScriptsPMAdapter:
             Document content or None
         """
         pm = self.get_pm()
-        return pm.get_document_content(doc_path, version)
+        return cast("str | None", (pm.get_document_content(doc_path, version)))
 
     def create_or_update_document(
         self,
@@ -198,7 +200,7 @@ class ScriptsPMAdapter:
             True if deleted successfully
         """
         pm = self.get_pm()
-        return pm.delete_document(doc_path, delete_file)
+        return cast("bool", (pm.delete_document(doc_path, delete_file)))
 
     def get_document_versions(self, doc_path: str) -> list[Any]:
         """Get all versions of a document.
@@ -210,7 +212,7 @@ class ScriptsPMAdapter:
             List of versions
         """
         pm = self.get_pm()
-        return pm.get_document_versions(doc_path)
+        return cast("list[Any]", (pm.get_document_versions(doc_path)))
 
     def compare_document_versions(self, doc_path: str, old_version: str, new_version: str) -> Any:
         """Compare two document versions.
@@ -237,7 +239,7 @@ class ScriptsPMAdapter:
             List of matching documents
         """
         pm = self.get_pm()
-        return pm.search_documents(query, limit)
+        return cast("list[dict[str, Any]]", (pm.search_documents(query, limit)))
 
     def list_tasks(
         self,
@@ -258,7 +260,7 @@ class ScriptsPMAdapter:
             Dictionary with tasks list
         """
         pm = self.get_pm()
-        return pm.list_tasks(status=status, assignee=assignee, limit=limit, offset=offset)
+        return cast("dict[str, Any]", (pm.list_tasks(status=status, assignee=assignee, limit=limit, offset=offset)))
 
     def get_task_history(
         self,
@@ -285,14 +287,19 @@ class ScriptsPMAdapter:
             Dictionary with task history
         """
         pm = self.get_pm()
-        return pm.get_task_history(
-            task_id=task_id,
-            assignee=assignee,
-            status=status,
-            start_date=start_date,
-            end_date=end_date,
-            limit=limit,
-            offset=offset,
+        return cast(
+            "dict[str, Any]",
+            (
+                pm.get_task_history(
+                    task_id=task_id,
+                    assignee=assignee,
+                    status=status,
+                    start_date=start_date,
+                    end_date=end_date,
+                    limit=limit,
+                    offset=offset,
+                )
+            ),
         )
 
     def get_director_task_history(
@@ -312,7 +319,7 @@ class ScriptsPMAdapter:
             Dictionary with director tasks
         """
         pm = self.get_pm()
-        return pm.get_director_task_history(iteration=iteration, limit=limit, offset=offset)
+        return cast("dict[str, Any]", (pm.get_director_task_history(iteration=iteration, limit=limit, offset=offset)))
 
     def get_task(self, task_id: str) -> Any | None:
         """Get a specific task.
@@ -400,7 +407,7 @@ class ScriptsPMAdapter:
             List of assignment records
         """
         pm = self.get_pm()
-        return pm.get_task_assignments(task_id, assignee, limit)
+        return cast("list[dict[str, Any]]", (pm.get_task_assignments(task_id, assignee, limit)))
 
     @staticmethod
     def _enum_value(enum_cls: Any, raw_value: str | None, default_name: str) -> Any:
@@ -434,7 +441,7 @@ class ScriptsPMAdapter:
             List of matching tasks
         """
         pm = self.get_pm()
-        return pm.search_tasks(query, limit)
+        return cast("list[dict[str, Any]]", (pm.search_tasks(query, limit)))
 
     def list_requirements(
         self,
@@ -455,7 +462,9 @@ class ScriptsPMAdapter:
             Dictionary with requirements list
         """
         pm = self.get_pm()
-        return pm.list_requirements(status=status, priority=priority, limit=limit, offset=offset)
+        return cast(
+            "dict[str, Any]", (pm.list_requirements(status=status, priority=priority, limit=limit, offset=offset))
+        )
 
     def get_requirement(self, req_id: str) -> dict[str, Any] | None:
         """Get a specific requirement.
@@ -467,7 +476,7 @@ class ScriptsPMAdapter:
             Requirement dict or None
         """
         pm = self.get_pm()
-        return pm.get_requirement(req_id)
+        return cast("dict[str, Any] | None", (pm.get_requirement(req_id)))
 
     def analyze_project_health(self) -> dict[str, Any]:
         """Analyze project health.
@@ -476,4 +485,4 @@ class ScriptsPMAdapter:
             Health analysis report
         """
         pm = self.get_pm()
-        return pm.analyze_project_health()
+        return cast("dict[str, Any]", (pm.analyze_project_health()))

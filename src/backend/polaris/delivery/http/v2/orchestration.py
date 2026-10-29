@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from polaris.cells.orchestration.workflow_runtime.public.service import (
@@ -181,7 +181,7 @@ async def get_run_tasks(run_id: str, request: Request, workspace: str = "") -> d
                 detail="internal error",
             )
 
-        return result
+        return cast("dict[str, Any]", (result))
 
     except HTTPException:
         raise

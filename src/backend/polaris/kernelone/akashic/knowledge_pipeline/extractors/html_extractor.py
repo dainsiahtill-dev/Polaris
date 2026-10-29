@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import re
 from html.parser import HTMLParser
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.akashic.knowledge_pipeline.extractors.base import (
     BaseExtractor,
@@ -128,7 +128,7 @@ class HtmlExtractor(BaseExtractor):
             plain_text = parser.get_text()
         except (RuntimeError, ValueError) as exc:
             logger.warning("HTML parsing failed: %s", exc)
-            return self._extract_lines(text, options)
+            return cast("list[Any]", (self._extract_lines(text, options)))
 
         if not plain_text:
             return []

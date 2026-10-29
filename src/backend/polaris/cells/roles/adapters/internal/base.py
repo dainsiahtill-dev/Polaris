@@ -12,7 +12,7 @@ import re
 from abc import abstractmethod
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.orchestration.workflow_runtime.public.service import RoleAdapterFactoryPort, RoleOrchestrationAdapter
 from polaris.cells.runtime.task_runtime.public import task_row_execution_event_failure
@@ -180,7 +180,7 @@ class BaseRoleAdapter(RoleOrchestrationAdapter):
         normalized = self._coerce_board_task_id(task_id)
         if normalized is None:
             return False
-        return self.task_runtime.task_exists(normalized)
+        return cast("bool", (self.task_runtime.task_exists(normalized)))
 
     def _update_board_task(
         self,

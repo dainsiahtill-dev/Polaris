@@ -30,6 +30,7 @@ import os
 import sys
 import typing
 from pathlib import Path
+from typing import cast
 
 from polaris.kernelone.storage import resolve_runtime_path
 
@@ -150,10 +151,10 @@ def _route_console(args: argparse.Namespace) -> int:
     from polaris.delivery.cli.engineering import reject_legacy_execution, run_engineering_action
 
     if getattr(args, "session_id", None) or getattr(args, "super", False):
-        return reject_legacy_execution()
+        return cast("int", (reject_legacy_execution()))
     if getattr(args, "batch", False) and not args.instruction:
         args.instruction = sys.stdin.read()
-    return asyncio.run(run_engineering_action(args, role=args.role))
+    return cast("int", (asyncio.run(run_engineering_action(args, role=args.role))))
 
 
 def _route_task(args: argparse.Namespace) -> int:
@@ -162,7 +163,7 @@ def _route_task(args: argparse.Namespace) -> int:
     if task_cmd == "create":
         from polaris.delivery.cli.engineering import reject_legacy_execution
 
-        return reject_legacy_execution()
+        return cast("int", (reject_legacy_execution()))
     if task_cmd not in {"list", "show"}:
         print(f"Error: unknown task command: {task_cmd!r}", file=sys.stderr)
         return 1
@@ -186,7 +187,7 @@ def _task_create(workspace: Path, args: argparse.Namespace) -> int:
     """Retired mutation; historical inspection remains available."""
     from polaris.delivery.cli.engineering import reject_legacy_execution
 
-    return reject_legacy_execution()
+    return cast("int", (reject_legacy_execution()))
 
 
 def _task_list(workspace: Path, args: argparse.Namespace) -> int:
@@ -254,7 +255,7 @@ def _route_session(args: argparse.Namespace) -> int:
 
     session_cmd = str(getattr(args, "session_command", "") or "").strip().lower()
     if session_cmd in {"switch", "clear"}:
-        return reject_legacy_execution()
+        return cast("int", (reject_legacy_execution()))
     if session_cmd not in {"list", "show"}:
         print(f"Error: unknown session command: {session_cmd!r}", file=sys.stderr)
         return 1
@@ -301,14 +302,14 @@ def _session_switch(host, args: argparse.Namespace) -> int:
     """Retired mutation; historical inspection remains available."""
     from polaris.delivery.cli.engineering import reject_legacy_execution
 
-    return reject_legacy_execution()
+    return cast("int", (reject_legacy_execution()))
 
 
 def _session_clear(host, args: argparse.Namespace) -> int:
     """Retired mutation; historical inspection remains available."""
     from polaris.delivery.cli.engineering import reject_legacy_execution
 
-    return reject_legacy_execution()
+    return cast("int", (reject_legacy_execution()))
 
 
 def _route_serve(args: argparse.Namespace) -> int:

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 logger = logging.getLogger(__name__)
 
@@ -80,12 +80,12 @@ class BaseExtractor:
 
         # Try UTF-8 first
         try:
-            return doc.content.decode("utf-8")
+            return cast("str", (doc.content.decode("utf-8")))
         except UnicodeDecodeError as exc:
             logger.warning("UTF-8 decode failed for %s: %s", doc.source, exc)
 
         # Fall back to UTF-8 with replacement
-        return doc.content.decode("utf-8", errors="replace")
+        return cast("str", (doc.content.decode("utf-8", errors="replace")))
 
     def _do_extract(
         self,

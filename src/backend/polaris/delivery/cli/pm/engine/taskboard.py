@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.runtime.task_runtime.public.contracts import (
     SettleTaskRuntimeExecutionAttemptCommandV1,
@@ -55,13 +55,16 @@ def _task_runtime_workspace(*, workspace_full: str, run_id: str) -> Path:
     """Resolve the isolated task-runtime workspace used by PM mainline dispatch."""
     from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
 
-    return (
-        Path(workspace_full).resolve()
-        / get_workspace_metadata_dir_name()
-        / "runtime"
-        / "state"
-        / "taskboard_mainline"
-        / (str(run_id or "run").strip() or "run")
+    return cast(
+        "Path",
+        (
+            Path(workspace_full).resolve()
+            / get_workspace_metadata_dir_name()
+            / "runtime"
+            / "state"
+            / "taskboard_mainline"
+            / (str(run_id or "run").strip() or "run")
+        ),
     )
 
 

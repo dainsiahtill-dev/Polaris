@@ -24,7 +24,7 @@ import os
 import re
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.editing.editblock_engine import (
     parse_edit_blocks,
@@ -401,15 +401,20 @@ def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]
             old_lines >= _DESTRUCTIVE_SHRINK_MIN_REMOVED_LINES
             and new_lines <= old_lines * _DESTRUCTIVE_SHRINK_MAX_ADD_RATIO
         ):
-            return _destructive_shrink_error(
-                file_path,
-                old_lines,
-                new_lines,
-                tool_hint=(
-                    "write_file replaces the WHOLE file. If the intent is a partial edit, emit a "
-                    "precise range/search replacement with only the changed lines so untouched code "
-                    "is preserved. If the intent is a whole-file rewrite, provide a complete file "
-                    "body comparable in size to the original."
+            return cast(
+                "dict[str, Any]",
+                (
+                    _destructive_shrink_error(
+                        file_path,
+                        old_lines,
+                        new_lines,
+                        tool_hint=(
+                            "write_file replaces the WHOLE file. If the intent is a partial edit, emit a "
+                            "precise range/search replacement with only the changed lines so untouched code "
+                            "is preserved. If the intent is a whole-file rewrite, provide a complete file "
+                            "body comparable in size to the original."
+                        ),
+                    )
                 ),
             )
 
@@ -458,7 +463,7 @@ def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]
         tool_kwargs=kwargs,
     )
     if not policy_result.get("ok"):
-        return policy_result
+        return cast("dict[str, Any]", (policy_result))
 
     # ========================================================================
     # PRE-WRITE VALIDATION GATE - Validate code syntax before writing
@@ -512,7 +517,7 @@ def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]
     full_path = str(self._kernel_fs.resolve_workspace_path(rel))
     write_result = _write_temp_verify_rename(full_path, text, encoding="utf-8")
     if not write_result.get("ok"):
-        return write_result
+        return cast("dict[str, Any]", (write_result))
 
     _emit_file_written_event(
         self,
@@ -540,7 +545,7 @@ def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]
         result["control_flow_comma_sanitized"] = True
 
     result = attach_post_write_syntax_check(result, str(target))
-    return _attach_director_policy_evidence(result, policy_result.get("director_policy"))
+    return cast("dict[str, Any]", (_attach_director_policy_evidence(result, policy_result.get("director_policy"))))
 
 
 def _handle_read_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
@@ -580,7 +585,7 @@ def _handle_read_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
         return resolve_error or {"ok": False, "error": f"Invalid path: {target_path}"}
 
     if not self._kernel_fs.workspace_exists(rel) or not self._kernel_fs.workspace_is_file(rel):
-        return _not_found_error(self, str(target_path))
+        return cast("dict[str, Any]", (_not_found_error(self, str(target_path))))
 
     # First pass: read raw bytes for size estimation
     safe_max_bytes = max(1024, min(int(max_bytes), 2_000_000))
@@ -733,7 +738,7 @@ def _handle_search_replace(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
         return resolve_error or {"ok": False, "error": f"Invalid path: {file}"}
 
     if not self._kernel_fs.workspace_exists(rel):
-        return _not_found_error(self, str(file))
+        return cast("dict[str, Any]", (_not_found_error(self, str(file))))
     if not self._kernel_fs.workspace_is_file(rel):
         return {"ok": False, "error": f"Path is not a file: {file}"}
 
@@ -787,12 +792,12 @@ def _handle_search_replace(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
         tool_kwargs=kwargs,
     )
     if not policy_result.get("ok"):
-        return policy_result
+        return cast("dict[str, Any]", (policy_result))
 
     full_path = str(self._kernel_fs.resolve_workspace_path(rel))
     write_result = _write_temp_verify_rename(full_path, new_content, encoding="utf-8")
     if not write_result.get("ok"):
-        return write_result
+        return cast("dict[str, Any]", (write_result))
 
     _emit_file_written_event(
         self,
@@ -802,18 +807,23 @@ def _handle_search_replace(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
         new_content=new_content,
     )
 
-    return _attach_director_policy_evidence(
-        {
-            "ok": True,
-            "file": rel,
-            "replacements_count": replacements,
-            "effect_receipt": {
-                "file": rel,
-                "replacements_count": replacements,
-                "operation": "modify",
-            },
-        },
-        policy_result.get("director_policy"),
+    return cast(
+        "dict[str, Any]",
+        (
+            _attach_director_policy_evidence(
+                {
+                    "ok": True,
+                    "file": rel,
+                    "replacements_count": replacements,
+                    "effect_receipt": {
+                        "file": rel,
+                        "replacements_count": replacements,
+                        "operation": "modify",
+                    },
+                },
+                policy_result.get("director_policy"),
+            )
+        ),
     )
 
 
@@ -843,7 +853,7 @@ def _handle_edit_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
         return resolve_error or {"ok": False, "error": f"Invalid path: {file}"}
 
     if not self._kernel_fs.workspace_exists(rel):
-        return _not_found_error(self, str(file))
+        return cast("dict[str, Any]", (_not_found_error(self, str(file))))
     if not self._kernel_fs.workspace_is_file(rel):
         return {"ok": False, "error": f"Path is not a file: {file}"}
 
@@ -935,7 +945,7 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
         )
         synth, err = _synthesize_line_range_block(self, file, start, end, replacement)
         if err is not None:
-            return err
+            return cast("dict[str, Any]", (err))
         blocks_text = synth or ""
     elif blocks_text and not _has_search_replace_markers(blocks_text):
         marker_file, marker_body = _unwrap_weak_file_marker(blocks_text, default_file=file)
@@ -951,7 +961,7 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
                     force=True,
                 )
                 if whole_file_err is not None:
-                    return whole_file_err
+                    return cast("dict[str, Any]", (whole_file_err))
                 if whole_file_blocks is not None:
                     blocks_text = whole_file_blocks
             else:
@@ -969,7 +979,7 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
                 force=True,
             )
             if whole_file_err is not None:
-                return whole_file_err
+                return cast("dict[str, Any]", (whole_file_err))
             if whole_file_blocks is not None:
                 blocks_text = whole_file_blocks
         update_blocks = (
@@ -982,7 +992,7 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
         elif not _has_search_replace_markers(blocks_text):
             whole_file_blocks, whole_file_err = _synthesize_whole_file_replacement_block(self, file, blocks_text)
             if whole_file_err is not None:
-                return whole_file_err
+                return cast("dict[str, Any]", (whole_file_err))
             if whole_file_blocks is not None:
                 blocks_text = whole_file_blocks
             else:
@@ -1150,7 +1160,7 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
 
     # Check file exists
     if not self._kernel_fs.workspace_exists(rel):
-        return _not_found_error(self, str(target_file))
+        return cast("dict[str, Any]", (_not_found_error(self, str(target_file))))
 
     if not self._kernel_fs.workspace_is_file(rel):
         return {"ok": False, "error": f"Path is not a file: {target_file}"}
@@ -1523,12 +1533,12 @@ def _edit_file_line_mode(
         tool_kwargs=tool_kwargs,
     )
     if not policy_result.get("ok"):
-        return policy_result
+        return cast("dict[str, Any]", (policy_result))
 
     full_path = str(self._kernel_fs.resolve_workspace_path(rel))
     write_result = _write_temp_verify_rename(full_path, new_content, encoding="utf-8")
     if not write_result.get("ok"):
-        return write_result
+        return cast("dict[str, Any]", (write_result))
 
     _emit_file_written_event(
         self,
@@ -1538,19 +1548,24 @@ def _edit_file_line_mode(
         new_content=new_content,
     )
 
-    return _attach_director_policy_evidence(
-        {
-            "ok": True,
-            "file": rel,
-            "mode": "line_range",
-            "lines_affected": end - start + 1 if end >= start else 0,
-            "effect_receipt": {
-                "file": rel,
-                "mode": "line_range",
-                "operation": "modify",
-            },
-        },
-        policy_result.get("director_policy"),
+    return cast(
+        "dict[str, Any]",
+        (
+            _attach_director_policy_evidence(
+                {
+                    "ok": True,
+                    "file": rel,
+                    "mode": "line_range",
+                    "lines_affected": end - start + 1 if end >= start else 0,
+                    "effect_receipt": {
+                        "file": rel,
+                        "mode": "line_range",
+                        "operation": "modify",
+                    },
+                },
+                policy_result.get("director_policy"),
+            )
+        ),
     )
 
 
@@ -1619,12 +1634,12 @@ def _edit_file_replace_mode(
         tool_kwargs=tool_kwargs,
     )
     if not policy_result.get("ok"):
-        return policy_result
+        return cast("dict[str, Any]", (policy_result))
 
     full_path = str(self._kernel_fs.resolve_workspace_path(rel))
     write_result = _write_temp_verify_rename(full_path, new_content, encoding="utf-8")
     if not write_result.get("ok"):
-        return write_result
+        return cast("dict[str, Any]", (write_result))
 
     result: dict[str, Any] = {
         "ok": True,
@@ -1655,7 +1670,7 @@ def _edit_file_replace_mode(
         new_content=new_content,
     )
 
-    return _attach_director_policy_evidence(result, policy_result.get("director_policy"))
+    return cast("dict[str, Any]", (_attach_director_policy_evidence(result, policy_result.get("director_policy"))))
 
 
 def _handle_append_to_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
@@ -1684,7 +1699,7 @@ def _handle_append_to_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
     # File doesn't exist
     if not self._kernel_fs.workspace_exists(rel):
         if not create_if_missing:
-            return _not_found_error(self, str(file))
+            return cast("dict[str, Any]", (_not_found_error(self, str(file))))
         policy_result = _validate_director_policy_for_write(
             self,
             rel=rel,
@@ -1694,11 +1709,11 @@ def _handle_append_to_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
             tool_kwargs=kwargs,
         )
         if not policy_result.get("ok"):
-            return policy_result
+            return cast("dict[str, Any]", (policy_result))
         full_path = str(self._kernel_fs.resolve_workspace_path(rel))
         write_result = _write_temp_verify_rename(full_path, content_text, encoding="utf-8")
         if not write_result.get("ok"):
-            return write_result
+            return cast("dict[str, Any]", (write_result))
         _emit_file_written_event(
             self,
             file_path=rel,
@@ -1706,19 +1721,24 @@ def _handle_append_to_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
             old_content="",
             new_content=content_text,
         )
-        return _attach_director_policy_evidence(
-            {
-                "ok": True,
-                "file": rel,
-                "bytes_appended": len(content_text.encode("utf-8")),
-                "created": True,
-                "effect_receipt": {
-                    "file": rel,
-                    "bytes_appended": len(content_text.encode("utf-8")),
-                    "operation": "create",
-                },
-            },
-            policy_result.get("director_policy"),
+        return cast(
+            "dict[str, Any]",
+            (
+                _attach_director_policy_evidence(
+                    {
+                        "ok": True,
+                        "file": rel,
+                        "bytes_appended": len(content_text.encode("utf-8")),
+                        "created": True,
+                        "effect_receipt": {
+                            "file": rel,
+                            "bytes_appended": len(content_text.encode("utf-8")),
+                            "operation": "create",
+                        },
+                    },
+                    policy_result.get("director_policy"),
+                )
+            ),
         )
 
     if not self._kernel_fs.workspace_is_file(rel):
@@ -1743,12 +1763,12 @@ def _handle_append_to_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
         tool_kwargs=kwargs,
     )
     if not policy_result.get("ok"):
-        return policy_result
+        return cast("dict[str, Any]", (policy_result))
 
     full_path = str(self._kernel_fs.resolve_workspace_path(rel))
     write_result = _write_temp_verify_rename(full_path, new_content, encoding="utf-8")
     if not write_result.get("ok"):
-        return write_result
+        return cast("dict[str, Any]", (write_result))
 
     _emit_file_written_event(
         self,
@@ -1758,19 +1778,24 @@ def _handle_append_to_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
         new_content=new_content,
     )
 
-    return _attach_director_policy_evidence(
-        {
-            "ok": True,
-            "file": rel,
-            "bytes_appended": len(content_text.encode("utf-8")),
-            "created": False,
-            "effect_receipt": {
-                "file": rel,
-                "bytes_appended": len(content_text.encode("utf-8")),
-                "operation": "modify",
-            },
-        },
-        policy_result.get("director_policy"),
+    return cast(
+        "dict[str, Any]",
+        (
+            _attach_director_policy_evidence(
+                {
+                    "ok": True,
+                    "file": rel,
+                    "bytes_appended": len(content_text.encode("utf-8")),
+                    "created": False,
+                    "effect_receipt": {
+                        "file": rel,
+                        "bytes_appended": len(content_text.encode("utf-8")),
+                        "operation": "modify",
+                    },
+                },
+                policy_result.get("director_policy"),
+            )
+        ),
     )
 
 

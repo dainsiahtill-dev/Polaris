@@ -19,7 +19,7 @@ import json
 import logging
 import os
 import threading
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
 
@@ -190,7 +190,7 @@ class SLMCoprocessor:
         if not output:
             return None
         try:
-            return json.loads(output)
+            return cast("dict[str, Any] | None", (json.loads(output)))
         except json.JSONDecodeError:
             logger.debug("SLM healed JSON is still invalid")
             return None

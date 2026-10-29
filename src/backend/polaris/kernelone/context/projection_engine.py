@@ -7,7 +7,7 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping, cast
 
 from polaris.kernelone.context.context_os.helpers import get_metadata_value
 from polaris.kernelone.context.control_plane_noise import (
@@ -329,7 +329,7 @@ class ProjectionEngine:
         """
         if is_signal_role(role):
             return content
-        return strip_control_plane_markers(content)
+        return cast("str", (strip_control_plane_markers(content)))
 
     def _normalize_turn(self, turn: Mapping[str, Any], receipt_store: ReceiptStore) -> dict[str, Any] | None:
         role = str(turn.get("role") or "").strip()

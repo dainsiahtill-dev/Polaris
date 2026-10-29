@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 # Import core types from KernelOne (no Cells dependency)
 from polaris.kernelone.multi_agent.bus_port import (
@@ -393,7 +393,7 @@ class InMemoryBroker(MessageBroker):
         Returns:
             List of DeadLetterRecord
         """
-        return self._bus_port.dead_letters
+        return cast("list[Any]", (self._bus_port.dead_letters))
 
     def get_stats(self) -> dict[str, Any]:
         """Get broker statistics.

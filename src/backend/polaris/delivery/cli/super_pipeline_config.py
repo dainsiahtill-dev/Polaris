@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
     from polaris.delivery.cli.super_mode import SuperPipelineContext
@@ -182,42 +182,62 @@ def _pm_not_empty(ctx: SuperPipelineContext) -> bool:
 def _build_architect_handoff(**kw: Any) -> str:
     from polaris.delivery.cli.super_mode import build_super_readonly_message
 
-    return build_super_readonly_message(
-        role="architect",
-        original_request=kw.get("original_request", ""),
+    return cast(
+        "str",
+        (
+            build_super_readonly_message(
+                role="architect",
+                original_request=kw.get("original_request", ""),
+            )
+        ),
     )
 
 
 def _build_pm_handoff(**kw: Any) -> str:
     from polaris.delivery.cli.super_mode import build_pm_handoff_message
 
-    return build_pm_handoff_message(
-        original_request=kw.get("original_request", ""),
-        architect_output=kw.get("architect_output", ""),
-        blueprint_file_path=kw.get("blueprint_file_path", ""),
+    return cast(
+        "str",
+        (
+            build_pm_handoff_message(
+                original_request=kw.get("original_request", ""),
+                architect_output=kw.get("architect_output", ""),
+                blueprint_file_path=kw.get("blueprint_file_path", ""),
+            )
+        ),
     )
 
 
 def _build_ce_handoff(**kw: Any) -> str:
     from polaris.delivery.cli.super_mode import build_chief_engineer_handoff_message
 
-    return build_chief_engineer_handoff_message(
-        original_request=kw.get("original_request", ""),
-        architect_output=kw.get("architect_output", ""),
-        pm_output=kw.get("pm_output", ""),
-        claimed_tasks=list(kw.get("claimed_tasks", [])),
+    return cast(
+        "str",
+        (
+            build_chief_engineer_handoff_message(
+                original_request=kw.get("original_request", ""),
+                architect_output=kw.get("architect_output", ""),
+                pm_output=kw.get("pm_output", ""),
+                claimed_tasks=list(kw.get("claimed_tasks", [])),
+            )
+        ),
     )
 
 
 def _build_director_handoff(**kw: Any) -> str:
     from polaris.delivery.cli.super_mode import build_director_task_handoff_message
 
-    return build_director_task_handoff_message(
-        original_request=kw.get("original_request", ""),
-        architect_output=kw.get("architect_output", ""),
-        pm_output=kw.get("pm_output", ""),
-        claimed_tasks=list(kw.get("claimed_tasks", [])),
-        blueprint_items=list(kw.get("blueprint_items", [])),
+    return cast(
+        "str",
+        (
+            build_director_task_handoff_message(
+                original_request=kw.get("original_request", ""),
+                architect_output=kw.get("architect_output", ""),
+                pm_output=kw.get("pm_output", ""),
+                claimed_tasks=list(kw.get("claimed_tasks", [])),
+                blueprint_items=list(kw.get("blueprint_items", [])),
+            )
+        ),
     )
 
 

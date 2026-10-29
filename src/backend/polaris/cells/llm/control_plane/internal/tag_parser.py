@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.utils import utc_now_iso
 
@@ -260,7 +260,7 @@ class StreamingTagParser:
 
     @staticmethod
     def _utc_now() -> str:
-        return utc_now_iso()
+        return cast("str", (utc_now_iso()))
 
 
 def create_tag_parser(flush_threshold: int = 20) -> StreamingTagParser:

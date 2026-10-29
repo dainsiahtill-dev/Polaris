@@ -7,7 +7,7 @@ in ``polaris.kernelone.traceability.internal.service_impl``.
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from polaris.kernelone.traceability.public.contracts import (
     TraceabilityMatrix,
@@ -128,4 +128,4 @@ def create_traceability_service(workspace: str) -> TraceabilityService:
         TraceabilityServiceImpl,
     )
 
-    return TraceabilityServiceImpl(workspace=workspace)
+    return cast("TraceabilityService", (TraceabilityServiceImpl(workspace=workspace)))

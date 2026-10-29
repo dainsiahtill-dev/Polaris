@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import copy
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.llm.engine.native_request_capture import verified_native_capture_audit
 
@@ -118,7 +118,7 @@ def build_final_request_context_audit_for_request(
     context = _request_context(ai_request)
     native_audit = verified_native_capture_audit(request=ai_request, workspace=context.get("workspace"))
     if native_audit is not None:
-        return native_audit
+        return cast("dict[str, Any]", (native_audit))
     messages = _request_messages(ai_request, [dict(item) for item in prepared.messages if isinstance(item, dict)])
     # Audit getters must bind observations to the supplied final messages, even
     # when the caller still carries older context/history. Never mutate it.

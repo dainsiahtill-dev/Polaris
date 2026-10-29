@@ -21,7 +21,7 @@ from contextlib import suppress
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, Path as _Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.control_plane.verifier_execution.public import (
     RunVerifierPolicyCommandV1,
@@ -1193,7 +1193,7 @@ def _run_platform_verifiers(workspace: Path, *, timeout_s: int) -> dict[str, Any
             timeout_seconds=timeout_s,
         )
     )
-    return result.gate_patch
+    return cast("dict[str, Any]", (result.gate_patch))
 
 
 def _required_user_verifier_requirement(verifier_patch: dict[str, Any]) -> dict[str, Any] | None:

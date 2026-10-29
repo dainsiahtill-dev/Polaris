@@ -11,7 +11,7 @@ import os
 import statistics
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, cast
 
 from polaris.delivery.cli.pm.state_manager import (
     _generate_id,
@@ -131,7 +131,7 @@ class ExecutionTracker:
                     "failed_runs": 0,
                 },
             }
-        return data
+        return cast("dict[str, Any]", (data))
 
     def _save_stats(self, stats: dict[str, Any]) -> None:
         """Save execution stats."""
@@ -146,7 +146,7 @@ class ExecutionTracker:
                 "executor_performance": {},
                 "trends": {},
             }
-        return data
+        return cast("dict[str, Any]", (data))
 
     def _save_performance(self, perf: dict[str, Any]) -> None:
         """Save performance data."""

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 
 def _validate_exact_context_snapshot_hash(value: str) -> str:
@@ -20,7 +20,7 @@ def _validate_exact_context_snapshot_hash(value: str) -> str:
 
     from polaris.kernelone.llm.engine.internal.context_hash import validate_context_hash
 
-    return validate_context_hash(value)
+    return cast("str", (validate_context_hash(value)))
 
 
 def _as_mapping(value: Any) -> Mapping[str, Any]:

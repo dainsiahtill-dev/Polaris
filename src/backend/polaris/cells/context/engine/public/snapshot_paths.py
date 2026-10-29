@@ -15,7 +15,7 @@ import stat
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.instances.public.service import query_instance_records
 from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
@@ -189,7 +189,7 @@ def default_kernelone_runtime_root(workspace: str) -> Path:
     metadata_dir = get_workspace_metadata_dir_name()
     cache_parts = cache_base.as_posix().split("/")
     projects_root = cache_base / "projects" if metadata_dir in cache_parts else cache_base / metadata_dir / "projects"
-    return projects_root / workspace_key(workspace_abs) / "runtime"
+    return cast("Path", (projects_root / workspace_key(workspace_abs) / "runtime"))
 
 
 def instance_runtime_root_candidates(

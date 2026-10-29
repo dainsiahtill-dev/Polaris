@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.context.context_os.models_v2 import WorkingStateV2 as WorkingState
 
@@ -34,7 +34,7 @@ class WorkingStateManager:
 
     def export(self) -> dict[str, Any]:
         """Export the canonical working state as a plain mapping."""
-        return self.current().to_dict()
+        return cast("dict[str, Any]", (self.current().to_dict()))
 
     def update(self, key: str, value: Any) -> None:
         """Update a working state key."""

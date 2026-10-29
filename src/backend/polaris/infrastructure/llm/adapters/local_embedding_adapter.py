@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import cast
 
 from polaris.kernelone.llm.embedding import KernelEmbeddingPort
 
@@ -25,7 +26,7 @@ class LocalTransformerEmbeddingAdapter(KernelEmbeddingPort):
 
     def get_embedding(self, text: str, model: str | None = None) -> list[float]:
         # Ignores model param if using fixed local model
-        return self.model.encode(text).tolist()
+        return cast("list[float]", (self.model.encode(text).tolist()))
 
     def get_fingerprint(self) -> str:
         return f"sentence-transformers/{self.model_name}:{self.device}"

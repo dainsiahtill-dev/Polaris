@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.context.context_os.summarizers.contracts import (
     SummarizationError,
@@ -178,7 +178,7 @@ class LLMLinguaSummarizer:
                 logger.warning("LLMLingua compressed lost critical content, using fallback")
                 return self._simple_truncate(content, max_tokens)
 
-            return compressed
+            return cast("str", (compressed))
 
         except (RuntimeError, ValueError) as e:
             logger.warning(f"LLMLingua compression failed: {e}")
@@ -232,7 +232,7 @@ class LLMLinguaSummarizer:
                 keep_last_sentence=True,
             )
 
-            return result.get("compressed_prompt", content)
+            return cast("str", (result.get("compressed_prompt", content)))
 
         except (RuntimeError, ValueError) as e:
             logger.warning(f"LLMLingua query-aware compression failed: {e}")

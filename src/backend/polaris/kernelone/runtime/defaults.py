@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import Final
+from typing import Final, cast
 
 from polaris.kernelone._runtime_config import get_workspace
 from polaris.kernelone.runtime.channel_contracts import (
@@ -67,7 +67,7 @@ def resolve_default_workspace(start: str | None = None) -> str:
     """
     explicit = get_workspace()
     if explicit:
-        return os.path.abspath(explicit)
+        return cast("str", (os.path.abspath(explicit)))
     start_path = str(start or os.getcwd())
     return find_workspace_root(start_path) or os.path.abspath(start_path)
 

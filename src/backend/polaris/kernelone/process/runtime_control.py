@@ -12,6 +12,7 @@ import os
 import signal
 import subprocess
 import time
+from typing import cast
 
 from polaris.kernelone.fs.control_flags import (
     clear_director_stop_flag as _clear_director_stop_flag,
@@ -226,7 +227,7 @@ def clear_stop_flag(workspace: str) -> None:
 
 def director_stop_flag_path(workspace: str) -> str:
     """Return the Director role stop-signal flag path for a workspace."""
-    return _director_stop_flag_path(workspace)
+    return cast("str", (_director_stop_flag_path(workspace)))
 
 
 def clear_director_stop_flag(workspace: str) -> None:

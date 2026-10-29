@@ -14,7 +14,7 @@ import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone._runtime_config import resolve_env_str
 from polaris.kernelone.fs import KernelFileSystem
@@ -335,10 +335,10 @@ class KernelAuditRuntime:
             latest_events = self._store.query(limit=1, offset=0)
         except (OSError, RuntimeError, ValueError) as exc:
             logger.warning("Failed to resolve previous audit hash, falling back to GENESIS_HASH: %s", exc)
-            return GENESIS_HASH
+            return cast("str", (GENESIS_HASH))
 
         if not latest_events:
-            return GENESIS_HASH
+            return cast("str", (GENESIS_HASH))
         return self._hash_event(latest_events[0])
 
     @staticmethod
@@ -681,7 +681,7 @@ class KernelAuditRuntime:
         except (AttributeError, TypeError, ValueError):
             logical = f"runtime/audit/{absolute_path.name}"
         receipt = fs.append_jsonl(logical, payload)
-        return receipt.absolute_path
+        return cast("str", (receipt.absolute_path))
 
     def _fs_for_workspace(self, workspace: str) -> KernelFileSystem:
         return KernelFileSystem(

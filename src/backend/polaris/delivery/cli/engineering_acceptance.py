@@ -19,7 +19,7 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from urllib.parse import quote, urlencode, urlparse
 from uuid import uuid4
 
@@ -267,7 +267,7 @@ def _startup_environment(plan: dict[str, Any]) -> Iterator[None]:
 def _supervisor(home: str | None) -> SupervisorPort:
     from polaris.cells.instances.public.service import get_instance_supervisor
 
-    return get_instance_supervisor(Path(home) if home else None)
+    return cast("SupervisorPort", (get_instance_supervisor(Path(home) if home else None)))
 
 
 def _validate_instance(instance: Mapping[str, Any], binding: dict[str, Any]) -> None:
@@ -821,7 +821,7 @@ def cancel(
 
 def _read_activity(workspace: Path) -> dict[str, Any]:
     """Compatibility activity projection; semantics remain with the store owner."""
-    return query_engineering_resource_state(workspace)
+    return cast("dict[str, Any]", (query_engineering_resource_state(workspace)))
 
 
 def _resource_state(binding: dict[str, Any]) -> dict[str, Any]:
@@ -832,7 +832,7 @@ def _resource_state(binding: dict[str, Any]) -> dict[str, Any]:
         request_key=binding["request_key"],
     )
     if state.get("status") != "readable":
-        return state
+        return cast("dict[str, Any]", (state))
     if not binding.get("run_id"):
         expected = {
             "request_key": binding["request_key"],
@@ -846,7 +846,7 @@ def _resource_state(binding: dict[str, Any]) -> dict[str, Any]:
         binding["run_id"] = state["run_id"]
         binding["request_recovered"] = True
         _write(Path(plan["evidence_dir"]) / "binding.json", binding)
-    return state
+    return cast("dict[str, Any]", (state))
 
 
 def _resource_unknown(binding: dict[str, Any], error: Exception) -> dict[str, Any]:

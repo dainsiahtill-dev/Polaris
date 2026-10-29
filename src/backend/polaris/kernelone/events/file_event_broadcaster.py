@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from polaris.kernelone.constants import BROADCAST_MAX_SIZE_BYTES
 from polaris.kernelone.fs import KernelFileSystem
@@ -361,7 +361,7 @@ def _normalize_relative_path(fs: KernelFileSystem, file_path: str) -> str:
     token = str(file_path or "").strip()
     if not token:
         raise ValueError("file_path is required")
-    return fs.to_workspace_relative_path(token)
+    return cast("str", (fs.to_workspace_relative_path(token)))
 
 
 def write_file_with_broadcast(

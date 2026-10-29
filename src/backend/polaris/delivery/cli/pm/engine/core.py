@@ -275,7 +275,7 @@ class PolarisEngine:
 
     def _role_context_history_limit(self) -> int:
         """Get role context history limit."""
-        return _role_context_history_limit()
+        return cast("int", (_role_context_history_limit()))
 
     def _append_role_context(
         self,
@@ -430,7 +430,9 @@ class PolarisEngine:
     def plan_batches(self, tasks: Sequence[dict[str, Any]]) -> list[list[dict[str, Any]]]:
         """Plan execution batches from tasks."""
         workers = max(1, int(self.config.max_directors or 1))
-        return self.scheduler.schedule(tasks, workers, self.config.scheduling_policy)
+        return cast(
+            "list[list[dict[str, Any]]]", (self.scheduler.schedule(tasks, workers, self.config.scheduling_policy))
+        )
 
     def _update_engine_status(
         self,
@@ -487,18 +489,23 @@ class PolarisEngine:
         # This is a placeholder that imports the dispatch logic
         from polaris.delivery.cli.pm.engine._dispatch import _dispatch_director_tasks_impl
 
-        return _dispatch_director_tasks_impl(
-            self,
-            args=args,
-            workspace_full=workspace_full,
-            run_dir=run_dir,
-            pm_payload=pm_payload,
-            events_path=events_path,
-            dialogue_path=dialogue_path,
-            plan_path=plan_path,
-            pm_tasks_paths=pm_tasks_paths,
-            runtime_status_path=runtime_status_path,
-            progress_payload_paths=progress_payload_paths,
+        return cast(
+            "dict[str, Any]",
+            (
+                _dispatch_director_tasks_impl(
+                    self,
+                    args=args,
+                    workspace_full=workspace_full,
+                    run_dir=run_dir,
+                    pm_payload=pm_payload,
+                    events_path=events_path,
+                    dialogue_path=dialogue_path,
+                    plan_path=plan_path,
+                    pm_tasks_paths=pm_tasks_paths,
+                    runtime_status_path=runtime_status_path,
+                    progress_payload_paths=progress_payload_paths,
+                )
+            ),
         )
 
 

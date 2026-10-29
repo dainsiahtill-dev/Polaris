@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Request
 from polaris.cells.runtime.projection.public import list_memos
@@ -15,4 +15,4 @@ def v2_get_memos(request: Request, limit: int = 200) -> dict[str, Any]:
     state = get_state(request)
     workspace = state.settings.workspace or DEFAULT_WORKSPACE
     ramdisk_root = state.settings.ramdisk_root or ""
-    return list_memos(str(workspace), str(ramdisk_root), limit)
+    return cast("dict[str, Any]", (list_memos(str(workspace), str(ramdisk_root), limit)))

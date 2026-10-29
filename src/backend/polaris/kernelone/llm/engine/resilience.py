@@ -31,7 +31,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from polaris.kernelone.constants import (
     CIRCUIT_BREAKER_FAILURE_THRESHOLD,
@@ -164,7 +164,7 @@ def calculate_backoff_with_jitter(
     """
     delay = min(base_delay * (2**attempt), max_delay)
     jitter = random.uniform(0, delay * jitter_percent)
-    return delay + jitter
+    return cast("float", (delay + jitter))
 
 
 async def retry_with_jitter(

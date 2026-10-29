@@ -11,7 +11,7 @@ import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Coroutine
+from typing import Any, Callable, Coroutine, cast
 
 from polaris.cells.director.task_consumer.public.project_verification import (
     ProjectArtifactReceiptV1,
@@ -1404,7 +1404,7 @@ def _pre_state_punch_list(step: dict[str, Any], *, cwd: str) -> dict[str, Any] |
     verify = normalize_step_verify(step.get("verify"))
     if not verify:
         return None
-    return collect_failing_clauses(verify, cwd=cwd)
+    return cast("dict[str, Any] | None", (collect_failing_clauses(verify, cwd=cwd)))
 
 
 def _build_director_adapter_input(task_id: str, payload: dict[str, Any], lease_token: str) -> dict[str, Any]:

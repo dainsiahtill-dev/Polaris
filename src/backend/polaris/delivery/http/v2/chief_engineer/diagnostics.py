@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import Depends, Request
 from polaris.cells.chief_engineer.blueprint.public import summarize_risks
@@ -129,7 +129,7 @@ def _blueprint_contract_list(payload: dict[str, Any], *keys: str) -> list[str]:
         for source in (payload, base_schema, context, pm_task, qa_contract):
             rows = _string_list(source.get(key))
             if rows:
-                return rows
+                return cast("list[str]", (rows))
     return []
 
 
@@ -474,7 +474,7 @@ async def get_chief_engineer_cache_stats() -> dict[str, Any]:
     from polaris.cells.roles.kernel.public.service import get_global_llm_cache
 
     cache = get_global_llm_cache()
-    return cache.get_stats()
+    return cast("dict[str, Any]", (cache.get_stats()))
 
 
 @router.post("/chief-engineer/cache-clear", dependencies=[Depends(require_auth)])
@@ -495,7 +495,7 @@ async def get_chief_engineer_token_budget_stats() -> dict[str, Any]:
     import polaris.delivery.http.v2.chief_engineer as _ce
 
     budget = _ce.get_global_token_budget()
-    return budget.get_stats()
+    return cast("dict[str, Any]", (budget.get_stats()))
 
 
 __all__ = [

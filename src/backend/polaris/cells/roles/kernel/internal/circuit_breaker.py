@@ -18,7 +18,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ def normalize_tool_signature(tool_name: str, args: dict[str, Any]) -> tuple[str,
     """
     normalizer = TOOL_SIGNATURE_NORMALIZERS.get(tool_name)
     if normalizer:
-        return normalizer(tool_name, args)
+        return cast("tuple[str, str]", (normalizer(tool_name, args)))
 
     # Default: use full args JSON hash (no normalization)
     args_str = json.dumps(args, sort_keys=True, ensure_ascii=False)

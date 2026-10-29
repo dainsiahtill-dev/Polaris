@@ -18,7 +18,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.audit.contracts import (
     KernelAuditEvent,
@@ -152,7 +152,7 @@ class AuditStore:
                     continue
                 content = json.dumps(event.to_dict(), sort_keys=True, ensure_ascii=False)
                 return hashlib.sha256(content.encode("utf-8")).hexdigest()
-        return GENESIS_HASH
+        return cast("str", (GENESIS_HASH))
 
     def _get_current_log_file(self) -> Path:
         """Get current log file with monthly rotation."""

@@ -11,7 +11,7 @@ Usage:
 import json
 import logging
 import re
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 _logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ def safe_json_loads(text: str, default: T | None = None) -> T | None:
     if not text:
         return default
     try:
-        return json.loads(text)
+        return cast("T | None", (json.loads(text)))
     except (json.JSONDecodeError, ValueError):
         return default
 
@@ -86,7 +86,7 @@ def parse_json_payload(text: str) -> dict[str, Any] | None:
 
     # First try direct parse
     try:
-        return json.loads(candidate)
+        return cast("dict[str, Any] | None", (json.loads(candidate)))
     except (json.JSONDecodeError, ValueError) as exc:
         _logger.debug("Failed to parse JSON payload: %s", exc)
 
@@ -95,7 +95,7 @@ def parse_json_payload(text: str) -> dict[str, Any] | None:
     end = candidate.rfind("}")
     if start != -1 and end != -1 and end > start:
         try:
-            return json.loads(candidate[start : end + 1])
+            return cast("dict[str, Any] | None", (json.loads(candidate[start : end + 1])))
         except (json.JSONDecodeError, ValueError) as exc:
             _logger.debug("Failed to parse JSON from substring: %s", exc)
 

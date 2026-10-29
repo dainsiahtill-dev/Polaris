@@ -7,7 +7,7 @@ for different scheduling policies (FIFO, priority, DAG).
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 from polaris.delivery.cli.pm.engine.helpers import (
     _build_batches,
@@ -52,7 +52,7 @@ class SingleWorkerScheduler:
     ) -> list[list[dict[str, Any]]]:
         """Schedule tasks into execution batches."""
         ordered = _order_tasks(tasks, policy)
-        return _build_batches(ordered, max(1, workers), policy)
+        return cast("list[list[dict[str, Any]]]", (_build_batches(ordered, max(1, workers), policy)))
 
 
 def _role_context_history_limit() -> int:

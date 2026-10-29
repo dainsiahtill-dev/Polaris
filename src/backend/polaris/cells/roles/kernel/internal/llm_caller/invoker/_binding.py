@@ -7,7 +7,7 @@ import json
 import logging
 from dataclasses import dataclass, fields
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FactoryRoleSemanticRequestIdentityV1,
@@ -148,11 +148,16 @@ class _InvokerBindingMixin:
         provider_id = str((binding or {}).get("provider_id") or getattr(profile, "provider_id", "") or "").strip()
         model = str((binding or {}).get("model") or getattr(profile, "model", "") or "").strip()
         binding_id = str((binding or {}).get("binding_id") or "").strip()
-        return is_role_binding_healthy(
-            role_id,
-            provider_id=provider_id,
-            model=model,
-            binding_id=binding_id,
+        return cast(
+            "bool",
+            (
+                is_role_binding_healthy(
+                    role_id,
+                    provider_id=provider_id,
+                    model=model,
+                    binding_id=binding_id,
+                )
+            ),
         )
 
     @staticmethod
@@ -649,22 +654,27 @@ class _InvokerBindingMixin:
         if fallback is None:
             if fallback_failures:
                 latest_failure = fallback_failures[-1]
-                return self._build_call_error_response(
-                    prepared=latest_failure.prepared,
-                    active_request=latest_failure.active_request,
-                    response_error=latest_failure.error,
-                    profile=latest_failure.profile,
-                    native_tool_fallback=False,
-                    native_response_fallback=False,
-                    allow_native_tool_text_fallback=False,
-                    model=latest_failure.model,
-                    role_id=role_id,
-                    run_id=run_id,
-                    task_id=task_id,
-                    attempt=attempt,
-                    call_id=call_id,
-                    event_emitter=event_emitter,
-                    start_time=start_time,
+                return cast(
+                    "LLMResponse | None",
+                    (
+                        self._build_call_error_response(
+                            prepared=latest_failure.prepared,
+                            active_request=latest_failure.active_request,
+                            response_error=latest_failure.error,
+                            profile=latest_failure.profile,
+                            native_tool_fallback=False,
+                            native_response_fallback=False,
+                            allow_native_tool_text_fallback=False,
+                            model=latest_failure.model,
+                            role_id=role_id,
+                            run_id=run_id,
+                            task_id=task_id,
+                            attempt=attempt,
+                            call_id=call_id,
+                            event_emitter=event_emitter,
+                            start_time=start_time,
+                        )
+                    ),
                 )
             return None
 
@@ -699,41 +709,51 @@ class _InvokerBindingMixin:
         )
 
         if not is_response_ok:
-            return self._build_call_error_response(
-                prepared=fallback_prepared,
-                active_request=fallback_active_request,
-                response_error=response_error,
-                profile=fallback_profile,
-                native_tool_fallback=native_tool_fallback,
-                native_response_fallback=False,
-                allow_native_tool_text_fallback=False,
-                model=fallback_model,
-                role_id=role_id,
-                run_id=run_id,
-                task_id=task_id,
-                attempt=attempt,
-                call_id=call_id,
-                event_emitter=event_emitter,
-                start_time=start_time,
+            return cast(
+                "LLMResponse | None",
+                (
+                    self._build_call_error_response(
+                        prepared=fallback_prepared,
+                        active_request=fallback_active_request,
+                        response_error=response_error,
+                        profile=fallback_profile,
+                        native_tool_fallback=native_tool_fallback,
+                        native_response_fallback=False,
+                        allow_native_tool_text_fallback=False,
+                        model=fallback_model,
+                        role_id=role_id,
+                        run_id=run_id,
+                        task_id=task_id,
+                        attempt=attempt,
+                        call_id=call_id,
+                        event_emitter=event_emitter,
+                        start_time=start_time,
+                    )
+                ),
             )
 
-        return self._finalize_call_response(
-            cache=get_global_llm_cache(),
-            prepared=fallback_prepared,
-            active_request=fallback_active_request,
-            response=fallback_raw_response,
-            cache_eligible=False,
-            prompt_fingerprint=None,
-            temperature=temperature,
-            model=fallback_model,
-            profile=fallback_profile,
-            prompt_tokens=prompt_tokens,
-            turn_round=turn_round,
-            role_id=role_id,
-            run_id=run_id,
-            task_id=task_id,
-            attempt=attempt,
-            call_id=call_id,
-            event_emitter=event_emitter,
-            start_time=start_time,
+        return cast(
+            "LLMResponse | None",
+            (
+                self._finalize_call_response(
+                    cache=get_global_llm_cache(),
+                    prepared=fallback_prepared,
+                    active_request=fallback_active_request,
+                    response=fallback_raw_response,
+                    cache_eligible=False,
+                    prompt_fingerprint=None,
+                    temperature=temperature,
+                    model=fallback_model,
+                    profile=fallback_profile,
+                    prompt_tokens=prompt_tokens,
+                    turn_round=turn_round,
+                    role_id=role_id,
+                    run_id=run_id,
+                    task_id=task_id,
+                    attempt=attempt,
+                    call_id=call_id,
+                    event_emitter=event_emitter,
+                    start_time=start_time,
+                )
+            ),
         )

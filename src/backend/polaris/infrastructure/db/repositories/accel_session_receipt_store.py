@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from polaris.infrastructure.db.adapters import SqliteAdapter
@@ -134,14 +134,19 @@ class SessionReceiptStore:
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        return self._kernel_db.sqlite(
-            str(self._db_path),
-            timeout_seconds=10.0,
-            isolation_level=None,
-            check_same_thread=False,
-            row_factory="row",
-            pragmas={"busy_timeout": 5000},
-            ensure_parent=True,
+        return cast(
+            "sqlite3.Connection",
+            (
+                self._kernel_db.sqlite(
+                    str(self._db_path),
+                    timeout_seconds=10.0,
+                    isolation_level=None,
+                    check_same_thread=False,
+                    row_factory="row",
+                    pragmas={"busy_timeout": 5000},
+                    ensure_parent=True,
+                )
+            ),
         )
 
     def _init_schema(self) -> None:

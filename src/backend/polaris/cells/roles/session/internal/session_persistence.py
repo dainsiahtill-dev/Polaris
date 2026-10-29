@@ -14,7 +14,7 @@ import logging
 import os
 import threading
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone._runtime_config import resolve_env_int
 from polaris.kernelone.fs import KernelFileSystem
@@ -162,7 +162,7 @@ class SessionPersistenceService:
         try:
             logical_path = self._get_snapshot_path(session_id)
             data = self.fs.read_json(logical_path)
-            return data
+            return cast("dict[str, Any] | None", (data))
 
         except FileNotFoundError:
             logger.debug("Session snapshot not found: id=%s", session_id)
@@ -212,7 +212,7 @@ class SessionPersistenceService:
         try:
             manifest_path = self._get_manifest_path()
             manifest = self.fs.read_json(manifest_path)
-            return manifest.get("snapshots", [])
+            return cast("list[dict[str, Any]]", (manifest.get("snapshots", [])))
 
         except FileNotFoundError:
             return []
@@ -407,7 +407,7 @@ class SessionEventPublisher:
     @staticmethod
     def _utc_now() -> str:
         """返回当前 UTC 时间 ISO 格式字符串"""
-        return _utc_now_str()
+        return cast("str", (_utc_now_str()))
 
     def publish_session_created(
         self,

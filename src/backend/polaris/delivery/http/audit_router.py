@@ -20,7 +20,7 @@ import logging
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Path as FastApiPath, Query
 from fastapi.responses import Response
@@ -588,7 +588,7 @@ async def get_corruption_log(
     try:
         workspace = str(getattr(settings, "workspace", "") or ".")
         facade = AuditUseCaseFacade(runtime_root=runtime_root)
-        return facade.get_corruption_log(workspace=workspace, limit=limit)
+        return cast("list[dict[str, Any]]", (facade.get_corruption_log(workspace=workspace, limit=limit)))
     except (RuntimeError, ValueError) as e:
         logger.error("get_corruption_log failed: %s", e)
         raise HTTPException(status_code=500, detail="internal error") from e

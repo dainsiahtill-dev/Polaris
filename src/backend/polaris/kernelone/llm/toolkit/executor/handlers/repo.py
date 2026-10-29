@@ -7,7 +7,7 @@ Each tool has precise semantics that must not be aliased to other tools.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -51,14 +51,19 @@ def _handle_repo_tree(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
         authorized = resolve_committed_read_paths(self._kernel_fs, self._capability_token)
     except (OSError, ValueError, PathSecurityError):
         return {"ok": False, "error": "Missing or invalid committed read scope"}
-    return _handle_list_directory(
-        self,
-        path=path,
-        recursive=True,
-        max_entries=kwargs.get("max_entries", 100),
-        depth=kwargs.get("depth"),
-        include_hidden=False,
-        authorized_read_paths=authorized,
+    return cast(
+        "dict[str, Any]",
+        (
+            _handle_list_directory(
+                self,
+                path=path,
+                recursive=True,
+                max_entries=kwargs.get("max_entries", 100),
+                depth=kwargs.get("depth"),
+                include_hidden=False,
+                authorized_read_paths=authorized,
+            )
+        ),
     )
 
 
@@ -84,14 +89,19 @@ def _handle_repo_rg(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
     context_lines = kwargs.get("context_lines", 0)
     case_sensitive = kwargs.get("case_sensitive", False)
 
-    return _handle_unified_search(
-        self,
-        query=pattern,
-        path=path,
-        max_results=max_results,
-        file_patterns=file_patterns,
-        context_lines=context_lines,
-        case_sensitive=case_sensitive,
+    return cast(
+        "dict[str, Any]",
+        (
+            _handle_unified_search(
+                self,
+                query=pattern,
+                path=path,
+                max_results=max_results,
+                file_patterns=file_patterns,
+                context_lines=context_lines,
+                case_sensitive=case_sensitive,
+            )
+        ),
     )
 
 
@@ -117,11 +127,16 @@ def _handle_repo_read_around(self: AgentAccelToolExecutor, **kwargs) -> dict[str
         end = int(line) + radius
 
     if start is not None and end is not None:
-        return _handle_read_file(
-            self,
-            file=file,
-            start_line=int(start),
-            end_line=int(end),
+        return cast(
+            "dict[str, Any]",
+            (
+                _handle_read_file(
+                    self,
+                    file=file,
+                    start_line=int(start),
+                    end_line=int(end),
+                )
+            ),
         )
 
     return {"ok": False, "error": "Missing required parameters: line or start/end"}
@@ -145,11 +160,16 @@ def _handle_repo_read_slice(self: AgentAccelToolExecutor, **kwargs) -> dict[str,
     if end is None:
         return {"ok": False, "error": "Missing required parameter: end"}
 
-    return _handle_read_file(
-        self,
-        file=file,
-        start_line=int(start),
-        end_line=int(end),
+    return cast(
+        "dict[str, Any]",
+        (
+            _handle_read_file(
+                self,
+                file=file,
+                start_line=int(start),
+                end_line=int(end),
+            )
+        ),
     )
 
 
@@ -191,7 +211,7 @@ def _handle_repo_read_head(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
     )
 
     if not result.get("ok"):
-        return result
+        return cast("dict[str, Any]", (result))
 
     # Enhance result with clear status message for LLM understanding
     content = result.get("content", "")
@@ -208,7 +228,7 @@ def _handle_repo_read_head(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
     result["status"] = "success"
     result["message"] = status_message
 
-    return result
+    return cast("dict[str, Any]", (result))
 
 
 def _handle_repo_read_tail(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
@@ -243,7 +263,7 @@ def _handle_repo_read_tail(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
     # Read entire file and slice - this is a limitation
     result = _handle_read_file(self, file=file, start_line=1, end_line=9999999)
     if not result.get("ok"):
-        return result
+        return cast("dict[str, Any]", (result))
 
     # _handle_read_file returns content at top level, not nested in "result"
     content = result.get("content", "")

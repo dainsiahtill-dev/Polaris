@@ -31,7 +31,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Optional, cast
 
 from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name, resolve_env_bool, resolve_env_str
 
@@ -378,7 +378,7 @@ def _truthy_env(value: str, default: bool = True) -> bool:
 
 
 def state_to_ramdisk_enabled() -> bool:
-    return resolve_env_bool(_STATE_TO_RAMDISK_KEY)
+    return cast("bool", (resolve_env_bool(_STATE_TO_RAMDISK_KEY)))
 
 
 def normalize_ramdisk_root(value: str) -> str:
@@ -469,7 +469,7 @@ def kernelone_home() -> str:
     """
     raw = resolve_env_str("home")
     if raw:
-        return os.path.abspath(os.path.expanduser(os.path.expandvars(raw)))
+        return cast("str", (os.path.abspath(os.path.expanduser(os.path.expandvars(raw)))))
     root_override = str(os.environ.get("KERNELONE_ROOT") or "").strip()
     if root_override:
         root = os.path.abspath(os.path.expanduser(os.path.expandvars(root_override)))
@@ -1105,7 +1105,7 @@ class StorageLayout:
 
     @property
     def workspace_root(self) -> Path:
-        return self._workspace_root
+        return cast("Path", (self._workspace_root))
 
     @property
     def config_root(self) -> Path:

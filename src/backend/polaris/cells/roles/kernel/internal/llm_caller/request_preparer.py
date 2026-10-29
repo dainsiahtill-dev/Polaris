@@ -793,8 +793,8 @@ def _bounded_required_tool_retry_max_tokens(value: Any) -> int:
     except (TypeError, ValueError):
         current = 0
     if current <= 0:
-        return _REQUIRED_TOOL_RETRY_MAX_TOKENS
-    return min(current, _REQUIRED_TOOL_RETRY_MAX_TOKENS)
+        return cast("int", (_REQUIRED_TOOL_RETRY_MAX_TOKENS))
+    return cast("int", (min(current, _REQUIRED_TOOL_RETRY_MAX_TOKENS)))
 
 
 def _bounded_required_tool_retry_timeout(value: Any) -> float:
@@ -803,8 +803,8 @@ def _bounded_required_tool_retry_timeout(value: Any) -> float:
     except (TypeError, ValueError):
         current = 0.0
     if current <= 0:
-        return _REQUIRED_TOOL_RETRY_TIMEOUT_SECONDS
-    return min(current, _REQUIRED_TOOL_RETRY_TIMEOUT_SECONDS)
+        return cast("float", (_REQUIRED_TOOL_RETRY_TIMEOUT_SECONDS))
+    return cast("float", (min(current, _REQUIRED_TOOL_RETRY_TIMEOUT_SECONDS)))
 
 
 def _build_execution_budget_projection(
@@ -834,18 +834,23 @@ def _build_execution_budget_projection(
         output_floor_tokens = request_max_tokens
         floor_provenance = "transaction_kernel_retry_output_budget_bounded"
 
-    return resolve_execution_budget(
-        role_id=role_id,
-        context=override,
-        request_options=request_options,
-        max_output_tokens=int(request_max_tokens),
-        output_floor_tokens=int(output_floor_tokens),
-        output_floor_provenance=floor_provenance,
-        llm_timeout_seconds=float(request_timeout_seconds),
-        request_timeout_seconds=float(request_timeout_seconds),
-        context_max_tokens_present=context_max_tokens_present,
-        context_timeout_present=context_timeout_present,
-    ).to_payload()
+    return cast(
+        "dict[str, Any]",
+        (
+            resolve_execution_budget(
+                role_id=role_id,
+                context=override,
+                request_options=request_options,
+                max_output_tokens=int(request_max_tokens),
+                output_floor_tokens=int(output_floor_tokens),
+                output_floor_provenance=floor_provenance,
+                llm_timeout_seconds=float(request_timeout_seconds),
+                request_timeout_seconds=float(request_timeout_seconds),
+                context_max_tokens_present=context_max_tokens_present,
+                context_timeout_present=context_timeout_present,
+            ).to_payload()
+        ),
+    )
 
 
 def _with_projection_capability_profile(context: Any, capability_profile: dict[str, Any]) -> Any:
@@ -1131,10 +1136,15 @@ class LLMRequestPreparer:
 
         def _forced_or_role_tool_schemas() -> list[dict[str, Any]]:
             if forced_tool_definitions is not None:
-                return augment_forced_transaction_tool_definitions(
-                    tool_definitions=_role_native_tools(),
-                    forced_definitions=forced_tool_definitions,
-                    context_override=override,
+                return cast(
+                    "list[dict[str, Any]]",
+                    (
+                        augment_forced_transaction_tool_definitions(
+                            tool_definitions=_role_native_tools(),
+                            forced_definitions=forced_tool_definitions,
+                            context_override=override,
+                        )
+                    ),
                 )
             return _role_native_tools() if contract.native_tools_enabled else []
 

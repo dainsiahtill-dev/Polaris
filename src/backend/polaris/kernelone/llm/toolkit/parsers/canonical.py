@@ -38,7 +38,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 # Import canonical ToolCall from contracts (P0-001 unified)
 from polaris.kernelone.llm.contracts.tool import ToolCall
@@ -66,7 +66,7 @@ def extract_arguments(data: dict[str, Any]) -> dict[str, Any]:
                 return value
             if isinstance(value, str):
                 try:
-                    return json.loads(value)
+                    return cast("dict[str, Any]", (json.loads(value)))
                 except json.JSONDecodeError:
                     pass
     # Fallback: return the whole dict minus known non-argument keys

@@ -326,7 +326,7 @@ def _quality_repair_write_file_tool_definition() -> dict[str, Any]:
     """Registry-faithful write_file schema via Forced Tool Surface SSOT (R127)."""
     from polaris.kernelone.tool_execution.forced_tool_surface import resolve_registry_tool_schema
 
-    return resolve_registry_tool_schema("write_file")
+    return cast("dict[str, Any]", (resolve_registry_tool_schema("write_file")))
 
 
 def _quality_repair_edit_file_tool_definition() -> dict[str, Any]:
@@ -337,14 +337,14 @@ def _quality_repair_edit_file_tool_definition() -> dict[str, Any]:
     """
     from polaris.kernelone.tool_execution.forced_tool_surface import resolve_registry_tool_schema
 
-    return resolve_registry_tool_schema("edit_file")
+    return cast("dict[str, Any]", (resolve_registry_tool_schema("edit_file")))
 
 
 def _quality_repair_execute_command_tool_definition() -> dict[str, Any]:
     """Registry-faithful execute_command schema via Forced Tool Surface SSOT (R127)."""
     from polaris.kernelone.tool_execution.forced_tool_surface import resolve_registry_tool_schema
 
-    return resolve_registry_tool_schema("execute_command")
+    return cast("dict[str, Any]", (resolve_registry_tool_schema("execute_command")))
 
 
 def _director_repair_force_existing_write_enabled() -> bool:
@@ -371,7 +371,7 @@ def _quality_repair_existing_target_tool_definitions() -> list[dict[str, Any]]:
     """Existing-file quality repair forced tools — registry SSOT only (R127)."""
     from polaris.kernelone.tool_execution.forced_tool_surface import build_forced_tool_surface
 
-    return build_forced_tool_surface(("edit_file", "write_file", "execute_command"))
+    return cast("list[dict[str, Any]]", (build_forced_tool_surface(("edit_file", "write_file", "execute_command"))))
 
 
 def _format_unresolved_relative_import_error_for_repair_prompt(error: Any) -> str | None:

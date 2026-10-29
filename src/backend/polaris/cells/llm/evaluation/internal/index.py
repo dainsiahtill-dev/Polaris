@@ -11,7 +11,7 @@ import os
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
 from polaris.kernelone.storage import resolve_global_path, resolve_runtime_path
@@ -229,7 +229,7 @@ def _workspace_index_path(workspace_path: str | None) -> str:
 
 def _global_index_path(workspace_path: str | None) -> str:
     del workspace_path
-    return resolve_global_path("config/llm/llm_test_index.json")
+    return cast("str", (resolve_global_path("config/llm/llm_test_index.json")))
 
 
 def _resolve_index_paths(workspace: Any) -> list[str]:

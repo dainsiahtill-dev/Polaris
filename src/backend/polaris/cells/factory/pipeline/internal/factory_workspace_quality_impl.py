@@ -19,7 +19,7 @@ from itertools import count as round_numbers
 from os import PathLike
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.runtime.execution_broker.public import (
     ProjectArtifactReceiptV1,
@@ -1765,10 +1765,15 @@ def _claim_workspace_quality_repair_attempt(
             candidate_owner = str(metadata.get("external_task_id") or candidate.get("external_task_id") or "").strip()
             if candidate_owner != original_owner_task_id:
                 return (-1, -1)
-        return executor._workspace_quality_repair_owner_score(
-            candidate,
-            run_id=run_id,
-            normalized_targets=normalized_targets,
+        return cast(
+            "tuple[int, int]",
+            (
+                executor._workspace_quality_repair_owner_score(
+                    candidate,
+                    run_id=run_id,
+                    normalized_targets=normalized_targets,
+                )
+            ),
         )
 
     def bound_owner_row(binding: RuntimeTaskFactoryRunBindingResultV1, external_id: str) -> dict[str, Any]:
@@ -3782,7 +3787,7 @@ async def _run_workspace_quality_checks_in_session(
             return configured_timeout_seconds
         reserved_for_qa = _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS + _QUALITY_GATE_QA_DEADLINE_SAFETY_SECONDS
         available_for_command = max(1.0, remaining_seconds - reserved_for_qa)
-        return max(1.0, min(configured_timeout_seconds, available_for_command))
+        return cast("float", (max(1.0, min(configured_timeout_seconds, available_for_command))))
 
     async def run_workspace_quality_command_with_deadline(
         command: list[str],

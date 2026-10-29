@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public import (
     merge_failure_evidence_payload,
@@ -35,7 +35,10 @@ def _select_aggregate_role_ids(
     available_role_ids: set[str],
 ) -> tuple[str, ...]:
     if requested_role_ids:
-        return _dedupe_tokens(role_id for role_id in requested_role_ids if role_id in available_role_ids)
+        return cast(
+            "tuple[str, ...]",
+            (_dedupe_tokens(role_id for role_id in requested_role_ids if role_id in available_role_ids)),
+        )
     selected = tuple(role_id for role_id in _DEFAULT_AGGREGATE_ROLE_IDS if role_id in available_role_ids)
     if selected:
         return selected
@@ -200,7 +203,7 @@ def _build_runtime_audit_result(
 
 def _normalize_failure_signal(value: str) -> str:
     token = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
-    return _AGGREGATE_FAILURE_SIGNAL_ALIASES.get(token, token)
+    return cast("str", (_AGGREGATE_FAILURE_SIGNAL_ALIASES.get(token, token)))
 
 
 def _extract_failure_signals(query: BuildAggregateRolePlanQueryV1) -> tuple[str, ...]:
@@ -214,7 +217,10 @@ def _extract_failure_signals(query: BuildAggregateRolePlanQueryV1) -> tuple[str,
         raw_values = source.get("failure_signals") if isinstance(source, Mapping) else None
         if isinstance(raw_values, list | tuple):
             signals.extend(str(item or "") for item in raw_values)
-    return _dedupe_tokens(_normalize_failure_signal(signal) for signal in signals if str(signal or "").strip())
+    return cast(
+        "tuple[str, ...]",
+        (_dedupe_tokens(_normalize_failure_signal(signal) for signal in signals if str(signal or "").strip())),
+    )
 
 
 def _extract_failure_evidence(query: BuildAggregateRolePlanQueryV1) -> dict[str, Any]:
@@ -229,7 +235,7 @@ def _extract_failure_evidence(query: BuildAggregateRolePlanQueryV1) -> dict[str,
 def _aggregate_plan_failure_evidence_payload(plan: AggregateRolePlanResultV1) -> dict[str, Any]:
     """Return the canonical aggregate failure-evidence projection for a plan."""
 
-    return merge_failure_evidence_payload({}, plan.metadata.get("failure_evidence"))
+    return cast("dict[str, Any]", (merge_failure_evidence_payload({}, plan.metadata.get("failure_evidence"))))
 
 
 def _build_takeover_evidence_status(

@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.roles.profile.public.service import (
     RoleProfileRegistry,
@@ -179,7 +179,7 @@ class WorkflowRoleAdapter:
         """获取角色配置"""
         profile = self.registry.get_profile(role)
         if profile:
-            return profile_to_dict(profile)
+            return cast("dict[str, Any] | None", (profile_to_dict(profile)))
         return None
 
     def validate_role_permission(
@@ -202,7 +202,7 @@ class WorkflowRoleAdapter:
             return False, f"未知角色: {role}"
 
         gateway = RoleToolGateway(profile, self.workspace)
-        return gateway.check_tool_permission(tool_name, tool_args)
+        return cast("tuple[bool, str]", (gateway.check_tool_permission(tool_name, tool_args)))
 
 
 class WorkflowRoleResult:

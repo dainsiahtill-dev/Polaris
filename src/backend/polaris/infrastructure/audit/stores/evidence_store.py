@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # No Domain entity imports: this Infrastructure layer accepts Dict[str, Any].
 # The caller (task_lifecycle_service) serializes EvidencePackage.to_dict()
@@ -150,7 +150,7 @@ class EvidenceStore:
             raise EvidenceNotFoundError(f"Evidence not found for task {task_id} iteration {iteration}")
 
         with open(evidence_file, encoding="utf-8") as f:
-            return json.load(f)
+            return cast("dict[str, Any]", (json.load(f)))
 
     def load_latest_evidence(self, task_id: str) -> dict[str, Any]:
         """Load latest evidence for a task.
@@ -172,7 +172,7 @@ class EvidenceStore:
 
         latest = evidence_files[-1]
         with open(latest, encoding="utf-8") as f:
-            return json.load(f)
+            return cast("dict[str, Any]", (json.load(f)))
 
     def list_evidence(self, task_id: str) -> list[dict[str, Any]]:
         """List all evidence iterations for a task.

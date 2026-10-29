@@ -31,7 +31,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import IntEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.audit.omniscient.context import (
     AuditContext,
@@ -708,7 +708,7 @@ class OmniscientAuditBus:
         Returns:
             Storm level string: normal, elevated, warning, critical, emergency.
         """
-        return self._storm_detector.get_level().value
+        return cast("str", (self._storm_detector.get_level().value))
 
     # =========================================================================
     # Internal Dispatch Loop

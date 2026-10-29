@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from polaris.kernelone.llm.toolkit.contracts import ServiceLocator
@@ -262,7 +262,7 @@ class ContextBudgetGate:
                 if isinstance(result, int) and result >= 0:
                     return result
         # CJK-aware fallback using TokenEstimator's heuristic
-        return TokenEstimator.estimate(text)
+        return cast("int", (TokenEstimator.estimate(text)))
 
     # ------------------------------------------------------------------
     # Factory helpers (budget resolution chain)
@@ -369,7 +369,7 @@ def _resolve_model_window_from_spec(provider_name: str, model_name: str, workspa
 
     catalog = ModelCatalog(workspace=workspace)
     spec = catalog.resolve(provider_id=provider_name, model=model_name)
-    return spec.max_context_tokens
+    return cast("int", (spec.max_context_tokens))
 
 
 __all__ = [

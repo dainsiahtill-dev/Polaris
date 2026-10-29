@@ -4,7 +4,7 @@ import asyncio
 import json
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import aiohttp
 import requests
@@ -57,7 +57,7 @@ def _strip_structured_tags(text: str) -> str:
 
 
 def _timeout_seconds(config: dict[str, Any], default: int, key: str = "timeout") -> int:
-    return normalize_timeout_seconds(config.get(key), default=default)
+    return cast("int", (normalize_timeout_seconds(config.get(key), default=default)))
 
 
 def _resolve_max_tokens(config: dict[str, Any], default: int) -> int:
@@ -360,14 +360,14 @@ class KimiProvider(BaseProvider):
         )
 
     def _base_url(self, config: dict[str, Any]) -> str:
-        return normalize_base_url(str(config.get("base_url") or ""))
+        return cast("str", (normalize_base_url(str(config.get("base_url") or ""))))
 
     def _build_url(
         self, config: dict[str, Any], path_key: str = "api_path", default_path: str = DEFAULT_CHAT_PATH
     ) -> str:
         base = self._base_url(config)
         path = str(config.get(path_key) or default_path).strip()
-        return join_url(base, path, strip_prefixes=["/v1"])
+        return cast("str", (join_url(base, path, strip_prefixes=["/v1"])))
 
     def _headers(self, config: dict[str, Any], api_key: str | None) -> dict[str, str]:
         headers = {
@@ -488,7 +488,7 @@ class KimiProvider(BaseProvider):
                     first_choice = choices[0]
                     if isinstance(first_choice, dict):
                         message = first_choice.get("message", {})
-                        return message.get("content", "")
+                        return cast("str", (message.get("content", "")))
             return ""
 
         return invoke_with_retry(

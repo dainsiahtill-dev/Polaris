@@ -404,7 +404,10 @@ class _DirectedEffectMixin(_ServiceMixinBase):
         if self._has_pending_terminal_intent(session):
             return self._fulfilled_terminal_intent_pre_barrier_locked(session)
         identity = self._execution_attempt_identity_from_session(session)
-        return DirectedEffectOperationRepository().settlement_pre_barrier(identity)
+        return cast(
+            "DirectedEffectSettlementPreBarrierVerdictV1",
+            (DirectedEffectOperationRepository().settlement_pre_barrier(identity)),
+        )
 
     def _fulfilled_terminal_intent_pre_barrier_locked(
         self,
@@ -422,10 +425,15 @@ class _DirectedEffectMixin(_ServiceMixinBase):
         settlement_identity = validated
         outcome = cast(Literal["completed", "failed", "suspended"], pending_intent["outcome"])
         terminal_intent_hash = str(pending_intent["terminal_intent_hash"])
-        return DirectedEffectOperationRepository().preflight_parent_for_terminal_intent(
-            settlement_identity,
-            outcome=outcome,
-            terminal_intent_hash=terminal_intent_hash,
+        return cast(
+            "DirectedEffectSettlementPreBarrierVerdictV1",
+            (
+                DirectedEffectOperationRepository().preflight_parent_for_terminal_intent(
+                    settlement_identity,
+                    outcome=outcome,
+                    terminal_intent_hash=terminal_intent_hash,
+                )
+            ),
         )
 
     @staticmethod
@@ -1708,7 +1716,9 @@ class _DirectedEffectMixin(_ServiceMixinBase):
     ) -> TaskExecutionSession | None:
         """Read one recovery candidate while the caller holds both session locks."""
 
-        return self._read_session_locked(task_id, raise_infrastructure_errors=True)
+        return cast(
+            "TaskExecutionSession | None", (self._read_session_locked(task_id, raise_infrastructure_errors=True))
+        )
 
     @staticmethod
     def _after_directed_effect_recovery_session_file_lock_acquired(*, task_id: int) -> None:

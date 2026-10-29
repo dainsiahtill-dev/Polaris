@@ -7,7 +7,7 @@ import shutil
 import time
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence, cast
 
 from polaris.cells.runtime.task_runtime.internal.task_board import (
     Task,
@@ -324,14 +324,19 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
             task_id=task_id, session_id=current.session_id if current is not None else ""
         )
         try:
-            return self._reconcile_ambiguous_directed_effect_session_locked(
-                command,
-                task_id=task_id,
-                current=current,
-                task_row=task_row,
-                owner_epoch=owner_epoch,
-                deadline_monotonic=deadline_monotonic,
-                remaining_operations=remaining_operations,
+            return cast(
+                "_DirectedEffectRecoverySessionSweep",
+                (
+                    self._reconcile_ambiguous_directed_effect_session_locked(
+                        command,
+                        task_id=task_id,
+                        current=current,
+                        task_row=task_row,
+                        owner_epoch=owner_epoch,
+                        deadline_monotonic=deadline_monotonic,
+                        remaining_operations=remaining_operations,
+                    )
+                ),
             )
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             return _DirectedEffectRecoverySessionSweep(

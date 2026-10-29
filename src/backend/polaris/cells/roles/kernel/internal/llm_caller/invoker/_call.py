@@ -10,7 +10,7 @@ import re
 import time
 import uuid
 from hashlib import sha256
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.control_plane.run_ledger.public import (
     project_native_tool_call_envelopes_to_metadata,
@@ -1572,7 +1572,7 @@ class _InvokerCallMixin:
                 factory_semantic_identity=factory_semantic_identity,
             )
             if fallback_response is not None:
-                return fallback_response
+                return cast("LLMResponse", (fallback_response))
             return self._call_exception_response(
                 e,
                 prepared=prepared,

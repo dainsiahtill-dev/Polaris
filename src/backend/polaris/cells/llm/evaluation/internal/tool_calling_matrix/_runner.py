@@ -12,7 +12,7 @@ import logging
 import time
 from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.roles.runtime.public.contracts import (
     ExecuteRoleSessionCommandV1,
@@ -98,7 +98,7 @@ class RolesRuntimeMatrixExecutor:
         """
         from polaris.cells.roles.runtime.public.service import stream_role_session_command
 
-        return stream_role_session_command(command)
+        return cast("AsyncIterator[Mapping[str, Any]]", (stream_role_session_command(command)))
 
     async def run_session(
         self,
@@ -119,7 +119,7 @@ class _CompositeMatrixExecutor:
         self._run_executor = run_executor
 
     def stream_session(self, command: ExecuteRoleSessionCommandV1) -> AsyncIterator[Mapping[str, Any]]:
-        return self._stream_executor(command)
+        return cast("AsyncIterator[Mapping[str, Any]]", (self._stream_executor(command)))
 
     async def run_session(
         self,
@@ -151,7 +151,7 @@ def _resolve_executor(context: Mapping[str, Any] | None) -> RoleSessionMatrixExe
     if injected is None:
         return RolesRuntimeMatrixExecutor()
     if hasattr(injected, "stream_session") and hasattr(injected, "run_session"):
-        return injected
+        return cast("RoleSessionMatrixExecutor", (injected))
     if hasattr(injected, "stream_session"):
         return _CompositeMatrixExecutor(
             stream_executor=injected.stream_session,

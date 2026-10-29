@@ -9,7 +9,7 @@ results and copy/patch their metadata. The bodies were moved verbatim from
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public import (
     FailureClassV1,
@@ -30,7 +30,7 @@ from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
 
 def _native_tool_call_envelopes(result: RoleTurnResult) -> tuple[Mapping[str, Any], ...]:
     metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
-    return native_tool_call_envelope_refs_from_metadata(metadata)
+    return cast("tuple[Mapping[str, Any], ...]", (native_tool_call_envelope_refs_from_metadata(metadata)))
 
 
 def _lifecycle_receipt_from_metadata(metadata: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -50,13 +50,13 @@ def _lifecycle_failure_evidence_from_metadata(metadata: Mapping[str, Any]) -> di
 
 def _extract_tool_calls(result: RoleTurnResult) -> tuple[str, ...]:
     metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
-    return observed_tool_call_names_from_sources(result.tool_calls or (), metadata)
+    return cast("tuple[str, ...]", (observed_tool_call_names_from_sources(result.tool_calls or (), metadata)))
 
 
 def _has_tool_dispatch_evidence(result: RoleTurnResult) -> bool:
     if result.tool_results:
         return True
-    return batch_receipt_has_dispatch_evidence(result.batch_receipt)
+    return cast("bool", (batch_receipt_has_dispatch_evidence(result.batch_receipt)))
 
 
 def _tool_dispatch_dropped_error(result: RoleTurnResult) -> str:

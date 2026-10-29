@@ -23,7 +23,7 @@ import json
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.domain.director.constants import (
     DEFAULT_DIRECTOR_LIFECYCLE,
@@ -152,7 +152,7 @@ class DirectorLifecycleManager:
 
     def _now_iso(self) -> str:
         """获取当前 UTC 时间戳 (ISO 8601 格式)。"""
-        return utc_now_iso()
+        return cast("str", (utc_now_iso()))
 
     def get_state(
         self,

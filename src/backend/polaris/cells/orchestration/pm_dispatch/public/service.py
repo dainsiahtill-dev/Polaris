@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from polaris.cells.orchestration.pm_dispatch.internal import dispatch_pipeline as _dispatch_pipeline
 from polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline import (
     DispatchCallbacks,
@@ -38,7 +40,7 @@ def reachable_provider_pool(pool: tuple[str, ...], *, probe_timeout: float = 3.0
     it at import) so that callers and tests can substitute the probe via the
     canonical internal symbol.
     """
-    return _dispatch_pipeline._reachable_provider_pool(pool, probe_timeout=probe_timeout)
+    return cast("list[str]", (_dispatch_pipeline._reachable_provider_pool(pool, probe_timeout=probe_timeout)))
 
 
 __all__ = [

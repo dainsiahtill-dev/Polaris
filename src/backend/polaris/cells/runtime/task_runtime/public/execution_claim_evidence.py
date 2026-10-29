@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from polaris.cells.runtime.task_runtime.public.contracts import (
     TaskRuntimeExecutionAttemptIdentityV1,
@@ -74,7 +74,7 @@ def query_execution_claim_evidence(query: QueryExecutionClaimEvidenceV1) -> Exec
     """Authenticate original claim and durable current state without mutation."""
     from ..internal.execution_claim_evidence import query_execution_claim_evidence as owner_query
 
-    return owner_query(query)
+    return cast("ExecutionClaimEvidenceV1", (owner_query(query)))
 
 
 __all__ = [

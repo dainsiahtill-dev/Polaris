@@ -6,7 +6,7 @@ import queue
 import threading
 import time
 from collections.abc import AsyncGenerator, Iterable, Mapping
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.constants import DEFAULT_OPERATION_TIMEOUT_SECONDS
 from polaris.kernelone.llm.runtime_config import _ROLE_BINDING_MODE_ENV_KEYS, MASKED_SECRET
@@ -84,7 +84,7 @@ class KernelLLM:
         )
         executor = AIExecutor(workspace=_workspace_from_context(request_context))
         response = await executor.invoke(request)
-        return response.to_dict()
+        return cast("dict[str, Any]", (response.to_dict()))
 
     async def invoke_stream(
         self,

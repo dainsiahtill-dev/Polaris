@@ -13,7 +13,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum, auto
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.director.tasking.public import TaskQueueConfig, TaskService, WorkerPoolConfig, WorkerService
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
@@ -438,7 +438,7 @@ class DirectorService(DirectorCodeIntelMixin):
         return await self._worker_service.get_worker(worker_id)
 
     async def list_workers(self) -> list[Worker]:
-        return await self._worker_service.get_workers()
+        return cast("list[Any]", (await self._worker_service.get_workers()))
 
     async def _try_finalize_idle(self) -> None:
         """Transition RUNNING -> IDLE when the main loop has exited without workers.

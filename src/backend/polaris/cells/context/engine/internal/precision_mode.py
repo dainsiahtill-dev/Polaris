@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 COST_CLASSES: tuple[str, ...] = ("LOCAL", "FIXED", "METERED")
 
@@ -158,4 +158,4 @@ def route_by_cost_model(cost_class: str, role: str) -> CostStrategy:
 def _unique_preserve(values: list[str]) -> list[str]:
     from polaris.kernelone.shared.text_utils import unique_preserve as _impl
 
-    return _impl(values)
+    return cast("list[str]", (_impl(values)))

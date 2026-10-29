@@ -16,7 +16,7 @@ import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from queue import Queue as ThreadQueue
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.constants import DEFAULT_OPERATION_TIMEOUT_SECONDS, MAX_WORKFLOW_TIMEOUT_SECONDS
 from polaris.kernelone.fs.jsonl.locking import file_lock
@@ -425,7 +425,7 @@ class BackgroundManagerV2:
         except (TypeError, ValueError):
             parsed = self.DEFAULT_TIMEOUT_SECONDS
         parsed = max(1, parsed)
-        return min(parsed, self.MAX_TIMEOUT_SECONDS)
+        return cast("int", (min(parsed, self.MAX_TIMEOUT_SECONDS)))
 
     def _resolve_cwd(self, raw_cwd: Any) -> str:
         token = str(raw_cwd or "").strip() or "."

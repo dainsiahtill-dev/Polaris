@@ -11,7 +11,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.roles.runtime.internal.engineering_execution_policy import (
     CommandExecutionPolicy,
@@ -509,7 +509,7 @@ class EngineeringTools:
                 raise
             if command_cache is not None:
                 command_cache.validate()
-            return result
+            return cast("subprocess.CompletedProcess[str]", (result))
         except asyncio.CancelledError:
             self.cancel.set()
             control.cancel()
@@ -530,7 +530,7 @@ class EngineeringTools:
         roots = self.scope.write_roots if write else self.scope.read_roots
         if not any(target.is_relative_to(Path(root).resolve()) for root in roots):
             raise ValueError(f"engineering {'write' if write else 'read'} path outside permission scope: {value}")
-        return target
+        return cast("Path", (target))
 
     def _remaining(self) -> float:
         remaining = self.limits.deadline - time.time() if self.limits.deadline is not None else 120.0

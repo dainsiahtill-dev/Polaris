@@ -15,6 +15,7 @@ protocol/
 from __future__ import annotations
 
 import hashlib
+from typing import Any, cast
 
 from polaris.kernelone.llm.toolkit.protocol.applier import StrictOperationApplier
 
@@ -77,7 +78,7 @@ def parse_protocol_output(text: str) -> list[FileOperation]:
     Returns:
         FileOperation list (deduplicated)
     """
-    return ProtocolParser.parse(text)
+    return cast("list[Any]", (ProtocolParser.parse(text)))
 
 
 def validate_operations(

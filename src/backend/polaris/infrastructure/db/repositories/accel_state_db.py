@@ -7,7 +7,7 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from polaris.infrastructure.db.adapters import SqliteAdapter
 from polaris.kernelone.constants import ONE_MB_BYTES
@@ -56,7 +56,7 @@ def _connect(db_path: Path, timeout_seconds: int = 30) -> sqlite3.Connection:
                 )
                 """
             )
-            return conn
+            return cast("sqlite3.Connection", (conn))
         except sqlite3.OperationalError as exc:
             last_exc = exc
             if "database is locked" in str(exc).lower() and attempt < max_attempts - 1:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.roles.runtime.public.aggregate_chat._entrypoint_checks import (
     _dedupe_tokens,
@@ -95,7 +95,7 @@ def _aggregate_memory_recall_triggers(
     ]
     if selected_lobe.lobe_id == "hippocampus_controller":
         triggers.append("hippocampus_controller")
-    return _dedupe_tokens(triggers)
+    return cast("tuple[str, ...]", (_dedupe_tokens(triggers)))
 
 
 def _aggregate_memory_recall_query(

@@ -12,7 +12,7 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.director.runtime.public.service import (
     QueryDirectorRepairCoverageV1,
@@ -82,7 +82,7 @@ def _materialization_runtime_source_tools_for_step(step_id: str) -> tuple[str, .
     )
     for step in schedule.items:
         if step.step_id == step_id:
-            return step.runtime_source_tools
+            return cast("tuple[str, ...]", (step.runtime_source_tools))
     return ()
 
 
@@ -415,7 +415,7 @@ def _materialization_plannable_runtime_source_tools_from_base_files(
             },
         )
     )
-    return plan_probe.plannable_source_tools
+    return cast("tuple[str, ...]", (plan_probe.plannable_source_tools))
 
 
 def _run_materialization_html_entrypoint(
@@ -838,7 +838,7 @@ def _materialization_allowed_paths_from_runtime_public_plan(
             metadata={"adapter_bridge": "materialization_quality_runtime_ports"},
         )
     )
-    return result.allowed_paths
+    return cast("tuple[str, ...]", (result.allowed_paths))
 
 
 _BOUNDED_SCAN_IGNORED_PARTS = frozenset(
@@ -1500,12 +1500,17 @@ def _project_coverage_preaudit(
 ) -> dict[str, Any]:
     """Project read-only rule coverage before any bridge runner writes."""
 
-    return query_director_repair_coverage(
-        QueryDirectorRepairCoverageV1(
-            artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
-            artifact_quality_issues=tuple(dict(item) for item in artifact_quality_issues),
-        )
-    ).to_dict()
+    return cast(
+        "dict[str, Any]",
+        (
+            query_director_repair_coverage(
+                QueryDirectorRepairCoverageV1(
+                    artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
+                    artifact_quality_issues=tuple(dict(item) for item in artifact_quality_issues),
+                )
+            ).to_dict()
+        ),
+    )
 
 
 def _project_materialization_plan_probe_preaudit(

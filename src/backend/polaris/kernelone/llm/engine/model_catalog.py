@@ -6,7 +6,7 @@ and environment/bootstrap-injected values, not application Settings imports.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone._runtime_config import resolve_env_str
 from polaris.kernelone.llm import config_store as llm_config
@@ -218,7 +218,7 @@ class ModelCatalog:
         )
 
     def _cache_root(self) -> str:
-        return build_cache_root(self.ramdisk_root, self.workspace)
+        return cast("str", (build_cache_root(self.ramdisk_root, self.workspace)))
 
     def _load_llm_config_payload(self) -> dict[str, Any]:
         payload = llm_config.load_llm_config(self.workspace, self._cache_root(), settings=None)

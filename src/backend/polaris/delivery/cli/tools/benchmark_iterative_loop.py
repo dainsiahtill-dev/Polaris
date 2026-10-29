@@ -10,7 +10,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # Add backend to path before polaris imports
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -69,7 +69,7 @@ def _load_audit(workspace: str, run_id: str) -> dict[str, Any] | None:
     if audit_path.exists():
         try:
             with open(audit_path, encoding="utf-8") as f:
-                return json.load(f)
+                return cast("dict[str, Any] | None", (json.load(f)))
         except Exception as e:  # noqa: BLE001
             logger.debug("Failed to load audit JSON: %s", e)
     return None

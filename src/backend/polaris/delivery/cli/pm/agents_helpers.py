@@ -3,7 +3,7 @@
 import logging
 import os
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from polaris.delivery.cli.pm.config import AGENTS_DRAFT_REL, AGENTS_FEEDBACK_REL
 from polaris.delivery.cli.pm.utils import truncate_text_block
@@ -78,13 +78,13 @@ def _build_fallback(docs_text: str, root_text: str, feedback_text: str, error_hi
 
 def get_agents_draft_path(workspace_full: str, cache_root_full: str) -> str:
     """Get the path for the AGENTS draft file."""
-    return resolve_artifact_path(workspace_full, cache_root_full, AGENTS_DRAFT_REL)
+    return cast("str", (resolve_artifact_path(workspace_full, cache_root_full, AGENTS_DRAFT_REL)))
 
 
 def get_agents_feedback_path(workspace_full: str, cache_root_full: str) -> str:
     """Get the path for the AGENTS feedback file."""
     try:
-        return resolve_artifact_path(workspace_full, cache_root_full, AGENTS_FEEDBACK_REL)
+        return cast("str", (resolve_artifact_path(workspace_full, cache_root_full, AGENTS_FEEDBACK_REL)))
     except (RuntimeError, ValueError):
         return os.path.join(workspace_full, AGENTS_FEEDBACK_REL.replace("/", os.sep))
 

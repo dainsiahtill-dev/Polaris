@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.roles.kernel.internal.tool_call_envelope import (
     normalize_stream_tool_call_payload as _normalize_stream_tool_call_payload,
@@ -218,9 +218,9 @@ def sanitize_assistant_transcript_message(
             token,
             allowed_tool_names=allowed_tool_names,
         )
-        return strip_transport_whitespace(str(remainder or ""))
+        return cast("str", (strip_transport_whitespace(str(remainder or ""))))
     except (ValueError, TypeError, AttributeError):
-        return strip_transport_whitespace(token)
+        return cast("str", (strip_transport_whitespace(token)))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -252,11 +252,16 @@ def normalize_stream_tool_call_payload(
         Tuple of (normalized_payload, provider_type).
         provider_type is "openai", "anthropic", or "auto".
     """
-    return _normalize_stream_tool_call_payload(
-        tool_name=tool_name,
-        tool_args=tool_args,
-        call_id=call_id,
-        metadata=metadata,
+    return cast(
+        "tuple[dict[str, Any] | None, str]",
+        (
+            _normalize_stream_tool_call_payload(
+                tool_name=tool_name,
+                tool_args=tool_args,
+                call_id=call_id,
+                metadata=metadata,
+            )
+        ),
     )
 
 

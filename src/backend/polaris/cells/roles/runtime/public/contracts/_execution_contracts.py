@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 from uuid import uuid4
 
 from polaris.cells.roles.kernel.public.structured_output_contracts import (
@@ -673,11 +673,11 @@ class StandardStreamEvent(dict[str, Any]):
 
     @property
     def event_type(self) -> str:
-        return self["type"]
+        return cast("str", (self["type"]))
 
     @property
     def event_data(self) -> dict[str, Any]:
-        return self["data"]
+        return cast("dict[str, Any]", (self["data"]))
 
 
 class RoleRuntimeError(RuntimeError):

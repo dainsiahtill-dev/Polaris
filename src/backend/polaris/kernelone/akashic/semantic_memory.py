@@ -20,7 +20,7 @@ import re
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.fs.jsonl.locking import file_lock
 from polaris.kernelone.storage import resolve_runtime_path
@@ -137,7 +137,7 @@ class AkashicSemanticMemory:
             embedding = port.get_embedding(text, model=model)
             if embedding:
                 self._embedding_cache[text] = embedding
-            return embedding
+            return cast("list[float] | None", (embedding))
         except (RuntimeError, ValueError) as exc:
             logger.debug("Embedding computation failed: %s", exc)
             return None
@@ -241,7 +241,7 @@ class AkashicSemanticMemory:
 
         if norm_a == 0.0 or norm_b == 0.0:
             return 0.0
-        return dot / (norm_a * norm_b)
+        return cast("float", (dot / (norm_a * norm_b)))
 
     async def add(
         self,

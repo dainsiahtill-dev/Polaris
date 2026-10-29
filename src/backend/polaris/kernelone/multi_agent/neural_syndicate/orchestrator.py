@@ -42,7 +42,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 if TYPE_CHECKING:
     pass  # No runtime imports needed
@@ -266,7 +266,7 @@ class MessageForwarder:
                         remaining,
                     )
 
-                return success > 0
+                return cast("bool", (success > 0))
 
             except ValueError as exc:
                 # Message was expired (TTL <= 0)
@@ -470,7 +470,7 @@ class BlackboardClient:
         # Check cache first
         cached = await self.get(f"artifact:{artifact_id}")
         if cached:
-            return cached
+            return cast("dict[str, Any] | None", (cached))
 
         # Search in artifacts if service is available
         if self._artifact_service is None:

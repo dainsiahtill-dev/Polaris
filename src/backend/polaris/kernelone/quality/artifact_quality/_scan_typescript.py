@@ -11,7 +11,7 @@ import stat
 import subprocess
 import sys
 from pathlib import Path, PurePosixPath
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from polaris.kernelone.quality.artifact_quality._constants import (
     _ARTIFACT_QUALITY_ERROR_PREFIX,
@@ -1018,7 +1018,7 @@ def _resolve_typescript_module_file(
             try:
                 full, witness = reader.confined_path(candidate)
                 if witness is not None and stat.S_ISREG(witness.st_mode):
-                    return full
+                    return cast("Path | None", (full))
             except (OSError, RuntimeError, ValueError) as exc:
                 if incomplete_reasons is not None:
                     incomplete_reasons.append(f"import_path_unknown:{candidate}:{type(exc).__name__}:{exc}")

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Any
+from typing import Any, cast
 
 # NOTE: artifact_store imports are intentionally lazy (inside proxy functions) to
 # avoid a load-time circular dependency:
@@ -19,14 +19,14 @@ from polaris.kernelone.storage.io_paths import build_cache_root
 
 def read_json(path: str) -> dict[str, Any] | None:
     """Read a JSON object through the projection file I/O boundary."""
-    return file_io.read_json(path)
+    return cast("dict[str, Any] | None", (file_io.read_json(path)))
 
 
 def read_file_head(path: str, max_chars: int = 20000, *, allow_fallback: bool = True) -> str:
     """Read the start of a file through the projection file I/O boundary."""
     if allow_fallback:
-        return file_io.read_file_head(path, max_chars)
-    return file_io.read_file_head(path, max_chars, allow_fallback=allow_fallback)
+        return cast("str", (file_io.read_file_head(path, max_chars)))
+    return cast("str", (file_io.read_file_head(path, max_chars, allow_fallback=allow_fallback)))
 
 
 def read_file_tail(
@@ -38,9 +38,9 @@ def read_file_tail(
 ) -> str:
     """Read the end of a file through the projection file I/O boundary."""
     if max_chars is None and allow_fallback:
-        return file_io.read_file_tail(path, max_lines)
+        return cast("str", (file_io.read_file_tail(path, max_lines)))
     resolved_max_chars = 20000 if max_chars is None else max_chars
-    return file_io.read_file_tail(path, max_lines, resolved_max_chars, allow_fallback=allow_fallback)
+    return cast("str", (file_io.read_file_tail(path, max_lines, resolved_max_chars, allow_fallback=allow_fallback)))
 
 
 def read_incremental(
@@ -53,20 +53,25 @@ def read_incremental(
 ) -> list[str]:
     """Read newly appended lines through the projection file I/O boundary."""
     if max_chars is None and allow_fallback and not complete_lines_only:
-        return file_io.read_incremental(path, state)
+        return cast("list[str]", (file_io.read_incremental(path, state)))
     resolved_max_chars = 20000 if max_chars is None else max_chars
-    return file_io.read_incremental(
-        path,
-        state,
-        resolved_max_chars,
-        allow_fallback=allow_fallback,
-        complete_lines_only=complete_lines_only,
+    return cast(
+        "list[str]",
+        (
+            file_io.read_incremental(
+                path,
+                state,
+                resolved_max_chars,
+                allow_fallback=allow_fallback,
+                complete_lines_only=complete_lines_only,
+            )
+        ),
     )
 
 
 def format_mtime(path: str) -> str:
     """Format a file modification time through the projection file I/O boundary."""
-    return file_io.format_mtime(path)
+    return cast("str", (file_io.format_mtime(path)))
 
 
 def resolve_artifact_path(workspace: str, cache_root: str, rel_path: str) -> str:
@@ -75,7 +80,7 @@ def resolve_artifact_path(workspace: str, cache_root: str, rel_path: str) -> str
         resolve_artifact_path as _resolve,
     )
 
-    return _resolve(workspace, cache_root, rel_path)
+    return cast("str", (_resolve(workspace, cache_root, rel_path)))
 
 
 def select_latest_artifact(workspace: str, cache_root: str, rel_path: str) -> Any:

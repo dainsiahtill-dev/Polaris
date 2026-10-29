@@ -12,7 +12,7 @@ import re
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.utils.time_utils import utc_now_str
 
@@ -224,7 +224,7 @@ def _require_exact_positive_record_int(name: str, value: Any) -> int:
 
 
 def utc_now_iso() -> str:
-    return utc_now_str()
+    return cast("str", (utc_now_str()))
 
 
 def new_event_id() -> str:

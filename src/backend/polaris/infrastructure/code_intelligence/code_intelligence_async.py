@@ -11,7 +11,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.infrastructure.accel.config import resolve_effective_config
 from polaris.infrastructure.accel.indexers import build_or_update_indexes
@@ -312,10 +312,10 @@ class AsyncIndexManager:
             if not force_full:
                 cached = self._cache.get(cache_key)
                 if cached:
-                    return cached
+                    return cast("dict[str, Any]", (cached))
 
                 if self._index_status["manifest"]:
-                    return self._index_status["manifest"]
+                    return cast("dict[str, Any]", (self._index_status["manifest"]))
 
         if background:
             # 在后台启动索引构建
@@ -364,7 +364,7 @@ class AsyncIndexManager:
             cache_key = f"index_manifest:{self.workspace}:{force_full}"
             self._cache.set(cache_key, manifest, ttl=1800)  # 30分钟
 
-            return manifest
+            return cast("dict[str, Any]", (manifest))
 
         except (RuntimeError, ValueError) as e:
             with self._status_lock:
@@ -461,7 +461,7 @@ class AsyncCodeIntelligenceService:
             )
             cached = self._cache.get(cache_key)
             if cached:
-                return cached
+                return cast("dict[str, Any]", (cached))
 
         # 确保索引存在
         await self.ensure_index(background=False)
@@ -482,7 +482,7 @@ class AsyncCodeIntelligenceService:
         if cache_key and self._cache:
             self._cache.set(cache_key, pack, ttl=600)  # 10分钟
 
-        return pack
+        return cast("dict[str, Any]", (pack))
 
     async def verify_changes(
         self,

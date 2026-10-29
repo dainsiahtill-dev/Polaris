@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public.failure_evidence import (
     FailureClassV1,
@@ -294,21 +294,26 @@ def build_tool_dispatch_dropped_lifecycle_from_anomaly_flags(
             decoded_count = _int_value(flag.get("decoded_tool_calls_count"))
             provider_response_hash = _clean_string(flag.get("provider_response_hash"))
         break
-    return build_tool_call_lifecycle_receipt(
-        run_id=run_id,
-        task_id=task_id,
-        turn_id=turn_id,
-        role=role,
-        provider_response_hash=provider_response_hash,
-        native_tool_calls_count=native_count,
-        decoded_tool_calls_count=decoded_count,
-        receipts=[],
-        dropped_tool_calls=dropped_tool_calls,
-        native_tool_call_envelopes=native_tool_call_envelopes,
-        dispatch_status="dropped",
-        failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
-        reason=reason,
-    ).to_dict()
+    return cast(
+        "dict[str, Any]",
+        (
+            build_tool_call_lifecycle_receipt(
+                run_id=run_id,
+                task_id=task_id,
+                turn_id=turn_id,
+                role=role,
+                provider_response_hash=provider_response_hash,
+                native_tool_calls_count=native_count,
+                decoded_tool_calls_count=decoded_count,
+                receipts=[],
+                dropped_tool_calls=dropped_tool_calls,
+                native_tool_call_envelopes=native_tool_call_envelopes,
+                dispatch_status="dropped",
+                failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+                reason=reason,
+            ).to_dict()
+        ),
+    )
 
 
 def build_tool_dispatch_dropped_lifecycle_from_observed_calls(
@@ -347,19 +352,24 @@ def build_tool_dispatch_dropped_lifecycle_from_observed_calls(
                     "reason": "tool_dispatch_dropped",
                 }
             )
-    return build_tool_call_lifecycle_receipt(
-        run_id=run_id,
-        task_id=task_id,
-        turn_id=turn_id,
-        role=role,
-        native_tool_calls_count=len(envelopes) or len(dropped_tool_calls),
-        receipts=[],
-        dropped_tool_calls=dropped_tool_calls,
-        native_tool_call_envelopes=envelopes,
-        dispatch_status="dropped",
-        failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
-        reason=reason,
-    ).to_dict()
+    return cast(
+        "dict[str, Any]",
+        (
+            build_tool_call_lifecycle_receipt(
+                run_id=run_id,
+                task_id=task_id,
+                turn_id=turn_id,
+                role=role,
+                native_tool_calls_count=len(envelopes) or len(dropped_tool_calls),
+                receipts=[],
+                dropped_tool_calls=dropped_tool_calls,
+                native_tool_call_envelopes=envelopes,
+                dispatch_status="dropped",
+                failure_class=FailureClassV1.TOOL_DISPATCH_DROPPED.value,
+                reason=reason,
+            ).to_dict()
+        ),
+    )
 
 
 def project_lifecycle_failure_evidence_to_metadata(
@@ -381,7 +391,7 @@ def project_lifecycle_failure_evidence_to_metadata(
     failure_evidence = failure_evidence_from_lifecycle_receipt(lifecycle)
     if not failure_evidence:
         return []
-    return append_failure_evidence_to_metadata(metadata, failure_evidence)
+    return cast("list[dict[str, Any]]", (append_failure_evidence_to_metadata(metadata, failure_evidence)))
 
 
 def project_tool_lifecycle_metadata(metadata: dict[str, Any]) -> None:

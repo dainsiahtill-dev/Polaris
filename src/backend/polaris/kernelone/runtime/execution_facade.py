@@ -20,7 +20,7 @@ import logging
 import time
 import weakref
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from polaris.kernelone.constants import EXECUTION_DEFAULT_PROCESS_TIMEOUT_SECONDS
 from polaris.kernelone.runtime.execution_runtime import (
@@ -115,7 +115,7 @@ class ProcessRunResult:
 
     @property
     def ok(self) -> bool:
-        return self.snapshot.ok
+        return cast("bool", (self.snapshot.ok))
 
 
 class ExecutionFacade:
@@ -311,7 +311,7 @@ class ExecutionFacade:
         lane: ExecutionLane | None = None,
         status: ExecutionStatus | None = None,
     ) -> list[ExecutionSnapshot]:
-        return self._runtime.list_snapshots(lane=lane, status=status)
+        return cast("list[Any]", (self._runtime.list_snapshots(lane=lane, status=status)))
 
     def resolve_handle(self, handle_or_id: ExecutionHandle | str) -> ExecutionHandle:
         if isinstance(handle_or_id, ExecutionHandle):
@@ -512,7 +512,7 @@ def run_sync(coro: Coroutine[Any, Any, _T]) -> _T:
             exception,
         )
         raise exception
-    return result
+    return cast("_T", (result))
 
 
 __all__ = [

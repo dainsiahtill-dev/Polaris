@@ -12,7 +12,7 @@ import time
 from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -84,7 +84,7 @@ def _fetch_text_default(url: str, timeout_seconds: float) -> str:
     )
     with urlopen(request, timeout=max(1.0, float(timeout_seconds))) as response:
         payload = response.read()
-    return payload.decode("utf-8", errors="replace")
+    return cast("str", (payload.decode("utf-8", errors="replace")))
 
 
 def _fetch_with_retry(

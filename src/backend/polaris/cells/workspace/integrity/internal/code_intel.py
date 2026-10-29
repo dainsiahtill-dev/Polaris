@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.infrastructure.code_intelligence import CodeIntelligenceService
 
@@ -107,7 +107,7 @@ class DirectorCodeIntelMixin:
                 "results": [],
             }
 
-        return self._code_intel.verify_changes(changed_files, mode="evidence_run")
+        return cast("dict[str, Any]", (self._code_intel.verify_changes(changed_files, mode="evidence_run")))
 
     def get_relevant_symbols(
         self,

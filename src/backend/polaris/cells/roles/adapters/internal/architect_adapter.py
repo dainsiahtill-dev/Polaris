@@ -10,7 +10,7 @@ import logging
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.llm.engine import ResponseNormalizer
@@ -585,7 +585,7 @@ class ArchitectAdapter(BaseRoleAdapter):
             return False
         if str(docs.get("plan_markdown") or "").strip() and str(docs.get("architecture_markdown") or "").strip():
             return False
-        return ResponseNormalizer.looks_truncated_json(body)
+        return cast("bool", (ResponseNormalizer.looks_truncated_json(body)))
 
     async def _repair_truncated_docs_if_needed(
         self,

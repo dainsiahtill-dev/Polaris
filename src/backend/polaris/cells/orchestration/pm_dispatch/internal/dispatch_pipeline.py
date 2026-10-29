@@ -18,7 +18,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
 if TYPE_CHECKING:
@@ -359,12 +359,17 @@ def _write_mainline_full_integration_qa_result(
     iteration: int,
     integration_qa_result: dict[str, Any],
 ) -> str:
-    return _inline_qa_consumer._write_mainline_full_integration_qa_result(
-        workspace_full=workspace_full,
-        cache_root_full=cache_root_full,
-        run_id=run_id,
-        iteration=iteration,
-        integration_qa_result=integration_qa_result,
+    return cast(
+        "str",
+        (
+            _inline_qa_consumer._write_mainline_full_integration_qa_result(
+                workspace_full=workspace_full,
+                cache_root_full=cache_root_full,
+                run_id=run_id,
+                iteration=iteration,
+                integration_qa_result=integration_qa_result,
+            )
+        ),
     )
 
 
@@ -1491,16 +1496,21 @@ def run_chief_engineer_preflight(
         if run_pre_dispatch_chief_engineer is not None
         else _get_chief_engineer_service()
     )
-    return _run_pre_dispatch(
-        workspace_full=workspace_full,
-        cache_root_full=cache_root_full,
-        run_dir=run_dir,
-        run_id=run_id,
-        pm_iteration=pm_iteration,
-        tasks=tasks,
-        run_events=run_events,
-        dialogue_full=dialogue_full,
-        analysis_runner=analysis_runner,
+    return cast(
+        "dict[str, Any] | None",
+        (
+            _run_pre_dispatch(
+                workspace_full=workspace_full,
+                cache_root_full=cache_root_full,
+                run_dir=run_dir,
+                run_id=run_id,
+                pm_iteration=pm_iteration,
+                tasks=tasks,
+                run_events=run_events,
+                dialogue_full=dialogue_full,
+                analysis_runner=analysis_runner,
+            )
+        ),
     )
 
 
@@ -1664,7 +1674,7 @@ def _submit_pm_workflow_sync_resolve() -> Callable[..., Any]:
     global submit_pm_workflow_sync
     if submit_pm_workflow_sync is None:
         _, _, submit_pm_workflow_sync = _get_workflow_runtime_ref()
-    return submit_pm_workflow_sync
+    return cast("Callable[..., Any]", (submit_pm_workflow_sync))
 
 
 # Re-export lazy-loaded functions as module-level names so external tests can

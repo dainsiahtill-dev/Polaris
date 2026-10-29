@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.context.context_os.summarizers.contracts import (
     SummarizationError,
@@ -338,7 +338,7 @@ class TieredSummarizer:
                         # 检查是否需要进一步压缩
                         estimated_tokens = self._estimate_tokens(result)
                         if estimated_tokens <= current_max_tokens or iteration >= self._max_iterations - 1:
-                            return result
+                            return cast("str", (result))
 
                         # 需要进一步压缩: 减小目标并继续迭代
                         current_content = result

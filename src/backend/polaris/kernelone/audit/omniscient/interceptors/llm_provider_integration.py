@@ -24,7 +24,7 @@ Usage:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.audit.omniscient.bus import (
     AuditEventEnvelope,
@@ -238,7 +238,7 @@ class LLMProviderAuditInterceptor(BaseAuditInterceptor):
 
         # Emit via bus
         try:
-            return bus.emit_sync(event.to_audit_dict(), priority=priority)
+            return cast("str", (bus.emit_sync(event.to_audit_dict(), priority=priority)))
         except (RuntimeError, ValueError) as exc:
             logger.debug("[llm_provider_audit] Failed to emit event: %s", exc)
             return ""

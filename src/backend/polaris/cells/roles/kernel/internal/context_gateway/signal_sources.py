@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.context.contracts import TurnEngineContextRequest as ContextRequest
 from polaris.kernelone.fs import format_workspace_tree
@@ -68,13 +68,18 @@ class SignalSourceProvider:
         避免 LLM 将平铺列表误读为层级结构导致路径幻觉。
         """
         try:
-            return format_workspace_tree(
-                self._workspace,
-                max_dirs=20,
-                max_files=10,
-                max_sub_items=5,
-                exclude_hidden=True,
-                exclude_dirs=(".github", ".vscode", "__pycache__", ".git"),
+            return cast(
+                "str | None",
+                (
+                    format_workspace_tree(
+                        self._workspace,
+                        max_dirs=20,
+                        max_files=10,
+                        max_sub_items=5,
+                        exclude_hidden=True,
+                        exclude_dirs=(".github", ".vscode", "__pycache__", ".git"),
+                    )
+                ),
             )
         except (RuntimeError, ValueError) as e:
             logger.warning(f"获取项目结构失败: {e}")
@@ -98,7 +103,7 @@ class SignalSourceProvider:
                 load_scout_anchors,
             )
 
-            return format_anchor_card(load_scout_anchors(str(self._workspace)))
+            return cast("str | None", (format_anchor_card(load_scout_anchors(str(self._workspace)))))
         except (RuntimeError, ValueError, OSError) as e:
             logger.debug(f"侦察锚点卡构建失败: {e}")
             return None

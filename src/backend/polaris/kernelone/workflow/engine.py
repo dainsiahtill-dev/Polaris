@@ -29,7 +29,7 @@ import asyncio
 import inspect
 import logging
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from polaris.kernelone.constants import DEFAULT_OPERATION_TIMEOUT_SECONDS
 from polaris.kernelone.trace import create_task_with_context
@@ -260,7 +260,7 @@ class WorkflowEngine:
 
     def _now(self) -> str:
         """Return current UTC timestamp as ISO string."""
-        return _now()
+        return cast("str", (_now()))
 
     async def start(self) -> None:
         if self._running:
@@ -1198,21 +1198,21 @@ class WorkflowEngine:
     def _resolve_status(self, state: WorkflowRuntimeState) -> str:
         statuses = [task.status for task in state.task_states.values()]
         if not statuses:
-            return WorkflowTaskStatus.COMPLETED.value
+            return cast("str", (WorkflowTaskStatus.COMPLETED.value))
         if any(item == WorkflowTaskStatus.RUNNING.value for item in statuses):
-            return WorkflowTaskStatus.RUNNING.value
+            return cast("str", (WorkflowTaskStatus.RUNNING.value))
         if any(item == WorkflowTaskStatus.FAILED.value for item in statuses):
-            return WorkflowTaskStatus.FAILED.value
+            return cast("str", (WorkflowTaskStatus.FAILED.value))
         if any(item == WorkflowTaskStatus.BLOCKED.value for item in statuses):
-            return WorkflowTaskStatus.FAILED.value
+            return cast("str", (WorkflowTaskStatus.FAILED.value))
         if any(item == WorkflowTaskStatus.CANCELLED.value for item in statuses):
-            return WorkflowTaskStatus.CANCELLED.value
+            return cast("str", (WorkflowTaskStatus.CANCELLED.value))
         skipped_count = sum(1 for item in statuses if item == WorkflowTaskStatus.SKIPPED.value)
         if skipped_count == len(statuses):
-            return WorkflowTaskStatus.COMPLETED.value
+            return cast("str", (WorkflowTaskStatus.COMPLETED.value))
         if all(item == WorkflowTaskStatus.COMPLETED.value for item in statuses):
-            return WorkflowTaskStatus.COMPLETED.value
-        return WorkflowTaskStatus.RUNNING.value
+            return cast("str", (WorkflowTaskStatus.COMPLETED.value))
+        return cast("str", (WorkflowTaskStatus.RUNNING.value))
 
     def _build_result(self, state: WorkflowRuntimeState, *, status: str, error: str = "") -> dict[str, Any]:
         tasks = {

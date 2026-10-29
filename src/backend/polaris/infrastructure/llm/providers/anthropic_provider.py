@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.llm.engine.normalizer import ResponseNormalizer
 from polaris.kernelone.llm.engine.provider_native_request import (
@@ -190,7 +190,7 @@ _ANTHROPIC_OPTION_KEYS = (
 
 
 def _timeout_seconds(config: dict[str, Any], default: int) -> float:
-    return normalize_timeout_seconds(config.get("timeout"), default=default)
+    return cast("float", (normalize_timeout_seconds(config.get("timeout"), default=default)))
 
 
 def _resolve_max_tokens(config: dict[str, Any], default: int) -> int:
@@ -316,7 +316,7 @@ def _sanitize_anthropic_payload_options(payload: dict[str, Any], config: dict[st
 
 
 def _convert_tools_to_anthropic(tools: Any) -> list[dict[str, Any]]:
-    return convert_tools_to_anthropic(tools)
+    return cast("list[dict[str, Any]]", (convert_tools_to_anthropic(tools)))
 
 
 def _convert_tool_choice_to_anthropic(
@@ -324,9 +324,14 @@ def _convert_tool_choice_to_anthropic(
     *,
     disable_parallel_tool_use: bool | None = None,
 ) -> dict[str, Any] | None:
-    return convert_tool_choice_to_anthropic(
-        tool_choice,
-        disable_parallel_tool_use=disable_parallel_tool_use,
+    return cast(
+        "dict[str, Any] | None",
+        (
+            convert_tool_choice_to_anthropic(
+                tool_choice,
+                disable_parallel_tool_use=disable_parallel_tool_use,
+            )
+        ),
     )
 
 
@@ -395,7 +400,10 @@ def _provider_native_messages(
 
     chat_messages = config.get("chat_messages")
     if isinstance(chat_messages, list) and chat_messages:
-        return build_anthropic_native_messages(chat_messages, fallback_prompt=prompt)
+        return cast(
+            "tuple[list[dict[str, Any]], str | None]",
+            (build_anthropic_native_messages(chat_messages, fallback_prompt=prompt)),
+        )
     adapter_messages = _CONTRACT.extract_messages({"config": config})
     if adapter_messages:
         return adapter_messages, None
@@ -690,7 +698,7 @@ def invoke(prompt: str, model: str, config: dict[str, Any], api_key: str | None)
 
 
 def _extract_output(data: dict[str, Any]) -> str:
-    return LLMResponseParser.extract_text(data)
+    return cast("str", (LLMResponseParser.extract_text(data)))
 
 
 def _usage_from_response(prompt: str, output: str, data: dict[str, Any]) -> Usage:

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.benchmark.unified_models import (
     ObservedBenchmarkRun,
@@ -87,7 +87,7 @@ class StrategyBenchmarkAdapter:
             with open(receipt_path, encoding="utf-8") as f:
                 receipt = json.load(f)
             self._receipt_cache[cache_key] = receipt
-            return receipt
+            return cast("dict[str, Any] | None", (receipt))
         except (RuntimeError, ValueError):
             return None
 

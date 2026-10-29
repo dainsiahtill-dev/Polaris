@@ -25,7 +25,7 @@ import json
 import logging
 import re
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.llm.contracts.tool import ToolCall
 
@@ -385,7 +385,7 @@ class JSONToolParser:
                 # Find the original key
                 for orig_key in data:
                     if orig_key.lower() == key:
-                        return data[orig_key]
+                        return cast("dict[str, Any] | None", (data[orig_key]))
                 return value
             # Try to parse string as JSON
             if isinstance(value, str):

@@ -15,7 +15,7 @@ import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from polaris.delivery.cli.pm.utils import read_json_file
 from polaris.kernelone.utils import utc_now_str
@@ -80,7 +80,7 @@ def _write_atomic_text(path: str, content: str) -> None:
 
 def _now_iso() -> str:
     """Get current ISO format timestamp."""
-    return utc_now_str()
+    return cast("str", (utc_now_str()))
 
 
 def _generate_id(prefix: str = "ID") -> str:
@@ -435,7 +435,7 @@ class PMStateManager:
             new_value = current + increment
             setattr(state.stats, stat_name, new_value)
             self._save_state(state)
-            return new_value
+            return cast("int", (new_value))
         return 0
 
     def is_initialized(self) -> bool:
@@ -497,7 +497,7 @@ class PMStateManager:
             Data dictionary or None
         """
         path = self._get_path(subsystem, filename)
-        return read_json_file(path)
+        return cast("dict[str, Any] | None", (read_json_file(path)))
 
     def write_subsystem_data(self, subsystem: str, filename: str, data: dict[str, Any]) -> None:
         """Write subsystem data file atomically.

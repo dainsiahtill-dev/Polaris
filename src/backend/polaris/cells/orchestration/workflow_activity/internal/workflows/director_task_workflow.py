@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.orchestration.workflow_activity.internal.activities.base import (
     ActivityExecutionResult,
@@ -188,11 +188,16 @@ async def _register_traceability_commit_activity(
     workspace = str(payload.get("workspace") or "").strip()
 
     if not task_id or not run_id or not workspace:
-        return ActivityExecutionResult(
-            success=False,
-            summary="Missing required traceability fields",
-            errors=["invalid_traceability_payload"],
-        ).to_dict()
+        return cast(
+            "dict[str, Any]",
+            (
+                ActivityExecutionResult(
+                    success=False,
+                    summary="Missing required traceability fields",
+                    errors=["invalid_traceability_payload"],
+                ).to_dict()
+            ),
+        )
 
     try:
         trace_service = create_traceability_service(workspace)
@@ -212,17 +217,27 @@ async def _register_traceability_commit_activity(
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("Traceability commit registration failed for %s: %s", task_id, exc)
-        return ActivityExecutionResult(
-            success=False,
-            summary=str(exc),
-            errors=["traceability_commit_failed"],
-        ).to_dict()
+        return cast(
+            "dict[str, Any]",
+            (
+                ActivityExecutionResult(
+                    success=False,
+                    summary=str(exc),
+                    errors=["traceability_commit_failed"],
+                ).to_dict()
+            ),
+        )
 
-    return ActivityExecutionResult(
-        success=True,
-        summary="Traceability commit node registered",
-        payload={"task_id": task_id, "run_id": run_id},
-    ).to_dict()
+    return cast(
+        "dict[str, Any]",
+        (
+            ActivityExecutionResult(
+                success=True,
+                summary="Traceability commit node registered",
+                payload={"task_id": task_id, "run_id": run_id},
+            ).to_dict()
+        ),
+    )
 
 
 async def _broadcast_task_progress(

@@ -11,7 +11,7 @@ import re as re
 import subprocess as subprocess
 import sys as sys
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public import (
     AppendToolCallLifecycleEventCommandV1,
@@ -423,7 +423,7 @@ def _seal_claimed_materialization_without_tool_lifecycle(
             resolved_run_id,
             exc_info=True,
         )
-    return lifecycle
+    return cast("dict[str, Any] | None", (lifecycle))
 
 
 def _materialization_failure_evidence_row(
@@ -466,21 +466,26 @@ def _materialization_failure_evidence_row(
                 if token
             )
         )
-    return FailureEvidenceV1(
-        failure_class=failure_class,
-        responsible_layer=responsible_layer,
-        reason=detail,
-        evidence_refs=tuple(evidence_refs),
-        metadata={
-            "error": error,
-            "error_code": error_code,
-            "failure_stage": failure_stage,
-            "root_cause_hint": root_cause_hint,
-            "materialization_mode": materialization_mode,
-            "run_id": run_id,
-            "task_id": target_task_id,
-        },
-    ).to_dict()
+    return cast(
+        "dict[str, Any]",
+        (
+            FailureEvidenceV1(
+                failure_class=failure_class,
+                responsible_layer=responsible_layer,
+                reason=detail,
+                evidence_refs=tuple(evidence_refs),
+                metadata={
+                    "error": error,
+                    "error_code": error_code,
+                    "failure_stage": failure_stage,
+                    "root_cause_hint": root_cause_hint,
+                    "materialization_mode": materialization_mode,
+                    "run_id": run_id,
+                    "task_id": target_task_id,
+                },
+            ).to_dict()
+        ),
+    )
 
 
 def _phase_no_materialized_changes(

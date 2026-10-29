@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastapi import Request, status
 from polaris.delivery.http.routers._shared import StructuredHTTPException
@@ -98,7 +98,7 @@ def _resolve_blueprint_path(workspace: str, cache_root: str, value: str) -> Path
         return None
 
     if _d._path_is_within(resolved, workspace) or _d._path_is_within(resolved, cache_root):
-        return resolved
+        return cast("Path | None", (resolved))
     return None
 
 

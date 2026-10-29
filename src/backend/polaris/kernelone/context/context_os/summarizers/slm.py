@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.context.context_os.summarizers.contracts import (
     SLMConfigProtocol,
@@ -377,7 +377,7 @@ class SLMSummarizer:
         config = self.config
         if config is None:
             return False
-        return config.slm_enabled
+        return cast("bool", (config.slm_enabled))
 
     def get_compression_stats(self) -> dict[str, Any]:
         """Get compression statistics.

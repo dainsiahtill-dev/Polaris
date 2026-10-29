@@ -5,7 +5,7 @@ import concurrent.futures
 import json
 import logging
 import os
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.events.io_events import emit_event
 from polaris.kernelone.fs.text_ops import write_text_atomic
@@ -375,7 +375,7 @@ Summary:"""
                 response = await executor.invoke(request)
                 if not response.ok:
                     raise RuntimeError(f"LLM summarization failed: {response.error}")
-                return response.output.strip()
+                return cast("str", (response.output.strip()))
 
             # Use ThreadPoolExecutor to avoid nested event loop issues
             # This works whether called from sync or async context

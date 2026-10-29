@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any
+from typing import Any, cast
 
 __all__ = ["AuthContext"]
 
@@ -55,7 +55,7 @@ class AuthContext:
             if not session:
                 return False
             expires_at = session.get("expires_at", 0)
-            return expires_at > time.time()
+            return cast("bool", (expires_at > time.time()))
 
     def create_session(
         self,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.quality.artifact_quality._issues import (
     _file_artifact_quality_issue,
@@ -37,7 +37,7 @@ def _python_specialist_text(
             raise ValueError("specialist reader workspace binding mismatch")
         read = reader.read(root_full / relative)
         if read.status == "readable":
-            return read.text
+            return cast("str | None", (read.text))
         if not (optional and read.status == "missing"):
             incomplete_reasons.append(f"python_specialist_source_unknown:{relative}:{read.status}:{read.detail}")
         return None

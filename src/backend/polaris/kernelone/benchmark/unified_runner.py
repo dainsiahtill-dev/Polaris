@@ -37,7 +37,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Protocol, TypeAlias
+from typing import Any, Protocol, TypeAlias, cast
 
 from polaris.kernelone.events.constants import (
     EVENT_TYPE_COMPLETE,
@@ -661,7 +661,7 @@ class UnifiedBenchmarkRunner:
                 workspace,
                 "no strategy observation found for case",
             )
-        return result
+        return cast("ObservedBenchmarkRun", (result))
 
     async def _collect_context_observation(
         self,
@@ -680,7 +680,7 @@ class UnifiedBenchmarkRunner:
             ObservedBenchmarkRun with context selection results.
         """
         adapter = ContextBenchmarkAdapter()
-        return adapter.evaluate(case, workspace)
+        return cast("ObservedBenchmarkRun", (adapter.evaluate(case, workspace)))
 
     def _create_error_observation(
         self,

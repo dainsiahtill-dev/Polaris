@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +91,7 @@ class AIExecutorAdapter:
             )
 
             response = await self._executor.invoke(request)
-            return response.content
+            return cast("str", (response.content))
 
         except (RuntimeError, ValueError) as e:
             logger.warning("LLM invocation failed: %s (%r)", type(e).__name__, e)

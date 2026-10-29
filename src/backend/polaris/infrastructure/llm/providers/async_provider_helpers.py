@@ -455,7 +455,7 @@ def _parse_json(text: str) -> dict[str, Any]:
     """Parse JSON text, raising ValueError on failure."""
     import json
 
-    return json.loads(text)
+    return cast("dict[str, Any]", (json.loads(text)))
 
 
 def _build_backoff_seconds(
@@ -469,7 +469,7 @@ def _build_backoff_seconds(
 
     delay = min(base_delay_seconds * (2 ** (attempt - 1)), max_delay_seconds)
     jitter = random.uniform(0, delay * 0.1)
-    return delay + jitter
+    return cast("float", (delay + jitter))
 
 
 def _shrink_max_tokens_for_context_overflow(payload: dict[str, Any], error_body: str) -> bool:

@@ -33,7 +33,7 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from polaris.kernelone.llm.embedding import get_default_embedding_port
 
@@ -223,7 +223,7 @@ class SemanticCacheInterceptor:
                     query_hash[:8],
                     entry.hit_count,
                 )
-                return entry.response
+                return cast("T", (entry.response))
 
         # Try similarity search
         embedding = self._compute_embedding(query)
@@ -242,7 +242,7 @@ class SemanticCacheInterceptor:
                     similar_entry.hit_count * 0.01 + 0.9,  # Approximate similarity
                     query_hash[:8],
                 )
-                return similar_entry.response
+                return cast("T", (similar_entry.response))
 
         # Cache miss - compute
         self._stats["misses"] += 1
@@ -262,7 +262,7 @@ class SemanticCacheInterceptor:
             query_hash[:8],
         )
 
-        return response
+        return cast("T", (response))
 
     async def _find_similar_entry(
         self,

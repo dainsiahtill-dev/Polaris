@@ -262,16 +262,21 @@ async def execute_role_chat_nonstreaming(
             raise ValueError("unsupported engineering workflow or execution role")
         if values.get("run_id") or values.get("session_id") or _mapping(values.get("context")).get("run_id"):
             raise ValueError("existing runs require the engineering run resource; engines cannot be converted")
-        return await start_engineering_run(
-            service,
-            settings,
-            instruction=_execution_instruction(message, values),
-            workspace=workspace,
-            workflow=cast(Literal["direct", "collaborative"], workflow),
-            role=cast(Literal["pm", "chief_engineer", "director", "qa"], role),
-            permission_profile_id=profile_id,
-            required_checks=tuple(checks),
-            request_key=request_key,
+        return cast(
+            "dict[str, Any]",
+            (
+                await start_engineering_run(
+                    service,
+                    settings,
+                    instruction=_execution_instruction(message, values),
+                    workspace=workspace,
+                    workflow=cast(Literal["direct", "collaborative"], workflow),
+                    role=cast(Literal["pm", "chief_engineer", "director", "qa"], role),
+                    permission_profile_id=profile_id,
+                    required_checks=tuple(checks),
+                    request_key=request_key,
+                )
+            ),
         )
     result = await service.chat_role(
         role,

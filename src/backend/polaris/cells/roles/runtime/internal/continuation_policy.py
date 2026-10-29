@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     pass
@@ -182,32 +182,32 @@ class SessionPatch(dict[str, Any]):
         return self.get("task_progress")
 
     def get_suspected_files(self) -> list[str]:
-        return self.get("suspected_files", [])
+        return cast("list[str]", (self.get("suspected_files", [])))
 
     def get_patched_files(self) -> list[str]:
-        return self.get("patched_files", [])
+        return cast("list[str]", (self.get("patched_files", [])))
 
     def get_verified_results(self) -> list[str]:
-        return self.get("verified_results", [])
+        return cast("list[str]", (self.get("verified_results", [])))
 
     def get_pending_files(self) -> list[str]:
-        return self.get("pending_files", [])
+        return cast("list[str]", (self.get("pending_files", [])))
 
     def get_remove_keys(self) -> list[str]:
-        return self.get("remove_keys", [])
+        return cast("list[str]", (self.get("remove_keys", [])))
 
     def get_error_summary(self) -> str:
-        return self.get("error_summary", "")
+        return cast("str", (self.get("error_summary", "")))
 
     def get_action_taken(self) -> str:
-        return self.get("action_taken", "")
+        return cast("str", (self.get("action_taken", "")))
 
     def get_key_file_snapshots(self) -> dict[str, str]:
-        return self.get("key_file_snapshots", {})
+        return cast("dict[str, str]", (self.get("key_file_snapshots", {})))
 
     def get_confidence(self) -> str:
         """返回置信度：confirmed / likely / hypothesis（默认 hypothesis）。"""
-        return self.get("confidence", "hypothesis")
+        return cast("str", (self.get("confidence", "hypothesis")))
 
     def get_superseded(self) -> bool:
         """返回 superseded 标记（默认 False）。被标记的发现物不进入续写 prompt。"""
@@ -907,4 +907,4 @@ def strip_session_patch_block(text: str) -> str:
         return text
 
     pattern = _get_session_patch_block_re()
-    return pattern.sub("", text).strip()
+    return cast("str", (pattern.sub("", text).strip()))

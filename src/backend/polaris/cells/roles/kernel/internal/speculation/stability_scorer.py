@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from typing import cast
 
 from polaris.cells.roles.kernel.internal.speculation.models import (
     CandidateToolCall,
@@ -191,7 +192,7 @@ class StabilityScorer:
         critical_mutations = [m for m in candidate.mutation_history if m.field_path in _CRITICAL_FIELDS]
         if not critical_mutations:
             return None
-        return max(m.ts_monotonic for m in critical_mutations) * 1000.0
+        return cast("float | None", (max(m.ts_monotonic for m in critical_mutations) * 1000.0))
 
     def _has_recent_critical_overwrite(self, candidate: CandidateToolCall) -> bool:
         """Return True if a critical field was overwritten in the last window."""

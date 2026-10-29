@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.audit.alerting import (
     Alert,
@@ -269,7 +269,7 @@ class AuditAlertInterceptor(BaseAuditInterceptor):
         Returns:
             List of active alerts.
         """
-        return self._alerting_engine.get_active_alerts(severity)
+        return cast("list[Any]", (self._alerting_engine.get_active_alerts(severity)))
 
     def get_fired_alerts(self) -> list[Alert]:
         """Get all alerts fired by this interceptor this session.

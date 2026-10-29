@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from .base_sdk import BaseLLMSDK, SDKConfig, SDKMessage, SDKResponse, SDKUnavailableError
 
@@ -36,12 +36,12 @@ def _coerce_usage(usage: Any) -> dict[str, Any] | None:
         return usage
     if hasattr(usage, "model_dump"):
         try:
-            return usage.model_dump()
+            return cast("dict[str, Any] | None", (usage.model_dump()))
         except (RuntimeError, ValueError):
             return None
     if hasattr(usage, "to_dict"):
         try:
-            return usage.to_dict()
+            return cast("dict[str, Any] | None", (usage.to_dict()))
         except (RuntimeError, ValueError):
             return None
     if hasattr(usage, "__dict__"):

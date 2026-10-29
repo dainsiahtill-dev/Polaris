@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.roles.runtime.public.aggregate_chat._helpers import (
     _aggregate_objective_from_messages,
@@ -69,15 +69,15 @@ def _select_aggregate_execution_role(
     }
     for role in preferred_by_lobe.get(selected_lobe.lobe_id, selected_lobe.role_ids):
         if role in current_roles and role in selected_lobe.role_ids:
-            return role
+            return cast("str", (role))
     for role in selected_lobe.role_ids:
         if role in current_roles:
-            return role
+            return cast("str", (role))
     for role in ("director", "chief_engineer", "architect", "pm", "qa"):
         if role in current_roles:
             return role
     if plan.current_role_ids:
-        return plan.current_role_ids[0]
+        return cast("str", (plan.current_role_ids[0]))
     raise ValueError("aggregate single_turn requires at least one concrete role")
 
 

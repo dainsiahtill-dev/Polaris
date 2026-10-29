@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.akashic.knowledge_pipeline.protocols import (
     IdempotentVectorStorePort,
@@ -96,7 +96,7 @@ class LanceDBVectorAdapter:
                 language=metadata.get("language", ""),
             )
             logger.debug("LanceDB adapter added chunk: %s", record_id[:12])
-            return record_id
+            return cast("str", (record_id))
         except (RuntimeError, ValueError) as exc:
             # Check if it's an idempotency duplicate (LanceDB may raise on duplicate id)
             logger.debug("LanceDB add failed (may be duplicate): %s", exc)
@@ -109,7 +109,7 @@ class LanceDBVectorAdapter:
         Returns True if the chunk existed and was deleted.
         """
         try:
-            return await self._lancedb.delete(content_hash=memory_id)
+            return cast("bool", (await self._lancedb.delete(content_hash=memory_id)))
         except (RuntimeError, ValueError) as exc:
             logger.warning("LanceDB delete failed for %s: %s", memory_id[:12], exc)
             return False

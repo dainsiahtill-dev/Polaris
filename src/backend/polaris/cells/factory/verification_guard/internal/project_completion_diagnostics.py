@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from typing import cast
 
 from polaris.cells.factory.verification_guard.public.contracts import (
     _PROJECT_COMPLETION_DIAGNOSTICS_AUTHORITY_TOKEN,
@@ -47,11 +48,11 @@ def _required(item: object) -> bool:
 
 def _affected_target(item: object) -> str:
     if isinstance(item, ProjectArtifactObligationObservationV1):
-        return item.path
+        return cast("str", (item.path))
     if isinstance(item, ProjectEntrypointObligationObservationV1):
-        return item.runtime_path or item.source_path or item.command or item.obligation_id
+        return cast("str", (item.runtime_path or item.source_path or item.command or item.obligation_id))
     if isinstance(item, ProjectVerificationObligationObservationV1):
-        return item.command or item.modality
+        return cast("str", (item.command or item.modality))
     raise TypeError("unsupported project completion obligation")
 
 

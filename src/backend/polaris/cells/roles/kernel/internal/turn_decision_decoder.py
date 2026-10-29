@@ -14,7 +14,7 @@ import uuid
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from polaris.cells.roles.kernel.internal.tool_call_envelope import (
     native_tool_call_envelopes_from_response,
@@ -310,7 +310,7 @@ class TurnDecisionDecoder:
 
     @staticmethod
     def _native_tool_calls(response: RawLLMResponse) -> list[dict[str, Any]]:
-        return native_tool_calls_from_response(response)
+        return cast("list[dict[str, Any]]", (native_tool_calls_from_response(response)))
 
     @staticmethod
     def _native_tool_call_envelopes(response: RawLLMResponse) -> list[dict[str, Any]]:
@@ -318,7 +318,7 @@ class TurnDecisionDecoder:
         if not isinstance(usage, Mapping) and isinstance(response, Mapping):
             usage = response.get("usage")
         usage_map = usage if isinstance(usage, Mapping) else None
-        return native_tool_call_envelopes_from_response(response, usage_map)
+        return cast("list[dict[str, Any]]", (native_tool_call_envelopes_from_response(response, usage_map)))
 
     @staticmethod
     def _native_tool_name_hint(native: dict[str, Any]) -> str:

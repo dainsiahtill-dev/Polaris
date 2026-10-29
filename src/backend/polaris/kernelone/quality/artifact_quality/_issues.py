@@ -6,7 +6,7 @@ import re
 import sys
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from polaris.kernelone.quality.artifact_quality._constants import (
     _ARTIFACT_QUALITY_COMPILER_PATH_RE,
@@ -75,7 +75,7 @@ def _legacy_artifact_quality_issue_code_from_message(message: str) -> str:
     for classifier in _LEGACY_ARTIFACT_QUALITY_ISSUE_CODE_CLASSIFIERS:
         issue_code = classifier(message, normalized)
         if issue_code:
-            return issue_code
+            return cast("str", (issue_code))
     slug = re.sub(r"[^a-z0-9]+", "_", normalized).strip("_")
     return slug[:80] or "artifact_quality_error"
 

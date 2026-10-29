@@ -10,7 +10,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
@@ -535,7 +535,7 @@ def trim_str_list(values: Any, limit: int = 20) -> list[str]:
     else:
         return []
 
-    return values[:limit]
+    return cast("list[str]", (values[:limit]))
 
 
 def normalize_file_plan_entry(file_plan: Any) -> dict[str, Any] | None:

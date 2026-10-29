@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import asdict
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Request
 from polaris.cells.control_plane.run_ledger.public import merge_failure_evidence_payload
@@ -81,7 +81,7 @@ def _normalize_failure_signals(payload: Mapping[str, Any]) -> tuple[str, ...]:
 
 def _normalize_failure_evidence(payload: Mapping[str, Any]) -> dict[str, Any]:
     raw_evidence = payload.get("failure_evidence")
-    return merge_failure_evidence_payload({}, raw_evidence)
+    return cast("dict[str, Any]", (merge_failure_evidence_payload({}, raw_evidence)))
 
 
 @router.post("/v1/chat/completions", dependencies=[Depends(require_auth)])

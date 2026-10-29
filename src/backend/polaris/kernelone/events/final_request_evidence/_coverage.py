@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.events.final_request_evidence._constants import (
     _COVERAGE_FLAG_TO_REF,
@@ -27,13 +27,13 @@ def final_request_evidence_ref_for_requirement(value: Any) -> str:
     """Return the canonical evidence ref for a requirement or slot alias."""
 
     token = _text(value)
-    return _EVIDENCE_REQUIREMENT_TO_REF.get(token.lower(), token)
+    return cast("str", (_EVIDENCE_REQUIREMENT_TO_REF.get(token.lower(), token)))
 
 
 def final_request_evidence_ref_for_coverage_flag(value: Any) -> str:
     """Return the canonical evidence ref represented by a coverage flag."""
 
-    return _COVERAGE_FLAG_TO_REF.get(_text(value), "")
+    return cast("str", (_COVERAGE_FLAG_TO_REF.get(_text(value), "")))
 
 
 def final_request_evidence_refs_for_coverage_flags(
@@ -104,7 +104,7 @@ def final_request_included_evidence_refs(
     refs.extend(final_request_evidence_refs_for_metadata_summary(request_metadata_summary))
     if list(receipt_refs):
         refs.append("receipt_store_refs")
-    return _unique_texts(refs)
+    return cast("list[str]", (_unique_texts(refs)))
 
 
 def build_final_request_coverage_sources(
@@ -162,9 +162,14 @@ def _coverage_source_hash(
     request_metadata_summary: Mapping[str, Any],
 ) -> str:
     summary_key, workflow_key = _COVERAGE_SOURCE_HASH_KEYS.get(ref_type, ("", ""))
-    return _first_text(
-        request_metadata_summary.get(summary_key) if summary_key else "",
-        workflow_chain.get(workflow_key) if workflow_key else "",
+    return cast(
+        "str",
+        (
+            _first_text(
+                request_metadata_summary.get(summary_key) if summary_key else "",
+                workflow_chain.get(workflow_key) if workflow_key else "",
+            )
+        ),
     )
 
 

@@ -153,7 +153,7 @@ class _DependencySessionMixin(_ServiceMixinBase):
             "settlement_identity_lease_expires_at"
         ):
             return False
-        return self._fulfilled_terminal_intent_pre_barrier_locked(terminal_session).allowed
+        return cast("bool", (self._fulfilled_terminal_intent_pre_barrier_locked(terminal_session).allowed))
 
     def list_ready(self) -> list[Task]:
         raise RuntimeError("TaskRuntimeService.list_ready is retired; use list_ready_task_rows()")

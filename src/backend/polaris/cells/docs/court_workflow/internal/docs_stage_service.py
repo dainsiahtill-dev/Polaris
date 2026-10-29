@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.storage.io_paths import resolve_artifact_path
 
@@ -204,7 +204,7 @@ def _read_json_file(path: str) -> dict[str, Any] | None:
         return None
     try:
         with open(path, encoding="utf-8") as f:
-            return json.load(f)
+            return cast("dict[str, Any] | None", (json.load(f)))
     except json.JSONDecodeError as exc:
         logger.error(
             "Failed to parse JSON from %s: %s (line %s, col %s)",

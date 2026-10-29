@@ -9,7 +9,7 @@ import os
 import re
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from polaris.kernelone.events.sourcing.models import new_event_id, utc_now_iso
 from polaris.kernelone.fs import (
@@ -527,7 +527,7 @@ class SegmentedJsonlEventStore:
 
     def _read_path(self, logical_path: str) -> Path:
         if not self._read_only:
-            return self._kernel_fs.resolve_path(logical_path)
+            return cast("Path", (self._kernel_fs.resolve_path(logical_path)))
         path = Path(resolve_runtime_path(self.storage_identity.workspace_abs, logical_path, read_only=True))
         if path.is_symlink() or any(parent.is_symlink() for parent in path.parents):
             raise SegmentedEventStoreError("read path contains symlink", code="read_path_symlink")
@@ -535,12 +535,17 @@ class SegmentedJsonlEventStore:
 
     def _read_bytes(self, logical_path: str) -> bytes:
         if not self._read_only:
-            return self._kernel_fs.read_bytes(logical_path)
+            return cast("bytes", (self._kernel_fs.read_bytes(logical_path)))
         path = self._read_path(logical_path)
         relative = str(path.relative_to(self.storage_identity.runtime_root))
-        return read_guarded_regular_file_snapshot(
-            self.storage_identity.runtime_root, relative, 64 * 1024 * 1024
-        ).content
+        return cast(
+            "bytes",
+            (
+                read_guarded_regular_file_snapshot(
+                    self.storage_identity.runtime_root, relative, 64 * 1024 * 1024
+                ).content
+            ),
+        )
 
     def _validate_tail_cursor_locked(self, cursor: _Cursor) -> _Cursor:
         if cursor.total_count == 0:

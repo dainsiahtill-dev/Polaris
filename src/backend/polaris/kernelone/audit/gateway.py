@@ -6,7 +6,7 @@ import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, cast
 
 from polaris.kernelone._runtime_config import get_runtime_base, get_workspace
 from polaris.kernelone.audit import (
@@ -39,7 +39,7 @@ def _to_kernel_role(value: AuditRole | str) -> str:
         Pass plain ``str`` role values directly instead of using AuditRole enum.
     """
     if isinstance(value, KernelAuditRole):
-        return value.value
+        return cast("str", (value.value))
     return str(getattr(value, "value", value) or "").strip()
 
 
@@ -196,7 +196,7 @@ class AuditGateway:
         # Priority: KERNELONE_WORKSPACE env var (via _runtime_config), then KERNELONE_WORKSPACE fallback
         ws = get_workspace()
         workspace = ws if ws else os.getcwd()
-        return self._runtime.get_corruption_log(workspace=workspace, limit=limit)
+        return cast("list[dict[str, Any]]", (self._runtime.get_corruption_log(workspace=workspace, limit=limit)))
 
     def verify_chain(self) -> dict[str, Any]:
         result = self._runtime.verify_chain()

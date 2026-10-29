@@ -7,7 +7,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import asdict
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.audit.evidence.public.service import create_evidence_bundle_service
 from polaris.cells.orchestration.pm_dispatch.public.service import OrchestrationCommandService
@@ -225,14 +225,14 @@ class ResidentService:
             self.runtime_state.mode = self.identity.operating_mode
             self.runtime_state.updated_at = now
             self._persist_core_state()
-            return self.identity.to_dict()
+            return cast("dict[str, Any]", (self.identity.to_dict()))
 
     def record_decision(self, payload: DecisionRecord | Mapping[str, Any]) -> DecisionRecord:
         with self._lock:
             return self._record_locked_decision(payload)
 
     def list_decisions(self, *, limit: int = 100, actor: str = "", verdict: str = "") -> list[DecisionRecord]:
-        return self.recorder.list_recent(limit=limit, actor=actor, verdict=verdict)
+        return cast("list[Any]", (self.recorder.list_recent(limit=limit, actor=actor, verdict=verdict)))
 
     def get_decision_evidence_bundle(self, decision_id: str) -> dict[str, Any] | None:
         """获取决策关联的证据包详情。
@@ -261,7 +261,7 @@ class ResidentService:
         }
 
     def list_goals(self, *, status: str = "") -> list[GoalProposal]:
-        return self.goal_governor.list_goals(status=status)
+        return cast("list[Any]", (self.goal_governor.list_goals(status=status)))
 
     def create_goal_proposal(self, payload: Mapping[str, Any]) -> GoalProposal:
         with self._lock:
@@ -313,7 +313,7 @@ class ResidentService:
                 expected_revision=expected_revision,
             )
             self._refresh_agenda_view()
-            return contract
+            return cast("dict[str, Any] | None", (contract))
 
     def archive_goal(self, goal_id: str, *, expected_revision: int) -> GoalProposal | None:
         with self._lock:
@@ -422,7 +422,7 @@ class ResidentService:
             }
 
     def list_skills(self) -> list[SkillArtifact]:
-        return self.storage.load_skills()
+        return cast("list[Any]", (self.storage.load_skills()))
 
     def list_experiments(self) -> list[dict[str, Any]]:
         return [item.to_dict() for item in self.storage.load_experiments()]
@@ -432,11 +432,11 @@ class ResidentService:
 
     def run_meta_cognition(self, decisions: Iterable[DecisionRecord] | None = None) -> dict[str, Any]:
         records = list(decisions) if decisions is not None else self.storage.load_decisions(limit=1000)
-        return self.meta_cognition.refresh(records)
+        return cast("dict[str, Any]", (self.meta_cognition.refresh(records)))
 
     def run_skill_foundry(self, decisions: Iterable[DecisionRecord] | None = None) -> list[SkillArtifact]:
         records = list(decisions) if decisions is not None else self.storage.load_decisions(limit=1000)
-        return self.skill_foundry.extract(records)
+        return cast("list[Any]", (self.skill_foundry.extract(records)))
 
     def rebuild_capabilities(
         self,
@@ -446,7 +446,7 @@ class ResidentService:
         records = list(decisions) if decisions is not None else self.storage.load_decisions(limit=1000)
         skill_list = list(skills) if skills is not None else self.storage.load_skills()
         graph = self.capability_graph.rebuild(records, skill_list)
-        return graph.to_dict()
+        return cast("dict[str, Any]", (graph.to_dict()))
 
     def run_counterfactual_lab(self, decisions: Iterable[DecisionRecord] | None = None) -> list[dict[str, Any]]:
         records = list(decisions) if decisions is not None else self.storage.load_decisions(limit=1000)
@@ -858,7 +858,7 @@ class ResidentService:
             started_at=started_at,
         )
 
-        return view.to_dict()
+        return cast("dict[str, Any] | None", (view.to_dict()))
 
     def list_goal_executions(self) -> list[dict[str, Any]]:
         """列出所有目标的执行投影（仅 approved 和 materialized 状态）。"""
@@ -978,4 +978,4 @@ def reset_resident_services() -> None:
 
 def record_resident_decision(workspace: str, payload: DecisionRecord | Mapping[str, Any]) -> dict[str, Any]:
     service = get_resident_service(workspace)
-    return service.record_decision(payload).to_dict()
+    return cast("dict[str, Any]", (service.record_decision(payload).to_dict()))

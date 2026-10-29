@@ -16,7 +16,7 @@ Usage:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from polaris.kernelone.context.context_os.helpers import _estimate_tokens
 from polaris.kernelone.context.context_os.models_v2 import (
@@ -165,5 +165,5 @@ class PhaseAwareBudgetPlannerStage:
     def phase_turn_count(self) -> int:
         """Get number of turns in current phase."""
         if self._phase_detector is not None:
-            return self._phase_detector.phase_turn_count
+            return cast("int", (self._phase_detector.phase_turn_count))
         return 0

@@ -13,6 +13,7 @@ import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import asdict, replace
+from typing import cast
 
 from polaris.cells.orchestration.workflow_orchestration.public.project_completion import (
     ProjectCompletionActionCommandV1,
@@ -97,7 +98,7 @@ class TaskRuntimeProjectCompletionActionOwnerV1(ProjectCompletionActionPortV1):
             return None
         if durable.code != "same_task_local_rework_authorization_found" or not durable.ok:
             raise RuntimeError(f"project_completion_task_runtime_{durable.code}")
-        return durable.authorization
+        return cast("Mapping[str, object] | None", (durable.authorization))
 
     @staticmethod
     def _receipt(

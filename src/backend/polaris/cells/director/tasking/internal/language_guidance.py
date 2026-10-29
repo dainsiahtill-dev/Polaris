@@ -22,7 +22,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.role.language_identity import (
     get_language_professional_identity,
@@ -907,7 +907,7 @@ def _normalize_language(value: Any) -> str:
     token = normalize_language_token(value)
     if not token:
         return ""
-    return _LANG_ALIASES.get(token, token)
+    return cast("str", (_LANG_ALIASES.get(token, token)))
 
 
 def _normalize_framework(value: Any) -> str:
@@ -1245,7 +1245,7 @@ def get_role_identity(language: str) -> str:
 
     identity = get_language_professional_identity(language)
     if identity is not None:
-        return identity.identity
+        return cast("str", (identity.identity))
     return _ROLE_IDENTITIES["generic"]
 
 

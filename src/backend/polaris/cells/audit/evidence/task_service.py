@@ -6,7 +6,7 @@ domain `TaskEvidence` records.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from polaris.domain.entities import TaskEvidence
 from polaris.domain.language import detect_language as _detect_language
@@ -16,7 +16,7 @@ _MAX_EVIDENCE_CONTENT_CHARS = 1000
 
 def detect_language(file_path: str) -> str:
     """Detect a file language from its path."""
-    return _detect_language(str(file_path or ""))
+    return cast("str", (_detect_language(str(file_path or ""))))
 
 
 def build_file_evidence(files_created: list[dict[str, Any]]) -> list[TaskEvidence]:

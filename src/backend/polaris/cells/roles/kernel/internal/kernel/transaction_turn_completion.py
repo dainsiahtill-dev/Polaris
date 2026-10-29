@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.control_plane.run_ledger.public import (
     build_missing_dispatch_lifecycle_receipt,
@@ -272,7 +272,7 @@ def _extract_structured_output(
         candidate = get_output_parser(kernel).extract_json(visible_content)
         if candidate is not None:
             validated = response_schema(**candidate)
-            return validated.model_dump()
+            return cast("dict[str, Any] | None", (validated.model_dump()))
     except (RuntimeError, ValueError):
         return None
     return None
@@ -302,7 +302,7 @@ def _build_completion_metadata(
         handoff_pack = build_context_handoff_pack(kernel, tk_result, role, request)
         metadata["handoff_pack"] = handoff_pack.to_dict()
         metadata["transaction_kind"] = "handoff_workflow"
-    return metadata
+    return cast("dict[str, Any]", (metadata))
 
 
 def _copy_string_list(value: Any) -> list[str]:
@@ -354,11 +354,16 @@ def _build_missing_dispatch_lifecycle_receipt(
     batch_receipt: Mapping[str, Any] | None,
 ) -> dict[str, Any] | None:
     required_write_tools = [tool for tool in _extract_required_tools(metadata) if is_write_tool_name(tool)]
-    return build_missing_dispatch_lifecycle_receipt(
-        required_write_tools=required_write_tools,
-        metadata_candidates=(metadata, _last_decision_metadata(ledger)),
-        tool_results=tool_results,
-        batch_receipt=batch_receipt,
+    return cast(
+        "dict[str, Any] | None",
+        (
+            build_missing_dispatch_lifecycle_receipt(
+                required_write_tools=required_write_tools,
+                metadata_candidates=(metadata, _last_decision_metadata(ledger)),
+                tool_results=tool_results,
+                batch_receipt=batch_receipt,
+            )
+        ),
     )
 
 
@@ -508,18 +513,23 @@ def _append_task_boundary_verdict(
             *tool_results,
         ]
     try:
-        return append_role_turn_task_boundary_verdict(
-            role=role,
-            workspace=str(request.workspace or kernel.workspace or "."),
-            task_id=str(request.task_id or ""),
-            run_id=str(request.run_id or turn_id),
-            context_override=getattr(request, "context_override", None),
-            tool_results=tool_results,
-            tool_dispatch=task_boundary_tool_dispatch_from_lifecycle_metadata(metadata),
-            needs_followup_workflow=bool(metadata.get("needs_followup_workflow")),
-            workflow_reason=str(metadata.get("workflow_reason") or ""),
-            error_message=error_msg,
-            evidence_refs=task_boundary_evidence_refs_from_metadata(metadata),
+        return cast(
+            "dict[str, Any] | None",
+            (
+                append_role_turn_task_boundary_verdict(
+                    role=role,
+                    workspace=str(request.workspace or kernel.workspace or "."),
+                    task_id=str(request.task_id or ""),
+                    run_id=str(request.run_id or turn_id),
+                    context_override=getattr(request, "context_override", None),
+                    tool_results=tool_results,
+                    tool_dispatch=task_boundary_tool_dispatch_from_lifecycle_metadata(metadata),
+                    needs_followup_workflow=bool(metadata.get("needs_followup_workflow")),
+                    workflow_reason=str(metadata.get("workflow_reason") or ""),
+                    error_message=error_msg,
+                    evidence_refs=task_boundary_evidence_refs_from_metadata(metadata),
+                )
+            ),
         )
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         run_id = str(request.run_id or turn_id)

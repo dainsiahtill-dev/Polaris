@@ -18,7 +18,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable as Callable,
 from concurrent.futures import ThreadPoolExecutor as ThreadPoolExecutor
 from threading import Lock
 from types import SimpleNamespace as SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 # ── Third-party / internal imports (before stdlib per PEP 8 / E402) ──────────
 from polaris.cells.roles.engine.public.service import (
@@ -457,11 +457,11 @@ class RoleRuntimeService(
 
     @classmethod
     def _normalize_execution_domain(cls, domain: str | None) -> str | None:
-        return RoleDomainPolicy.normalize_domain(domain)
+        return cast("str | None", (RoleDomainPolicy.normalize_domain(domain)))
 
     @classmethod
     def _strategy_domain_from_execution(cls, execution_domain: str) -> str:
-        return RoleDomainPolicy.strategy_domain_from_execution(execution_domain)
+        return cast("str", (RoleDomainPolicy.strategy_domain_from_execution(execution_domain)))
 
     @classmethod
     def _resolve_execution_domain(
@@ -497,15 +497,20 @@ class RoleRuntimeService(
 
         Delegates to extracted persistence module for actual implementation.
         """
-        return await _project_host_history_impl(
-            session_id=session_id,
-            role=role,
-            workspace=workspace,
-            history=history,
-            context=context,
-            session_context_config=session_context_config,
-            history_limit=history_limit,
-            session_title=session_title,
+        return cast(
+            "tuple[tuple[tuple[str, str], ...], dict[str, Any], dict[str, Any]]",
+            (
+                await _project_host_history_impl(
+                    session_id=session_id,
+                    role=role,
+                    workspace=workspace,
+                    history=history,
+                    context=context,
+                    session_context_config=session_context_config,
+                    history_limit=history_limit,
+                    session_title=session_title,
+                )
+            ),
         )
 
     @staticmethod

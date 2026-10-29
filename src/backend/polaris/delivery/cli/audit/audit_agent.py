@@ -10,7 +10,7 @@ import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 
 def _bootstrap_backend_import_path():
@@ -107,7 +107,7 @@ def get_events(
         event_types=event_types or [],
         limit=limit,
     )
-    return result.get("events", [])
+    return cast("list[dict[str, Any]]", (result.get("events", [])))
 
 
 def get_stats(workspace: str = ".") -> dict[str, Any]:
@@ -127,7 +127,7 @@ def get_stats(workspace: str = ".") -> dict[str, Any]:
         command="stats",
         workspace=workspace,
     )
-    return result
+    return cast("dict[str, Any]", (result))
 
 
 def triage(workspace: str = ".") -> dict[str, Any]:
@@ -147,7 +147,7 @@ def triage(workspace: str = ".") -> dict[str, Any]:
         command="triage",
         workspace=workspace,
     )
-    return result
+    return cast("dict[str, Any]", (result))
 
 
 def verify(workspace: str = ".") -> dict[str, Any]:
@@ -167,7 +167,7 @@ def verify(workspace: str = ".") -> dict[str, Any]:
         command="verify-chain",
         workspace=workspace,
     )
-    return result
+    return cast("dict[str, Any]", (result))
 
 
 def get_corruption_log(
@@ -195,4 +195,4 @@ def get_corruption_log(
         since=since,
         limit=limit,
     )
-    return result.get("entries", [])
+    return cast("list[dict[str, Any]]", (result.get("entries", [])))

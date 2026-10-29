@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.runtime.task_runtime.public import TaskRuntimeExecutionAttemptIdentityV1
 
@@ -34,7 +34,7 @@ def _invoke_run_runtime_repair_with_director_tools(*args: Any, **kwargs: Any) ->
 
     import polaris.cells.roles.adapters.internal.director.post_execution_repair_bridge as _pkg
 
-    return _pkg.run_runtime_repair_with_director_tools(*args, **kwargs)
+    return cast("list[dict[str, Any]]", (_pkg.run_runtime_repair_with_director_tools(*args, **kwargs)))
 
 
 def run_cpp_post_repairs_as_tool_results(

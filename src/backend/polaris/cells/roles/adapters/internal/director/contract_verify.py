@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.quality.step_verify import (
     assess_legacy_step_verify_command_safety,
@@ -182,7 +182,7 @@ def _explicit_construction_verify(context: Mapping[str, Any]) -> str:
         step = _mapping_or_empty(record.get("construction_step"))
         command = normalize_step_verify(step.get("verify"))
         if command:
-            return command
+            return cast("str", (command))
     return ""
 
 
@@ -259,7 +259,7 @@ def _safe_normalized_command(value: Any) -> str:
     safety = assess_legacy_step_verify_command_safety(command)
     if not safety.allowed:
         return ""
-    return command
+    return cast("str", (command))
 
 
 def _select_verify_candidate(candidates: list[str], *, language: str, defer_validation: bool = False) -> str:

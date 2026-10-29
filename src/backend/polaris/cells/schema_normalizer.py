@@ -7,7 +7,7 @@ Run with --dry-run first to see what would change.
 
 import argparse
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
@@ -18,7 +18,7 @@ BACKUP_DIR = CELLS_DIR / ".schema_backups"
 def load_cell(cell_path: Path) -> dict[str, Any]:
     """Load a cell.yaml file."""
     with open(cell_path, encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        return cast("dict[str, Any]", (yaml.safe_load(f)))
 
 
 def save_cell(cell_path: Path, data: dict[str, Any]) -> None:

@@ -315,7 +315,9 @@ class _ExecutionMixin(_ServiceMixinBase):
                 reconcile_error=reconcile_error,
                 execution_event=execution_event,
             )
-            return self._claim_result_with_execution_attempt(result, terminal_session_to_reconcile)
+            return cast(
+                "dict[str, Any]", (self._claim_result_with_execution_attempt(result, terminal_session_to_reconcile))
+            )
 
         if rejection_reason:
             task_row = (
@@ -333,9 +335,14 @@ class _ExecutionMixin(_ServiceMixinBase):
                 result["execution_fact_authoritative"] = True
                 result["source"] = "task_runtime.execution_fact"
                 result["fact_status"] = fact_status
-            return self._claim_result_with_execution_attempt(
-                result,
-                existing_session if rejection_reason == "lease_conflict" else None,
+            return cast(
+                "dict[str, Any]",
+                (
+                    self._claim_result_with_execution_attempt(
+                        result,
+                        existing_session if rejection_reason == "lease_conflict" else None,
+                    )
+                ),
             )
 
         if session is None:
@@ -372,7 +379,7 @@ class _ExecutionMixin(_ServiceMixinBase):
             claim_applied=True,
             execution_event=execution_event,
         )
-        return self._claim_result_with_execution_attempt(result, session)
+        return cast("dict[str, Any]", (self._claim_result_with_execution_attempt(result, session)))
 
     def heartbeat_execution(
         self,
@@ -833,7 +840,7 @@ class _ExecutionMixin(_ServiceMixinBase):
         mismatch = self._execution_attempt_mismatch_code(identity, session, allow_terminal_settlement_lease=True)
         if mismatch is not None:
             return self._execution_attempt_settlement_result(False, mismatch, command, session=session), None
-        return session
+        return cast("TaskExecutionSession | tuple[dict[str, Any], None]", (session))
 
     def _settle_active_execution_attempt_locked(
         self,
