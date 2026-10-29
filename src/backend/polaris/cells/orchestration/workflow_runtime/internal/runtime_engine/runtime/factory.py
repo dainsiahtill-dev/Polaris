@@ -69,11 +69,11 @@ class RuntimeFactory:
         activity_runner = ActivityRunner(config.max_concurrent_activities)
 
         handler_registry = CellHandlerRegistry(
-            workflows=get_workflow_registry(),  # type: ignore[arg-type]
-            activities=get_activity_registry(),  # type: ignore[arg-type]
+            workflows=get_workflow_registry(),
+            activities=get_activity_registry(),
         )
         engine = WorkflowEngine(
-            store=store,  # type: ignore[arg-type]
+            store=store,
             timer_wheel=timer_wheel,
             task_queue_manager=task_queue_manager,
             activity_runner=activity_runner,

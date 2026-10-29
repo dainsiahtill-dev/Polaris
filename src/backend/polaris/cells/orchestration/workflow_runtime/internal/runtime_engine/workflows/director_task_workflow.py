@@ -213,7 +213,7 @@ class DirectorTaskWorkflow(WorkflowQueryState):
                 await message_bus.broadcast(
                     MessageType.TASK_TRACE,
                     "director_task_workflow",
-                    payload,  # type: ignore[arg-type]
+                    payload,
                 )
         except (RuntimeError, ValueError) as e:
             # Log but don't disrupt workflow execution

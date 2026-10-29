@@ -608,7 +608,7 @@ class DebugTracer:
             )
             return response
 
-        urllib.request.urlopen = traced_urlopen  # type: ignore[assignment]
+        urllib.request.urlopen = traced_urlopen
 
     class _LoggedStreamProxy:
         def __init__(self, tracer: DebugTracer, wrapped: Any, trace_id: str, stream_name: str) -> None:
@@ -667,7 +667,7 @@ class DebugTracer:
         assert orig_popen is not None and orig_run is not None
 
         class TracedPopen(orig_popen):  # type: ignore[misc,valid-type]
-            def __init__(inner_self, *args: Any, **kwargs: Any) -> None:  # type: ignore[misc]  # noqa: N805
+            def __init__(inner_self, *args: Any, **kwargs: Any) -> None:  # noqa: N805
                 inner_self._hp_trace_id = _trace_id("cli")
                 inner_self._hp_start = time.perf_counter()
                 inner_self._hp_exit_logged = False
@@ -698,7 +698,7 @@ class DebugTracer:
                 _stdout: Any = getattr(inner_self, "stdout", None)
                 if _stdout is not None:
                     try:
-                        inner_self.stdout = tracer._LoggedStreamProxy(  # type: ignore[has-type]
+                        inner_self.stdout = tracer._LoggedStreamProxy(
                             tracer,
                             _stdout,
                             inner_self._hp_trace_id,
@@ -709,7 +709,7 @@ class DebugTracer:
                 _stderr: Any = getattr(inner_self, "stderr", None)
                 if _stderr is not None:
                     try:
-                        inner_self.stderr = tracer._LoggedStreamProxy(  # type: ignore[has-type]
+                        inner_self.stderr = tracer._LoggedStreamProxy(
                             tracer,
                             _stderr,
                             inner_self._hp_trace_id,
@@ -791,8 +791,8 @@ class DebugTracer:
             )
             return result
 
-        subprocess.Popen = TracedPopen  # type: ignore[misc,assignment]
-        subprocess.run = traced_run  # type: ignore[assignment]
+        subprocess.Popen = TracedPopen
+        subprocess.run = traced_run
 
     def _unpatch_all(self) -> None:
         """恢复所有被补丁替换的原始函数（必须在 self._state.lock 持有时调用）。"""
@@ -820,14 +820,14 @@ class DebugTracer:
 
         # urllib
         if self._state.orig_urlopen is not None:
-            urllib.request.urlopen = self._state.orig_urlopen  # type: ignore[assignment]
+            urllib.request.urlopen = self._state.orig_urlopen
             self._state.orig_urlopen = None
 
         # subprocess
         if self._state.orig_subprocess_popen is not None:
             subprocess.Popen = self._state.orig_subprocess_popen  # type: ignore[misc,assignment]
         if self._state.orig_subprocess_run is not None:
-            subprocess.run = self._state.orig_subprocess_run  # type: ignore[assignment]
+            subprocess.run = self._state.orig_subprocess_run
 
 
 # =============================================================================

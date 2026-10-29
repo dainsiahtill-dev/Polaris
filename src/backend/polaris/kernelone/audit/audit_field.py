@@ -322,7 +322,7 @@ def safe_value(
     # 尝试 __dict__
     if _has_dict_attr(obj):
         try:
-            obj_dict = obj.__dict__  # type: ignore[union-attr]
+            obj_dict = obj.__dict__
             if obj_dict:
                 return safe_value(dict(obj_dict), field_path=field_path, allow_methods=allow_methods)
         except (TypeError, AttributeError) as e:

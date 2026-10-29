@@ -800,7 +800,7 @@ class CognitiveRuntimeService:
             "handoff_rehydrated": True,
         }
         if source_spans:
-            metadata_patch["handoff_source_spans"] = list(source_spans)  # type: ignore[assignment]
+            metadata_patch["handoff_source_spans"] = list(source_spans)
         return HandoffRehydration(
             rehydration_id=str(uuid.uuid4()),
             handoff_id=handoff.handoff_id,

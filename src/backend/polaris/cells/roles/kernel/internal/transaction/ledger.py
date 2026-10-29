@@ -393,7 +393,7 @@ class TurnLedger:
 
     def _decision_to_dict(self, decision: TurnDecision) -> dict[str, Any]:
         """将决策转换为字典格式"""
-        _decision: Any = decision  # type: ignore[assignment]
+        _decision: Any = decision
         return {
             "kind": _decision.get("kind", "").value
             if hasattr(_decision.get("kind"), "value")

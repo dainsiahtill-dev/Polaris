@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 try:
     import yaml
 except (RuntimeError, ValueError):  # pragma: no cover - surfaced as report issue
-    yaml = None  # type: ignore[assignment]
+    yaml = None
 
 
 _MODE_AUDIT_ONLY = "audit-only"

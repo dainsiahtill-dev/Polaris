@@ -15,8 +15,8 @@ try:
     from polaris.kernelone.storage import normalize_logical_rel_path, resolve_ramdisk_root
     from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
 except ImportError:  # pragma: no cover - script-mode fallback
-    from polaris.kernelone.storage import normalize_logical_rel_path, resolve_ramdisk_root  # type: ignore
-    from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path  # type: ignore
+    from polaris.kernelone.storage import normalize_logical_rel_path, resolve_ramdisk_root
+    from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
 
 logger = logging.getLogger(__name__)
 

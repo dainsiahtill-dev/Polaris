@@ -22,7 +22,7 @@ try:
     OPENPYXL_AVAILABLE = True
 except ImportError:
     OPENPYXL_AVAILABLE = False
-    openpyxl = None  # type: ignore[assignment]
+    openpyxl = None
 
 if TYPE_CHECKING:
     from polaris.kernelone.akashic.knowledge_pipeline.extractors.base import (
@@ -49,7 +49,7 @@ class XlsxExtractor(BaseExtractor):
         """Check if XLSX extraction is available (openpyxl installed)."""
         return OPENPYXL_AVAILABLE
 
-    async def extract(self, doc: DocumentInput) -> list[ExtractedFragment]:  # type: ignore[override]
+    async def extract(self, doc: DocumentInput) -> list[ExtractedFragment]:
         """Extract text fragments from an Excel document."""
         from polaris.kernelone.akashic.knowledge_pipeline.protocols import (
             ExtractedFragment,
@@ -163,7 +163,7 @@ class XlsxExtractor(BaseExtractor):
             )
         ]
 
-    def _do_extract(  # type: ignore[override]
+    def _do_extract(
         self,
         text: str,
         options: ExtractionOptions,

@@ -348,7 +348,7 @@ def _repair_coverage(
         completion_contract_hash=contract_hash,
         obligation_id=obligation_id,
         owner_task_id=owner_task_id,
-        status=status,  # type: ignore[arg-type]
+        status=status,
         evidence_ref=f"director-runtime://repair-coverage/{evidence_hash}",
         source_tool=source_tool,
     )

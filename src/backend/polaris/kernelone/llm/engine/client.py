@@ -374,8 +374,8 @@ class MultiProviderFallbackManager:
     ) -> AsyncGenerator[AIStreamEvent, None]:
         """Invoke provider's stream, falling back to non-stream invoke if needed."""
         try:
-            stream_gen = provider.invoke_stream(request)  # type: ignore[call-arg]
-            async for event in stream_gen:  # type: ignore[attr-defined]
+            stream_gen = provider.invoke_stream(request)
+            async for event in stream_gen:
                 yield event
             return
         except (NotImplementedError, AttributeError):
@@ -390,7 +390,7 @@ class MultiProviderFallbackManager:
         else:
             # Protocol says invoke is async, but we handle sync just in case.
             response = await invoke_with_budget(
-                asyncio.to_thread(provider.invoke, request),  # type: ignore[arg-type]
+                asyncio.to_thread(provider.invoke, request),
                 timeout,
             )
         if response.ok:

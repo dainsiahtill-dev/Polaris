@@ -12,7 +12,7 @@ from typing import Any
 from polaris.kernelone.llm.engine.contracts import AIStreamEvent, StreamEventType
 
 try:
-    import msgpack  # type: ignore[import-not-found]
+    import msgpack
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
     msgpack = None
 

@@ -368,7 +368,7 @@ class ProviderManager:
         if providers_dir is None:
             providers_dir = str(Path(__file__).parent)
 
-        providers_path = Path(providers_dir)  # type: ignore[arg-type]
+        providers_path = Path(providers_dir)
         if not providers_path.exists():
             return
 

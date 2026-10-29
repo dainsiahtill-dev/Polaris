@@ -95,7 +95,7 @@ async def unwrap_task_outcome(
     try:
         result = fut.result()
         # The task result should be TaskExecutionOutcome but is typed as Any
-        return result  # type: ignore[return-value]
+        return result
     except asyncio.CancelledError:
         now = _now_func()
         return TaskExecutionOutcome(task_id, WorkflowTaskStatus.CANCELLED.value, 0, now, now, error="Task cancelled")

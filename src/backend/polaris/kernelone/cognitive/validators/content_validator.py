@@ -280,4 +280,4 @@ class ContentValidator:
 
 
 # 协议兼容声明
-ContentValidator: BaseValidator  # type: ignore[misc, no-redef]
+ContentValidator: BaseValidator

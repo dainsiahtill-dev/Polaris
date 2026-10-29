@@ -124,7 +124,7 @@ class FactoryRoleEvidenceSourceHeadV1:
             ),
             code="source_head_fields_mismatch",
         )
-        return cls(**value)  # type: ignore[arg-type]
+        return cls(**value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,7 +176,7 @@ class FactoryRoleEvidenceSourceItemV1:
             ),
             code="source_item_fields_mismatch",
         )
-        return cls(**value)  # type: ignore[arg-type]
+        return cls(**value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -405,15 +405,15 @@ class FactoryRoleEvidenceCutoffBodyV1:
             raise ValueError("cutoff_body_candidate_refs_list_required")
         request = FactoryRoleEvidenceCutoffRequestV1(
             schema_version=FACTORY_ROLE_EVIDENCE_CUTOFF_REQUEST_SCHEMA,
-            run_id=value.get("run_id"),  # type: ignore[arg-type]
-            role=value.get("role"),  # type: ignore[arg-type]
-            turn_id=value.get("turn_id"),  # type: ignore[arg-type]
-            call_id=value.get("call_id"),  # type: ignore[arg-type]
-            request_freeze_id=value.get("request_freeze_id"),  # type: ignore[arg-type]
-            semantic_candidate_hash=value.get("semantic_candidate_hash"),  # type: ignore[arg-type]
-            attempt_budget=value.get("attempt_budget"),  # type: ignore[arg-type]
-            execution_authority_hash=value.get("execution_authority_hash"),  # type: ignore[arg-type]
-            candidate_refs=tuple(raw_candidate_refs),  # type: ignore[arg-type]
+            run_id=value.get("run_id"),
+            role=value.get("role"),
+            turn_id=value.get("turn_id"),
+            call_id=value.get("call_id"),
+            request_freeze_id=value.get("request_freeze_id"),
+            semantic_candidate_hash=value.get("semantic_candidate_hash"),
+            attempt_budget=value.get("attempt_budget"),
+            execution_authority_hash=value.get("execution_authority_hash"),
+            candidate_refs=tuple(raw_candidate_refs),
         )
         authority = FactoryRoleEvidenceStageAuthorityV1(
             factory_run_id=value.get("factory_run_id"),  # type: ignore[arg-type]

@@ -261,7 +261,7 @@ class NATSClientWrapper:
         try:
             future: CFuture[None] = asyncio.run_coroutine_threadsafe(
                 self._async_publish(subject, payload),
-                self._loop,  # type: ignore[arg-type]  # _connected check guarantees it's not None
+                self._loop,  # _connected check guarantees it's not None
             )
             future.result(timeout=5.0)
             return True
@@ -285,7 +285,7 @@ class NATSClientWrapper:
         try:
             future: CFuture[Any] = asyncio.run_coroutine_threadsafe(
                 self._async_subscribe(subject),
-                self._loop,  # type: ignore[arg-type]  # _connected check guarantees it's not None
+                self._loop,  # _connected check guarantees it's not None
             )
             return future.result(timeout=5.0)
         except (RuntimeError, ValueError) as exc:
@@ -308,7 +308,7 @@ class NATSClientWrapper:
             try:
                 future: CFuture[None] = asyncio.run_coroutine_threadsafe(
                     self._async_close(),
-                    loop,  # type: ignore[arg-type]
+                    loop,
                 )
                 future.result(timeout=3.0)
             except (RuntimeError, ValueError) as exc:

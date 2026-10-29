@@ -77,13 +77,13 @@ def build_sequential_config(
         minimum=1,
     )
     trace_level = _seq_resolve_str(settings, sentinel, "seq_trace_level", "KERNELONE_SEQ_TRACE_LEVEL", "summary")
-    trace_level_enum = SequentialTraceLevel.SUMMARY  # type: ignore[attr-defined]
+    trace_level_enum = SequentialTraceLevel.SUMMARY
     if trace_level == "off":
-        trace_level_enum = SequentialTraceLevel.OFF  # type: ignore[attr-defined]
+        trace_level_enum = SequentialTraceLevel.OFF
     elif trace_level == "detailed":
-        trace_level_enum = SequentialTraceLevel.DETAILED  # type: ignore[attr-defined]
+        trace_level_enum = SequentialTraceLevel.DETAILED
 
-    budget = create_sequential_budget(  # type: ignore[operator]
+    budget = create_sequential_budget(
         max_steps=max_steps,
         max_tool_calls_total=max_tool_calls,
         max_no_progress_steps=max_no_progress,
@@ -103,25 +103,25 @@ def resolve_sequential_mode(
     settings: Any,
     sentinel: object,
     context: dict[str, Any] | None,
-) -> SequentialMode:  # type: ignore[valid-type]
+) -> SequentialMode:
     """Resolve SequentialMode from settings and context."""
     from .helpers import _seq_resolve_str
 
     default_mode = _seq_resolve_str(settings, sentinel, "seq_default_mode", "KERNELONE_SEQ_DEFAULT_MODE", "enabled")
     default_mode_token = str(default_mode or "").strip().lower()
-    mode = SequentialMode.ENABLED  # type: ignore[attr-defined]
+    mode = SequentialMode.ENABLED
     if default_mode_token == "disabled":
-        mode = SequentialMode.DISABLED  # type: ignore[attr-defined]
+        mode = SequentialMode.DISABLED
     elif default_mode_token == "required":
-        mode = SequentialMode.REQUIRED  # type: ignore[attr-defined]
+        mode = SequentialMode.REQUIRED
     if context:
         seq_mode = context.get("sequential_mode")
         if seq_mode == "disabled":
-            mode = SequentialMode.DISABLED  # type: ignore[attr-defined]
+            mode = SequentialMode.DISABLED
         elif seq_mode == "required":
-            mode = SequentialMode.REQUIRED  # type: ignore[attr-defined]
+            mode = SequentialMode.REQUIRED
         elif seq_mode == "enabled":
-            mode = SequentialMode.ENABLED  # type: ignore[attr-defined]
+            mode = SequentialMode.ENABLED
     return mode
 
 
@@ -146,7 +146,7 @@ async def execute_sequential(
     except ValueError as exc:
         return {"success": False, "error": f"Failed to load profile: {exc}"}
 
-    engine = SequentialEngine(  # type: ignore[operator]
+    engine = SequentialEngine(
         workspace=workspace,
         budget=budget,
         trace_level=seq_config["trace_level"].value,
@@ -177,7 +177,7 @@ async def execute_sequential(
         run_id=run_id,
     )
     return {
-        "success": stats.failure_class == SequentialFailureClass.SUCCESS.value,  # type: ignore[attr-defined]
+        "success": stats.failure_class == SequentialFailureClass.SUCCESS.value,
         "task_id": task_id,
         "sequential_stats": {
             "steps": stats.steps,

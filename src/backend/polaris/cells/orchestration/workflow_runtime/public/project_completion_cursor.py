@@ -204,7 +204,7 @@ def compose_project_completion_cursor(store: object) -> ProjectCompletionCursorP
         SqliteProjectCompletionCursorV1,
     )
 
-    return SqliteProjectCompletionCursorV1(store)  # type: ignore[arg-type]
+    return SqliteProjectCompletionCursorV1(store)
 
 
 __all__ = [

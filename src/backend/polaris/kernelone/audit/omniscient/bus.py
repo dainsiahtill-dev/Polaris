@@ -871,7 +871,7 @@ class OmniscientAuditBus:
                     try:
                         from polaris.kernelone.events.typed import TypedEvent
 
-                        typed_event = TypedEvent.model_validate(event)  # type: ignore[attr-defined]
+                        typed_event = TypedEvent.model_validate(event)
                         await self._typed_event_adapter.emit_to_registry(typed_event)
                     except (RuntimeError, ValueError) as exc:
                         # [P1-AUDIT-003] TypedEvent failure should use warning level

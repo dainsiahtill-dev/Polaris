@@ -101,7 +101,7 @@ async def run_connectivity_suite(
             "details": {},
         }
 
-    provider = get_provider_manager().get_provider_instance(provider_type)  # type: ignore[attr-defined]
+    provider = get_provider_manager().get_provider_instance(provider_type)
     if provider is None:
         return {
             "ok": False,
@@ -294,7 +294,7 @@ async def run_response_suite(
 ) -> dict[str, Any]:
     """运行响应测试套件"""
     provider_type = str(provider_cfg.get("type") or "").strip().lower()
-    provider = get_provider_manager().get_provider_instance(provider_type)  # type: ignore[attr-defined]
+    provider = get_provider_manager().get_provider_instance(provider_type)
 
     if provider is None:
         return {
@@ -344,7 +344,7 @@ async def run_thinking_suite(
 ) -> dict[str, Any]:
     """运行思考能力测试套件"""
     provider_type = str(provider_cfg.get("type") or "").strip().lower()
-    provider = get_provider_manager().get_provider_instance(provider_type)  # type: ignore[attr-defined]
+    provider = get_provider_manager().get_provider_instance(provider_type)
 
     if provider is None:
         return {
@@ -429,7 +429,7 @@ async def run_qualification_suite(
     ]
 
     provider_type = str(provider_cfg.get("type") or "").strip().lower()
-    provider = get_provider_manager().get_provider_instance(provider_type)  # type: ignore[attr-defined]
+    provider = get_provider_manager().get_provider_instance(provider_type)
 
     if provider is None:
         return {
@@ -444,7 +444,7 @@ async def run_qualification_suite(
     for case in cases:
         try:
             # provider.invoke is dynamically typed, suppress mypy error
-            invoke_fn = provider.invoke  # type: ignore[assignment]
+            invoke_fn = provider.invoke
             prompt = str(case["prompt"])
             result = await asyncio.to_thread(
                 invoke_fn,
@@ -506,7 +506,7 @@ async def run_interview_suite(
     ]
 
     provider_type = str(provider_cfg.get("type") or "").strip().lower()
-    provider = get_provider_manager().get_provider_instance(provider_type)  # type: ignore[attr-defined]
+    provider = get_provider_manager().get_provider_instance(provider_type)
 
     if provider is None:
         return {

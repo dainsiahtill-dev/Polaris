@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 from polaris.kernelone.errors import TimeoutError as _CanonicalTimeoutError
-from tree_sitter_language_pack import get_parser  # type: ignore[attr-defined]
+from tree_sitter_language_pack import get_parser
 
 
 @dataclass(frozen=True)
@@ -91,11 +91,11 @@ def is_tree_sitter_available() -> TreeSitterAvailability:
     if hasattr(signal, "SIGALRM") and hasattr(signal, "alarm"):
         try:
             old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
-            signal.alarm(timeout_seconds)  # type: ignore[attr-defined]
+            signal.alarm(timeout_seconds)
             try:
                 result = check_with_timeout()
             finally:
-                signal.alarm(0)  # type: ignore[attr-defined]
+                signal.alarm(0)
                 signal.signal(signal.SIGALRM, old_handler)
             return result
         except TimeoutError:

@@ -427,7 +427,7 @@ class QAAgent(RoleAgent):
                 "error_code": "PROTOCOL_ERROR",
             }
 
-    def handle_message(self, message: AgentMessage) -> AgentMessage | None:  # type: ignore[override]
+    def handle_message(self, message: AgentMessage) -> AgentMessage | None:
         """Handle incoming messages from other agents."""
         if message.type == MessageType.TASK:
             payload = message.payload if isinstance(message.payload, dict) else {}
@@ -472,9 +472,9 @@ class QAAgent(RoleAgent):
         message = self.message_queue.receive(block=False)
         if not message:
             return False
-        response = self.handle_message(message)  # type: ignore[arg-type]
+        response = self.handle_message(message)
         if response is not None:
-            self.message_queue.send(response)  # type: ignore[arg-type]
+            self.message_queue.send(response)
         return True
 
     def _load_snapshot(self, snapshot: dict[str, Any]) -> None:

@@ -252,7 +252,7 @@ async def _run_session_workflow_case(
         max_auto_turns=20,
     )
     # Monkey-patch envelope builder so we can control continuation modes
-    orch._build_envelope_from_completion = envelope_builder  # type: ignore[assignment]
+    orch._build_envelope_from_completion = envelope_builder
 
     # Collect events
     event_list: list[TurnEvent] = []
@@ -335,7 +335,7 @@ async def _run_session_workflow_case(
 def _event_to_dict(event: TurnEvent) -> dict[str, Any]:
     """Convert a TurnEvent to a plain dict."""
     if hasattr(event, "to_dict"):
-        return event.to_dict()  # type: ignore[union-attr]
+        return event.to_dict()
     return {
         "type": event.__class__.__name__,
         **{k: getattr(event, k) for k in dir(event) if not k.startswith("_") and not callable(getattr(event, k))},
@@ -449,7 +449,7 @@ def _envelope(
     """Helper to build TurnOutcomeEnvelope."""
     return TurnOutcomeEnvelope(
         turn_result=TurnResult(
-            turn_id="t0",  # type: ignore[arg-type]
+            turn_id="t0",
             kind="final_answer",
             visible_content=visible_content,
             decision={},

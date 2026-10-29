@@ -100,7 +100,7 @@ def _priority_value(task: dict[str, Any]) -> int:
     if raw is None:
         return 5  # default medium priority
     try:
-        return int(raw)  # type: ignore[arg-type]
+        return int(raw)
     except (TypeError, ValueError):
         token = str(raw).strip().lower()
         aliases = {"critical": 0, "high": 1, "medium": 5, "low": 9}

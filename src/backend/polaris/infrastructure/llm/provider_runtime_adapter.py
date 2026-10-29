@@ -88,7 +88,7 @@ def _resolve_settings_from_di() -> Any:
                 # Cast container to Coroutine for asyncio.run
                 from typing import cast
 
-                container = asyncio.run(cast("Coroutine[Any, Any, DIContainer]", container))  # type: ignore[arg-type]
+                container = asyncio.run(cast("Coroutine[Any, Any, DIContainer]", container))
             else:
                 close = getattr(container, "close", None)
                 if callable(close):

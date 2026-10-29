@@ -107,7 +107,7 @@ def resolve_runtime_path(
 
 
 def resolve_preferred_logical_prefix(
-    kernel_fs,  # type: ignore[no-untyped-def]
+    kernel_fs,
     *,
     runtime_prefix: str,
     workspace_fallback_prefix: str,

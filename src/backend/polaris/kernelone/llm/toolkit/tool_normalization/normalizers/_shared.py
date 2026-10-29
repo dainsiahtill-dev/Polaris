@@ -567,8 +567,8 @@ def normalize_patch_like_write_content(
 
         edit_type_enum = EditType
     except ImportError:
-        edit_type_enum = None  # type: ignore[misc,assignment]
-        parse_protocol_output = None  # type: ignore[misc,assignment]
+        edit_type_enum = None
+        parse_protocol_output = None
 
     if parse_protocol_output is not None and edit_type_enum is not None:
         operations = parse_protocol_output(candidate)

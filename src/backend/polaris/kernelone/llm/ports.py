@@ -243,7 +243,7 @@ class DefaultRoleContextCompressorPort:
             acceptance_criteria=list(identity.acceptance_criteria),
             scope=list(identity.scope),
             current_phase=identity.current_phase,
-            metadata=identity.metadata if identity.metadata is not None else {},  # type: ignore[arg-type]
+            metadata=identity.metadata if identity.metadata is not None else {},
         )
 
         compressor = self._compressor(

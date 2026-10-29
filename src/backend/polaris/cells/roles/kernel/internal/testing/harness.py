@@ -385,7 +385,7 @@ class KernelTestHarness:
         kernel = RoleExecutionKernel(
             workspace=self.config.workspace,
             use_structured_output=self.config.use_structured_output,
-            tool_gateway=tool_gateway,  # type: ignore[arg-type]
+            tool_gateway=tool_gateway,
             llm_invoker=self._fake_llm,
         )
 

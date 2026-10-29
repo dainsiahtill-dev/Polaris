@@ -44,7 +44,7 @@ from sqlalchemy.pool import NullPool, StaticPool
 
 # SQLAlchemy's declarative_base() returns a dynamically created class
 # that is valid as a base class for ORM models.
-Base: Any = declarative_base()  # type: ignore[misc]
+Base: Any = declarative_base()
 
 
 class Conversation(Base):

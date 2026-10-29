@@ -210,7 +210,7 @@ def _resolve_executor(context: Mapping[str, Any] | None) -> RoleSessionStreamExe
     if executor is None:
         return RolesRuntimeStreamExecutor()
     if hasattr(executor, "stream_session"):
-        return executor  # type: ignore[return-value]
+        return executor
     raise TypeError("role_session_executor must provide a stream_session(command) method")
 
 

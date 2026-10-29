@@ -35,7 +35,7 @@ def route_edit_operations(
             # Ensure search and replace are strings (not list)
             search_text: str = s if isinstance(s, str) else "".join(s) if isinstance(s, list) else str(s)
             replace_text: str = r if isinstance(r, str) else "".join(r) if isinstance(r, list) else str(r)
-            ops.append(RoutedOperation(kind="search_replace", path=p, search=search_text, replace=replace_text))  # type: ignore[arg-type]
+            ops.append(RoutedOperation(kind="search_replace", path=p, search=search_text, replace=replace_text))
         return ops
 
     udiff = extract_unified_diff_edits(text)

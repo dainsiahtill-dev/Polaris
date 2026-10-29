@@ -505,7 +505,7 @@ class _LRUSessionRegistry:
 
 
 # Replace simple dict with LRU registry
-_STREAM_SESSION_REGISTRY = _LRUSessionRegistry(  # type: ignore[no-redef,assignment]
+_STREAM_SESSION_REGISTRY = _LRUSessionRegistry(
     max_sessions=int(os.environ.get("KERNELONE_MAX_SESSIONS", "10")),
     idle_timeout_seconds=float(
         os.environ.get("KERNELONE_SESSION_IDLE_TIMEOUT", str(DEFAULT_OPERATION_TIMEOUT_SECONDS))

@@ -30,7 +30,7 @@ class SqliteAdapter:
         if options.isolation_level is None:
             isolation = None
         elif options.isolation_level in ("DEFERRED", "EXCLUSIVE", "IMMEDIATE"):
-            isolation = options.isolation_level  # type: ignore[assignment]
+            isolation = options.isolation_level
         else:
             isolation = "DEFERRED"  # default
         conn = sqlite3.connect(

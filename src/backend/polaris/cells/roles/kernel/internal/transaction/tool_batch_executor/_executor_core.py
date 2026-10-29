@@ -737,7 +737,7 @@ class _ToolBatchExecutorCore:
                 turn_id=turn_id,
                 cancel_token=cancel_token,
                 batch_idempotency_key=batch_idempotency_key,
-                side_effect_class=side_effect_class,  # type: ignore[arg-type]
+                side_effect_class=side_effect_class,
             ),
             directed_effect_runtime=self.directed_effect_runtime,
             directed_effect_required=self.directed_effect_required,

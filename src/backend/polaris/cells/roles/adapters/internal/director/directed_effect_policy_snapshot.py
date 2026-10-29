@@ -319,7 +319,7 @@ def _thaw(value: object) -> object:
     if isinstance(value, tuple):
         # Bare tuples may still appear from older frozen argument shapes.
         if value and all(isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str) for item in value):
-            return {str(key): _thaw(item) for key, item in value}  # type: ignore[misc]
+            return {str(key): _thaw(item) for key, item in value}
         return [_thaw(item) for item in value]
     return value
 

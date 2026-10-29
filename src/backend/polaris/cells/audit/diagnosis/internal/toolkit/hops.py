@@ -118,7 +118,7 @@ def _extract_tool_paths(event: EventDict) -> dict[str, str]:
     raw_from_meta = meta.get("raw_output_paths")
     if isinstance(raw_from_meta, dict):
         for key in ("tool_stdout_path", "tool_stderr_path", "tool_error_path"):
-            value = raw_from_meta.get(key)  # type: ignore[union-attr]
+            value = raw_from_meta.get(key)
             if isinstance(value, str) and value.strip() and key not in paths:
                 paths[key] = value.strip()
 

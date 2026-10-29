@@ -18,7 +18,7 @@ except ImportError:
     from dataclasses import dataclass
 
     @dataclass
-    class OllamaMetadata:  # type: ignore[no-redef]
+    class OllamaMetadata:
         """Fallback metadata for environments without Ollama integration."""
 
         done: bool = False
@@ -41,7 +41,7 @@ except ImportError:
             if self.metadata is None:
                 self.metadata = OllamaMetadata(error="Ollama integration unavailable")
 
-    def invoke_ollama(  # type: ignore[misc]
+    def invoke_ollama(
         prompt: str,
         model: str,
         workspace: str = "",
@@ -51,12 +51,12 @@ except ImportError:
         events_path: str = "",
     ) -> OllamaResponse:
         """Fallback LLM invocation for environments without Ollama integration."""
-        return OllamaResponse(output="", metadata=OllamaMetadata(error="Ollama integration unavailable"))  # type: ignore[arg-type]
+        return OllamaResponse(output="", metadata=OllamaMetadata(error="Ollama integration unavailable"))
 
-    def get_template(_name: str, _profile: str | None = None) -> str:  # type: ignore[misc]
+    def get_template(_name: str, _profile: str | None = None) -> str:
         raise FileNotFoundError("prompt template loader is unavailable")
 
-    def render_template(template: str, context: dict[str, object]) -> str:  # type: ignore[misc]
+    def render_template(template: str, context: dict[str, object]) -> str:
         rendered = str(template or "")
         for key, value in context.items():
             rendered = rendered.replace(f"{{{{{key}}}}}", str(value))

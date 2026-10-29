@@ -107,7 +107,7 @@ def _collect_events(
             refs = event.get("refs")
             if not _is_dict(refs):
                 refs = {}
-            ref_run_id = str(refs.get("run_id") or "") if refs else ""  # type: ignore[union-attr]
+            ref_run_id = str(refs.get("run_id") or "") if refs else ""
             if run_id and ref_run_id and ref_run_id != run_id:
                 continue
             items.append(event)
@@ -132,12 +132,12 @@ def _extract_tool_paths(event: dict[str, Any]) -> dict[str, str]:
         meta = {}
     paths: dict[str, str] = {}
     for key in keys:
-        value = output.get(key) if output else None  # type: ignore[union-attr]
+        value = output.get(key) if output else None
         if not value:
-            value = meta.get(key) if meta else None  # type: ignore[union-attr]
+            value = meta.get(key) if meta else None
         if isinstance(value, str) and value.strip():
             paths[key] = value.strip()
-    raw_from_meta = meta.get("raw_output_paths") if meta else None  # type: ignore[union-attr]
+    raw_from_meta = meta.get("raw_output_paths") if meta else None
     if _is_dict(raw_from_meta):
         for key in ("tool_stdout_path", "tool_stderr_path", "tool_error_path"):
             value = raw_from_meta.get(key)  # type: ignore[union-attr]
@@ -176,7 +176,7 @@ def _build_hop3(event: dict[str, Any]) -> dict[str, Any]:
             "tool": output.get("tool") or event.get("name") or "",  # type: ignore[union-attr]
             "paths": paths,
         }
-    output_error = output.get("error") if output else None  # type: ignore[union-attr]
+    output_error = output.get("error") if output else None
     if isinstance(output_error, str) and output_error.strip():
         return {
             "source": "event_output",
@@ -269,7 +269,7 @@ def build_failure_hops(
     }
 
     # Build hop2_evidence with safe dict access
-    hop2_refs: dict[str, Any] = refs if refs else {}  # type: ignore[assignment]
+    hop2_refs: dict[str, Any] = refs if refs else {}
     files_value = hop2_refs.get("files")
     files_list: list[Any] = []
     if isinstance(files_value, list):

@@ -104,7 +104,7 @@ def _prepare_model_runtime(settings: Settings, workspace: Path) -> None:
     from polaris.kernelone.llm.providers.provider_injection import set_provider_manager_port
 
     inject_kernelone_provider_runtime()
-    set_provider_manager_port(ProviderAdapter(provider_manager))  # type: ignore[arg-type]
+    set_provider_manager_port(ProviderAdapter(provider_manager))
     # Existing config_store/runtime_config choose KERNELONE_LLM_CONFIG or the
     # same global config. No workspace model map or role-readiness fanout.
     load_llm_config(str(workspace), str(workspace / ".polaris" / "runtime"), settings=settings)

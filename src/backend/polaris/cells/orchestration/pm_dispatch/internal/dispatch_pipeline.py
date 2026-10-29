@@ -1670,10 +1670,10 @@ def _submit_pm_workflow_sync_resolve() -> Callable:
 # Re-export lazy-loaded functions as module-level names so external tests can
 # monkeypatch them (e.g. test_dispatch_pipeline_engine_dispatch.py).
 # These are populated on first access via the lazy loaders above.
-submit_pm_workflow_sync = None  # type: ignore[assignment]
+submit_pm_workflow_sync = None
 """Re-exported from _get_workflow_runtime() — replaced on first _submit_pm_workflow_sync_resolve()."""
 
-run_pre_dispatch_chief_engineer = None  # type: ignore[assignment]
+run_pre_dispatch_chief_engineer = None
 """Re-exported from _get_chief_engineer_service() for test patchability."""
 
 

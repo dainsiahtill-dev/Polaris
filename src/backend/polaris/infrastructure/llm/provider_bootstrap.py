@@ -63,7 +63,7 @@ class ProviderAdapter:
                 completion_tokens=int(getattr(getattr(result, "usage", None), "completion_tokens", 0) or 0),
                 total_tokens=int(getattr(getattr(result, "usage", None), "total_tokens", 0) or 0),
             ),
-            latency_ms=int(float(getattr(result, "latency_ms", 0) or 0)),  # type: ignore[arg-type]
+            latency_ms=int(float(getattr(result, "latency_ms", 0) or 0)),
             metadata=self._build_metadata(result),
         )
 
@@ -256,7 +256,7 @@ def inject_kernelone_provider_runtime(
     with _provider_bootstrap_lock:
         current_provider = ServiceLocator.get_provider()
         if not isinstance(current_provider, ProviderAdapter) or current_provider.manager is not effective_manager:
-            ServiceLocator.register_provider(cast("ProviderPort", ProviderAdapter(effective_manager)))  # type: ignore[arg-type]
+            ServiceLocator.register_provider(cast("ProviderPort", ProviderAdapter(effective_manager)))
 
     logger.debug(
         "KernelOne provider runtime injected using %s",

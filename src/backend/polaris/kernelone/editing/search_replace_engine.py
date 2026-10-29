@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 try:
-    from diff_match_patch import diff_match_patch  # type: ignore
+    from diff_match_patch import diff_match_patch
 except (RuntimeError, ValueError, ImportError):  # pragma: no cover - optional dependency
     diff_match_patch = None
 

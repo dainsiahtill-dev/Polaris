@@ -22,7 +22,7 @@ try:
     PYPPTX_AVAILABLE = True
 except ImportError:
     PYPPTX_AVAILABLE = False
-    pptx = None  # type: ignore[assignment]
+    pptx = None
 
 if TYPE_CHECKING:
     from polaris.kernelone.akashic.knowledge_pipeline.extractors.base import (
@@ -49,7 +49,7 @@ class PptxExtractor(BaseExtractor):
         """Check if PPTX extraction is available (python-pptx installed)."""
         return PYPPTX_AVAILABLE
 
-    async def extract(self, doc: DocumentInput) -> list[ExtractedFragment]:  # type: ignore[override]
+    async def extract(self, doc: DocumentInput) -> list[ExtractedFragment]:
         """Extract text fragments from a PowerPoint document."""
         from polaris.kernelone.akashic.knowledge_pipeline.protocols import (
             ExtractedFragment,
@@ -164,7 +164,7 @@ class PptxExtractor(BaseExtractor):
             )
         ]
 
-    def _do_extract(  # type: ignore[override]
+    def _do_extract(
         self,
         text: str,
         options: ExtractionOptions,

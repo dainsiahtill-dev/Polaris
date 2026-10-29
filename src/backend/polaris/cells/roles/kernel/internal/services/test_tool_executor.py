@@ -518,7 +518,7 @@ class TestEdgeCases:
         """Test that None args defaults to empty dict."""
         # Arrange
         mock_backend.execute.return_value = {"success": True}
-        call = ToolCall(tool="test", args=None)  # type: ignore[arg-type]
+        call = ToolCall(tool="test", args=None)
 
         # Act
         await executor.execute_single(call, mock_profile)

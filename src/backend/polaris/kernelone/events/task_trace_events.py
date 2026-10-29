@@ -167,7 +167,7 @@ async def _resolve_message_bus() -> Any | None:
     try:
         container = _container_port
         if container is not None:
-            director_service = await container.resolve_async("DirectorService")  # type: ignore[arg-type]
+            director_service = await container.resolve_async("DirectorService")
             bus: Any = getattr(director_service, "_bus", None)
             return bus
 
@@ -178,7 +178,7 @@ async def _resolve_message_bus() -> Any | None:
         from polaris.infrastructure.di.container import get_container
 
         fallback_container = await get_container()
-        director_service = await fallback_container.resolve_async("DirectorService")  # type: ignore[arg-type]
+        director_service = await fallback_container.resolve_async("DirectorService")
         bus = getattr(director_service, "_bus", None)
         return bus
     except (RuntimeError, ValueError, KeyError):

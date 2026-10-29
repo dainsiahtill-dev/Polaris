@@ -129,7 +129,7 @@ async def record_turn_truthlog_event(
 ) -> None:
     """Best-effort append of one turn event into TruthLog."""
     if is_dataclass(event) and not isinstance(event, type):
-        payload: Any = asdict(event)  # type: ignore[arg-type]  # is_dataclass narrows to DataclassInstance
+        payload: Any = asdict(event)  # is_dataclass narrows to DataclassInstance
     else:
         payload = {"repr": repr(event)}
 

@@ -105,7 +105,7 @@ class PMNode(BaseRoleNode):
                 prompt,
                 backend,
                 args,
-                context.usage_ctx,  # type: ignore[arg-type]  # Add missing usage_ctx parameter
+                context.usage_ctx,  # Add missing usage_ctx parameter
             )
         except (RuntimeError, ValueError) as e:
             return self._create_error_result(

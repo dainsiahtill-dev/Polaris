@@ -482,7 +482,7 @@ class ChiefEngineerAgent(RoleAgent):
         # Lazy initialize ADR store
         adr_store = self._adr_store
         if adr_store is None:
-            from polaris.cells.chief_engineer.blueprint.internal.adr_store import (  # type: ignore[attr-defined]
+            from polaris.cells.chief_engineer.blueprint.internal.adr_store import (
                 BlueprintADRStore,
             )
 
@@ -513,10 +513,10 @@ class ChiefEngineerAgent(RoleAgent):
         # Store in ADR store if available
         try:
             from polaris.cells.chief_engineer.blueprint.internal.adr_store import (
-                BlueprintADR,  # type: ignore[attr-defined]
+                BlueprintADR,
             )
 
-            adr: BlueprintADR = BlueprintADR(  # type: ignore[call-overload]
+            adr: BlueprintADR = BlueprintADR(
                 adr_id=adr_id,
                 blueprint_id=blueprint_id,
                 related_task_ids=[blueprint.task_id],

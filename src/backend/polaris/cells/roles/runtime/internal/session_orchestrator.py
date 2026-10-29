@@ -1655,7 +1655,7 @@ class RoleSessionOrchestrator:
         """创建空 envelope（用于首次非 first_turn 的类型安全降级）。"""
         return TurnOutcomeEnvelope(
             turn_result=TurnResult(
-                turn_id="",  # type: ignore[arg-type]
+                turn_id="",
                 kind="final_answer",
                 visible_content="",
                 decision={},
@@ -1720,8 +1720,8 @@ class RoleSessionOrchestrator:
 
         # TurnId = NewType("TurnId", str)，直接使用字符串
         turn_result = TurnResult(
-            turn_id=event.turn_id,  # type: ignore[arg-type]
-            kind=turn_kind,  # type: ignore[arg-type]
+            turn_id=event.turn_id,
+            kind=turn_kind,
             visible_content=visible_content,
             decision={},
             batch_receipt=event.batch_receipt,

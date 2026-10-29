@@ -128,7 +128,7 @@ class RoleExecutionKernel:
             context_gateway_config_factory: 上下文网关配置工厂（可选，由 runtime/adapters 注入）
         """
         self.workspace = workspace
-        self.registry = registry or RoleProfileRegistry()  # type: ignore[no-untyped-call]
+        self.registry = registry or RoleProfileRegistry()
 
         # 保存注入的服务（可能为 None，由 provider owner 懒加载处理）
         self._injected_llm_invoker = llm_invoker

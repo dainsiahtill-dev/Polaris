@@ -190,9 +190,9 @@ def get_anthropomorphic_context(
         # Unpack with type narrowing - retrieve() returns list[tuple] when return_scores=True
         if retrieved_results and isinstance(retrieved_results[0], tuple):
             # Type narrowing: retrieved_results is list[tuple[MemoryItem, float]]
-            tuple_results = retrieved_results  # type: ignore[assignment]
-            retrieved_memories = [item for item, _score in tuple_results]  # type: ignore[misc]
-            retrieved_scores = [score for _item, score in tuple_results]  # type: ignore[misc]
+            tuple_results = retrieved_results
+            retrieved_memories = [item for item, _score in tuple_results]
+            retrieved_scores = [score for _item, score in tuple_results]
         elif retrieved_results:
             # Type narrowing: retrieved_results is list[MemoryItem] when not tuples
             retrieved_memories = cast("list[MemoryItem]", retrieved_results)

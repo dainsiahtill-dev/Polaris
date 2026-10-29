@@ -203,7 +203,7 @@ def _validate_admission_genesis(record: Mapping[str, Any], *, run_id: str) -> No
         factory_run_id=payload.get("factory_run_id"),  # type: ignore[arg-type]
         created_at=payload.get("created_at"),  # type: ignore[arg-type]
         name=payload.get("name"),  # type: ignore[arg-type]
-        description=payload.get("description"),  # type: ignore[arg-type]
+        description=payload.get("description"),
     )
     if admission.factory_run_id != run_id:
         raise _fail("factory_event_chain_run_mismatch", "Admission payload belongs to a different run")

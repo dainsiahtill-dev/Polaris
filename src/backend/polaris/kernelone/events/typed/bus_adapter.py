@@ -187,7 +187,7 @@ class TypedEventBusAdapter:
 
         message_type_name = message_type.name if isinstance(message_type, MessageType) else message_type
 
-        self._event_to_message_type[event_name] = message_type  # type: ignore
+        self._event_to_message_type[event_name] = message_type
         self._message_type_to_event[message_type_name] = event_name
 
         logger.debug(f"Registered mapping: {event_name} -> {message_type_name}")

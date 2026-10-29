@@ -281,7 +281,7 @@ class OpenTelemetryExporter:
                 },
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=self._timeout_seconds):  # type: ignore[arg-type]
+            with urllib.request.urlopen(req, timeout=self._timeout_seconds):
                 pass  # Context manager handles connection close; response body is irrelevant
 
         await loop.run_in_executor(None, _sync_post)
@@ -487,7 +487,7 @@ class JaegerExporter(OpenTelemetryExporter):
                 },
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=self._timeout_seconds):  # type: ignore[arg-type]
+            with urllib.request.urlopen(req, timeout=self._timeout_seconds):
                 pass  # Context manager handles connection close
 
         await loop.run_in_executor(None, _sync_post)

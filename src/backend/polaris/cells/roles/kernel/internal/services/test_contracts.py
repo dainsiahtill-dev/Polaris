@@ -93,7 +93,7 @@ class TestLLMRequest:
         messages = [{"role": "user", "content": "Hello"}]
         request = LLMRequest(messages=messages)
         with pytest.raises(AttributeError):
-            request.temperature = 0.5  # type: ignore[misc]
+            request.temperature = 0.5
 
 
 class TestToolCall:
@@ -530,7 +530,7 @@ class TestIntegration:
 
         # frozen dataclasses cannot be modified
         with pytest.raises(AttributeError):
-            req1.temperature = 0.1  # type: ignore[misc]
+            req1.temperature = 0.1
 
         # frozen dataclasses support equality
         req2 = LLMRequest(messages=[{"role": "user", "content": "hi"}])

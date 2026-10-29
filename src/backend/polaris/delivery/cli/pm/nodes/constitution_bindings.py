@@ -216,7 +216,7 @@ def patch_role_node(base_node_class: type[BaseRoleNode]) -> type[BaseRoleNode]:
         node.enable_constitution(strict=True)
     """
 
-    class ConstitutionalNode(base_node_class, ConstitutionalRoleNodeMixin):  # type: ignore[valid-type,misc]
+    class ConstitutionalNode(base_node_class, ConstitutionalRoleNodeMixin):
         """宪法增强的角色节点。"""
 
         def __init__(self, *args, **kwargs) -> None:
@@ -333,10 +333,10 @@ def enable_constitutional_bindings(strict: bool = True) -> dict[str, Any]:
                     node_cls: Any = node_class
                     node_cls.enable_constitution = lambda self, s=strict: (
                         ConstitutionalRoleNodeMixin.enable_constitution(self, s)
-                    )  # type: ignore[assignment]
-                    node_cls._enforce_action = ConstitutionalRoleNodeMixin._enforce_action  # type: ignore[assignment]
-                    node_cls._enforce_communication = ConstitutionalRoleNodeMixin._enforce_communication  # type: ignore[assignment]
-                    node_cls.get_constitution_report = ConstitutionalRoleNodeMixin.get_constitution_report  # type: ignore[assignment]
+                    )
+                    node_cls._enforce_action = ConstitutionalRoleNodeMixin._enforce_action
+                    node_cls._enforce_communication = ConstitutionalRoleNodeMixin._enforce_communication
+                    node_cls.get_constitution_report = ConstitutionalRoleNodeMixin.get_constitution_report
 
                     # 保存原始 execute
                     if hasattr(node_class, "execute"):
@@ -358,7 +358,7 @@ def enable_constitutional_bindings(strict: bool = True) -> dict[str, Any]:
                                         )
                             return orig(self, context)
 
-                        node_cls.execute = wrapped_execute  # type: ignore[assignment]
+                        node_cls.execute = wrapped_execute
 
                 patched_roles_list.append(role_name)
             except (RuntimeError, ValueError) as e:

@@ -907,7 +907,7 @@ class AsyncWorker:
                 )
 
             wait_result = await broker.wait_process(
-                launch_result.handle,  # type: ignore[arg-type]
+                launch_result.handle,
                 timeout_seconds=max(1.0, float(task.timeout or 300)),
             )
 

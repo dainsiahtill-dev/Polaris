@@ -129,12 +129,12 @@ class QARealtimeProvider:
                     target_task_id=str(audit.get("task_id", "")),
                     target_type=str(audit.get("target_type", "task"))
                     if audit.get("target_type") in ("task", "code_change", "file")
-                    else "task",  # type: ignore[arg-type]
+                    else "task",
                     state=qa_state,
                     verdict=verdict,
                     issues=audit.get("issues", []),
                     reviewed_by=str(audit.get("reviewer", "")) or None,
-                    created_at=self._parse_datetime(audit.get("created_at")) or datetime.now(),  # type: ignore[arg-type]
+                    created_at=self._parse_datetime(audit.get("created_at")) or datetime.now(),
                     completed_at=self._parse_datetime(audit.get("completed_at")),
                 )
             )

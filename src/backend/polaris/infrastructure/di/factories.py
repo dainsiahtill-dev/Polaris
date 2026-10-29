@@ -178,7 +178,7 @@ def register_all_factories(container: DIContainer) -> None:
 
     # Register class-level registries (ToolSpecRegistry)
     # ToolSpecRegistry uses class-level singleton pattern, returns class not instance
-    container.register_singleton(ToolSpecRegistry, create_tool_spec_registry)  # type: ignore[arg-type]
+    container.register_singleton(ToolSpecRegistry, create_tool_spec_registry)
 
     # Register instance singletons
     container.register_singleton(ThemeManager, create_theme_manager)

@@ -114,7 +114,7 @@ class _InvokerBindingMixin:
             clone.provider_id = slot.provider_id
             clone.model = slot.model
             clone.selected_role_binding_json = selection
-            return clone  # type: ignore[return-value]
+            return clone
 
     @staticmethod
     def _fallback_slots_for_role(role_id: str, profile: RoleProfile) -> tuple[RoleBindingSlot, ...]:
@@ -179,7 +179,7 @@ class _InvokerBindingMixin:
             ensure_ascii=False,
             separators=(",", ":"),
         )
-        return clone  # type: ignore[return-value]
+        return clone
 
     @staticmethod
     def _profile_for_selected_route(role_id: str, profile: RoleProfile) -> RoleProfile:

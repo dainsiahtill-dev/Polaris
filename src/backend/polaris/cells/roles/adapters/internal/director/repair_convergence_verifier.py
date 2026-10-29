@@ -194,7 +194,7 @@ def build_step_verify_convergence_verifier(
             command=command_tuple,
             exit_code=exit_code,
             raw_output_ref=raw_output_ref,
-            environment_prep_receipts=environment_prep_receipts,  # type: ignore[arg-type]
+            environment_prep_receipts=environment_prep_receipts,
             metadata=metadata,
         )
 
@@ -312,7 +312,7 @@ def build_artifact_quality_convergence_verifier(
             command=command_tuple,
             exit_code=exit_code,
             raw_output_ref=raw_output_ref,
-            environment_prep_receipts=environment_prep_receipts,  # type: ignore[arg-type]
+            environment_prep_receipts=environment_prep_receipts,
             metadata=metadata,
         )
 

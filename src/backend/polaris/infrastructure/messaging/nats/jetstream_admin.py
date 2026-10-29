@@ -98,7 +98,7 @@ class StreamManager:
         # Import nats-py types dynamically to avoid attr-defined errors
         # when the library stubs are incomplete
         try:
-            from nats.js.api import (  # type: ignore[attr-defined]
+            from nats.js.api import (
                 DiscardPolicy,
                 RetentionPolicy,
                 StorageType,
@@ -111,10 +111,10 @@ class StreamManager:
         storage_type = StorageType.FILE if self._config.stream_storage == "file" else StorageType.MEMORY
 
         retention_policy = {
-            "limits": RetentionPolicy.LIMITS,  # type: ignore[attr-defined]
-            "workqueue": RetentionPolicy.WORK_QUEUE,  # type: ignore[attr-defined]
-            "interest": RetentionPolicy.INTEREST,  # type: ignore[attr-defined]
-        }.get(self._config.stream_retention, RetentionPolicy.LIMITS)  # type: ignore[attr-defined]
+            "limits": RetentionPolicy.LIMITS,
+            "workqueue": RetentionPolicy.WORK_QUEUE,
+            "interest": RetentionPolicy.INTEREST,
+        }.get(self._config.stream_retention, RetentionPolicy.LIMITS)
 
         discard_policy = DiscardPolicy.OLD if self._config.stream_discard == "old" else DiscardPolicy.NEW
 
@@ -142,7 +142,7 @@ class StreamManager:
         """
         try:
             # Try to get existing stream
-            await self._js.stream_info(self._config.stream_name)  # type: ignore[union-attr]
+            await self._js.stream_info(self._config.stream_name)
             logger.info(f"Stream already exists: {self._config.stream_name}")
             return True
 
@@ -152,7 +152,7 @@ class StreamManager:
 
             try:
                 config = self._create_stream_config()
-                await self._js.add_stream(config)  # type: ignore[union-attr]
+                await self._js.add_stream(config)
                 # Access config.name safely using getattr
                 stream_name = getattr(config, "name", self._config.stream_name)
                 logger.info(f"Stream created: {stream_name}")
@@ -169,10 +169,10 @@ class StreamManager:
             Stream info dictionary or None if stream doesn't exist.
         """
         try:
-            info = await self._js.stream_info(self._config.stream_name)  # type: ignore[union-attr]
+            info = await self._js.stream_info(self._config.stream_name)
             # Convert to dict if needed
             if hasattr(info, "dict"):
-                return info.dict()  # type: ignore[union-attr]
+                return info.dict()
             return info  # type: ignore[return-value]
         except JSConsumerNotFoundError:
             return None
@@ -184,7 +184,7 @@ class StreamManager:
             True if stream was deleted.
         """
         try:
-            await self._js.delete_stream(self._config.stream_name)  # type: ignore[union-attr]
+            await self._js.delete_stream(self._config.stream_name)
             logger.info(f"Stream deleted: {self._config.stream_name}")
             return True
         except JSConsumerNotFoundError:
@@ -209,7 +209,7 @@ class StreamManager:
             True if update succeeded.
         """
         try:
-            current = await self._js.stream_info(self._config.stream_name)  # type: ignore[union-attr]
+            current = await self._js.stream_info(self._config.stream_name)
             # Get config from stream info safely
             config = getattr(current, "config", None)
             if config is None:
@@ -217,11 +217,11 @@ class StreamManager:
                 return False
 
             if max_bytes is not None:
-                config.max_bytes = max_bytes  # type: ignore[union-attr]
+                config.max_bytes = max_bytes
             if max_age_seconds is not None:
-                config.max_age = max_age_seconds * 1000000000  # type: ignore[union-attr]
+                config.max_age = max_age_seconds * 1000000000
 
-            await self._js.update_stream(config)  # type: ignore[union-attr]
+            await self._js.update_stream(config)
             logger.info(f"Stream updated: {self._config.stream_name}")
             return True
 
@@ -305,7 +305,7 @@ class ConsumerManager:
         """
         # Import nats-py types dynamically to avoid attr-defined errors
         try:
-            from nats.js.api import (  # type: ignore[attr-defined]
+            from nats.js.api import (
                 AckPolicy,
                 ConsumerConfig,
                 DeliverPolicy,
@@ -324,29 +324,29 @@ class ConsumerManager:
             )
 
         deliver_policy_map = {
-            "all": DeliverPolicy.ALL,  # type: ignore[attr-defined]
-            "last": DeliverPolicy.LAST,  # type: ignore[attr-defined]
-            "new": DeliverPolicy.NEW,  # type: ignore[attr-defined]
-            "by_start_sequence": DeliverPolicy.BY_START_SEQUENCE,  # type: ignore[attr-defined]
-            "by_start_time": DeliverPolicy.BY_START_TIME,  # type: ignore[attr-defined]
+            "all": DeliverPolicy.ALL,
+            "last": DeliverPolicy.LAST,
+            "new": DeliverPolicy.NEW,
+            "by_start_sequence": DeliverPolicy.BY_START_SEQUENCE,
+            "by_start_time": DeliverPolicy.BY_START_TIME,
         }
 
         ack_policy_map = {
-            "none": AckPolicy.NONE,  # type: ignore[attr-defined]
-            "all": AckPolicy.ALL,  # type: ignore[attr-defined]
-            "explicit": AckPolicy.EXPLICIT,  # type: ignore[attr-defined]
+            "none": AckPolicy.NONE,
+            "all": AckPolicy.ALL,
+            "explicit": AckPolicy.EXPLICIT,
         }
 
         return ConsumerConfig(
             durable_name=consumer_name if durable else None,
             deliver_subject=delivery_subject,
-            deliver_policy=deliver_policy_map.get(deliver_policy, DeliverPolicy.ALL),  # type: ignore[attr-defined]
-            ack_policy=ack_policy_map.get(ack_policy, AckPolicy.EXPLICIT),  # type: ignore[attr-defined]
+            deliver_policy=deliver_policy_map.get(deliver_policy, DeliverPolicy.ALL),
+            ack_policy=ack_policy_map.get(ack_policy, AckPolicy.EXPLICIT),
             ack_wait=ack_wait_seconds * 1_000_000_000,
             max_deliver=max_deliver,
             max_ack_pending=max_ack_pending,
             filter_subject=subject,
-            replay_policy=ReplayPolicy.INSTANT,  # type: ignore[attr-defined]
+            replay_policy=ReplayPolicy.INSTANT,
         )
 
     async def create_consumer(
@@ -369,7 +369,7 @@ class ConsumerManager:
         """
         try:
             # Try to get existing consumer
-            await self._js.consumer_info(self._stream_name, consumer_name)  # type: ignore[union-attr]
+            await self._js.consumer_info(self._stream_name, consumer_name)
             logger.info(f"Consumer already exists: {consumer_name}")
             return True
 
@@ -383,7 +383,7 @@ class ConsumerManager:
             )
 
             try:
-                await self._js.add_consumer(self._stream_name, config)  # type: ignore[union-attr]
+                await self._js.add_consumer(self._stream_name, config)
                 logger.info(f"Consumer created: {consumer_name}")
                 return True
 
@@ -401,11 +401,11 @@ class ConsumerManager:
             Consumer info dictionary or None if not found.
         """
         try:
-            info = await self._js.consumer_info(self._stream_name, consumer_name)  # type: ignore[union-attr]
+            info = await self._js.consumer_info(self._stream_name, consumer_name)
             # Convert to dict if needed
             if hasattr(info, "dict"):
-                return info.dict()  # type: ignore[union-attr]
-            return info  # type: ignore[return-value]
+                return info.dict()
+            return info
         except JSConsumerNotFoundError:
             return None
 
@@ -419,7 +419,7 @@ class ConsumerManager:
             True if consumer was deleted.
         """
         try:
-            await self._js.delete_consumer(self._stream_name, consumer_name)  # type: ignore[union-attr]
+            await self._js.delete_consumer(self._stream_name, consumer_name)
             logger.info(f"Consumer deleted: {consumer_name}")
             return True
         except JSConsumerNotFoundError:
@@ -436,14 +436,14 @@ class ConsumerManager:
             List of consumer info dictionaries.
         """
         try:
-            consumers = await self._js.consumers_info(self._stream_name)  # type: ignore[union-attr]
+            consumers = await self._js.consumers_info(self._stream_name)
             result: list[dict[str, Any]] = []
             for c in consumers:
                 if hasattr(c, "dict"):
-                    result.append(c.dict())  # type: ignore[union-attr]
+                    result.append(c.dict())
                 else:
                     # Fallback: convert to dict if possible
-                    result.append({"info": c})  # type: ignore[arg-type]
+                    result.append({"info": c})
             return result
         except (RuntimeError, ValueError) as e:
             logger.error(f"Failed to list consumers: {e}")
@@ -518,7 +518,7 @@ class JetStreamAdmin:
             if js is None:
                 raise RuntimeError("JetStream not available")
             self._stream_manager = StreamManager(
-                js,  # type: ignore[arg-type]
+                js,
                 self._config,
             )
         return self._stream_manager
@@ -540,7 +540,7 @@ class JetStreamAdmin:
             if js is None:
                 raise RuntimeError("JetStream not available")
             self._consumer_managers[stream] = ConsumerManager(
-                js,  # type: ignore[arg-type]
+                js,
                 stream,
             )
 
@@ -608,20 +608,20 @@ class JetStreamAdmin:
         async def pull_messages() -> AsyncIterator[dict[str, Any]]:
             try:
                 # Use pull_subscribe with proper typing
-                consumer = await js.pull_subscribe(  # type: ignore[union-attr]
+                consumer = await js.pull_subscribe(
                     subject,
                     durable=consumer_name,
                     stream=self._config.stream_name,
                 )
-                async for msg in consumer.messages():  # type: ignore[union-attr]
+                async for msg in consumer.messages():
                     try:
                         import json
 
-                        data = json.loads(msg.data.decode("utf-8"))  # type: ignore[union-attr]
+                        data = json.loads(msg.data.decode("utf-8"))
                         if callback:
                             callback(data)
                         yield data
-                        await msg.ack()  # type: ignore[union-attr]
+                        await msg.ack()
                     except json.JSONDecodeError as e:
                         logger.warning(f"Invalid JSON: {e}")
                     except (RuntimeError, ValueError) as e:

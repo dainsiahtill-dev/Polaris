@@ -172,7 +172,7 @@ class TreeSitterSymbolHandler:
         except ImportError:
             return None
         try:
-            return get_parser(language)  # type: ignore[arg-type]
+            return get_parser(language)
         except (AttributeError, TypeError):
             return None
 

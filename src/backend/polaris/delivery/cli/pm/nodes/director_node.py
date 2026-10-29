@@ -124,9 +124,9 @@ class DirectorNode(BaseRoleNode):
                 pm_payload=pm_payload,
                 events_path=context.events_path,
                 dialogue_path=context.dialogue_path,
-                plan_path=plan_path or "",  # type: ignore[arg-type]
+                plan_path=plan_path or "",
                 pm_tasks_paths=pm_tasks_paths or None,
-                runtime_status_path=runtime_status_path or "",  # type: ignore[arg-type]
+                runtime_status_path=runtime_status_path or "",
                 progress_payload_paths=progress_payload_paths or None,
             )
         except (RuntimeError, ValueError) as e:

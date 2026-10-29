@@ -406,7 +406,7 @@ class InMemoryBroker(MessageBroker):
             "messages_delivered": self._messages_delivered,
             "dead_letter_count": self._dead_letter_count,
             "subscriber_count": len(self._subscriptions),
-            "bus_stats": self._bus_port.get_stats(),  # type: ignore[attr-defined]
+            "bus_stats": self._bus_port.get_stats(),
         }
 
 

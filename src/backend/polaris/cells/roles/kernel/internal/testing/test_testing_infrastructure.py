@@ -490,7 +490,7 @@ class TestKernelTestHarness:
         )
 
         assert harness.fake_llm is not None
-        assert len(harness._fake_llm._responses) == 2  # type: ignore[union-attr]
+        assert len(harness._fake_llm._responses) == 2
 
     def test_tool_configuration(self) -> None:
         """Test tool configuration."""
@@ -502,7 +502,7 @@ class TestKernelTestHarness:
         )
 
         assert harness.fake_tools is not None
-        assert "read_file" in harness.fake_tools.registered_tools  # type: ignore[union-attr]
+        assert "read_file" in harness.fake_tools.registered_tools
 
     def test_context_configuration(self) -> None:
         """Test context configuration."""
@@ -516,7 +516,7 @@ class TestKernelTestHarness:
 
         harness.reset()
 
-        assert harness.fake_llm.call_count == 0  # type: ignore[union-attr]
+        assert harness.fake_llm.call_count == 0
         assert harness._built is False
 
     def test_double_build_error(self) -> None:
@@ -563,13 +563,13 @@ class TestIntegration:
 
         tool_name = llm_response.tool_calls[0]["tool"]
         tool_args = llm_response.tool_calls[0]["args"]
-        result = fake_tools.execute_sync(tool_name, tool_args)  # type: ignore[union-attr]
+        result = fake_tools.execute_sync(tool_name, tool_args)
 
         assert result["content"] == "CONFIG = {}"
 
         # Verify calls
         fake_llm.assert_call_count(1)
-        fake_tools.assert_called("read_file")  # type: ignore[union-attr]
+        fake_tools.assert_called("read_file")
 
     @pytest.mark.asyncio
     async def test_multi_turn_conversation(self) -> None:
@@ -619,10 +619,10 @@ class TestIntegration:
 
         fake_tools = harness.fake_tools
 
-        calc_result = fake_tools.execute_sync("calculate", {"a": 1, "b": 2})  # type: ignore[union-attr]
+        calc_result = fake_tools.execute_sync("calculate", {"a": 1, "b": 2})
         assert calc_result["result"] == 3
 
-        validate_result = fake_tools.execute_sync("validate", {"input": "test"})  # type: ignore[union-attr]
+        validate_result = fake_tools.execute_sync("validate", {"input": "test"})
         assert validate_result["valid"] is True
 
 

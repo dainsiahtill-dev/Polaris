@@ -165,7 +165,7 @@ def update_latest_pointer(workspace_full: str, cache_root_full: str, run_id: str
     try:
         from polaris.kernelone.fs.text_ops import write_json_atomic
     except ImportError:  # pragma: no cover - script-mode fallback
-        from polaris.kernelone.fs.text_ops import write_json_atomic  # type: ignore
+        from polaris.kernelone.fs.text_ops import write_json_atomic
 
     if not run_id:
         return
@@ -195,7 +195,7 @@ def resolve_artifact_path(
     try:
         from polaris.kernelone.fs.text_ops import is_run_artifact
     except ImportError:  # pragma: no cover - script-mode fallback
-        from polaris.kernelone.fs.text_ops import is_run_artifact  # type: ignore
+        from polaris.kernelone.fs.text_ops import is_run_artifact
 
     if not rel_path:
         return ""

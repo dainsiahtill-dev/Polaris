@@ -47,10 +47,10 @@ try:
     from polaris.kernelone.single_agent.role_framework import RoleBase, RoleCapability, RoleInfo, RoleState
 except ImportError:
     # Fallback for bootstrap scenario
-    RoleBase = None  # type: ignore[assignment,misc]
-    RoleCapability = None  # type: ignore[misc,assignment]
-    RoleInfo = None  # type: ignore[misc,assignment]
-    RoleState = None  # type: ignore[misc,assignment]
+    RoleBase = None
+    RoleCapability = None
+    RoleInfo = None
+    RoleState = None
 
 
 logger = logging.getLogger(__name__)
@@ -66,17 +66,17 @@ try:
     DIRECTOR_V2_AVAILABLE = True
 except ImportError:
     DIRECTOR_V2_AVAILABLE = False
-    DirectorService = None  # type: ignore[misc, assignment]
-    DirectorConfig = None  # type: ignore[misc, assignment]
-    TaskStatus = None  # type: ignore[misc, assignment]
-    TaskPriority = None  # type: ignore[misc, assignment]
+    DirectorService = None
+    DirectorConfig = None
+    TaskStatus = None
+    TaskPriority = None
 
 
 class DirectorRole(RoleBase):
     """Director Role - Director"""
 
     def __init__(self, workspace: str | None = None) -> None:
-        self.workspace = workspace or os.getcwd()  # type: ignore[assignment]
+        self.workspace = workspace or os.getcwd()
         self.role_id = "director"
         self.role_name = "Director"
-        self.capabilities = [RoleCapability.TASK_EXECUTION, RoleCapability.FILE_OPERATIONS]  # type: ignore[attr-defined]
+        self.capabilities = [RoleCapability.TASK_EXECUTION, RoleCapability.FILE_OPERATIONS]

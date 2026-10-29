@@ -14,5 +14,5 @@ def _mod() -> ModuleType:
     Call sites must resolve via the package object so those patches apply.
     """
 
-    pkg = sys.modules[__package__]  # type: ignore[index]
+    pkg = sys.modules[__package__]
     return pkg

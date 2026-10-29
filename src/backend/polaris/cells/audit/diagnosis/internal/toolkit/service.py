@@ -586,7 +586,7 @@ def _offline_export(
         content = facade.export_json(
             start_time=start_dt,
             end_time=end_dt,
-            event_types=event_types,  # type: ignore[arg-type]
+            event_types=event_types,
             include_data=include_data,
         )
         return "success", {"format": "json", "content": content}

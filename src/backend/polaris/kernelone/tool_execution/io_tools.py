@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 try:
     from polaris.kernelone.fs.encoding import build_utf8_env
 except ImportError:  # pragma: no cover - script-mode fallback
-    from polaris.kernelone.fs.encoding import build_utf8_env  # type: ignore
+    from polaris.kernelone.fs.encoding import build_utf8_env
 
 
 def resolve_codex_path() -> str | None:

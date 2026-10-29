@@ -593,17 +593,17 @@ class RoleSessionService:
         changes: dict[str, Any] = {}
         if title is not None:
             changes["title"] = {"old": str(session.title), "new": str(title)}
-            session.title = title  # type: ignore
+            session.title = title
         if context_config is not None:
             context_config = self._sanitize_context_config(context_config)
             changes["context_config"] = True
-            session.context_config = json.dumps(context_config)  # type: ignore
+            session.context_config = json.dumps(context_config)
         if capability_profile is not None:
             changes["capability_profile"] = True
-            session.capability_profile = json.dumps(capability_profile)  # type: ignore
+            session.capability_profile = json.dumps(capability_profile)
         if state is not None:
             changes["state"] = {"old": str(session.state), "new": str(state)}
-            session.state = state  # type: ignore
+            session.state = state
 
         self.db.commit()
         self.db.refresh(session)
@@ -707,8 +707,8 @@ class RoleSessionService:
         self._publish_session_ended(session, reason="deleted" if soft else "hard_deleted")
 
         if soft:
-            session.is_deleted = 1  # type: ignore
-            session.state = SessionState.ARCHIVED.value  # type: ignore
+            session.is_deleted = 1
+            session.state = SessionState.ARCHIVED.value
             self.db.commit()
         else:
             self.db.delete(session)
@@ -760,9 +760,9 @@ class RoleSessionService:
         )
 
         # 更新会话的附着字段
-        session.attached_run_id = run_id  # type: ignore
-        session.attached_task_id = task_id  # type: ignore
-        session.attachment_mode = mode  # type: ignore
+        session.attached_run_id = run_id
+        session.attached_task_id = task_id
+        session.attachment_mode = mode
 
         self.db.add(attachment)
         self.db.commit()
@@ -793,9 +793,9 @@ class RoleSessionService:
         self._deactivate_attachments(session_id)
 
         # 更新会话字段
-        session.attached_run_id = None  # type: ignore
-        session.attached_task_id = None  # type: ignore
-        session.attachment_mode = AttachmentMode.ISOLATED.value  # type: ignore
+        session.attached_run_id = None
+        session.attached_task_id = None
+        session.attachment_mode = AttachmentMode.ISOLATED.value
 
         self.db.commit()
 
@@ -920,7 +920,7 @@ class RoleSessionService:
         if session.context_config:
             try:
                 # session.context_config is Column[str]; str() returns the value at runtime
-                existing = json.loads(str(session.context_config))  # type: ignore[arg-type]
+                existing = json.loads(str(session.context_config))
             except json.JSONDecodeError:
                 existing = {}
         existing["strategy_override"] = dict(override)
@@ -980,14 +980,14 @@ class RoleSessionService:
         )
 
         # 更新会话计数和时间
-        session.message_count = (session.message_count or 0) + 1  # type: ignore
+        session.message_count = (session.message_count or 0) + 1
 
         self.db.add(message)
         self.db.commit()
 
         # M3: 发布消息添加事件
         # session.message_count is Column[int]; cast to int for event publishing
-        self._publish_message_added(session_id, role, int(session.message_count or 0))  # type: ignore[arg-type]
+        self._publish_message_added(session_id, role, int(session.message_count or 0))
 
         return session
 
@@ -1120,7 +1120,7 @@ class RoleSessionService:
 
             if run_id or task_id:
                 service.attach_session(
-                    str(session.id),  # type: ignore[arg-type]
+                    str(session.id),
                     run_id=run_id,
                     task_id=task_id,
                     mode=AttachmentMode.ATTACHED_COLLABORATIVE.value,

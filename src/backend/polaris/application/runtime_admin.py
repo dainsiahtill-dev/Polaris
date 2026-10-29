@@ -145,7 +145,7 @@ class OrchestratorHandle:
         ``RuntimeAdminError`` so delivery never sees Cell-internal exceptions.
         """
         try:
-            async for event in self._orchestrator.execute_stream(user_message, context=context):  # type: ignore[misc,attr-defined]
+            async for event in self._orchestrator.execute_stream(user_message, context=context):
                 yield event
         except RoleRuntimeError as exc:
             raise RuntimeAdminError(
@@ -341,4 +341,4 @@ class RuntimeAdminService:
                 cause=exc,
             ) from exc
 
-        return OrchestratorHandle(orchestrator)  # type: ignore[arg-type]
+        return OrchestratorHandle(orchestrator)

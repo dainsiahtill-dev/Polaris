@@ -628,7 +628,7 @@ class UnifiedOrchestrationService(OrchestrationService):
         await self._update_task_status(run_id, task.task_id, RunStatus.RUNNING)
 
         # 获取角色适配器
-        adapter = self._adapters.get(task.role_entry.role_id)  # type: ignore[misc]
+        adapter = self._adapters.get(task.role_entry.role_id)
         if not adapter:
             raise RuntimeError(f"No adapter for role: {task.role_entry.role_id}")
 
@@ -725,7 +725,7 @@ class UnifiedOrchestrationService(OrchestrationService):
             )
         try:
             return asyncio.run(
-                adapter.execute(  # type: ignore[misc]
+                adapter.execute(
                     task_id=task_id,
                     input_data=input_data,
                     context=context,

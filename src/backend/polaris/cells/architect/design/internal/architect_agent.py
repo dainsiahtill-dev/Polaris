@@ -208,7 +208,7 @@ class ArchitectAgent(RoleAgent):
         return {"ok": True, "blueprint": record.to_dict()}
 
     def _tool_list_blueprints(self, task_id: str | None = None) -> dict[str, Any]:
-        rows = self._store.list_by_task(task_id or "") if str(task_id or "").strip() else self._store.list_all()  # type: ignore[arg-type]
+        rows = self._store.list_by_task(task_id or "") if str(task_id or "").strip() else self._store.list_all()
         return {"ok": True, "count": len(rows), "blueprints": [item.to_dict() for item in rows]}
 
     def handle_message(self, message: AgentMessage) -> AgentMessage | None:

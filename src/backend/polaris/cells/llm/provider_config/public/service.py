@@ -44,7 +44,7 @@ def _extract_workspace_and_cache_root(settings: Any) -> tuple[str, str]:
 
 def _to_dict(value: Any) -> dict[str, Any]:
     if is_dataclass(value) and not isinstance(value, type):
-        payload = asdict(value)  # type: ignore[arg-type]
+        payload = asdict(value)
         if isinstance(payload, dict):
             return payload
     if isinstance(value, Mapping):

@@ -70,10 +70,10 @@ class ResidentDecisionSupervisor(Protocol):
 class _NullEventEmitter:
     """No-op emitter used when kernelone.tool_execution.io_utils is unavailable."""
 
-    def emit_event(self, path: str, **kwargs: Any) -> None:  # type: ignore[override]
+    def emit_event(self, path: str, **kwargs: Any) -> None:
         return None
 
-    def emit_dialogue(self, path: str, **kwargs: Any) -> None:  # type: ignore[override]
+    def emit_dialogue(self, path: str, **kwargs: Any) -> None:
         return None
 
 
@@ -83,10 +83,10 @@ def _load_kernelone_emitter() -> EventEmitter:
         from polaris.kernelone.events import emit_dialogue, emit_event
 
         class _KernelOneEmitter:
-            def emit_event(self, path: str, **kwargs: Any) -> None:  # type: ignore[override]
+            def emit_event(self, path: str, **kwargs: Any) -> None:
                 emit_event(path, **kwargs)
 
-            def emit_dialogue(self, path: str, **kwargs: Any) -> None:  # type: ignore[override]
+            def emit_dialogue(self, path: str, **kwargs: Any) -> None:
                 emit_dialogue(path, **kwargs)
 
         return _KernelOneEmitter()

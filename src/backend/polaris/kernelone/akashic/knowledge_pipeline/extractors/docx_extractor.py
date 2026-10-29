@@ -55,7 +55,7 @@ class DocxExtractor(BaseExtractor):
         """Check if DOCX extraction is available."""
         return DOCX_AVAILABLE
 
-    async def extract(self, doc: DocumentInput) -> list[ExtractedFragment]:  # type: ignore[override]
+    async def extract(self, doc: DocumentInput) -> list[ExtractedFragment]:
         """Extract text fragments from a Word document.
 
         Handles python-docx Document objects directly.
@@ -245,7 +245,7 @@ class DocxExtractor(BaseExtractor):
         logger.debug("Extracted %d fragments from DOCX", len(fragments))
         return fragments
 
-    def _do_extract(  # type: ignore[override]
+    def _do_extract(
         self,
         text: str,
         options: ExtractionOptions,

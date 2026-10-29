@@ -320,7 +320,7 @@ class KnowledgeSync:
         hashes: set[str] = set()
         try:
             # _semantic is the AkashicSemanticMemory wrapped by IdempotentVectorStore
-            semantic = self._jsonl._semantic  # type: ignore[attr-defined]
+            semantic = self._jsonl._semantic
             for item in semantic._items.values():
                 hashes.add(self._content_hash(item.text))
         except (RuntimeError, ValueError) as exc:
@@ -330,7 +330,7 @@ class KnowledgeSync:
     def _get_text_by_content_hash(self, content_hash: str) -> str | None:
         """Look up the original text for a given content_hash from JSONL store."""
         try:
-            semantic = self._jsonl._semantic  # type: ignore[attr-defined]
+            semantic = self._jsonl._semantic
             for item in semantic._items.values():
                 if self._content_hash(item.text) == content_hash:
                     return item.text

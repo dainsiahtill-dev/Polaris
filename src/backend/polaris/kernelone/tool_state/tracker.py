@@ -410,9 +410,9 @@ class ToolCallTracker:
             callback: Async or sync callback function
         """
         if inspect.iscoroutinefunction(callback):
-            self._state_callbacks.append(callback)  # type: ignore[arg-type, misc]
+            self._state_callbacks.append(callback)
         else:
-            self._sync_callbacks.append(callback)  # type: ignore[arg-type, misc]
+            self._sync_callbacks.append(callback)
 
     def remove_callback(self, callback: ToolStateCallback | SyncToolStateCallback) -> bool:
         """Remove a callback.
@@ -425,7 +425,7 @@ class ToolCallTracker:
         """
         if inspect.iscoroutinefunction(callback):
             try:
-                self._state_callbacks.remove(callback)  # type: ignore
+                self._state_callbacks.remove(callback)
                 return True
             except ValueError:
                 return False

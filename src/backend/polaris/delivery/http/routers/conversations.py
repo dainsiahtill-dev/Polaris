@@ -97,7 +97,7 @@ async def create_conversation_v2(
             meta=safe_meta,
         )
         db.add(msg)
-        conversation.message_count = 1  # type: ignore[assignment]
+        conversation.message_count = 1
 
     db.commit()
     db.refresh(conversation)
@@ -170,9 +170,9 @@ async def update_conversation_v2(
         raise StructuredHTTPException(status_code=404, code="CONVERSATION_NOT_FOUND", message="Conversation not found")
 
     if data.title is not None:
-        conversation.title = data.title  # type: ignore[assignment]
+        conversation.title = data.title
     if data.context_config is not None:
-        conversation.context_config = json.dumps(data.context_config)  # type: ignore[assignment]
+        conversation.context_config = json.dumps(data.context_config)
 
     db.commit()
     db.refresh(conversation)
@@ -201,7 +201,7 @@ async def delete_conversation_v2(
     if hard:
         db.delete(conversation)
     else:
-        conversation.is_deleted = 1  # type: ignore[assignment]
+        conversation.is_deleted = 1
 
     db.commit()
 
@@ -245,7 +245,7 @@ async def add_message_v2(
     db.add(msg)
 
     # 更新消息计数和时间戳
-    conversation.message_count = max_seq + 1  # type: ignore[assignment]
+    conversation.message_count = max_seq + 1
 
     db.commit()
     db.refresh(msg)
@@ -313,7 +313,7 @@ async def add_messages_batch_v2(
         )
         db.add(msg)
 
-    conversation.message_count = max_seq + len(messages)  # type: ignore[assignment]
+    conversation.message_count = max_seq + len(messages)
     db.commit()
 
     return {"ok": True, "added_count": len(messages)}
@@ -352,7 +352,7 @@ async def delete_message_v2(
             db.query(ConversationMessage).filter(ConversationMessage.conversation_id == conversation_id).count()
             - 1  # 因为还没 commit
         )
-        conversation.message_count = count_value  # type: ignore[assignment]
+        conversation.message_count = count_value
 
     db.commit()
 

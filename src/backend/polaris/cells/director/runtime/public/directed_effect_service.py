@@ -27,7 +27,7 @@ def _denied(error_code: str) -> DirectorEffectExecutionEvidenceComparisonResultV
     return DirectorEffectExecutionEvidenceComparisonResultV1(
         status="denied",
         matches=False,
-        error_code=error_code,  # type: ignore[arg-type]
+        error_code=error_code,
     )
 
 

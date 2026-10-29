@@ -24,7 +24,7 @@ from polaris.cells.roles.profile.internal.schema import RoleProfile
 from polaris.kernelone.context.contracts import TurnEngineContextRequest as ContextRequest
 
 # 导入 Standard Toolkit 工具系统
-from polaris.kernelone.llm.toolkit import (  # type: ignore[attr-defined]
+from polaris.kernelone.llm.toolkit import (
     ChiefEngineerToolIntegration,
     has_tool_calls,
 )

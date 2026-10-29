@@ -224,11 +224,11 @@ def _run_unix_pty(
     output_queue: queue.Queue,
 ) -> tuple[int, str, int]:
     """Run command using pty on Unix/Linux/Mac"""
-    import pty  # type: ignore[import]
+    import pty
     import select
 
     start = time.time()
-    master_fd, slave_fd = pty.openpty()  # type: ignore[attr-defined, union-attr]
+    master_fd, slave_fd = pty.openpty()
 
     try:
         process = subprocess.Popen(

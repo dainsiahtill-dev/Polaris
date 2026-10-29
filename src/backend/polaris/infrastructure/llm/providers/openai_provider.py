@@ -658,7 +658,7 @@ class OpenAIProvider(BaseProvider):
                     if token.startswith("Error:"):
                         return
 
-            for kind, text in think_parser.flush():  # type: ignore[attr-defined]
+            for kind, text in think_parser.flush():
                 if not text:
                     continue
                 if kind == "thinking":

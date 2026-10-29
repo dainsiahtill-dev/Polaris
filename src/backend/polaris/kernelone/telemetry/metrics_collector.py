@@ -346,12 +346,12 @@ class MetricsCollector:
 
             @functools.wraps(func)
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-                self.increment(metric_name, labels)  # type: ignore[arg-type]
+                self.increment(metric_name, labels)
                 return func(*args, **kwargs)
 
             @functools.wraps(func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-                self.increment(metric_name, labels)  # type: ignore[arg-type]
+                self.increment(metric_name, labels)
                 return await func(*args, **kwargs)
 
             if asyncio.iscoroutinefunction(func):
@@ -390,7 +390,7 @@ class MetricsCollector:
                     return func(*args, **kwargs)
                 finally:
                     duration = time.perf_counter() - start
-                    self.observe(metric_name, duration, labels)  # type: ignore[arg-type]
+                    self.observe(metric_name, duration, labels)
 
             @functools.wraps(func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -399,7 +399,7 @@ class MetricsCollector:
                     return await func(*args, **kwargs)
                 finally:
                     duration = time.perf_counter() - start
-                    self.observe(metric_name, duration, labels)  # type: ignore[arg-type]
+                    self.observe(metric_name, duration, labels)
 
             if asyncio.iscoroutinefunction(func):
                 return async_wrapper  # type: ignore[return-value]

@@ -47,7 +47,7 @@ def _pid_alive(pid: int) -> bool:
 
     if platform.system() == "Windows":
         try:
-            import psutil  # type: ignore[import-untyped]
+            import psutil
 
             return psutil.pid_exists(pid)
         except (ImportError, RuntimeError, ValueError):

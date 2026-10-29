@@ -323,8 +323,8 @@ def run_agentic_eval_command(args: argparse.Namespace) -> int:
     package = build_agentic_eval_audit_package(
         workspace=workspace,
         scope_role=role,
-        provider_id=provider_id or "",  # type: ignore[arg-type]
-        model=model or "",  # type: ignore[arg-type]
+        provider_id=provider_id or "",
+        model=model or "",
         run_result=_as_dict(run_result),
         max_fixes=max_fixes,
     )

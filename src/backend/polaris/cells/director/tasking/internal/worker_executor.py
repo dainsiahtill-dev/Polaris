@@ -182,14 +182,14 @@ class WorkerExecutor:
 
         # Initialize specialized services (Phase 4 deps deferred)
         if _FileApplyService is not None:
-            self._file_service = _FileApplyService(workspace, message_bus, worker_id)  # type: ignore[operator, no-redef]
+            self._file_service = _FileApplyService(workspace, message_bus, worker_id)
         else:
-            self._file_service = None  # type: ignore[assignment, no-redef]
+            self._file_service = None
         self._evidence_service = EvidenceService()
         if _CodeGenerationEngine is not None:
-            self._code_engine = _CodeGenerationEngine(workspace, self)  # type: ignore[operator, no-redef]
+            self._code_engine = _CodeGenerationEngine(workspace, self)
         else:
-            self._code_engine = None  # type: ignore[assignment, no-redef]
+            self._code_engine = None
 
     def _raise_code_writing_forbidden(self, action: str) -> typing.NoReturn:
         """Fail closed when forbidden code-writing helpers are invoked."""
@@ -301,7 +301,7 @@ class WorkerExecutor:
         initial_target_signatures = self._snapshot_workspace_files(target_files)
         budget_seconds = self._code_engine.resolve_task_timeout_budget(
             task,
-            rounds=total_rounds,  # type: ignore[arg-type]
+            rounds=total_rounds,
         )
         deadline_ts = time.time() + budget_seconds
         spin_tracker: dict[str, dict[str, Any]] = {}
@@ -318,7 +318,7 @@ class WorkerExecutor:
                 len(rounds),
             )
             for round_index, round_plan in enumerate(rounds, start=1):
-                remaining = self._code_engine.remaining_timeout(deadline_ts)  # type: ignore[operator]
+                remaining = self._code_engine.remaining_timeout(deadline_ts)
                 if remaining <= 0:
                     logger.info(
                         "[WorkerExecutor] CodeGen budget exhausted before round %s/%s",
@@ -354,7 +354,7 @@ class WorkerExecutor:
                     round_files=round_paths,
                 )
                 try:
-                    round_files, round_warnings = await self._code_engine.invoke_generation_with_retries(  # type: ignore[operator]
+                    round_files, round_warnings = await self._code_engine.invoke_generation_with_retries(
                         task=task,
                         prompt=prompt,
                         model=model,
@@ -364,9 +364,9 @@ class WorkerExecutor:
                         round_files=round_paths,
                         spin_tracker=spin_tracker,
                     )
-                    files_created.extend(round_files)  # type: ignore[union-attr]
+                    files_created.extend(round_files)
                     if round_warnings:
-                        policy_messages.extend(round_warnings)  # type: ignore[union-attr]
+                        policy_messages.extend(round_warnings)
                         logger.warning(
                             "Worker code generation blocked for task %s: %s",
                             task.id,
@@ -460,7 +460,7 @@ class WorkerExecutor:
         )
 
         if bootstrap_files:
-            files_created = self._file_service.write_files(bootstrap_files)  # type: ignore[operator]
+            files_created = self._file_service.write_files(bootstrap_files)
             logger.info(
                 "[WorkerExecutor] Bootstrap template generated %s files",
                 len(files_created),
@@ -816,13 +816,13 @@ class WorkerExecutor:
         """Delegate to FileApplyService."""
         if self._file_service is None:
             return []
-        return self._file_service.write_files(files, task_id)  # type: ignore[operator]
+        return self._file_service.write_files(files, task_id)
 
     def _collect_workspace_files(self, paths: list[str], task_id: str = "", operation: str = "modify") -> list[dict]:
         """Delegate to FileApplyService."""
         if self._file_service is None:
             return []
-        return self._file_service.collect_workspace_files(paths, task_id, operation)  # type: ignore[operator]
+        return self._file_service.collect_workspace_files(paths, task_id, operation)
 
     def _apply_response_operations(
         self,
@@ -837,7 +837,7 @@ class WorkerExecutor:
         return self._file_service.apply_response_operations(
             response,
             task_id,
-            llm_metadata,  # type: ignore[arg-type]
+            llm_metadata,
             allowed_scope_paths=allowed_scope_paths,
         )
 

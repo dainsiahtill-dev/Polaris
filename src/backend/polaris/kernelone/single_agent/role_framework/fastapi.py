@@ -21,9 +21,9 @@ except ImportError:
     FASTAPI_AVAILABLE = False
     # type: ignore[misc,assignment]
     FastAPI = object  # type: ignore[misc,assignment]
-    HTTPException = Exception  # type: ignore[misc,assignment]
+    HTTPException = Exception
 
-    def Query(*a, **k) -> None:  # type: ignore[misc,no-redef]  # noqa: N802
+    def Query(*a, **k) -> None:  # noqa: N802
         return None
 
 

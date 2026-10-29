@@ -26,7 +26,7 @@ def _bootstrap_backend_import_path():
     return PM, get_pm, RoleBase, RoleCapability, RoleInfo, RoleState
 
 
-class PMRole:  # type: ignore[misc]  # structurally broken: RoleBase imported lazily inside _bootstrap_backend_import_path; mypy cannot resolve it at class definition time
+class PMRole:  # structurally broken: RoleBase imported lazily inside _bootstrap_backend_import_path; mypy cannot resolve it at class definition time
     """PM 角色
 
     继承自 RoleBase，提供标准化的接口。

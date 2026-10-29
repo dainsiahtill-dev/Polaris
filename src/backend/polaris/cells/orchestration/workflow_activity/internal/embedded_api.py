@@ -701,7 +701,7 @@ class EmbeddedWorkflowAPI:
             workflow_handler.__embedded_workflow_name__ = primary_name  # type: ignore[attr-defined]
             run_method = getattr(c, run_method_name, None)
             if callable(run_method):
-                run_method.__embedded_workflow_name__ = primary_name  # type: ignore[attr-defined]
+                run_method.__embedded_workflow_name__ = primary_name
             c.__embedded_workflow_name__ = primary_name  # type: ignore[attr-defined]
             c.__embedded_workflow_handler__ = workflow_handler  # type: ignore[attr-defined]
             registry = get_workflow_registry()

@@ -53,7 +53,7 @@ class StormLevel(str, Enum):
     CRITICAL = "critical"  # Storm in progress
     EMERGENCY = "emergency"  # Extreme rate, drop all non-error
 
-    def __repr__(self) -> str:  # type: ignore[override]
+    def __repr__(self) -> str:
         return f"StormLevel.{self.name}"
 
 

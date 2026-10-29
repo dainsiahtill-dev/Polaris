@@ -76,11 +76,9 @@ def _normalize_workflow_input(value: PMWorkflowInput | dict[str, Any]) -> PMWork
         workspace=str(value.get("workspace") or "").strip(),
         run_id=str(value.get("run_id") or "").strip(),
         precomputed_payload=(
-            value.get("precomputed_payload")  # type: ignore[arg-type]
-            if isinstance(value.get("precomputed_payload"), dict)
-            else {}
+            value.get("precomputed_payload") if isinstance(value.get("precomputed_payload"), dict) else {}
         ),
-        metadata=value.get("metadata") if isinstance(value.get("metadata"), dict) else {},  # type: ignore[arg-type]
+        metadata=value.get("metadata") if isinstance(value.get("metadata"), dict) else {},
     )
 
 

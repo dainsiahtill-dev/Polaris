@@ -281,4 +281,4 @@ class LayoutValidator:
 
 
 # 协议兼容声明
-LayoutValidator: BaseValidator  # type: ignore[misc, no-redef]
+LayoutValidator: BaseValidator

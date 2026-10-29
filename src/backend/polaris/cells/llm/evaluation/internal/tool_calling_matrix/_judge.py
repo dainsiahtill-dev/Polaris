@@ -268,7 +268,7 @@ def _check_mode(
         ordered_ok = True
         group_evidence: list[dict[str, Any]] = []
         for raw_group in ordered_groups:
-            group = tuple(canonicalize_tool_name(item, keep_unknown=True) for item in _tuple_of_strings(raw_group))  # type: ignore[assignment]
+            group = tuple(canonicalize_tool_name(item, keep_unknown=True) for item in _tuple_of_strings(raw_group))
             if not group:
                 continue
             found_index = -1

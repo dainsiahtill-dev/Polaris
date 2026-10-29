@@ -111,7 +111,7 @@ def ensure_minimal_kernelone_bindings() -> None:
     if not has_audit_store_factory():
         set_audit_store_factory(AuditStoreAdapter)
 
-    register_business_roots_resolver(resolve_polaris_roots)  # type: ignore[arg-type]
+    register_business_roots_resolver(resolve_polaris_roots)
 
     _install_slm_binding()
 
@@ -161,7 +161,7 @@ def _inject_embedding_port(settings: Settings) -> None:
             resp = requests_module.get(f"{host}/api/tags", timeout=2)
             if resp.status_code == 200:
                 set_default_ollama_adapter(OllamaRuntimeAdapter())
-                port = OllamaEmbeddingAdapter()  # type: ignore[assignment]
+                port = OllamaEmbeddingAdapter()
                 set_default_embedding_port(port)
                 logger.info("Injected OllamaEmbeddingPort: %s", port.get_fingerprint())
                 return
@@ -169,7 +169,7 @@ def _inject_embedding_port(settings: Settings) -> None:
             logger.debug("Ollama embedding injection unavailable: %s", exc)
 
     # 3. Fallback to Stub
-    port = StubEmbeddingAdapter()  # type: ignore[assignment]
+    port = StubEmbeddingAdapter()
     set_default_embedding_port(port)
     logger.warning("No real embedding infrastructure found. Injected StubEmbeddingPort.")
 
@@ -191,7 +191,7 @@ def _inject_provider_manager_port() -> None:
         from polaris.kernelone.llm.providers.provider_injection import set_provider_manager_port
 
         provider_adapter = ProviderAdapter(provider_manager)
-        set_provider_manager_port(provider_adapter)  # type: ignore[arg-type]
+        set_provider_manager_port(provider_adapter)
         logger.info("Wired IProviderRegistryPort into KernelOne")
     except ImportError as exc:
         logger.debug("Provider port injection unavailable (missing dependencies): %s", exc)

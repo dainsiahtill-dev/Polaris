@@ -151,7 +151,7 @@ def _resolve_executor(context: Mapping[str, Any] | None) -> RoleSessionMatrixExe
     if injected is None:
         return RolesRuntimeMatrixExecutor()
     if hasattr(injected, "stream_session") and hasattr(injected, "run_session"):
-        return injected  # type: ignore[return-value]
+        return injected
     if hasattr(injected, "stream_session"):
         return _CompositeMatrixExecutor(
             stream_executor=injected.stream_session,

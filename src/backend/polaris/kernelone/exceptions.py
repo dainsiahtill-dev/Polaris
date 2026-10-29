@@ -227,7 +227,7 @@ def __getattr__(name: str) -> type:
 
 # Semantic alias for LLMError - prefer this for type hints
 # Note: This is lazily loaded via __getattr__
-LLMException = None  # type: ignore[assignment,misc]
+LLMException = None
 
 # ============================================================================
 # Backward Compatibility Aliases

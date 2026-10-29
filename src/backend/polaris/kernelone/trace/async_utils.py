@@ -352,7 +352,7 @@ def patch_asyncio_create_task() -> None:
             return copied.run(original_create_task, coro, name=name)
         return original_create_task(coro, name=name, context=context)
 
-    asyncio.create_task = patched_create_task  # type: ignore
+    asyncio.create_task = patched_create_task
     logger.warning(
         "asyncio.create_task has been patched to auto-propagate context. This may affect performance and compatibility."
     )

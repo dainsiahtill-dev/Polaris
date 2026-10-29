@@ -79,7 +79,7 @@ async def create_memory_manager(
         workspace=workspace,
         working_memory=WorkingMemoryWindow(),
         semantic_cache=SemanticCacheInterceptor(),
-        legacy_memory_store=legacy_store,  # type: ignore[arg-type]  # MemoryStore is compatible via adapter
+        legacy_memory_store=legacy_store,  # MemoryStore is compatible via adapter
     )
 
     # Start compression daemon if enabled

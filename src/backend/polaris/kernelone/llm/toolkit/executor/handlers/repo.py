@@ -894,7 +894,7 @@ def _find_all_symbols_ts(content: str, language: str, max_results: int = 500) ->
     from typing import cast
 
     try:
-        parser = get_parser(cast("str", language))  # type: ignore[arg-type]
+        parser = get_parser(cast("str", language))
     except (LookupError, RuntimeError, ValueError) as e:
         logger.debug("tree-sitter grammar unavailable for language '%s': %s", language, e)
         return []

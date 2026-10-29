@@ -123,12 +123,12 @@ def build_pm_prompt(*args, **kwargs):
     return _pm_backend_module.build_pm_prompt(*args, **kwargs)
 
 
-def resolve_agents_approval_mode(args):  # type: ignore[no-redef]
+def resolve_agents_approval_mode(args):
     _pm_agents_module._is_interactive_session = _is_interactive_session
     return _pm_agents_module.resolve_agents_approval_mode(args)
 
 
-def wait_for_agents_confirmation(*args, **kwargs):  # type: ignore[no-redef]
+def wait_for_agents_confirmation(*args, **kwargs):
     _pm_agents_module._is_interactive_session = _is_interactive_session
     _pm_agents_module.maybe_generate_agents_draft = maybe_generate_agents_draft
     return _pm_agents_module.wait_for_agents_confirmation(*args, **kwargs)

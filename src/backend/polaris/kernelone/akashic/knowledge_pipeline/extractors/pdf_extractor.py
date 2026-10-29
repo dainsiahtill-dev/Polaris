@@ -32,7 +32,7 @@ try:
     PDFPLUMBER_AVAILABLE = True
 except ImportError:
     PDFPLUMBER_AVAILABLE = False
-    pdfplumber = None  # type: ignore[assignment]
+    pdfplumber = None
 
 
 class PDFExtractor(BaseExtractor):

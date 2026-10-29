@@ -39,7 +39,7 @@ _patch_state: dict[str, Any] = {}
 
 def _get_original_send() -> Callable[..., Awaitable[httpx.Response]] | None:
     """Get the original httpx.AsyncClient.send method."""
-    return _patch_state.get("original_send")  # type: ignore[return-value]
+    return _patch_state.get("original_send")
 
 
 def _set_original_send(send: Callable[..., Awaitable[httpx.Response]]) -> None:
@@ -56,7 +56,7 @@ InterceptorCallback = Callable[["HTTPExchange"], Awaitable[tuple[bool, "httpx.Re
 
 def _get_interceptor() -> InterceptorCallback | None:
     """Get the interceptor callback."""
-    return _patch_state.get("interceptor")  # type: ignore[return-value]
+    return _patch_state.get("interceptor")
 
 
 def _set_interceptor(cb: InterceptorCallback | None) -> None:

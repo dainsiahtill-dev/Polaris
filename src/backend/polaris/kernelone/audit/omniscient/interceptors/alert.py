@@ -221,7 +221,7 @@ class AuditAlertInterceptor(BaseAuditInterceptor):
             Dict of interceptor name -> circuit open state.
         """
         states: dict[str, bool] = {}
-        for callback in self._bus._interceptors:  # type: ignore[attr-defined]
+        for callback in self._bus._interceptors:
             # Bound method: callback.__self__ is the interceptor instance
             if hasattr(callback, "__self__"):
                 instance = callback.__self__

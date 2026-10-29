@@ -195,7 +195,7 @@ def _extract_iteration(event: LLMRealtimeEvent) -> int:
         if candidate is None:
             continue
         try:
-            return max(0, int(candidate))  # type: ignore[arg-type]
+            return max(0, int(candidate))
         except (TypeError, ValueError):
             continue
     return 0

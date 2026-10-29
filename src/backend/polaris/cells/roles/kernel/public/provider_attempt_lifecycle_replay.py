@@ -1202,9 +1202,9 @@ def _parse_lifecycle_event(
         start_permit_id=payload.get("start_permit_id"),  # type: ignore[arg-type]
         context_snapshot_ref=payload.get("context_snapshot_ref"),  # type: ignore[arg-type]
         pin_hash=payload.get("pin_hash"),  # type: ignore[arg-type]
-        lease_id=payload.get("lease_id", ""),  # type: ignore[arg-type]
-        terminal_status=payload.get("status", ""),  # type: ignore[arg-type]
-        error=payload.get("error", ""),  # type: ignore[arg-type]
+        lease_id=payload.get("lease_id", ""),
+        terminal_status=payload.get("status", ""),
+        error=payload.get("error", ""),
     )
 
 

@@ -440,7 +440,7 @@ class EventRegistry:
 
                 # Handle async handlers
                 if asyncio.iscoroutine(result):
-                    pending_tasks.append(asyncio.create_task(result))  # type: ignore[arg-type]
+                    pending_tasks.append(asyncio.create_task(result))
                 elif asyncio.isfuture(result):
                     pending_tasks.append(asyncio.shield(result))  # type: ignore[arg-type]
                 else:

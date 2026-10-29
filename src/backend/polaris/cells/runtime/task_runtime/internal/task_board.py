@@ -945,7 +945,7 @@ class TaskBoard:
                         lock_flag = fcntl.LOCK_SH if read_only else fcntl.LOCK_EX
                         if deadline is not None:
                             lock_flag |= fcntl.LOCK_NB
-                        fcntl.flock(lock_file.fileno(), lock_flag)  # type: ignore[attr-defined]
+                        fcntl.flock(lock_file.fileno(), lock_flag)
                     lock_acquired = True
                 except OSError as exc:
                     if deadline is None:
@@ -971,7 +971,7 @@ class TaskBoard:
                     elif lock_acquired:
                         import fcntl
 
-                        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)  # type: ignore[attr-defined]
+                        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
                 except OSError as exc:
                     logger.debug("Failed to unlock file %s: %s", lock_file_path, exc)
                 finally:

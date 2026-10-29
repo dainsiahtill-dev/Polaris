@@ -375,7 +375,7 @@ class WorkflowEngine:
         except WorkflowContractError as exc:
             errors: list[str] = []
             if hasattr(exc, "errors"):
-                errors = list(exc.errors)  # type: ignore[attr-defined]
+                errors = list(exc.errors)
             return RuntimeSubmissionResult(
                 submitted=False,
                 status="invalid_contract",

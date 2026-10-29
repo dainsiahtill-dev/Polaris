@@ -56,7 +56,7 @@ def _get_llm_error() -> type[Exception]:
     if not _LLM_ERROR_LOADED:
         from polaris.kernelone.errors import LLMError as _LE  # noqa: N814
 
-        _LLM_ERROR = _LE  # type: ignore[assignment]
+        _LLM_ERROR = _LE
         _LLM_ERROR_LOADED = True
     assert _LLM_ERROR is not None
     return _LLM_ERROR
@@ -680,7 +680,7 @@ def is_retryable(error: Exception) -> bool:
         True if the error is retryable, False otherwise.
     """
     if isinstance(error, _LLMErrorType):
-        return error.retryable  # type: ignore[attr-defined]
+        return error.retryable
 
     # Default classifications for common exceptions
     error_str = str(error).lower()

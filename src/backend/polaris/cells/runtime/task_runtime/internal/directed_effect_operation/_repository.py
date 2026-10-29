@@ -28,23 +28,23 @@ def _pkg_lookup(name: str):
     return getattr(_sys.modules[__package__], name)
 
 
-def query_fact_events(*args, **kwargs):  # type: ignore[no-redef]
+def query_fact_events(*args, **kwargs):
     return _pkg_lookup("query_fact_events")(*args, **kwargs)
 
 
-def read_guarded_fact_snapshot(*args, **kwargs):  # type: ignore[no-redef]
+def read_guarded_fact_snapshot(*args, **kwargs):
     return _pkg_lookup("read_guarded_fact_snapshot")(*args, **kwargs)
 
 
-def append_if_guarded_snapshot(*args, **kwargs):  # type: ignore[no-redef]
+def append_if_guarded_snapshot(*args, **kwargs):
     return _pkg_lookup("append_if_guarded_snapshot")(*args, **kwargs)
 
 
-def append_fact_event(*args, **kwargs):  # type: ignore[no-redef]
+def append_fact_event(*args, **kwargs):
     return _pkg_lookup("append_fact_event")(*args, **kwargs)
 
 
-def enroll_fact_stream_streams(*args, **kwargs):  # type: ignore[no-redef]
+def enroll_fact_stream_streams(*args, **kwargs):
     return _pkg_lookup("enroll_fact_stream_streams")(*args, **kwargs)
 
 
@@ -89,7 +89,7 @@ del _patchable
 
 DirectedEffectOperationRepository = _NS["DirectedEffectOperationRepository"]
 # Point class at package module so getsource(class) uses package __file__ (surface).
-DirectedEffectOperationRepository.__module__ = __package__  # type: ignore[misc]
+DirectedEffectOperationRepository.__module__ = __package__
 DirectedEffectOperationRepository.__qualname__ = "DirectedEffectOperationRepository"
 
 # Re-bind method __module__ for clarity (getsource(method) still uses co_filename=.source)
@@ -97,6 +97,6 @@ for _name, _attr in list(vars(DirectedEffectOperationRepository).items()):
     _fn = getattr(_attr, "__func__", _attr)
     if callable(_fn) and getattr(_fn, "__module__", None) is not None:
         with contextlib.suppress(AttributeError, TypeError):
-            _fn.__module__ = __package__  # type: ignore[misc]
+            _fn.__module__ = __package__
 
 __all__ = ["DirectedEffectOperationRepository"]

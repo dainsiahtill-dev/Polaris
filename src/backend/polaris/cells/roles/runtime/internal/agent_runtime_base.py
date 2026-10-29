@@ -923,7 +923,7 @@ class RoleAgent(ABC):
                 logger.debug("[%s] BackendToolRuntime not available (import failed): %s", self.agent_name, exc)
                 return None
             try:
-                self._backend_tool_runtime = BackendToolRuntime(  # type: ignore[assignment]
+                self._backend_tool_runtime = BackendToolRuntime(
                     self.workspace,
                     allowed_tools=self._backend_allowed_tools_from_profile(),
                 )

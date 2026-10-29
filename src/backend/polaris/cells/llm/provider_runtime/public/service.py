@@ -68,7 +68,7 @@ def execute_provider_action(command: InvokeProviderActionCommandV1) -> ProviderI
     """Execute provider action with contract-level error mapping."""
     try:
         payload = run_provider_action(
-            action=command.action,  # type: ignore[arg-type]
+            action=command.action,
             provider_type=command.provider_type,
             provider_cfg=dict(command.provider_cfg),
             api_key=command.api_key,

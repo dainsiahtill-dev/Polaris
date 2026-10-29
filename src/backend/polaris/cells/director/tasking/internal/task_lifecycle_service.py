@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from polaris.cells.audit.verdict.public.service import IndependentAuditService  # type: ignore[type-arg]
+from polaris.cells.audit.verdict.public.service import IndependentAuditService
 from polaris.domain.entities import (
     Task,
     TaskEvidence,
@@ -104,7 +104,7 @@ else:
 class _AuditServiceProvider(Protocol):
     """Protocol for audit service provider."""
 
-    async def run_audit(self, context: AuditContext) -> Any: ...  # type: ignore[valid-type,name-defined]
+    async def run_audit(self, context: AuditContext) -> Any: ...
     def get_stats(self) -> dict[str, Any]: ...
 
 
@@ -207,7 +207,7 @@ class TaskServiceDeps:
     state_store: _StateStoreProvider
     log_store: _LogStoreProvider
     storage: StorageLayout
-    audit_service: _AuditServiceProvider = field(default_factory=lambda: IndependentAuditService())  # type: ignore[misc]
+    audit_service: _AuditServiceProvider = field(default_factory=lambda: IndependentAuditService())
     repair_service: _RepairServiceProvider | None = field(default=None)
 
     @classmethod
@@ -235,10 +235,10 @@ class TaskServiceDeps:
         _repair_svc: _RepairServiceProvider | None = None
         _rs_class = _RepairService
         if _rs_class is not None:
-            _repair_svc = _rs_class()  # type: ignore[operator]
+            _repair_svc = _rs_class()
 
         return cls(
-            audit_service=IndependentAuditService(),  # type: ignore[misc]
+            audit_service=IndependentAuditService(),
             repair_service=_repair_svc,
             impact_analyzer=ImpactAnalyzer(workspace),
             evidence_store=EvidenceStore(storage.runtime_root),
@@ -1112,7 +1112,7 @@ class TaskService:
     async def run_independent_audit(
         self,
         task_id: str,
-        audit_context: AuditContext,  # type: ignore[valid-type]
+        audit_context: AuditContext,
     ) -> dict[str, Any]:
         """Run independent audit for a task."""
         verdict = await self._audit_service.run_audit(audit_context)

@@ -47,7 +47,7 @@ class CsvExtractor(BaseExtractor):
         """CSV extraction is always available (stdlib)."""
         return True
 
-    def _do_extract(  # type: ignore[override]
+    def _do_extract(
         self,
         text: str,
         options: ExtractionOptions,

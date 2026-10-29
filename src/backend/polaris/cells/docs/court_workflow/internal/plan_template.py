@@ -10,8 +10,8 @@ try:
     from polaris.infrastructure.storage import LocalFileSystemAdapter
     from polaris.kernelone.fs import KernelFileSystem
 except ImportError:  # pragma: no cover - script-mode fallback
-    from polaris.infrastructure.storage import LocalFileSystemAdapter  # type: ignore
-    from polaris.kernelone.fs import KernelFileSystem  # type: ignore
+    from polaris.infrastructure.storage import LocalFileSystemAdapter
+    from polaris.kernelone.fs import KernelFileSystem
 
 
 def _kernel_fs(workspace: str) -> KernelFileSystem:

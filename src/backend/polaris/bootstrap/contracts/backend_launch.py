@@ -17,8 +17,8 @@ try:
     from polaris.domain.models.config_snapshot import ConfigSnapshot, ConfigValidationResult
 except ImportError:
     # Fallback for standalone usage
-    ConfigSnapshot = Any  # type: ignore[misc,assignment]
-    ConfigValidationResult = Any  # type: ignore[misc,assignment]
+    ConfigSnapshot = Any
+    ConfigValidationResult = Any
 
 
 @dataclass(frozen=True)

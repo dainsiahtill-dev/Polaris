@@ -136,7 +136,7 @@ def resolve_director_execution_backend(
         _mapping_payload(input_map.get("projection")),
     ):
         if candidate:
-            combined_projection.update(candidate)  # type: ignore[union-attr]
+            combined_projection.update(candidate)
 
     # Re-declare to help mypy narrow the type after the loop
     combined_projection: dict[str, Any] = combined_projection  # type: ignore[no-redef]
@@ -166,7 +166,7 @@ def resolve_director_execution_backend(
         task_metadata.get("requirement_delta"),
     ):
         # candidate is Any | None from .get(), but we normalize to str
-        normalized_str = _normalize_text(candidate)  # type: ignore[arg-type]
+        normalized_str = _normalize_text(candidate)
         if normalized_str:
             requirement = normalized_str
             break
@@ -182,7 +182,7 @@ def resolve_director_execution_backend(
         task_metadata.get("scenario_id"),
     ):
         # candidate is Any | None from .get(), but we normalize to str
-        normalized_str2 = _normalize_text(candidate).lower()  # type: ignore[arg-type]
+        normalized_str2 = _normalize_text(candidate).lower()
         if normalized_str2:
             scenario_id = normalized_str2
             break
@@ -198,7 +198,7 @@ def resolve_director_execution_backend(
         task_metadata.get("projection_experiment_id"),
     ):
         # candidate is Any | None from .get(), but we normalize to str
-        normalized = _normalize_text(candidate)  # type: ignore[arg-type]
+        normalized = _normalize_text(candidate)
         if normalized:
             experiment_id = normalized
             break
@@ -211,7 +211,7 @@ def resolve_director_execution_backend(
         task_metadata.get("project_slug"),
     ):
         # candidate is Any | None from .get(), but we normalize to str
-        normalized = _normalize_text(candidate)  # type: ignore[arg-type]
+        normalized = _normalize_text(candidate)
         if normalized:
             project_slug = _normalize_project_slug(normalized, default_value=default_project_slug)
             break

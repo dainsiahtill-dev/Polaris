@@ -174,9 +174,9 @@ class ShadowReplay:
                 )
                 if entry is not None:
                     # Replay found - short circuit
-                    return await player.intercept(exchange)  # type: ignore[union-attr]
+                    return await player.intercept(exchange)
                 # No replay found - proceed with recording
-                return await recorder.intercept(exchange)  # type: ignore[union-attr]
+                return await recorder.intercept(exchange)
 
             set_interceptor(combined_intercept)
 

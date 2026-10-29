@@ -153,7 +153,7 @@ def _load_config_file(path: Path) -> dict[str, Any]:
             # Add timeout protection for YAML loading
             import threading
 
-            import yaml  # type: ignore[import-untyped]
+            import yaml
 
             class TimeoutError(Exception):
                 pass

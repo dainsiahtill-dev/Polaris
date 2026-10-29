@@ -341,9 +341,9 @@ class TranscriptToolResult:
         if raw_status in ("success", "error", "blocked", "timeout"):
             status: ToolResultStatus = raw_status  # type: ignore[assignment]
         elif isinstance(result_dict.get("success"), bool):
-            status = "success" if result_dict["success"] else "error"  # type: ignore[assignment]
+            status = "success" if result_dict["success"] else "error"
         else:
-            status = "error"  # type: ignore[assignment]
+            status = "error"
 
         artifact_refs: list[str] = []
         result_value = result_dict.get("result") or result_dict.get("content")
@@ -399,7 +399,7 @@ class ControlEvent:
 
         raw_event_type = data.get("event_type", "continue")
         valid_types = {"stop", "continue", "handoff", "approval_required", "budget_hit", "compacted"}
-        event_type: ControlEventType = raw_event_type if raw_event_type in valid_types else "continue"  # type: ignore[assignment]
+        event_type: ControlEventType = raw_event_type if raw_event_type in valid_types else "continue"
 
         return cls(
             event_type=event_type,

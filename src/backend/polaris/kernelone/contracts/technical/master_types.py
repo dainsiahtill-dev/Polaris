@@ -158,7 +158,7 @@ class Result(Generic[T, E]):
             raise _KernelOneError(f"Result.unwrap() called on Err: {msg}")
         if self.value is None:
             raise _KernelOneError("Result.unwrap() called on Ok(None)")
-        return self.value  # type: ignore[return-value]
+        return self.value
 
     def unwrap_or(self, default: T) -> T:
         """Get value or return default if error."""

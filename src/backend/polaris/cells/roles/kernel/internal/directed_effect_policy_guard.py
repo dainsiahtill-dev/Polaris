@@ -156,7 +156,7 @@ class DirectedEffectPolicyGuardResultV1:
 
 def _freeze_value(value: object) -> DirectedEffectImmutableValueV1:
     if value is None or type(value) in {bool, int, float, str}:
-        return value  # type: ignore[return-value]
+        return value
     if isinstance(value, Mapping):
         return DirectedEffectImmutableMapV1(items=tuple((str(key), _freeze_value(item)) for key, item in value.items()))
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
