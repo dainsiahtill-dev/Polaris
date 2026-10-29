@@ -95,14 +95,13 @@ packages = ["src/backend/polaris"]
 [tool.hatch.build.targets.sdist]
 include = [
     "/src/backend",
-    "/tests",
     "/README.md",
     "/LICENSE",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests", "src/backend/tests", "src/backend/polaris"]
+testpaths = ["src/backend/polaris"]
 pythonpath = ["src/backend"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]

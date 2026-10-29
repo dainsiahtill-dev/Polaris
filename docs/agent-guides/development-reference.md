@@ -11,9 +11,9 @@ npm run dev
 npm run dev:renderer
 npm run dev:electron
 
-# 后端单独运行
+# 后端单独运行（旧根 src/backend/server.py shim 已退役；唯一服务入口为 polaris.delivery.server）
 # 仅用于 main 开发实例；bench/临时项目实例不得占用 49977。
-python src/backend/server.py --host 127.0.0.1 --port 49977
+cd src/backend && python -m polaris.delivery.server --host 127.0.0.1 --port 49977
 
 # 后端实例运行（main 开发实例；会注册到 Launcher）
 cd src/backend
@@ -64,12 +64,14 @@ npm run typecheck
 npm run lint
 npm run test
 
-# Electron E2E (唯一 E2E 测试)
+# Electron E2E (Playwright；testDir=src/backend/polaris/tests/electron)
 npm run test:e2e
+# 专项 e2e 入口另有 test:e2e:smoke / :runtime / :settings / :acceptance / :real-flow /
+# :dual-full-chain / :production-stability / :connectivity / :panel / :task / :semantic
 
 # Python/后端改动
 pytest
-pytest src/backend/tests
+pytest src/backend/polaris/tests
 
 # 工厂冒烟（可选）
 python scripts/run_factory_e2e_smoke.py --workspace .

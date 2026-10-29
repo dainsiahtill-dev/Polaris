@@ -38,7 +38,7 @@
 
 ## 1) 真实入口路径
 - 桌面入口: `src/electron/main.cjs`
-- 后端入口: `src/backend/server.py` -> `src/backend/polaris/delivery/http/app_factory.py` (FastAPI)
+- 后端入口: `python -m polaris.delivery.server`（`src/backend/polaris/delivery/server.py`）-> `src/backend/polaris/delivery/http/app_factory.py` (FastAPI)
 - 后端实例入口（推荐）: `python -m polaris.delivery.cli.backend serve ...`
 - 前端入口: `src/frontend/src/main.tsx`（Vite 配置: `src/frontend/vite.config.ts`）
 - 多实例总控 UI: `/launcher`（例如 `http://127.0.0.1:5173/launcher`）
@@ -58,7 +58,7 @@
 - Director deterministic repair kernel: `src/backend/polaris/cells/director/runtime/internal/repair_kernel`（只允许 cell 内实现使用；跨 Cell 走 public service）
 - PM/Director 编排层: `src/backend/polaris/delivery/cli/pm`, `src/backend/polaris/delivery/cli/director`
 - 前端主 UI: `src/frontend/src/app`
-- 测试: `tests/electron`, `src/backend/polaris/tests`
+- 测试: `src/backend/polaris/tests/electron`, `src/backend/polaris/tests`
 
 说明:
 - `src/backend/polaris` 是后端 ACGA 2.0 迁移承载根；新的主实现优先进入这里
