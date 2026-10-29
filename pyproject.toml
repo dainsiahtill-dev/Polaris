@@ -100,6 +100,7 @@ include = [
 ]
 
 [tool.pytest.ini_options]
+# Pytest 配置唯一真相（历史上的根 pytest.ini 已并入此处并删除；勿再建 pytest.ini）。
 asyncio_mode = "auto"
 testpaths = ["src/backend/polaris"]
 pythonpath = ["src/backend"]
@@ -110,6 +111,20 @@ addopts = [
     "--import-mode=importlib",
     "-v",
     "--tb=short",
+]
+norecursedirs = [
+    "tmp_pytest_agentic_eval_local",
+    ".pytest_tmp*",
+    "pytest-cache-files-*",
+    ".polaris",
+    ".git",
+    ".tox",
+    "dist",
+    "build",
+    "*.egg-info",
+    "src/backend/scripts",
+    "src/backend/polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/director_root_cause_locator/tests",
+    "src/backend/polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/director_safe_scope_plan/tests",
 ]
 markers = [
     "integration: integration/e2e style tests",
@@ -141,80 +156,15 @@ follow_imports = "silent"
 namespace_packages = true
 explicit_package_bases = true
 exclude = [
-    "^tests/",
-    "^src/backend/tests/",
     "^tools\\.py$",
     "^infrastructure/",
     "^scripts/",
     ".*/tests/",
 ]
 
-[tool.ruff]
-target-version = "py310"
-line-length = 120
-# Squad B Wave 1 baseline: keep historical archive snapshots out of lint scope.
-# These are immutable snapshots used for governance audits; we don't gate on them.
-extend-exclude = [
-    "**/_archived/**",
-    "**/_archived*",
-    "**/.polaris/**",
-    "**/playwright-report/**",
-    "**/test-results/**",
-]
-
-# 静态门禁：Thin CLI 策略
-# 允许 scripts/ 目录中的 sys.argv 和 argparse 使用
-# 其他目录禁止直接使用 sys.argv（应通过 DTO 传递）
-
-[tool.ruff.lint]
-# Mandatory quality gates (Task #4)
-select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # Pyflakes
-    "I",   # isort
-    "N",   # pep8-naming
-    "UP",  # pyupgrade
-    "B",   # flake8-bugbear
-    "C4",  # flake8-comprehensions
-    "SIM", # flake8-simplify
-    "ANN", # flake8-annotations (type hints)
-    "BLE", # flake8-blind-except
-    "LOG", # flake8-logging
-    "RUF", # Ruff-specific rules
-]
-ignore = [
-    "E501",  # line too long (handled by formatter)
-    "B008",  # do not perform function calls in argument defaults
-    "F401",  # imported but unused — disabled: re-export patterns are legitimate (ACGA public contract re-exports); noisy with --fix and breaks import chains
-    # ---- ANNOTATION RULES (GRADUAL ADOPTION) ----
-    # NOTE: ANN101/ANN102 were removed upstream in ruff 0.5+; keep them out
-    # of this list to avoid the "ignoring removed rules" warning every run.
-    "ANN001", "ANN002", "ANN003",
-    "ANN201", "ANN202", "ANN203", "ANN204",
-    "ANN401",  # Dynamically typed expressions (Any)
-    # ---- RUFF-SPECIFIC RULES ----
-    "RUF012",  # Mutable class defaults
-]
-
-[tool.ruff.lint.per-file-ignores]
-# Tests are allowed to use blind-except, magic numbers, blanket ignores.
-"**/tests/**" = ["B011", "BLE001"]
-"**/test_*.py" = ["B011", "BLE001"]
-# CLI delivery layer is allowed to print directly.
-"src/backend/polaris/delivery/cli/**" = ["T20"]
-
-[tool.ruff.lint.pydocstyle]
-convention = "google"
-
-[tool.ruff.format]
-quote-style = "double"
-indent-style = "space"
-line-ending = "auto"
-
-[tool.black]
-line-length = 120
-target-version = ["py310", "py311", "py312"]
+# Ruff 配置唯一真相在根目录 ruff.toml（ruff 同目录优先 ruff.toml，pyproject [tool.ruff]
+# 历史上被遮蔽成死配置并造成 ANN203 配置漂移事件）。此处不得再出现 [tool.ruff*] 块。
+# black 已退役，格式化唯一工具是 ruff format（ruff.toml [format]）。
 
 [tool.coverage.run]
 # Squad B Wave 1: explicitly include every polaris top-level subpackage so
