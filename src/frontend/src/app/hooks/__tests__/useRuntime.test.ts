@@ -945,9 +945,11 @@ describe('useRuntime llm filtering and dedup', () => {
     });
 
     const telemetry = buildTelemetryFromStream(result.current.llmStreamEvents, [], []);
-    expect(telemetry.totalTokens).toBe(4096);
+    // totalTokens/role tokens are provider usage totals (input+output), independent of
+    // request size; contextTokensLatest carries the context-size evidence (4096).
+    expect(telemetry.totalTokens).toBe(3666);
     expect(telemetry.contextTokensLatest).toBe(4096);
-    expect(telemetryRoleTokens(telemetry, 'director')).toBe(4096);
+    expect(telemetryRoleTokens(telemetry, 'director')).toBe(3666);
     expect(telemetry.events[0].contextSnapshotDegraded?.reason).toBe('context_snapshot_store_failure');
   });
 

@@ -1558,8 +1558,8 @@ function DirectorReadinessDiagnosticsStrip({
         </summary>
         <div className="mt-2 flex min-w-0 items-center gap-3 border-t border-[var(--soft-border)] pt-2">
           <EvidenceEndpointBadge
-            endpoint={evidenceEndpoint('/v2/director/capabilities', workspace)}
-            testId="director-capability-endpoint"
+            endpoint={evidenceEndpoint('/v2/director/diagnostics', workspace)}
+            testId="director-readiness-endpoint"
           />
 
           {isLoading ? (

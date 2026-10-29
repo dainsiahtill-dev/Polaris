@@ -51,10 +51,13 @@ function toDirectorPriority(task: PmTask): 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW
   return 'LOW';
 }
 
-function normalizePmTaskId(task: PmTask): string {
-  const raw = String(task.id || '').trim();
+function normalizePmTaskIdValue(raw: string): string {
   // Strip backend-generated TASK- prefixes (TASK-1, task_1, task-1, etc.)
-  return raw.replace(/^(?:task[-_])/i, '');
+  return raw.trim().replace(/^(?:task[-_])/i, '');
+}
+
+function normalizePmTaskId(task: PmTask): string {
+  return normalizePmTaskIdValue(String(task.id || ''));
 }
 
 function toStringList(value: unknown): string[] {
@@ -317,7 +320,7 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
           const workflowState = String(item?.metadata?.workflow_state || '').trim();
           return workflowState.length === 0;
         })
-        .map((item) => String(item?.metadata?.pm_task_id || '').trim())
+        .map((item) => normalizePmTaskIdValue(String(item?.metadata?.pm_task_id || '')))
         .filter((item) => item.length > 0);
       existingTaskIds = new Set(ids);
     }

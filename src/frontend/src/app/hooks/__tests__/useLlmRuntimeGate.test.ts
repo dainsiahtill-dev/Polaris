@@ -27,6 +27,7 @@ describe('useLlmRuntimeGate', () => {
       requiredRoles: ['pm', 'director'],
       lastUpdated: '2026-05-24T00:00:00Z',
       roleDetails: {},
+      skippedBindings: [],
     });
     expect(isRoleLlmBlocked(state, 'pm')).toBe(true);
     expect(isRoleLlmBlocked(state, 'qa')).toBe(false);
