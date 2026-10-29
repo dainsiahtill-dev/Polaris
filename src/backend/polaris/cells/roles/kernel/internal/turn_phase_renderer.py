@@ -62,7 +62,7 @@ class TurnPhaseRenderer:
     def __init__(self, config: RenderConfig | None = None) -> None:
         self.config = config or RenderConfig()
 
-    async def render_events(self, events: AsyncIterator[Any]) -> AsyncIterator[Any][str]:
+    async def render_events(self, events: AsyncIterator[Any]) -> AsyncIterator[str]:
         """渲染事件流"""
         async for event in events:
             lines = self._render_event(event)

@@ -152,12 +152,12 @@ class AuthContext:
         """Get the currently bound auth context, or None."""
         return _current_auth.get()  # type: ignore[return-value]
 
-    def bind(self) -> contextvars.Token:
+    def bind(self) -> contextvars.Token[Any]:
         """Bind this context to the current async execution scope."""
         raise NotImplementedError
 
     @classmethod
-    def unbind(cls, token: contextvars.Token) -> None:
+    def unbind(cls, token: contextvars.Token[Any]) -> None:
         """Unbind and restore previous context."""
         _current_auth.reset(token)
 
@@ -322,7 +322,7 @@ class SimpleAuthContext:
             metadata=dict(self.metadata),
         )
 
-    def bind(self) -> contextvars.Token:
+    def bind(self) -> contextvars.Token[Any]:
         return _current_auth.set(self)
 
     def to_dict(self) -> dict[str, Any]:

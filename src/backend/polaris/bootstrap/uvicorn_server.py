@@ -46,7 +46,7 @@ class UvicornServerHandle:
         self.port = port
         self.log_level = log_level
         self._server: Any | None = None
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[Any] | None = None
         self._config: Any | None = None
         self._startup_exception: BaseException | None = None
 

@@ -303,7 +303,7 @@ class CodexCLIProvider(BaseProvider):
 
         def run_with_pty(selected_args: list[str], use_prompt: bool) -> tuple[int, str, str, int]:
             """Run using PTY for real-time output capture"""
-            output_queue: queue.Queue = queue.Queue(maxsize=1000)  # 有界队列防止内存泄漏
+            output_queue: queue.Queue[Any] = queue.Queue(maxsize=1000)  # 有界队列防止内存泄漏
             collected_output: list[str] = []
 
             def collect_output() -> None:

@@ -230,7 +230,7 @@ class ToolGatewayPort(Protocol):
         >>> kernel = RoleExecutionKernel(tool_gateway=MockToolGateway())
     """
 
-    def execute(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any][str, Any]:
+    def execute(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         """Execute a tool by name with given arguments.
 
         Args:

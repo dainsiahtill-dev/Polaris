@@ -152,11 +152,11 @@ class _TraceContextManager:
         """Get the current trace carrier, or None."""
         return _trace_var.get()
 
-    def set(self, carrier: TraceCarrier) -> contextvars.Token:
+    def set(self, carrier: TraceCarrier) -> contextvars.Token[Any]:
         """Set the current trace carrier. Returns a token for reset()."""
         return _trace_var.set(carrier)
 
-    def reset(self, token: contextvars.Token) -> None:
+    def reset(self, token: contextvars.Token[Any]) -> None:
         """Reset to the previous carrier using a token from set()."""
         _trace_var.reset(token)
 
@@ -212,7 +212,7 @@ class TraceContext:
     def __init__(self, name: str) -> None:
         self.name = name
         self.trace_id: str = ""
-        self._token: contextvars.Token | None = None
+        self._token: contextvars.Token[Any] | None = None
 
     def __enter__(self) -> TraceContext:
         self.trace_id = new_trace_id()

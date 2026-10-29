@@ -454,7 +454,7 @@ def _extract_file_schema_from_tool_definition(definition: Mapping[str, Any]) -> 
     return None
 
 
-def _build_scoped_write_file_tool_definition(tool_definitions: list[dict[str, Any]]) -> dict[str, Any][str, Any]:
+def _build_scoped_write_file_tool_definition(tool_definitions: list[dict[str, Any]]) -> dict[str, Any]:
     """Build write_file from ToolSpecRegistry; pin path enums only.
 
     Live L1-08 quality-repair invented a slim schema (custom description, no

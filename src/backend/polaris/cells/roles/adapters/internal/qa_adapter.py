@@ -1350,7 +1350,7 @@ class QAAdapter(BaseRoleAdapter):
             if str(merged["verdict"]).upper() not in {"FAIL", "BLOCKED", "CONDITIONAL"}:
                 merged["verdict"] = llm_verdict
             for key in ("critical_issues", "major_issues", "warnings", "evidence", "suggestions"):
-                merged[key] = self._dedupe_list(list(cast("list", merged[key])) + self._dedupe_list(llm.get(key)))
+                merged[key] = self._dedupe_list(list[Any](cast("list", merged[key])) + self._dedupe_list(llm.get(key)))
             llm_score = self._coerce_int(llm.get("score"))
             if llm.get("score") is not None:
                 merged["score"] = min(self._coerce_int(merged["score"]), llm_score)
@@ -1363,19 +1363,19 @@ class QAAdapter(BaseRoleAdapter):
             if deterministic_blocked:
                 merged["evidence"] = self._dedupe_list(
                     [
-                        *list(cast("list", merged["evidence"])),
+                        *list[Any](cast("list", merged["evidence"])),
                         "qa_llm_judgement_unavailable_suppressed=deterministic_gate_blocked",
                     ]
                 )
             else:
                 merged["verdict"] = "BLOCKED"
                 merged["warnings"] = self._dedupe_list(
-                    [*list(cast("list", merged["warnings"])), _QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING]
+                    [*list[Any](cast("list", merged["warnings"])), _QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING]
                 )
             excerpt = str(llm.get("raw_excerpt") or "").strip()
             if excerpt:
                 merged["evidence"] = self._dedupe_list(
-                    [*list(cast("list", merged["evidence"])), f"llm_excerpt={excerpt}"]
+                    [*list[Any](cast("list", merged["evidence"])), f"llm_excerpt={excerpt}"]
                 )
         return merged
 

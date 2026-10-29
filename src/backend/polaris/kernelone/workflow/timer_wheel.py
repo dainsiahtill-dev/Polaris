@@ -10,7 +10,7 @@ import contextlib
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -53,7 +53,7 @@ class TimerWheel:
         self._timers: dict[str, TimerJob] = {}  # timer_id -> TimerJob
         self._workflow_timers: dict[str, set[str]] = {}  # workflow_id -> set of timer_ids
         self._running = False
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[Any] | None = None
         self._pending_callbacks: asyncio.Queue[tuple[TimerJob, Exception | None]] = asyncio.Queue(maxsize=500)
         self._lock = asyncio.Lock()
         self._sequence = 0

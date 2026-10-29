@@ -525,7 +525,7 @@ async def generate_role_response_streaming(
     settings: Any,
     role: str,
     message: str,
-    output_queue: asyncio.Queue,
+    output_queue: asyncio.Queue[Any],
     context: dict[str, Any] | None = None,
     prompt_appendix: str | None = None,
     session_id: str | None = None,
@@ -744,7 +744,7 @@ class RoleOutputParser:
     """
 
     # 角色对应的JSON Schema
-    ROLE_SCHEMAS: dict[str, Any][str, dict[str, Any]] = {
+    ROLE_SCHEMAS: dict[str, dict[str, Any]] = {
         "pm": {
             "type": "object",
             "required": ["tasks"],

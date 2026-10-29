@@ -307,7 +307,7 @@ def _quote_unquoted_string_values_in_objects(text: str) -> str:
 
     # Use regex to find patterns like: : word (not followed by [ or {)
     # where word is not a number, boolean, or null
-    def _replace_value(match: re.Match) -> str:
+    def _replace_value(match: re.Match[Any]) -> str:
         colon = match.group(1)
         value = match.group(2)
 

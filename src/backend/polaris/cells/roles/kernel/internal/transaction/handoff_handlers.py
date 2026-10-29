@@ -145,7 +145,7 @@ def select_primary_batch_receipt(receipts: list[dict[str, Any]]) -> dict[str, An
     return receipts[0]
 
 
-def summarize_batch_receipts(receipts: list[dict[str, Any]]) -> list[dict[str, Any][str, object]]:
+def summarize_batch_receipts(receipts: list[dict[str, Any]]) -> list[dict[str, object]]:
     """压缩 batch receipt 以便放入 handoff 上下文。"""
     summary: list[dict[str, object]] = []
     for receipt in receipts:

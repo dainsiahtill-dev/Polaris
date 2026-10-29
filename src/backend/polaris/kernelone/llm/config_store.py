@@ -346,7 +346,7 @@ def register_migration(from_ver: int, to_ver: int) -> Callable[..., Any]:
             return config
     """
 
-    def decorator(func: Callable[..., Any][[dict[str, Any]], dict[str, Any]]) -> Callable[..., Any]:
+    def decorator(func: Callable[[dict[str, Any]], dict[str, Any]]) -> Callable[..., Any]:
         _MIGRATIONS[(from_ver, to_ver)] = func
         return func
 

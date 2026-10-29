@@ -132,8 +132,8 @@ class CompressionDaemon:
 
         # State
         self._state: DaemonState = DaemonState.STOPPED
-        self._task: asyncio.Task | None = None
-        self._compression_tasks: list[asyncio.Task] = []
+        self._task: asyncio.Task[Any] | None = None
+        self._compression_tasks: list[asyncio.Task[Any]] = []
         self._lock: asyncio.Lock | None = None
 
         # Compressor instance (lazily created)

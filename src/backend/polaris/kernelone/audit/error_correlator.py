@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .error_correlator_rules import (
     BUILTIN_RULES,
@@ -74,7 +74,7 @@ def _map_to_resolution_hint(fc: AuditFailureClass) -> str:
     return _RESOLUTION_HINTS.get(fc, _RESOLUTION_HINTS[AuditFailureClass.UNKNOWN])
 
 
-class ErrorCorrelationResult(dict):
+class ErrorCorrelationResult(dict[str, Any]):
     """Result of error correlation query."""
 
     __slots__ = (

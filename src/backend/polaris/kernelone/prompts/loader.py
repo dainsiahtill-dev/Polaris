@@ -2,6 +2,7 @@ import json
 import os
 import re
 from functools import lru_cache
+from typing import Any
 
 PROFILE_ENV = "KERNELONE_PROMPT_PROFILE"
 DEFAULT_PROFILE = "zhenguan_governance"
@@ -102,7 +103,7 @@ _PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}")
 
 
 def render_template(template: str, values: dict[str, object]) -> str:
-    def replace(match: re.Match) -> str:
+    def replace(match: re.Match[Any]) -> str:
         key = match.group(1)
         value = values.get(key, "")
         return "" if value is None else str(value)

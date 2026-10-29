@@ -417,7 +417,7 @@ def get_role_system_prompt(*args, **kwargs) -> Any:
     return _get_role_system_prompt(*args, **kwargs)
 
 
-class WorkflowRoleResult(dict):
+class WorkflowRoleResult(dict[str, Any]):
     """Compatibility marker type for workflow role execution results."""
 
 

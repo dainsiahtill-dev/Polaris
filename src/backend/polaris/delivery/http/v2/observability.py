@@ -240,7 +240,7 @@ async def observability_websocket(websocket: WebSocket) -> None:
             )
 
     # Add handler - wrap async function in sync wrapper for the bridge
-    _pending_tasks: set[asyncio.Task] = set()
+    _pending_tasks: set[asyncio.Task[Any]] = set()
 
     def sync_handler(event: dict[str, Any]) -> None:
         task = asyncio.create_task(send_event(event))

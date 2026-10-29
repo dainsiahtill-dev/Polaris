@@ -61,7 +61,7 @@ class ArchitectService:
         self._bus = message_bus or MessageBus()
         self._docs: dict[str, ArchitectureDoc] = {}
         self._running = False
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[Any] | None = None
 
     async def start(self) -> None:
         """Start Architect Service."""

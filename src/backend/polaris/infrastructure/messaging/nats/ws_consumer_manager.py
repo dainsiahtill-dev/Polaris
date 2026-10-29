@@ -126,7 +126,7 @@ class JetStreamConsumerManager:
         self._resync_required = False
         self._connected = False
         self._closed = False
-        self._consumer_task: asyncio.Task | None = None
+        self._consumer_task: asyncio.Task[Any] | None = None
 
     @property
     def is_connected(self) -> bool:

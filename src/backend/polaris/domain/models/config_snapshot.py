@@ -133,8 +133,8 @@ class ConfigSnapshot:
         ConfigSnapshot(...)  # New instance with updated port
     """
 
-    _config: MappingProxyType = field(repr=False)
-    _sources: MappingProxyType = field(repr=False)
+    _config: MappingProxyType[Any, Any] = field(repr=False)
+    _sources: MappingProxyType[Any, Any] = field(repr=False)
     _timestamp: datetime = field(default_factory=datetime.now)
     _hash: int = field(init=False, repr=False)
 
@@ -150,7 +150,9 @@ class ConfigSnapshot:
         """Convert config to hashable format."""
         return tuple(sorted(self._flatten_dict(self._config)))
 
-    def _flatten_dict(self, d: dict[str, Any] | MappingProxyType, parent_key: str = "") -> list[tuple[str, Any]]:
+    def _flatten_dict(
+        self, d: dict[str, Any] | MappingProxyType[Any, Any], parent_key: str = ""
+    ) -> list[tuple[str, Any]]:
         """Flatten nested dict to list of (key, value) tuples."""
         items: list[tuple[str, Any]] = []
         for k, v in d.items():

@@ -162,7 +162,7 @@ class ErrorMessage(Static):
 # =============================================================================
 
 
-class PolarisTextualConsole(App):
+class PolarisTextualConsole(App[None]):
     """Polaris CLI Textual TUI 应用
 
     Features:

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ProcessHandle:
-    process: subprocess.Popen | None = None
+    process: subprocess.Popen[Any] | None = None
     log_handle: Any | None = None
     log_path: str = ""
     mode: str = ""

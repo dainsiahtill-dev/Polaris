@@ -335,7 +335,7 @@ def safe_value(
         return f"<{type(obj).__name__} conversion failed>"
 
 
-class TypeSafeDict(dict):
+class TypeSafeDict(dict[str, Any]):
     """类型安全的字典，封装 audit_len 等工具。"""
 
     def len(self, key: str, default: int = 0) -> int:
@@ -351,7 +351,7 @@ class TypeSafeDict(dict):
         return safe_value(self.get(key), field_path=key, allow_methods=allow_methods)
 
 
-class TypeSafeList(list):
+class TypeSafeList(list[Any]):
     """类型安全的列表，提供安全的元素访问。"""
 
     def safe_get(self, index: int, default: Any = None) -> Any:

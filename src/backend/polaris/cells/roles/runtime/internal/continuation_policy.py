@@ -157,7 +157,7 @@ _CONFIDENCE_RANK: dict[str, int] = {
 }
 
 
-class SessionPatch(dict):
+class SessionPatch(dict[str, Any]):
     """语义补丁类型，定义 session_patch 中各字段的操作语义。
 
     相比裸 dict.update()，本类型明确区分：

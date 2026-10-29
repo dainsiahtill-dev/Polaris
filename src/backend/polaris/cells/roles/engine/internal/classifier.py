@@ -177,7 +177,7 @@ class TaskClassifier:
 
         return scores
 
-    def _match_patterns(self, text: str, patterns: list[re.Pattern]) -> float:
+    def _match_patterns(self, text: str, patterns: list[re.Pattern[Any]]) -> float:
         """计算文本与模式的匹配得分
 
         Args:

@@ -108,7 +108,7 @@ def _retry_write_guidance_pins(context: list[dict[str, Any]]) -> list[str]:
     return pins
 
 
-def _retry_user_message(context: list[dict[str, Any]], content: str) -> dict[str, Any][str, Any]:
+def _retry_user_message(context: list[dict[str, Any]], content: str) -> dict[str, Any]:
     """Preserve existing typed tool contracts without promoting other metadata."""
     current_user = next(
         (

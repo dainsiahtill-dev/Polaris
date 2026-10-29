@@ -153,7 +153,7 @@ def _contract_path_looks_like_file_target(path: str) -> bool:
     return "." in basename
 
 
-def extract_platform_tool_contract(context: list[dict[str, Any]]) -> dict[str, Any][str, Any]:
+def extract_platform_tool_contract(context: list[dict[str, Any]]) -> dict[str, Any]:
     """Extract the platform tool contract from context metadata."""
     contract: dict[str, Any] = {}
     for message in context:

@@ -420,7 +420,7 @@ class RetryOrchestrator:
         set[str],
         set[str],
         str | None,
-        dict[str, Any][str, Any] | None,
+        dict[str, Any] | None,
         list[dict[str, Any]],
         bool,
         bool,

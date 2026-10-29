@@ -71,7 +71,7 @@ class VectorRecord:
 
     id: str
     content: str
-    embedding: np.ndarray
+    embedding: np.ndarray[Any, Any]
     content_hash: str
     importance: float
     semantic_tags: tuple[str, ...]
@@ -637,7 +637,7 @@ class KnowledgeLanceDB:
 
     async def similarity_search(
         self,
-        query_embedding: np.ndarray,
+        query_embedding: np.ndarray[Any, Any],
         top_k: int = 10,
         min_score: float = 0.7,
     ) -> list[ScoredVectorRecord]:

@@ -99,7 +99,7 @@ class QAService:
         self._bus = message_bus or MessageBus()
         self._audits: dict[str, QaAuditEvidenceV1] = {}
         self._running = False
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[Any] | None = None
 
     async def _emit_typed_event(self, event: Any) -> None:
         """Emit a typed event through the adapter if available."""

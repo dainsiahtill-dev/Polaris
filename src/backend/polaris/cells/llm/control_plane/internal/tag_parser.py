@@ -44,7 +44,7 @@ class StreamingTagParser:
         self.is_tag_mode = False
         self._tag_patterns = self._compile_patterns()
 
-    def _compile_patterns(self) -> dict[str, re.Pattern]:
+    def _compile_patterns(self) -> dict[str, re.Pattern[Any]]:
         return {
             "thinking_open": re.compile(rf"<({'|'.join(THINKING_TAGS)})[^>]*>", re.IGNORECASE),
             "thinking_close": re.compile(rf"</({'|'.join(THINKING_TAGS)})>", re.IGNORECASE),

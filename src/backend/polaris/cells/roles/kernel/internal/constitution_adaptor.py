@@ -209,7 +209,7 @@ def _assert_action_allowed(guard: ConstitutionGuard, role: Role, action: str) ->
         raise error
 
 
-def require_role_permission(role: Role, action: str) -> Callable[..., Any][[Callable[..., Any]], Callable[..., Any]]:
+def require_role_permission(role: Role, action: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """函数装饰器 - 要求特定权限。
 
     Usage:

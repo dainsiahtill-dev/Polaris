@@ -638,7 +638,7 @@ class ExplorationWorkflowRuntime:
                     ):
                         yield event
 
-    def _analyze_results(self, results: list[dict[str, Any]]) -> dict[str, Any][str, Any]:
+    def _analyze_results(self, results: list[dict[str, Any]]) -> dict[str, Any]:
         """分析工具执行结果，提取关键发现"""
         discoveries = {}
 

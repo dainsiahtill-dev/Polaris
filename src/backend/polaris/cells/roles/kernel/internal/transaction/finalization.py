@@ -34,7 +34,7 @@ from polaris.cells.roles.kernel.public.turn_events import CompletionEvent, TurnE
 logger = logging.getLogger(__name__)
 
 
-def _canonical_batch_receipt(receipts: list[dict[str, Any]]) -> dict[str, Any][str, Any]:
+def _canonical_batch_receipt(receipts: list[dict[str, Any]]) -> dict[str, Any]:
     """Return the canonical batch receipt used by result and completion events."""
     return merge_batch_receipts(receipts) or {"results": []}
 
@@ -757,7 +757,7 @@ class FinalizationHandler:
 # ---------------------------------------------------------------------------
 
 
-def _pre_finalization_self_check(ledger: TurnLedger, receipts: list[dict[str, Any]]) -> dict[str, Any][str, bool]:
+def _pre_finalization_self_check(ledger: TurnLedger, receipts: list[dict[str, Any]]) -> dict[str, bool]:
     """Agent 提交完成前必须自问三个问题（Superpowers 风格）。
 
     在 finalization 之前对 ledger 执行完整性/质量/纪律三维检查。

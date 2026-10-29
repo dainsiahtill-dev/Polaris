@@ -662,7 +662,7 @@ class AsyncWorker:
         self.message_callback = message_callback
         self.state = WorkerState.IDLE
 
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[Any] | None = None
         self._running = False
         self._current_task: WorkerTask | None = None
         self._result_queue: asyncio.Queue[WorkerTask] = asyncio.Queue(maxsize=200)

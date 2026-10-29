@@ -5,7 +5,7 @@ import os
 import subprocess
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.fs.encoding import build_utf8_env
 
@@ -66,7 +66,7 @@ def _run_cli(
     return process.returncode or 0, stdout or "", stderr or "", latency_ms
 
 
-def _terminate_process_tree(process: subprocess.Popen) -> None:
+def _terminate_process_tree(process: subprocess.Popen[Any]) -> None:
     pid = process.pid
     if not pid:
         return
@@ -146,7 +146,7 @@ def _run_cli_pty(
     cwd: str,
     env: dict[str, str] | None,
     input_text: str | None,
-    output_queue: queue.Queue,
+    output_queue: queue.Queue[Any],
 ) -> tuple[int, str, int]:
     """Execute CLI command using PTY for real terminal behavior (Windows/Linux/Mac)
 
@@ -171,7 +171,7 @@ def _run_winpty(
     cwd: str,
     env: dict[str, str] | None,
     input_text: str | None,
-    output_queue: queue.Queue,
+    output_queue: queue.Queue[Any],
 ) -> tuple[int, str, int]:
     """Run command using winpty on Windows"""
     start = time.time()
@@ -221,7 +221,7 @@ def _run_unix_pty(
     cwd: str,
     env: dict[str, str] | None,
     input_text: str | None,
-    output_queue: queue.Queue,
+    output_queue: queue.Queue[Any],
 ) -> tuple[int, str, int]:
     """Run command using pty on Unix/Linux/Mac"""
     import pty
@@ -292,7 +292,7 @@ def _run_cli_pty_fallback(
     cwd: str,
     env: dict[str, str] | None,
     input_text: str | None,
-    output_queue: queue.Queue,
+    output_queue: queue.Queue[Any],
 ) -> tuple[int, str, int]:
     """Fallback: Use subprocess with immediate unbuffered output"""
     start = time.time()

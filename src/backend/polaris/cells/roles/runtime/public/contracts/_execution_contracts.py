@@ -652,7 +652,7 @@ class StreamTurnOptions:
     prompt_appendix: str | None = None
 
 
-class StandardStreamEvent(dict):
+class StandardStreamEvent(dict[str, Any]):
     """Dict-subclass canonical stream event for the contracts layer (Task #2).
 
     Mirrors the dataclass in ``console_protocol`` but as a dict so callers

@@ -19,7 +19,7 @@ Merged patterns from:
 from __future__ import annotations
 
 import re
-from typing import Final
+from typing import Any, Final
 
 # Canonical dangerous command patterns (shell commands + dangerous imports)
 _DANGEROUS_PATTERNS: Final[list[str]] = [
@@ -77,11 +77,11 @@ _PATH_TRAVERSAL_PATTERNS: Final[list[str]] = [
     r"\.\.",  # Bare parent directory (for strict matching contexts)
 ]
 
-_COMMAND_CACHE: re.Pattern | None = None
-_PATH_CACHE: re.Pattern | None = None
+_COMMAND_CACHE: re.Pattern[Any] | None = None
+_PATH_CACHE: re.Pattern[Any] | None = None
 
 
-def _get_command_pattern() -> re.Pattern:
+def _get_command_pattern() -> re.Pattern[Any]:
     """Get compiled command pattern (cached)."""
     global _COMMAND_CACHE
     if _COMMAND_CACHE is None:
@@ -89,7 +89,7 @@ def _get_command_pattern() -> re.Pattern:
     return _COMMAND_CACHE
 
 
-def _get_path_pattern() -> re.Pattern:
+def _get_path_pattern() -> re.Pattern[Any]:
     """Get compiled path traversal pattern (cached)."""
     global _PATH_CACHE
     if _PATH_CACHE is None:

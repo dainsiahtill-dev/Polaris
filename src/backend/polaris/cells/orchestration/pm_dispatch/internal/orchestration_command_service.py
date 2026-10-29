@@ -524,7 +524,7 @@ class OrchestrationCommandService:
             settings: Application settings object
         """
         self.settings = settings
-        self._active_runs: dict[str, Any][str, dict[str, Any]] = {}
+        self._active_runs: dict[str, dict[str, Any]] = {}
 
     async def execute_pm_run(
         self,

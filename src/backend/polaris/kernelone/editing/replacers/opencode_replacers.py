@@ -20,7 +20,7 @@ Reference: OpenCode packages/opencode/src/tool/edit.ts
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -511,7 +511,7 @@ class EscapeNormalizedReplacer:
         Uses regex substitution to avoid ordering issues with sequential replacements.
         """
 
-        def replace_escape(match: re.Match) -> str:
+        def replace_escape(match: re.Match[Any]) -> str:
             """Replace a single escape sequence with its character value."""
             escape_map: dict[str, str] = {
                 "\\n": "\n",

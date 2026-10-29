@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _TERMINAL_STATUSES = {"success", "failed", "timeout", "cancelled"}
-_PROCESS_REGISTRY: dict[str, subprocess.Popen] = {}
+_PROCESS_REGISTRY: dict[str, subprocess.Popen[Any]] = {}
 _PROCESS_LOCK = threading.RLock()
 
 
@@ -63,7 +63,7 @@ class BackgroundTask:
     output_preview: str = ""  # First 1000 chars for quick view
     queue_position: int = 0  # Position when queued
     pid: int | None = None
-    process: subprocess.Popen | None = field(default=None, repr=False)
+    process: subprocess.Popen[Any] | None = field(default=None, repr=False)
 
 
 def _write_json_atomic(path: str, payload: dict[str, Any]) -> None:

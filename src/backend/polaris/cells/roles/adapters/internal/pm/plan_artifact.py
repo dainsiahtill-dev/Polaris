@@ -46,7 +46,7 @@ class PMPlanArtifactMixin(_PMAdapterMixinBase):
             "quality_gate": {
                 "score": int(quality.get("score") or 0),
                 "critical_issue_count": (
-                    len(cast("list", quality.get("critical_issues")))
+                    len(cast("list[Any]", quality.get("critical_issues")))
                     if isinstance(quality, dict) and isinstance(quality.get("critical_issues"), list)
                     else 0
                 ),

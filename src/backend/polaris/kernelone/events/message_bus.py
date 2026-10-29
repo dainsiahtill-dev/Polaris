@@ -589,7 +589,7 @@ class Actor:
         self._bus = message_bus
         self._queue: asyncio.Queue[Message] | None = None
         self._running = False
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[Any] | None = None
 
     async def start(self) -> None:
         """Start the actor."""

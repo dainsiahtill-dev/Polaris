@@ -157,7 +157,7 @@ class WorkerService:
         self._task_service = task_service
         self._bus = message_bus
         self._workers: dict[str, Worker] = {}
-        self._worker_tasks: dict[str, asyncio.Task] = {}
+        self._worker_tasks: dict[str, asyncio.Task[Any]] = {}
         self._lock = asyncio.Lock()
 
     async def initialize(self) -> None:

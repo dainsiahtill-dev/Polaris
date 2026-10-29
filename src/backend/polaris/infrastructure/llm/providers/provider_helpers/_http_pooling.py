@@ -200,7 +200,7 @@ class _LazyPool:
             self._pool = self._pool_getter()
         return getattr(self._pool, name)
 
-    def submit(self, fn: Any, *args: Any, **kwargs: Any) -> concurrent.futures.Future:
+    def submit(self, fn: Any, *args: Any, **kwargs: Any) -> concurrent.futures.Future[Any]:
         if self._pool is None:
             self._pool = self._pool_getter()
         return self._pool.submit(fn, *args, **kwargs)

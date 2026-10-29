@@ -170,16 +170,16 @@ class DirectorService(DirectorCodeIntelMixin):
         self._loop_wakeup = asyncio.Event()
         self._state_lock = asyncio.Lock()
         self._current_iteration = 0
-        self._main_loop_task: asyncio.Task | None = None
+        self._main_loop_task: asyncio.Task[Any] | None = None
         self._started_at: float | None = None
         self._stopped_at: float | None = None
         self._quiescence_started_at: float | None = None
         self._pending_stall_started_at: float | None = None
         self._empty_queue_started_at: float | None = None
 
-        self._running_tasks: dict[str, asyncio.Task] = {}
+        self._running_tasks: dict[str, asyncio.Task[Any]] = {}
         self._event_handlers_ready = False
-        self._finalize_idle_task: asyncio.Task | None = None
+        self._finalize_idle_task: asyncio.Task[Any] | None = None
 
         self._metrics = {
             "tasks_submitted": 0,
@@ -256,7 +256,7 @@ class DirectorService(DirectorCodeIntelMixin):
                 # (natural convergence, external cancel, or unhandled exception) we
                 # explicitly finalize the Director state.  This is the *only* place
                 # RUNNING -> IDLE can be triggered from the loop-exit path (CQS).
-                def _on_main_loop_done(_t: asyncio.Task) -> None:
+                def _on_main_loop_done(_t: asyncio.Task[Any]) -> None:
                     self._finalize_idle_task = asyncio.ensure_future(self._try_finalize_idle())
 
                 self._main_loop_task.add_done_callback(_on_main_loop_done)

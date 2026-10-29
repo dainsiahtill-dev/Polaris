@@ -925,7 +925,7 @@ class ToolLoopController:
         return True, ""
 
     @staticmethod
-    def _normalize_history(history: list[tuple[Any, ...]] | None) -> list[tuple[Any, ...][str, str]]:
+    def _normalize_history(history: list[tuple[Any, ...]] | None) -> list[tuple[str, str]]:
         normalized: list[tuple[str, str]] = []
         for item in list(history or []):
             if not isinstance(item, tuple) or len(item) < 2:

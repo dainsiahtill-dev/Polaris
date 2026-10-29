@@ -551,7 +551,7 @@ class ToolCallWidget(Container):
 # =============================================================================
 
 
-class ClaudeAgentTUI(App):
+class ClaudeAgentTUI(App[None]):
     """Claude 风格 Agent TUI 应用
 
     现代、专业、极简的 Agent 终端界面。

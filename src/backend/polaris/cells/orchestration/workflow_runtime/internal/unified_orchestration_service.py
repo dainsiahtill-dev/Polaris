@@ -293,7 +293,7 @@ class UnifiedOrchestrationService(OrchestrationService):
         self._repo = repository or InMemoryOrchestrationRepository()
         self._publisher = event_publisher or LoggingEventPublisher()
         self._adapters: dict[str, RoleOrchestrationAdapter] = {}
-        self._active_runs: dict[str, asyncio.Task] = {}
+        self._active_runs: dict[str, asyncio.Task[Any]] = {}
         self._run_locks: dict[str, asyncio.Lock] = {}
         self._role_adapter_factory = role_adapter_factory
 

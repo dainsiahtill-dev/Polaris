@@ -90,7 +90,7 @@ def _normalize_deterministic_bootstrap_target(value: Any) -> str:
     return path
 
 
-def _extract_declared_step_card(original_context: list[dict[str, Any]]) -> dict[str, Any][str, Any] | None:
+def _extract_declared_step_card(original_context: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Return the executing construction-step card carried in the turn context.
 
     A CE-fissioned leaf step is dispatched with its blueprint card injected as

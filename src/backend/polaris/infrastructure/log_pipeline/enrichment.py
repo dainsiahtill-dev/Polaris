@@ -88,7 +88,7 @@ class LLMEnrichmentWorker:
         self.run_id = run_id
         self.config = config or EnrichmentConfig()
         self._running = False
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[Any] | None = None
 
         # Runtime paths
         if run_id:

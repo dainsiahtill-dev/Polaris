@@ -245,7 +245,7 @@ class FakeToolExecutor:
         self._default_result = None
         return self
 
-    def execute_sync(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any][str, Any]:
+    def execute_sync(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         """Execute a tool by name with given arguments (synchronous version).
 
         Args:
@@ -307,7 +307,7 @@ class FakeToolExecutor:
         # Delegate to sync implementation (fake tools don't need real async)
         return self.execute_sync(tool_name, args)
 
-    def execute_tool(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any][str, Any]:
+    def execute_tool(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         """Alias for execute_sync() for compatibility with RoleToolGateway interface."""
         return self.execute_sync(tool_name, args)
 
