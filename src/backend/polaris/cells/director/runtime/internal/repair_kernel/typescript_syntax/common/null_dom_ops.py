@@ -4,11 +4,18 @@ import re
 from collections.abc import Mapping, Sequence
 from pathlib import PurePosixPath
 
-from ..constants import *  # noqa: F403
-from .misc_ops import *  # noqa: F403
-from .parse_ops import *  # noqa: F403
-from .path_ops import *  # noqa: F403
-from .plan_ops import *  # noqa: F403
+from ..constants import (
+    _HTML_MODULE_SCRIPT_SRC_RE,
+    _TS_LOCAL_DOM_DECLARE_CONST_START_RE,
+    _TS_LOCAL_DOM_INTERFACE_START_RE,
+)
+from .misc_ops import (
+    _json_object,
+)
+from .path_ops import (
+    _dedupe_preserve_order,
+    _normalize_repair_path,
+)
 
 """Shared TypeScript repair helpers: null_dom_ops."""
 

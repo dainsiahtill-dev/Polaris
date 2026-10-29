@@ -5,11 +5,23 @@ import re
 from collections.abc import Mapping, Sequence
 
 from ...contracts import RepairDiagnostic, RepairOperation, sha256_text
-from ..constants import *  # noqa: F403
-from .misc_ops import *  # noqa: F403
-from .parse_ops import *  # noqa: F403
-from .path_ops import *  # noqa: F403
-from .plan_ops import *  # noqa: F403
+from ..constants import (
+    _TS_IDENTIFIER_RE,
+    _TS_MISSING_PROPERTY_ERROR_RE,
+    _TS_OBJECT_MISSING_PROPERTIES_ERROR_RE,
+    _TS_OBJECT_MISSING_PROPERTY_ERROR_RE,
+)
+from .misc_ops import (
+    _resolve_relative_ts_module_path,
+    _text_line_start_offsets,
+    _to_positive_int,
+    _typescript_default_value_for_type,
+    _typescript_matching_brace_index,
+)
+from .path_ops import (
+    _dedupe_preserve_order,
+    _normalize_repair_path,
+)
 
 """Shared TypeScript repair helpers: member_text_ops."""
 

@@ -7,10 +7,22 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from ...contracts import RepairDiagnostic, RepairOperation, sha256_text
-from ..constants import *  # noqa: F403
-from .parse_ops import *  # noqa: F403
-from .path_ops import *  # noqa: F403
-from .plan_ops import *  # noqa: F403
+from ..constants import (
+    _JS_FUNCTION_DECL_RE,
+    _JS_METHOD_DECL_RE,
+    _JS_RUNTIME_FILE_RE,
+    _JS_VARIABLE_TYPE_RE,
+    _TS_CLASS_FIELD_DECL_RE,
+    _TS_DUPLICATE_IDENTIFIER_MESSAGE_RE,
+    _TS_EXPORTED_FUNCTION_PARAM_TYPE_RE,
+    _TS_IDENTIFIER_RE,
+    _TS_STRING_BRAND_TYPE_ALIAS_RE,
+    _TS_TYPE_ONLY_VALUE_USAGE_MESSAGE_RE,
+)
+from .path_ops import (
+    _dedupe_preserve_order,
+    _normalize_repair_path,
+)
 
 """Shared TypeScript repair helpers: misc_ops."""
 

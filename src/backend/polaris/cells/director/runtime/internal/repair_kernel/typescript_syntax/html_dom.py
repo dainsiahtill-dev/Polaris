@@ -5,8 +5,45 @@ from collections.abc import Mapping, Sequence
 
 from ..contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
 from ..javascript_syntax import repair_javascript_export_contract_placeholders
-from .common import *  # noqa: F403
-from .constants import *  # noqa: F403
+from .common.misc_ops import (
+    _javascript_annotation_candidate_paths,
+    _normalize_ts_class_field_initialization,
+    _strip_typescript_annotations_from_javascript,
+)
+from .common.null_dom_ops import (
+    _html_compiled_javascript_entrypoint_for_script,
+    _html_javascript_entrypoint_for_typescript_source,
+    _remove_typescript_local_dom_shims,
+    _repair_html_entrypoint_quality_text_with_metadata,
+    _typescript_base_files_have_dom_lib,
+)
+from .common.parse_ops import (
+    _parse_html_truncated_entrypoint_paths,
+    _parse_undeclared_runtime_import_paths,
+)
+from .common.path_ops import (
+    _common_prefix_len,
+    _dedupe_preserve_order,
+    _normalize_repair_path,
+)
+from .common.plan_ops import (
+    _repair_plan_or_none,
+    _text_replace_operations_from_repair,
+)
+from .constants import (
+    _HTML_COMPILED_JS_MISSING_RE,
+    _HTML_ID_ATTRIBUTE_RE,
+    _HTML_TS_MODULE_SCRIPT_ERROR_RE,
+    _TS_DECORATOR_LINE_RE,
+    _TS_EXACT_HTML_ID_TOKEN_REGEX_RE,
+    _TS_LOCAL_DOM_SHIM_NAMES,
+    _TYPEORM_IMPORT_LINE_RE,
+    HTML_TYPESCRIPT_MODULE_SCRIPT_SOURCE_TOOL,
+    JAVASCRIPT_TYPESCRIPT_ANNOTATION_SOURCE_TOOL,
+    TYPEORM_MODEL_NORMALIZATION_SOURCE_TOOL,
+    TYPESCRIPT_DOM_LOCAL_SHIM_CLEANUP_SOURCE_TOOL,
+    TYPESCRIPT_HTML_CONTAINER_SELECTOR_SOURCE_TOOL,
+)
 
 """TypeScript syntax repair module: html_dom."""
 

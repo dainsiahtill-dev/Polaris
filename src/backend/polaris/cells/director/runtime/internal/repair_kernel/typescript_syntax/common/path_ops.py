@@ -5,7 +5,16 @@ from collections.abc import Mapping, Sequence
 
 from ...contracts import RepairDiagnostic
 from ...path_files import normalize_base_files_strict, normalize_repair_path_strict
-from ..constants import *  # noqa: F403
+from ..constants import (
+    _TS_MISSING_CLOSING_BRACE_RAW_RE,
+    _TS_NUMBER_PROPERTY_CALL_RAW_RE,
+    _TS_NUMBER_TO_FUNCTION_ARGUMENT_RAW_RE,
+    _TS_NUMBER_TO_STRING_ARGUMENT_RAW_RE,
+    _TS_READONLY_ASSIGNMENT_RAW_RE,
+    _TS_SHORTHAND_PROPERTY_SCOPE_RAW_RE,
+    _TS_STRING_LITERAL_SUGGESTION_RAW_RE,
+    _TS_UNKNOWN_MEMBER_ACCESS_RAW_RE,
+)
 
 """Shared TypeScript repair helpers: path_ops."""
 

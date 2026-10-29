@@ -4,8 +4,57 @@ import re
 from collections.abc import Mapping, Sequence
 
 from ..contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
-from .common import *  # noqa: F403
-from .constants import *  # noqa: F403
+from .common.arg_shape_ops import (
+    _remove_shorthand_properties,
+    _typescript_param_type_from_property_operation,
+)
+from .common.import_text_ops import (
+    _typescript_ensure_named_type_import_operation,
+)
+from .common.misc_ops import (
+    _to_positive_int,
+    _typescript_brace_balance_delta,
+    _typescript_matching_brace_index,
+    _typescript_types_with_named_properties,
+)
+from .common.parse_ops import (
+    _is_typescript_comma_expected_diagnostic,
+    _parse_typescript_missing_props_diagnostic,
+)
+from .common.path_ops import (
+    _diagnostic_targets_path,
+    _normalize_repair_path,
+)
+from .common.plan_ops import (
+    _line_start_offsets,
+    _repair_plan_or_none,
+    _text_replace_operations_from_repair,
+)
+from .constants import (
+    _TS2339_PROP_ON_PRIMITIVE_RE,
+    _TS_DUPLICATE_IDENTIFIER_RAW_RE,
+    _TS_DUPLICATE_OBJECT_PROPERTY_RAW_RE,
+    _TS_ENUM_DECLARATION_LINE_RE,
+    _TS_ENUM_MEMBER_LINE_RE,
+    _TS_ENUM_MEMBER_SEPARATOR_RAW_RE,
+    _TS_IDENTIFIER_RE,
+    _TS_INLINE_OBJECT_MISSING_COMMA_RE,
+    _TS_KNOWN_METHOD_STUBS,
+    _TS_MISSING_CLOSING_BRACE_RAW_RE,
+    _TS_OBJECT_LITERAL_START_RE,
+    _TS_OBJECT_PROPERTY_KEY_LINE_RE,
+    _TS_OBJECT_PROPERTY_SEMICOLON_LINE_RE,
+    _TS_OBJECT_PROPERTY_VALUE_SEMICOLON_LINE_RE,
+    _TS_RETURN_OBJECT_START_RE,
+    _TS_SHORTHAND_PROPERTY_SCOPE_RAW_RE,
+    TYPESCRIPT_DUPLICATE_OBJECT_PROPERTY_SOURCE_TOOL,
+    TYPESCRIPT_ENUM_MEMBER_SEPARATOR_SOURCE_TOOL,
+    TYPESCRIPT_MISSING_CLOSING_BRACE_SOURCE_TOOL,
+    TYPESCRIPT_OBJECT_LITERAL_MISSING_PROPS_SOURCE_TOOL,
+    TYPESCRIPT_PARAM_OBJECT_PROPERTY_SOURCE_TOOL,
+    TYPESCRIPT_RETURN_OBJECT_COMMA_SOURCE_TOOL,
+    TYPESCRIPT_SHORTHAND_PROPERTY_SCOPE_SOURCE_TOOL,
+)
 
 """TypeScript syntax repair module: object_literals."""
 

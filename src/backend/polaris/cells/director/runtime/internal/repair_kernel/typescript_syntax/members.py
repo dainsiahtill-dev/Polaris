@@ -4,8 +4,57 @@ import re
 from collections.abc import Mapping, Sequence
 
 from ..contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
-from .common import *  # noqa: F403
-from .constants import *  # noqa: F403
+from .common.arg_shape_ops import (
+    _line_text_replace_operation,
+)
+from .common.import_text_ops import (
+    _typescript_exported_private_constructor_modifier_span,
+)
+from .common.member_text_ops import (
+    _add_typescript_members_operation,
+    _parse_typescript_missing_member_errors,
+    _typescript_declaration_type_name,
+    _typescript_existing_member_names_for_type,
+    _typescript_inline_object_missing_member_operations,
+    _typescript_line_at,
+    _typescript_line_invokes_constructor,
+    _typescript_member_usage_is_call,
+    _typescript_missing_member_declared_type,
+    _typescript_object_literal_missing_member_operations,
+    _typescript_receiver_for_member_access,
+    _typescript_safe_structural_member_type,
+    _typescript_usage_compatible_member_type,
+)
+from .common.misc_ops import (
+    _extend_typescript_declare_const_type_literal_operation,
+    _to_positive_int,
+    _typescript_declared_type_kind,
+    _typescript_property_line_with_default,
+)
+from .common.path_ops import (
+    _diagnostic_targets_path,
+    _normalize_repair_path,
+)
+from .common.plan_ops import (
+    _repair_plan_or_none,
+    _text_replace_operations_from_repair,
+)
+from .constants import (
+    _TS_IDENTIFIER_RE,
+    _TS_PRIVATE_CONSTRUCTOR_ACCESS_MESSAGE_RE,
+    _TS_PRIVATE_CONSTRUCTOR_ACCESS_RAW_RE,
+    _TS_PRIVATE_PROPERTY_ACCESS_MESSAGE_RE,
+    _TS_PRIVATE_PROPERTY_ACCESS_RAW_RE,
+    _TS_UNINITIALIZED_PROPERTY_RAW_RE,
+    _TS_UNKNOWN_MEMBER_ACCESS_RAW_RE,
+    TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL,
+    TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL,
+    TYPESCRIPT_NONFINITE_ALTITUDE_GUARD_SOURCE_TOOL,
+    TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL,
+    TYPESCRIPT_PRIVATE_PROPERTY_ACCESS_SOURCE_TOOL,
+    TYPESCRIPT_UNINITIALIZED_PROPERTY_SOURCE_TOOL,
+    TYPESCRIPT_UNKNOWN_MEMBER_ACCESS_SOURCE_TOOL,
+)
 
 """TypeScript syntax repair module: members."""
 

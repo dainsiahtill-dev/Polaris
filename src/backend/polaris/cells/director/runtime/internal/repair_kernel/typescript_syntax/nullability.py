@@ -4,8 +4,38 @@ import re
 from collections.abc import Mapping, Sequence
 
 from ..contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
-from .common import *  # noqa: F403
-from .constants import *  # noqa: F403
+from .common.misc_ops import (
+    _json_object,
+)
+from .common.null_dom_ops import (
+    _repair_typescript_multiline_dom_handle_declarations,
+    _typescript_global_guard_precedes,
+    _typescript_nullable_guard_in_text_window,
+)
+from .common.parse_ops import (
+    _diagnostic_text,
+)
+from .common.path_ops import (
+    _dedupe_preserve_order,
+    _normalize_repair_path,
+)
+from .common.plan_ops import (
+    _repair_plan_or_none,
+    _text_replace_operations_from_repair,
+)
+from .constants import (
+    _TS_CANVAS_CONTEXT_DECLARATION_LINE_RE,
+    _TS_IDENTIFIER_RE,
+    _TS_NULLABLE_ARGUMENT_RAW_RE,
+    _TS_NULLABLE_DOM_HANDLE_DECLARATION_LINE_RE,
+    _TS_NULLABLE_FUNCTION_DECLARATION_LINE_RE,
+    _TS_POSSIBLY_NULL_MESSAGE_RE,
+    _TS_POSSIBLY_NULL_RAW_RE,
+    _TS_POSSIBLY_UNDEFINED_MESSAGE_RE,
+    _TS_POSSIBLY_UNDEFINED_RAW_RE,
+    TYPESCRIPT_NULLABLE_CANVAS_CONTEXT_SOURCE_TOOL,
+    TYPESCRIPT_STRICT_NULL_RELAXATION_SOURCE_TOOL,
+)
 
 """TypeScript syntax repair module: nullability."""
 

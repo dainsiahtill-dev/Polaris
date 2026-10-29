@@ -4,11 +4,30 @@ import re
 from collections.abc import Mapping, Sequence
 
 from ...contracts import RepairDiagnostic, RepairOperation, sha256_text
-from ..constants import *  # noqa: F403
-from .misc_ops import *  # noqa: F403
-from .parse_ops import *  # noqa: F403
-from .path_ops import *  # noqa: F403
-from .plan_ops import *  # noqa: F403
+from ..constants import (
+    _TS_ARROW_FUNCTION_DECLARATION_LINE_RE,
+    _TS_FUNCTION_DECLARATION_LINE_RE,
+    _TS_IDENTIFIER_RE,
+    _TS_IMPORT_FROM_ANY_RE,
+    _TS_NUMBER_TO_FUNCTION_ARGUMENT_RAW_RE,
+    _TS_REEXPORTABLE_NAMED_IMPORT_RE,
+    _TS_UNUSED_DECLARATION_ERROR_RE,
+    _TS_UNUSED_FUNCTION_DECLARATION_LINE_RE,
+    _TS_UNUSED_LOCAL_DECLARATION_LINE_RE,
+)
+from .misc_ops import (
+    _split_typescript_argument_spans,
+    _split_typescript_params,
+    _to_positive_int,
+    _typescript_default_value_for_type,
+    _typescript_import_pairs_from_clause,
+)
+from .path_ops import (
+    _normalize_repair_path,
+)
+from .plan_ops import (
+    _line_start_offsets,
+)
 
 """Shared TypeScript repair helpers: arg_shape_ops."""
 

@@ -8,14 +8,28 @@ from pathlib import PurePosixPath
 from polaris.kernelone.quality.artifact_quality import _ts_js_code_mask
 
 from ...contracts import RepairOperation, sha256_text
-from ..constants import *  # noqa: F403
-from ..constants import _TS_IDENTIFIER_RE
+from ..constants import (
+    _TS_IDENTIFIER_RE,
+    _TS_IMPORT_FROM_ANY_RE,
+    _TS_NAMED_IMPORT_RE,
+    _TS_NAMED_REEXPORT_RE,
+    _TS_REEXPORTABLE_NAMED_IMPORT_RE,
+    _TS_STAR_REEXPORT_RE,
+    _TS_TEST_GLOBAL_NAMES,
+    _TS_VITEST_IMPORT_RE,
+)
 from ..module_binding_proof import parse_module_binding_facts
-from .misc_ops import *  # noqa: F403
-from .misc_ops import _typescript_brace_balance_delta, _typescript_import_pairs_from_clause
-from .parse_ops import *  # noqa: F403
-from .path_ops import *  # noqa: F403
-from .plan_ops import *  # noqa: F403
+from .misc_ops import (
+    _resolve_relative_ts_module_path,
+    _text_line_start_offsets,
+    _typescript_brace_balance_delta,
+    _typescript_import_pairs_from_clause,
+    _typescript_matching_brace_index,
+)
+from .path_ops import (
+    _dedupe_preserve_order,
+    _normalize_repair_path,
+)
 
 """Shared TypeScript repair helpers: import_text_ops."""
 

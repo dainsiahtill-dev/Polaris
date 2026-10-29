@@ -7,17 +7,84 @@ from collections.abc import Mapping, Sequence
 from polaris.kernelone.quality.artifact_quality import _ts_js_code_mask
 
 from ..contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
-from .common import *  # noqa: F403
-from .common.import_text_ops import _parse_named_import_symbols
+from .common.arg_shape_ops import (
+    _remove_typescript_named_import_binding,
+    _typescript_unused_import_declaration_operation,
+    _typescript_unused_parameter_operations,
+)
+from .common.import_text_ops import (
+    _normalize_typescript_module_ref,
+    _parse_named_import_symbols,
+    _relative_import_specifier_for_actual_path,
+    _typescript_module_exports_symbol,
+    _typescript_named_export_specifier_name,
+    _typescript_named_specifier_indent,
+    _typescript_named_type_specifier_names,
+    _typescript_named_value_specifier_name,
+    _typescript_named_value_specifier_names,
+)
+from .common.member_text_ops import (
+    _typescript_methods_used_on_constructed_symbol,
+    _typescript_symbol_is_constructed,
+)
 from .common.misc_ops import (
+    _resolve_case_variant_base_file,
     _resolve_relative_ts_module_path,
+    _to_positive_int,
+    _typescript_duplicate_identifier_targets,
     _typescript_identifier_used_outside_span,
     _typescript_import_pairs_from_clause,
+    _typescript_missing_identifier_usage_is_type_position,
+    _typescript_module_declared_symbol_kind,
+    _typescript_module_declares_symbol,
+    _typescript_symbol_is_called,
 )
-from .common.path_ops import _normalize_repair_path
-from .common.plan_ops import _text_replace_operations_from_repair
-from .constants import *  # noqa: F403
-from .constants import _TS_NAMED_REEXPORT_RE
+from .common.parse_ops import (
+    _diagnostic_text,
+    _parse_typescript_cannot_find_name_errors,
+    _typescript_syntax_error_paths,
+)
+from .common.path_ops import (
+    _dedupe_preserve_order,
+    _line_ending,
+    _normalize_repair_path,
+)
+from .common.plan_ops import (
+    _apply_single_text_operation,
+    _repair_plan_or_none,
+    _text_replace_operations_from_repair,
+)
+from .constants import (
+    _TS_DECLARES_LOCALLY_NOT_EXPORTED_ERROR_RE,
+    _TS_DUPLICATE_IDENTIFIER_MESSAGE_RE,
+    _TS_EMBEDDED_IMPORT_TYPE_LINE_RE,
+    _TS_EXPORT_AMBIGUITY_MESSAGE_RE,
+    _TS_EXPORT_STAR_RE,
+    _TS_IDENTIFIER_RE,
+    _TS_IMPORT_FROM_SPECIFIER_TEMPLATE,
+    _TS_IMPORT_SPECIFIER_KEYWORD_RE,
+    _TS_IMPORT_TYPE_AS_VALUE_MESSAGE_RE,
+    _TS_IMPORT_TYPE_AS_VALUE_RAW_RE,
+    _TS_LOCAL_NAMED_EXPORT_RE,
+    _TS_LOCAL_TYPE_NAMED_EXPORT_RE,
+    _TS_NAMED_IMPORT_BLOCK_END_LINE_RE,
+    _TS_NAMED_IMPORT_BLOCK_START_LINE_RE,
+    _TS_NAMED_IMPORT_RE,
+    _TS_NAMED_REEXPORT_RE,
+    _TS_NO_EXPORTED_MEMBER_ERROR_RE,
+    _TS_NO_EXPORTED_MEMBER_NAMED_ERROR_RE,
+    _TS_REEXPORTABLE_NAMED_IMPORT_RE,
+    _UNRESOLVED_IMPORT_SYMBOL_ERROR_RE,
+    _UNRESOLVED_RELATIVE_IMPORT_ERROR_RE,
+    TYPESCRIPT_EXPORT_AMBIGUITY_SOURCE_TOOL,
+    TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL,
+    TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,
+    TYPESCRIPT_REEXPORT_SOURCE_TOOL,
+    TYPESCRIPT_REEXPORTED_TYPE_BINDING_SOURCE_TOOL,
+    TYPESCRIPT_RELATIVE_IMPORT_CASE_SOURCE_TOOL,
+    TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL,
+    TYPESCRIPT_UNUSED_IMPORT_SOURCE_TOOL,
+)
 from .module_binding_proof import ModuleBindingFacts, parse_module_binding_facts
 
 """TypeScript syntax repair module: imports_exports."""

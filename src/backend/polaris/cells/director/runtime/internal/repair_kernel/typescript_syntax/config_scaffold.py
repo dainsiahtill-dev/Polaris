@@ -7,10 +7,50 @@ from typing import Any
 
 from ..contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
 from ..path_files import normalize_repair_path_strict
-from .common import *  # noqa: F403
-from .common.plan_ops import _repair_plan_or_none
-from .constants import *  # noqa: F403
-from .constants import TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL
+from .common.import_text_ops import (
+    _add_vitest_import_to_typescript_test,
+    _prepend_typescript_vitest_import_operation,
+    _typescript_module_allows_import_meta,
+)
+from .common.misc_ops import (
+    _json_object,
+    _typescript_libs_allow_es2021,
+    _typescript_promote_libs_to_es2021,
+)
+from .common.parse_ops import (
+    _diagnostic_text,
+    _is_typescript_config_file,
+    _parse_typescript_missing_test_global_errors,
+    _typescript_errors_require_dom_lib,
+    _typescript_errors_require_es2021_lib,
+    _typescript_errors_require_import_meta_module,
+    _typescript_glob_points_outside_root,
+)
+from .common.path_ops import (
+    _dedupe_preserve_order,
+    _normalize_repair_path,
+)
+from .common.plan_ops import (
+    _line_start_offsets,
+    _repair_plan_or_none,
+    _text_replace_operations_from_repair,
+)
+from .constants import (
+    _REMOVED_TYPESCRIPT_COMPILER_OPTIONS,
+    _TS_CONFIG_JOINABLE_KEYS,
+    _TS_CONFIG_SPLIT_KEY_LINE_RE,
+    _TS_SOURCEFILE_DIAGNOSTICS_RAW_RE,
+    _TS_VITEST_IMPORT_RE,
+    _TS_ZOD_INFERRED_TYPE_ALIAS_LINE_RE,
+    _TS_ZOD_TYPE_CLASS_COLLISION_ERROR_RE,
+    TYPESCRIPT_CONFIG_KEY_SPLIT_SOURCE_TOOL,
+    TYPESCRIPT_SCAFFOLD_SOURCE_TOOL,
+    TYPESCRIPT_SOURCEFILE_DIAGNOSTICS_SOURCE_TOOL,
+    TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL,
+    TYPESCRIPT_TSCONFIG_ROOTDIR_SOURCE_TOOL,
+    TYPESCRIPT_VITEST_GLOBALS_SOURCE_TOOL,
+    TYPESCRIPT_ZOD_TYPE_CLASS_COLLISION_SOURCE_TOOL,
+)
 
 """TypeScript syntax repair module: config_scaffold."""
 

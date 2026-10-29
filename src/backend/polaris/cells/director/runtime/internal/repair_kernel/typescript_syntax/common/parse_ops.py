@@ -3,9 +3,24 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from ...contracts import RepairDiagnostic
-from ..constants import *  # noqa: F403
-from .path_ops import *  # noqa: F403
-from .plan_ops import *  # noqa: F403
+from ..constants import (
+    _HTML_TRUNCATED_ERROR_RE,
+    _TS2345_ARG_MISSING_PROPS_LOOSE_RE,
+    _TS2345_ARG_MISSING_PROPS_RE,
+    _TS2345_MISSING_PROPS_CLAUSE_RE,
+    _TS_ANON_OBJECT_PROP_RE,
+    _TS_CANNOT_FIND_NAME_RAW_RE,
+    _TS_CANNOT_FIND_TEST_GLOBAL_RAW_RE,
+    _TS_IDENTIFIER_RE,
+    _TS_MISSING_PROPS_FROM_TYPE_RE,
+    _TS_MISSING_PROPS_PRIMARY_RE,
+    _TS_TEST_GLOBAL_NAMES,
+    _UNDECLARED_RUNTIME_IMPORT_ERROR_RE,
+)
+from .path_ops import (
+    _dedupe_preserve_order,
+    _normalize_repair_path,
+)
 
 """Shared TypeScript repair helpers: parse_ops."""
 

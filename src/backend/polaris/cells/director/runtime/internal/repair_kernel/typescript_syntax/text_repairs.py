@@ -4,8 +4,38 @@ import re
 from collections.abc import Mapping, Sequence
 
 from ..contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
-from .common import *  # noqa: F403
-from .constants import *  # noqa: F403
+from .common.misc_ops import (
+    _function_body_end_offset,
+    _typescript_brace_balance_delta,
+    _typescript_file_looks_truncated,
+)
+from .common.parse_ops import (
+    _is_typescript_test_file,
+)
+from .common.path_ops import (
+    _dedupe_preserve_order,
+    _diagnostic_targets_path,
+    _normalize_repair_path,
+)
+from .common.plan_ops import (
+    _line_start_offsets,
+    _repair_plan_or_none,
+    _text_replace_operations_from_repair,
+)
+from .constants import (
+    _TS_DUPLICATE_FUNCTION_RAW_RE,
+    _TS_ESCAPED_NEWLINE_IN_LINE_COMMENT_ERROR_RE,
+    _TS_FUNCTION_DECL_RE,
+    _TS_IDENTIFIER_RE,
+    _TS_LINE_COMMENT_ESCAPED_NEWLINE_CODE_RE,
+    _TS_TEST_BLOCK_RESIDUE_CLOSER_RE,
+    _TS_TEST_BLOCK_RESIDUE_STATEMENT_RE,
+    TYPESCRIPT_DUPLICATE_FUNCTION_SOURCE_TOOL,
+    TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL,
+    TYPESCRIPT_EXPECT_ERROR_PLACEMENT_SOURCE_TOOL,
+    TYPESCRIPT_TEST_BLOCK_RESIDUE_SOURCE_TOOL,
+    TYPESCRIPT_TRUNCATED_EOF_SOURCE_TOOL,
+)
 
 """TypeScript syntax repair module: text_repairs."""
 
