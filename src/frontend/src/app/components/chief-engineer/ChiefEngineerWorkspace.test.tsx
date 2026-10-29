@@ -22,10 +22,33 @@ vi.mock('@/api', () => ({
   apiFetch: apiFetchMock,
 }));
 
-vi.mock('@/runtime/transport', () => ({
-  RuntimeTransportProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
-  useRuntimeTransport: () => runtimeTransportMock,
-}));
+vi.mock(
+  '@/runtime/transport',
+  (): Pick<
+    typeof import('@/runtime/transport'),
+    | 'RuntimeTransportProvider'
+    | 'useConnectionState'
+    | 'useTransportActions'
+    | 'useMessageHandler'
+  > => ({
+    RuntimeTransportProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
+    useConnectionState: () => ({
+      connected: runtimeTransportMock.connected,
+      reconnecting: runtimeTransportMock.reconnecting,
+      error: runtimeTransportMock.error,
+      attemptCount: runtimeTransportMock.attemptCount,
+    }),
+    useTransportActions: () => ({
+      subscribeChannels: runtimeTransportMock.subscribeChannels,
+      sendCommand: runtimeTransportMock.sendCommand,
+      getLastCursor: runtimeTransportMock.getLastCursor,
+      reconnect: runtimeTransportMock.reconnect,
+    }),
+    useMessageHandler: () => ({
+      registerMessageHandler: runtimeTransportMock.registerMessageHandler,
+    }),
+  }),
+);
 
 vi.mock('./ChiefEngineerWorkbenchPanel', () => ({
   ChiefEngineerWorkbenchPanel: ({

@@ -20,9 +20,29 @@ vi.mock('@/api', () => ({
   getBackendInfo: () => getBackendInfoMock(),
 }));
 
-vi.mock('@/runtime/transport', () => ({
-  useRuntimeTransport: () => runtimeTransportMock,
-}));
+vi.mock(
+  '@/runtime/transport',
+  (): Pick<
+    typeof import('@/runtime/transport'),
+    'useConnectionState' | 'useTransportActions' | 'useMessageHandler'
+  > => ({
+    useConnectionState: () => ({
+      connected: runtimeTransportMock.connected,
+      reconnecting: runtimeTransportMock.reconnecting,
+      error: runtimeTransportMock.error,
+      attemptCount: runtimeTransportMock.attemptCount,
+    }),
+    useTransportActions: () => ({
+      subscribeChannels: runtimeTransportMock.subscribeChannels,
+      sendCommand: runtimeTransportMock.sendCommand,
+      getLastCursor: runtimeTransportMock.getLastCursor,
+      reconnect: runtimeTransportMock.reconnect,
+    }),
+    useMessageHandler: () => ({
+      registerMessageHandler: runtimeTransportMock.registerMessageHandler,
+    }),
+  }),
+);
 
 function jsonResponse(payload: unknown, ok = true): Response {
   return {

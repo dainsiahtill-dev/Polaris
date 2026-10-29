@@ -8,14 +8,41 @@ const benchServiceMock = vi.hoisted(() => ({
 }));
 
 const runtimeTransportMock = vi.hoisted(() => ({
+  connected: true,
+  reconnecting: false,
+  error: null as string | null,
+  attemptCount: 0,
   subscribeChannels: vi.fn(() => vi.fn()),
+  sendCommand: vi.fn(() => true),
+  getLastCursor: vi.fn(() => 0),
+  reconnect: vi.fn(),
   registerMessageHandler: vi.fn(() => vi.fn()),
 }));
 
 vi.mock('@/services/benchService', () => benchServiceMock);
-vi.mock('@/runtime/transport', () => ({
-  useRuntimeTransport: () => runtimeTransportMock,
-}));
+vi.mock(
+  '@/runtime/transport',
+  (): Pick<
+    typeof import('@/runtime/transport'),
+    'useConnectionState' | 'useTransportActions' | 'useMessageHandler'
+  > => ({
+    useConnectionState: () => ({
+      connected: runtimeTransportMock.connected,
+      reconnecting: runtimeTransportMock.reconnecting,
+      error: runtimeTransportMock.error,
+      attemptCount: runtimeTransportMock.attemptCount,
+    }),
+    useTransportActions: () => ({
+      subscribeChannels: runtimeTransportMock.subscribeChannels,
+      sendCommand: runtimeTransportMock.sendCommand,
+      getLastCursor: runtimeTransportMock.getLastCursor,
+      reconnect: runtimeTransportMock.reconnect,
+    }),
+    useMessageHandler: () => ({
+      registerMessageHandler: runtimeTransportMock.registerMessageHandler,
+    }),
+  }),
+);
 
 describe('useFactoryBench', () => {
   beforeEach(() => {
