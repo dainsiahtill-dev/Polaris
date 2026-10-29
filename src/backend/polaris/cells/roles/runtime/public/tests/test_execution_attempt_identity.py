@@ -112,9 +112,7 @@ def test_task_request_projects_typed_structured_output_contract(tmp_path: Path) 
 
     request = RoleRuntimeService._build_task_request(command)
 
-    assert request.context_override[STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY] == (
-        contract.to_context_projection()
-    )
+    assert request.context_override[STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY] == (contract.to_context_projection())
 
 
 def test_task_request_rejects_structured_output_context_drift(tmp_path: Path) -> None:

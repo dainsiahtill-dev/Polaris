@@ -92,16 +92,27 @@ def test_metrics_on_missing_namespace_do_not_initialize_storage(tmp_path: Path) 
 
 def test_metrics_reader_does_not_close_injected_writer_database(tmp_path: Path) -> None:
     writer = CognitiveRuntimeSqliteStore(str(tmp_path))
-    receipt = RuntimeReceipt(receipt_id="before", receipt_type="test", workspace=str(tmp_path),
-                             created_at="2026-10-01T00:00:00+00:00", payload={})
+    receipt = RuntimeReceipt(
+        receipt_id="before",
+        receipt_type="test",
+        workspace=str(tmp_path),
+        created_at="2026-10-01T00:00:00+00:00",
+        payload={},
+    )
     writer.append_receipt(receipt)
     try:
-        collector = CognitiveRuntimeMetricsCollector(str(tmp_path), db_path=writer._db_path,
-                                                     kernel_db=writer._kernel_db)
+        collector = CognitiveRuntimeMetricsCollector(
+            str(tmp_path), db_path=writer._db_path, kernel_db=writer._kernel_db
+        )
         collector.collect_metrics(str(tmp_path))
         assert writer.get_receipt("before") == receipt
-        after = RuntimeReceipt(receipt_id="after", receipt_type="test", workspace=str(tmp_path),
-                               created_at="2026-10-01T00:00:01+00:00", payload={})
+        after = RuntimeReceipt(
+            receipt_id="after",
+            receipt_type="test",
+            workspace=str(tmp_path),
+            created_at="2026-10-01T00:00:01+00:00",
+            payload={},
+        )
         writer.append_receipt(after)
         assert writer.get_receipt("after") == after
     finally:
@@ -113,8 +124,13 @@ def test_sqlite_writer_propagates_failed_statement_without_false_ack(tmp_path: P
     try:
         with pytest.raises(sqlite3.OperationalError):
             writer._submit_write(lambda connection: connection.execute("INSERT INTO nonexistent_table VALUES (1)"))
-        receipt = RuntimeReceipt(receipt_id="after-error", receipt_type="test", workspace=str(tmp_path),
-                                 created_at="2026-10-01T00:00:00+00:00", payload={})
+        receipt = RuntimeReceipt(
+            receipt_id="after-error",
+            receipt_type="test",
+            workspace=str(tmp_path),
+            created_at="2026-10-01T00:00:00+00:00",
+            payload={},
+        )
         writer.append_receipt(receipt)
         assert writer.get_receipt("after-error") == receipt
     finally:

@@ -1213,9 +1213,7 @@ class _ExecutionBrokerProjectVerificationRunner:
 
         async def wait_owned(seconds: float) -> ExecutionProcessWaitResultV1:
             if control is None:
-                result: ExecutionProcessWaitResultV1 = await service.wait_process(
-                    handle, timeout_seconds=seconds
-                )
+                result: ExecutionProcessWaitResultV1 = await service.wait_process(handle, timeout_seconds=seconds)
                 return result
             waiting = asyncio.create_task(service.wait_process(handle, timeout_seconds=seconds))
             try:

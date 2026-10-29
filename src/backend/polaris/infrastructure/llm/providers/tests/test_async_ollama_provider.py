@@ -329,9 +329,7 @@ class TestAsyncOllamaProvider:
         mock_result.elapsed_ms = 42
 
         # Act
-        with patch(
-            "polaris.infrastructure.llm.providers.async_ollama_provider.AsyncProviderHttpClient"
-        ) as mock_cls:
+        with patch("polaris.infrastructure.llm.providers.async_ollama_provider.AsyncProviderHttpClient") as mock_cls:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=None)
@@ -359,9 +357,7 @@ class TestAsyncOllamaProvider:
         mock_result.text = json.dumps(models_data)
 
         # Act
-        with patch(
-            "polaris.infrastructure.llm.providers.async_ollama_provider.AsyncProviderHttpClient"
-        ) as mock_cls:
+        with patch("polaris.infrastructure.llm.providers.async_ollama_provider.AsyncProviderHttpClient") as mock_cls:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=None)
@@ -398,9 +394,7 @@ class TestAsyncOllamaProvider:
             new_callable=AsyncMock,
         ) as mock_invoke:
             mock_invoke.return_value = mock_result
-            result = await provider.invoke(
-                "Hello", "llama2", {"base_url": "http://test:11434"}
-            )
+            result = await provider.invoke("Hello", "llama2", {"base_url": "http://test:11434"})
 
         # Assert
         assert result.ok is True

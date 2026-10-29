@@ -8,4 +8,3 @@ from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS
 
 def test_diag_write_tool_names_use_canonical_catalog() -> None:
     assert execute_method._DIAG_WRITE_TOOL_NAMES == WRITE_TOOLS
-

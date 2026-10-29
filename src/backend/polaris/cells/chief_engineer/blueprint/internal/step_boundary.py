@@ -191,9 +191,8 @@ def harden_task_boundary_steps(steps: list[dict[str, Any]]) -> list[dict[str, An
             changed = _append_unique(deps, required) or changed
         if deps != list(cloned.get("depends_on") or []):
             cloned["depends_on"] = deps
-        if (
-            cloned.get("artifact_role") != step.get("artifact_role")
-            or cloned.get("task_boundary_phase") != step.get("task_boundary_phase")
+        if cloned.get("artifact_role") != step.get("artifact_role") or cloned.get("task_boundary_phase") != step.get(
+            "task_boundary_phase"
         ):
             changed = True
         hardened.append(cloned)

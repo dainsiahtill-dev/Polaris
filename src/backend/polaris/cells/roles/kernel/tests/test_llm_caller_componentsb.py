@@ -535,8 +535,6 @@ async def test_factory_physical_attempt_control_port_drift_during_acquire_fails_
     assert cutoff_port.resolve_count == 0
 
 
-
-
 def test_final_request_context_audit_prefers_bound_model_window_over_role_default() -> None:
     profile = Mock()
     profile.max_context_tokens = 8000
@@ -1732,10 +1730,7 @@ class TestStreamEngineRunStream:
                 "polaris.cells.roles.kernel.internal.llm_caller.stream_engine."
                 "enforce_factory_aware_final_request_evidence_coverage"
             ),
-            patch(
-                "polaris.cells.roles.kernel.internal.llm_caller.stream_engine."
-                "assert_tool_in_final_request_surface"
-            ),
+            patch("polaris.cells.roles.kernel.internal.llm_caller.stream_engine.assert_tool_in_final_request_surface"),
         ):
             events = [
                 event

@@ -139,9 +139,9 @@ def test_invalid_typed_relative_specifier_does_not_produce_patch(specifier: obje
                     "source": "artifact_quality",
                     "code": "unresolved_relative_import",
                     "message": "Relative import target is unresolved.",
-                "path": IMPORTER,
-                "metadata": {"specifier": specifier},
-                "raw": ERROR,  # provenance cannot override malformed canonical fields
+                    "path": IMPORTER,
+                    "metadata": {"specifier": specifier},
+                    "raw": ERROR,  # provenance cannot override malformed canonical fields
                 },
             ),
             base_files=_files(),

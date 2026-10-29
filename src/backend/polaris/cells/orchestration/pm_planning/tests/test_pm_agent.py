@@ -343,7 +343,7 @@ class TestPMAgentGovernanceTools:
                             "error_code": "fact_stream_unavailable",
                         }
                     ],
-        }
+                }
 
         agent = PMAgent(str(tmp_path))
         agent._task_runtime = _TaskRuntimeWithFailedCreateEvent()
@@ -396,8 +396,7 @@ class TestPMAgentGovernanceTools:
 
             def get_task_row_stats(self) -> dict[str, object]:
                 raise AssertionError(
-                    "PM taskboard stats tool must read via "
-                    "get_observable_task_row_stats, not the legacy entrypoint"
+                    "PM taskboard stats tool must read via get_observable_task_row_stats, not the legacy entrypoint"
                 )
 
         agent = PMAgent(str(tmp_path))

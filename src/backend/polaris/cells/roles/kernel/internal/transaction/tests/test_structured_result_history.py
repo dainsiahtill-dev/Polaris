@@ -57,7 +57,7 @@ def test_pm_workspace_readers_cannot_resolve_opaque_receipt_history() -> None:
         {"role": "system", "content": "You are PM."},
         {"role": "assistant", "content": pointer},
         {"role": "user", "content": pointer},
-        {"role": "user", "content": "Correct the current complete task plan: {\"tasks\":[]}"},
+        {"role": "user", "content": 'Correct the current complete task plan: {"tasks":[]}'},
     ]
     tools = [{"type": "function", "function": {"name": "read_file", "parameters": {"type": "object"}}}]
     messages = build_decision_messages(context, tools)

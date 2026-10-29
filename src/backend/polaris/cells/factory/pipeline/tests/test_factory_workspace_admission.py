@@ -1966,8 +1966,7 @@ async def test_successful_quality_completion_notifies_only_after_completed_event
     advance_index = next(
         index
         for index, event in enumerate(events)
-        if event.get("type") == "project_completion_advance"
-        and event.get("status") == "completed_verified"
+        if event.get("type") == "project_completion_advance" and event.get("status") == "completed_verified"
     )
     assert completed_index < advance_index
 
@@ -2431,8 +2430,7 @@ async def test_failed_gate_allows_pending_owner_abort_without_passing_delivery(t
     def query_barrier(queried_workspace: str | Path, factory_run_id: str) -> FactorySettlementBarrierResultV1:
         assert Path(queried_workspace) == workspace
         pending = any(
-            row.get("status") == "pending"
-            and row.get("metadata", {}).get("factory_run_id") == factory_run_id
+            row.get("status") == "pending" and row.get("metadata", {}).get("factory_run_id") == factory_run_id
             for row in runtime.list_observable_task_rows()
         )
         return replace(
@@ -2451,9 +2449,7 @@ async def test_failed_gate_allows_pending_owner_abort_without_passing_delivery(t
     await service.start_run(run.id)
     row = runtime.create_task_row(subject="Not yet dispatched")
     assert runtime.bind_task_to_factory_run(
-        BindRuntimeTaskToFactoryRunCommandV1(
-            workspace=str(workspace), task_id=str(row["id"]), factory_run_id=run.id
-        )
+        BindRuntimeTaskToFactoryRunCommandV1(workspace=str(workspace), task_id=str(row["id"]), factory_run_id=run.id)
     ).ok
     await service.execute_stage(run.id, "director_dispatch", {"heartbeat_interval_seconds": 0})
 
@@ -3070,9 +3066,7 @@ async def test_same_run_quality_retry_remints_expired_factory_deadline(tmp_path:
         reason="same-run quality_gate after expired factory-run deadline",
     )
 
-    remaining = float(retried.metadata["factory_run_deadline_epoch_seconds"]) - datetime.now(
-        timezone.utc
-    ).timestamp()
+    remaining = float(retried.metadata["factory_run_deadline_epoch_seconds"]) - datetime.now(timezone.utc).timestamp()
     assert remaining >= 180.0
     assert retried.metadata["factory_run_deadline_source"] == "same_run_retry_epoch"
     assert retried.metadata["factory_run_deadline_extension_count"] == 1

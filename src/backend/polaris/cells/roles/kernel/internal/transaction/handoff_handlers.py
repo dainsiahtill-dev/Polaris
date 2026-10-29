@@ -44,7 +44,9 @@ class _OwnerWorkflowReceipts:
     receipts_json: str
 
 
-_workflow_owner_receipts: ContextVar[_OwnerWorkflowReceipts | None] = ContextVar("workflow_owner_receipts", default=None)
+_workflow_owner_receipts: ContextVar[_OwnerWorkflowReceipts | None] = ContextVar(
+    "workflow_owner_receipts", default=None
+)
 
 
 def _current_workflow_owner_receipts() -> _OwnerWorkflowReceipts | None:
@@ -62,11 +64,18 @@ def _workflow_owner_receipt_scope(decision: TurnDecision, context: dict, ledger:
         batches = [batch for batch in ledger.invocation_batches if str(batch.batch_id) == str(expected.get("batch_id"))]
         if len(batches) != 1:
             raise RuntimeError("workflow_owner_input_batch_missing_or_ambiguous")
-        input_batch = {"batch_id": str(batches[0].batch_id), "invocations": [
-            {"call_id": str(item.call_id), "tool_name": item.tool_name,
-             "arguments": dict(item.arguments), "native_arguments": dict(item.native_arguments or item.arguments)}
-            for item in batches[0].invocations
-        ]}
+        input_batch = {
+            "batch_id": str(batches[0].batch_id),
+            "invocations": [
+                {
+                    "call_id": str(item.call_id),
+                    "tool_name": item.tool_name,
+                    "arguments": dict(item.arguments),
+                    "native_arguments": dict(item.native_arguments or item.arguments),
+                }
+                for item in batches[0].invocations
+            ],
+        }
         receipts = context.get("batch_receipts", [])
         if not receipts or any(str(receipt.get("turn_id")) != str(ledger.turn_id) for receipt in receipts):
             raise RuntimeError("workflow_owner_receipt_turn_mismatch")
@@ -96,16 +105,28 @@ def _initial_batch_failure(decision: TurnDecision, context: dict, ledger: TurnLe
         call_id = str(invocation.get("call_id") or "")
         tool_name = str(invocation.get("tool_name") or "")
         captured = [item for item in inventory if str(item.call_id) == call_id and item.tool_name == tool_name]
-        if len(captured) != 1 or dict(captured[0].native_arguments or captured[0].arguments) != dict(invocation.get("native_arguments") or invocation.get("arguments") or {}):
+        if len(captured) != 1 or dict(captured[0].native_arguments or captured[0].arguments) != dict(
+            invocation.get("native_arguments") or invocation.get("arguments") or {}
+        ):
             return "workflow_initial_batch_invocation_mismatch"
-        matched = [row for row in rows if str(row.get("call_id") or "") == call_id and row.get("tool_name") == tool_name]
-        committed = [row for row in ledger.tool_executions if str(row.get("call_id") or "") == call_id and row.get("tool_name") == tool_name]
+        matched = [
+            row for row in rows if str(row.get("call_id") or "") == call_id and row.get("tool_name") == tool_name
+        ]
+        committed = [
+            row
+            for row in ledger.tool_executions
+            if str(row.get("call_id") or "") == call_id and row.get("tool_name") == tool_name
+        ]
         if len(matched) != 1 or len(committed) != 1 or matched[0].get("status") != committed[0].get("status"):
             return "workflow_initial_batch_receipt_missing_or_ambiguous"
         row = matched[0]
         if row.get("status") not in {"success", "pending", "pending_async"}:
             result = row.get("result")
-            return str(row.get("error") or (result.get("error") if isinstance(result, dict) else "") or "workflow_initial_batch_failed")
+            return str(
+                row.get("error")
+                or (result.get("error") if isinstance(result, dict) else "")
+                or "workflow_initial_batch_failed"
+            )
     return None
 
 
@@ -243,7 +264,9 @@ def build_workflow_handoff_context(
     """构建可恢复的 workflow handoff 上下文。"""
     metadata = decision.get("metadata", {})
     tool_batch = decision.get("tool_batch") or {}
-    captured_batches = [batch for batch in ledger.invocation_batches if str(batch.batch_id) == str(tool_batch.get("batch_id") or "")]
+    captured_batches = [
+        batch for batch in ledger.invocation_batches if str(batch.batch_id) == str(tool_batch.get("batch_id") or "")
+    ]
     receipt_input_batch = captured_batches[0] if len(captured_batches) == 1 else tool_batch
     primary_receipt = select_primary_batch_receipt(receipts)
     pending_receipts = [
@@ -507,7 +530,11 @@ class HandoffHandler:
 
         workflow_error = _initial_batch_failure(decision, workflow_context, ledger)
         workflow_decision = _with_context_handoff_pack(decision, workflow_context, handoff_reason)
-        if workflow_error is None and self.workflow_runtime is not None and hasattr(self.workflow_runtime, "execute_stream"):
+        if (
+            workflow_error is None
+            and self.workflow_runtime is not None
+            and hasattr(self.workflow_runtime, "execute_stream")
+        ):
             try:
                 with _workflow_owner_receipt_scope(decision, workflow_context, ledger):
                     async for event in self.workflow_runtime.execute_stream(workflow_decision, TurnId(str(turn_id))):

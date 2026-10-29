@@ -1,22 +1,19 @@
 from __future__ import annotations
 
 import json
-import posixpath
 import re
 from collections.abc import Mapping, Sequence
-from difflib import SequenceMatcher
-from pathlib import PurePosixPath
 from typing import Any
 
 from ..contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
-from ..javascript_syntax import repair_javascript_export_contract_placeholders
-from ..path_files import normalize_base_files_strict, normalize_repair_path_strict
-from .constants import *  # noqa: F403
+from ..path_files import normalize_repair_path_strict
 from .common import *  # noqa: F403
 from .common.plan_ops import _repair_plan_or_none
+from .constants import *  # noqa: F403
 from .constants import TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL
 
 """TypeScript syntax repair module: config_scaffold."""
+
 
 def _build_typescript_config_key_split_plan(
     *,
@@ -88,6 +85,7 @@ def _build_typescript_config_key_split_plan(
         metadata={"config_key_splits": repaired_items},
     )
 
+
 def _build_typescript_scaffold_plan(
     *,
     base_files: Mapping[str, str],
@@ -136,6 +134,7 @@ def _build_typescript_scaffold_plan(
         metadata={"files": files},
     )
 
+
 def _build_typescript_sourcefile_diagnostics_plan(
     *,
     base_files: Mapping[str, str],
@@ -166,6 +165,7 @@ def _build_typescript_sourcefile_diagnostics_plan(
         mode=mode,
         metadata={"diagnostics": repaired_files},
     )
+
 
 def _build_typescript_tsconfig_lib_plan(
     *,
@@ -411,6 +411,7 @@ def _build_typescript_tsconfig_rootdir_plan(
         metadata={"previous_rootDir": root_dir, "rootDir": ".", "outside_paths": outside_paths},
     )
 
+
 def _build_typescript_vitest_globals_plan(
     *,
     base_files: Mapping[str, str],
@@ -460,6 +461,7 @@ def _build_typescript_vitest_globals_plan(
         metadata={"test_globals": globals_repaired},
     )
 
+
 def _build_typescript_zod_type_class_collision_plan(
     *,
     base_files: Mapping[str, str],
@@ -491,6 +493,7 @@ def _build_typescript_zod_type_class_collision_plan(
         metadata={"files": files},
     )
 
+
 def _typescript_errors_require_rootdir_widening(diagnostics: Sequence[RepairDiagnostic]) -> bool:
     return any(
         diagnostic.code.lower() == "typescript_ts6059"
@@ -498,6 +501,7 @@ def _typescript_errors_require_rootdir_widening(diagnostics: Sequence[RepairDiag
         or 'is not under "rootDir"' in str(diagnostic.raw or diagnostic.message)
         for diagnostic in diagnostics
     )
+
 
 def _typescript_removed_compiler_options(diagnostics: Sequence[RepairDiagnostic]) -> tuple[str, ...]:
     """Return removed tsconfig compiler options explicitly present in diagnostics."""
@@ -521,6 +525,7 @@ def _typescript_removed_compiler_options(diagnostics: Sequence[RepairDiagnostic]
                 removed.append(option_name)
     return tuple(dict.fromkeys(removed))
 
+
 def _typescript_rootdir_outside_paths(diagnostics: Sequence[RepairDiagnostic], *, root_dir: str) -> list[str]:
     normalized_root = _normalize_repair_path(root_dir).rstrip("/")
     outside: list[str] = []
@@ -534,11 +539,13 @@ def _typescript_rootdir_outside_paths(diagnostics: Sequence[RepairDiagnostic], *
             outside.append(path)
     return _dedupe_preserve_order(outside)
 
+
 def _typescript_tsconfig_include_entries(payload: Mapping[str, Any]) -> list[str]:
     include = payload.get("include")
     if not isinstance(include, list):
         return []
     return [str(item or "").strip().replace("\\", "/") for item in include if str(item or "").strip()]
+
 
 def _typescript_scaffold_package_payload() -> dict[str, object]:
     return {
@@ -548,6 +555,7 @@ def _typescript_scaffold_package_payload() -> dict[str, object]:
         "scripts": {"build": "tsc", "test": "npm run build", "start": "node dist/index.js"},
         "devDependencies": {"typescript": "^5.0.0"},
     }
+
 
 def _typescript_scaffold_tsconfig_payload() -> dict[str, object]:
     return {
@@ -565,6 +573,7 @@ def _typescript_scaffold_tsconfig_payload() -> dict[str, object]:
         "exclude": ["node_modules", "dist"],
     }
 
+
 def _parse_typescript_sourcefile_diagnostics_paths(diagnostics: Sequence[RepairDiagnostic]) -> list[str]:
     paths: list[str] = []
     for diagnostic in diagnostics:
@@ -573,6 +582,7 @@ def _parse_typescript_sourcefile_diagnostics_paths(diagnostics: Sequence[RepairD
             if path:
                 paths.append(path)
     return _dedupe_preserve_order(paths)
+
 
 def _repair_typescript_sourcefile_diagnostics_usage(text: str) -> str:
     source = str(text or "")
@@ -611,6 +621,7 @@ def _repair_typescript_sourcefile_diagnostics_usage(text: str) -> str:
         return source
     return re.sub(r"if\s*\(\s*(?:0\s*>\s*0|false)\s*\)", "if (diagnostics.length > 0)", repaired)
 
+
 def _typescript_vitest_manifest_operations(package_text: str) -> tuple[RepairOperation, ...]:
     payload = _json_object(package_text)
     operations: list[RepairOperation] = []
@@ -646,6 +657,7 @@ def _typescript_vitest_manifest_operations(package_text: str) -> tuple[RepairOpe
         )
     return tuple(operations)
 
+
 def _parse_typescript_zod_type_class_collision_paths(diagnostics: Sequence[RepairDiagnostic]) -> list[str]:
     paths: list[str] = []
     for diagnostic in diagnostics:
@@ -655,6 +667,7 @@ def _parse_typescript_zod_type_class_collision_paths(diagnostics: Sequence[Repai
             if path:
                 paths.append(path)
     return _dedupe_preserve_order(paths)
+
 
 def _repair_typescript_zod_type_class_collision(text: str) -> str:
     token = str(text or "")
@@ -691,6 +704,7 @@ def _repair_typescript_zod_type_class_collision(text: str) -> str:
             repaired,
         )
     return repaired
+
 
 def _typescript_config_key_split_operations(
     *,
@@ -746,6 +760,7 @@ def _typescript_config_key_split_operations(
         )
     return tuple(operations)
 
+
 def _is_typescript_config_key_split_diagnostic(diagnostic: RepairDiagnostic) -> bool:
     if diagnostic.code.lower() == "typescript_config_key_syntax":
         return True
@@ -757,6 +772,7 @@ def _is_typescript_config_key_split_diagnostic(diagnostic: RepairDiagnostic) -> 
         and "config" in text
     )
 
+
 __all__ = (
     "_build_typescript_config_key_split_plan",
     "_build_typescript_scaffold_plan",
@@ -765,17 +781,17 @@ __all__ = (
     "_build_typescript_tsconfig_rootdir_plan",
     "_build_typescript_vitest_globals_plan",
     "_build_typescript_zod_type_class_collision_plan",
+    "_is_typescript_config_key_split_diagnostic",
+    "_parse_typescript_sourcefile_diagnostics_paths",
+    "_parse_typescript_zod_type_class_collision_paths",
+    "_repair_typescript_sourcefile_diagnostics_usage",
+    "_repair_typescript_zod_type_class_collision",
+    "_typescript_config_key_split_operations",
     "_typescript_errors_require_rootdir_widening",
     "_typescript_removed_compiler_options",
     "_typescript_rootdir_outside_paths",
-    "_typescript_tsconfig_include_entries",
     "_typescript_scaffold_package_payload",
     "_typescript_scaffold_tsconfig_payload",
-    "_parse_typescript_sourcefile_diagnostics_paths",
-    "_repair_typescript_sourcefile_diagnostics_usage",
+    "_typescript_tsconfig_include_entries",
     "_typescript_vitest_manifest_operations",
-    "_parse_typescript_zod_type_class_collision_paths",
-    "_repair_typescript_zod_type_class_collision",
-    "_typescript_config_key_split_operations",
-    "_is_typescript_config_key_split_diagnostic",
 )

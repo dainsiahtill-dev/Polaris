@@ -189,13 +189,12 @@ def _qa_local_repair_context(
     findings = [str(item).strip() for item in list(audit_result.get("findings") or []) if str(item).strip()][
         :_QA_FEEDBACK_MAX_FINDINGS
     ]
-    evidence_refs = [str(item).strip() for item in list(engine_payload.get("evidence_refs") or []) if str(item).strip()][
-        :_QA_FEEDBACK_MAX_FINDINGS
-    ]
+    evidence_refs = [
+        str(item).strip() for item in list(engine_payload.get("evidence_refs") or []) if str(item).strip()
+    ][:_QA_FEEDBACK_MAX_FINDINGS]
     failed_verifier = _mapping_copy(payload.get("qa_failed_verifier"))
     exact_receipt = bool(
-        str(failed_verifier.get("receipt_hash") or "").strip()
-        and str(failed_verifier.get("receipt_ref") or "").strip()
+        str(failed_verifier.get("receipt_hash") or "").strip() and str(failed_verifier.get("receipt_ref") or "").strip()
     )
     authority_kind = "exact_verifier_receipt" if exact_receipt else "diagnostic_effect"
     return {
@@ -1256,9 +1255,13 @@ class QAConsumer:
 
         classification = _mapping_copy(engine_payload.get("classification"))
         failed_verifier = _mapping_copy(payload.get("qa_failed_verifier"))
-        if next_stage == "pending_exec" and failed_verifier and not (
-            str(failed_verifier.get("receipt_hash") or "").strip()
-            and str(failed_verifier.get("receipt_ref") or "").strip()
+        if (
+            next_stage == "pending_exec"
+            and failed_verifier
+            and not (
+                str(failed_verifier.get("receipt_hash") or "").strip()
+                and str(failed_verifier.get("receipt_ref") or "").strip()
+            )
         ):
             # A missing physical receipt is an execution/control-plane outage,
             # not proof that the immutable project contract is contradictory.

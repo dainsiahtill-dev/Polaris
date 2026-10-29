@@ -30,6 +30,8 @@ def test_verification_workspace_can_live_below_operator_polaris_home() -> None:
         metadata.mkdir(parents=True)
         with pytest.raises(RuntimeError, match="verification_root_unsafe"):
             _root(metadata)
+
+
 def _write(root: Path, name: str, text: str) -> None:
     path = root / name
     path.parent.mkdir(parents=True, exist_ok=True)

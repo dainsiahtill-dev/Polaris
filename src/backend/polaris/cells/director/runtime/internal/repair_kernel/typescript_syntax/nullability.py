@@ -1,20 +1,14 @@
 from __future__ import annotations
 
-import json
-import posixpath
 import re
 from collections.abc import Mapping, Sequence
-from difflib import SequenceMatcher
-from pathlib import PurePosixPath
-from typing import Any
 
 from ..contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
-from ..javascript_syntax import repair_javascript_export_contract_placeholders
-from ..path_files import normalize_base_files_strict, normalize_repair_path_strict
-from .constants import *  # noqa: F403
 from .common import *  # noqa: F403
+from .constants import *  # noqa: F403
 
 """TypeScript syntax repair module: nullability."""
+
 
 def repair_typescript_nullable_canvas_context_guards(
     text: str,
@@ -100,6 +94,7 @@ def repair_typescript_nullable_canvas_context_guards(
         return text, []
     return "\n".join(repaired_lines) + ("\n" if text.endswith("\n") else ""), _dedupe_preserve_order(guarded)
 
+
 def _typescript_nullable_property_chain_non_null_assertion_line(
     line: str,
     symbols: set[str],
@@ -118,9 +113,11 @@ def _typescript_nullable_property_chain_non_null_assertion_line(
             asserted.append(symbol)
     return repaired, asserted
 
+
 def _typescript_nullable_target_is_safe(symbol: str) -> bool:
     parts = str(symbol or "").split(".")
     return bool(parts) and all(_TS_IDENTIFIER_RE.fullmatch(part) for part in parts)
+
 
 def _typescript_nullable_global_symbol_for_line(line: str, symbols: set[str]) -> str:
     for symbol in ("window", "document"):
@@ -131,6 +128,7 @@ def _typescript_nullable_global_symbol_for_line(line: str, symbols: set[str]) ->
         if re.search(rf"\b{re.escape(symbol)}\s*(?:\.|\[)", line):
             return symbol
     return ""
+
 
 def build_typescript_nullable_canvas_context_plan(
     *,
@@ -187,6 +185,7 @@ def build_typescript_nullable_canvas_context_plan(
         metadata={"guards": repaired_symbols},
     )
 
+
 def _typescript_strict_null_relaxation_signal(diagnostics: Sequence[RepairDiagnostic]) -> bool:
     """Fire when TS18048/TS2322 (strict-null) or TS1259/TS2352 (config-reducible) appear.
 
@@ -202,7 +201,8 @@ def _typescript_strict_null_relaxation_signal(diagnostics: Sequence[RepairDiagno
     text = _diagnostic_text(diagnostics).lower()
     if any(code in text for code in ("ts18048", "ts2322", "ts1259", "ts2352", "ts2307", "ts2580")):
         return True
-    return ("is possibly 'undefined'" in text) or ("is possibly \"undefined\"" in text)
+    return ("is possibly 'undefined'" in text) or ('is possibly "undefined"' in text)
+
 
 def _build_typescript_strict_null_relaxation_plan(
     *,
@@ -302,10 +302,12 @@ def _build_typescript_strict_null_relaxation_plan(
         metadata={"strict_null_relaxation": True},
     )
 
+
 def _typescript_canvas_context_non_null_assertion_line(line: str) -> str:
     if re.search(r"\.getContext\(\s*['\"]2d['\"]\s*\)!", line):
         return line
     return re.sub(r"(\.getContext\(\s*['\"]2d['\"]\s*\))(\s*;?\s*)$", r"\1!\2", line)
+
 
 def _typescript_dom_handle_non_null_assertion_line(line: str) -> str:
     if "| null" in line or "null |" in line:
@@ -328,9 +330,11 @@ def _typescript_dom_handle_non_null_assertion_line(line: str) -> str:
         count=1,
     )
 
+
 def _typescript_nullable_guard_follows(lines: list[str], index: int, symbol: str) -> bool:
     window = "\n".join(lines[index + 1 : index + 7])
     return _typescript_nullable_guard_in_text_window(window, symbol)
+
 
 def _parse_nullable_canvas_context_targets(
     diagnostics: Sequence[RepairDiagnostic],
@@ -356,6 +360,7 @@ def _parse_nullable_canvas_context_targets(
             _add_nullable_target(by_path, path, "")
     return by_path
 
+
 def _add_nullable_targets_from_raw(targets: dict[str, set[str] | None], raw: str) -> None:
     text = str(raw or "")
     for match in _TS_POSSIBLY_NULL_RAW_RE.finditer(text):
@@ -373,6 +378,7 @@ def _add_nullable_targets_from_raw(targets: dict[str, set[str] | None], raw: str
         if path:
             _add_nullable_target(targets, path, "")
 
+
 def _add_nullable_target(targets: dict[str, set[str] | None], path: str, symbol: str) -> None:
     if not symbol:
         targets[path] = None
@@ -385,18 +391,19 @@ def _add_nullable_target(targets: dict[str, set[str] | None], path: str, symbol:
         targets[path] = existing
     existing.add(symbol)
 
+
 __all__ = (
-    "repair_typescript_nullable_canvas_context_guards",
-    "_typescript_nullable_property_chain_non_null_assertion_line",
-    "_typescript_nullable_target_is_safe",
-    "_typescript_nullable_global_symbol_for_line",
-    "build_typescript_nullable_canvas_context_plan",
-    "_typescript_strict_null_relaxation_signal",
+    "_add_nullable_target",
+    "_add_nullable_targets_from_raw",
     "_build_typescript_strict_null_relaxation_plan",
+    "_parse_nullable_canvas_context_targets",
     "_typescript_canvas_context_non_null_assertion_line",
     "_typescript_dom_handle_non_null_assertion_line",
+    "_typescript_nullable_global_symbol_for_line",
     "_typescript_nullable_guard_follows",
-    "_parse_nullable_canvas_context_targets",
-    "_add_nullable_targets_from_raw",
-    "_add_nullable_target",
+    "_typescript_nullable_property_chain_non_null_assertion_line",
+    "_typescript_nullable_target_is_safe",
+    "_typescript_strict_null_relaxation_signal",
+    "build_typescript_nullable_canvas_context_plan",
+    "repair_typescript_nullable_canvas_context_guards",
 )

@@ -29,18 +29,27 @@ def _surface(name: str) -> list[dict[str, Any]]:
 
 def _kernel(tmp_path: Path, *, handoff: bool = True, failed: bool = False):
     calls: list[tuple[str, dict[str, Any]]] = []
-    bootstrap_fact_stream_workspace(BootstrapFactStreamWorkspaceCommandV1(
-        workspace=str(tmp_path),
-        streams=fact_stream_bootstrap_streams(),
-        maintenance_reason="private handoff execution contract fixture",
-    ))
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(tmp_path),
+            streams=fact_stream_bootstrap_streams(),
+            maintenance_reason="private handoff execution contract fixture",
+        )
+    )
 
     async def provider(_request: dict[str, Any]) -> dict[str, Any]:
         return {
             "content": "[handoff_workflow]" if handoff else "Read the file",
-            "tool_calls": [{"id": "native_read", "type": "function", "function": {
-                "name": "read_file", "arguments": json.dumps({"path": "main.py"}),
-            }}],
+            "tool_calls": [
+                {
+                    "id": "native_read",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": json.dumps({"path": "main.py"}),
+                    },
+                }
+            ],
             "model": "private-test-provider",
             "usage": {},
         }
@@ -97,9 +106,14 @@ async def test_failed_native_receipt_cannot_complete_handoff(tmp_path: Path) -> 
 @pytest.mark.asyncio
 async def test_stream_handoff_has_the_same_real_receipt(tmp_path: Path) -> None:
     kernel, calls = _kernel(tmp_path)
-    events = [event async for event in kernel.execute_stream(
-        "stream-handoff", [{"role": "user", "content": "Read main.py"}], _surface("read_file"),
-    )]
+    events = [
+        event
+        async for event in kernel.execute_stream(
+            "stream-handoff",
+            [{"role": "user", "content": "Read main.py"}],
+            _surface("read_file"),
+        )
+    ]
     assert len(calls) == 1
     results = [event for event in events if isinstance(event, ToolBatchEvent) and event.status == "success"]
     assert [event.call_id for event in results] == ["native_read"]
@@ -120,12 +134,22 @@ async def test_empty_tool_surface_does_not_authorize_handoff(tmp_path: Path) -> 
 async def test_reused_workflow_does_not_borrow_previous_turn_receipts(tmp_path: Path) -> None:
     kernel, calls = _kernel(tmp_path)
     await kernel.execute("first", [{"role": "user", "content": "Read main.py"}], _surface("read_file"))
-    decision = kernel.decoder.decode(RawLLMResponse(
-        content="[handoff_workflow]",
-        native_tool_calls=[{"id": "second_read", "type": "function", "function": {
-            "name": "read_file", "arguments": json.dumps({"path": "second.py"}),
-        }}],
-    ), TurnId("second"))
+    decision = kernel.decoder.decode(
+        RawLLMResponse(
+            content="[handoff_workflow]",
+            native_tool_calls=[
+                {
+                    "id": "second_read",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": json.dumps({"path": "second.py"}),
+                    },
+                }
+            ],
+        ),
+        TurnId("second"),
+    )
     result = await kernel.workflow_runtime.execute(decision, TurnId("second"))
     assert result.status.value == "completed"
     assert len(calls) == 2
@@ -135,21 +159,35 @@ async def test_reused_workflow_does_not_borrow_previous_turn_receipts(tmp_path: 
 @pytest.mark.asyncio
 async def test_metadata_receipt_cannot_claim_a_tool_already_executed(tmp_path: Path) -> None:
     kernel, calls = _kernel(tmp_path)
-    decision = kernel.decoder.decode(RawLLMResponse(
-        content="[handoff_workflow]", native_tool_calls=[{
-            "id": "native_read", "type": "function", "function": {
-                "name": "read_file", "arguments": json.dumps({"path": "main.py"}),
-            },
-        }],
-    ), TurnId("metadata-only"))
+    decision = kernel.decoder.decode(
+        RawLLMResponse(
+            content="[handoff_workflow]",
+            native_tool_calls=[
+                {
+                    "id": "native_read",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": json.dumps({"path": "main.py"}),
+                    },
+                }
+            ],
+        ),
+        TurnId("metadata-only"),
+    )
     fake_receipt = {
-        "batch_id": str(decision.tool_batch.batch_id), "turn_id": "metadata-only",
+        "batch_id": str(decision.tool_batch.batch_id),
+        "turn_id": "metadata-only",
         "results": [{"call_id": "native_read", "tool_name": "read_file", "status": "success", "result": "fake output"}],
-        "success_count": 1, "failure_count": 0,
+        "success_count": 1,
+        "failure_count": 0,
     }
     context = build_workflow_handoff_context(
-        decision=decision, receipts=[fake_receipt], ledger=TurnLedger(turn_id="metadata-only"),
-        handoff_reason="complex_exploration", handoff_source="metadata-only",
+        decision=decision,
+        receipts=[fake_receipt],
+        ledger=TurnLedger(turn_id="metadata-only"),
+        handoff_reason="complex_exploration",
+        handoff_source="metadata-only",
     )
     projected = _with_context_handoff_pack(decision, context, "complex_exploration")
     result = await kernel.workflow_runtime.execute(projected, TurnId("metadata-only"))

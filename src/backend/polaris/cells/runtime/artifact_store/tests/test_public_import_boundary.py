@@ -17,10 +17,6 @@ def test_artifact_store_public_boundary_does_not_import_projection_cell() -> Non
     imported_modules: set[str] = set()
     for source_file in source_files:
         tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
-        imported_modules.update(
-            node.module or ""
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom)
-        )
+        imported_modules.update(node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom))
 
     assert not any(module.startswith("polaris.cells.runtime.projection") for module in imported_modules)

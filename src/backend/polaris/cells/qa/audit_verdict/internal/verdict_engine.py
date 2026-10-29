@@ -728,9 +728,7 @@ def _route_classification(
         return "BLOCKED", False, "waiting_human", "", classification
     if (
         str(boundary.get("status") or "").strip() != "completed_verified"
-        or normalize_qa_failure_class(
-            str(boundary.get("failure_class") or TaskBoundaryFailureClassV1.PASSED.value)
-        )
+        or normalize_qa_failure_class(str(boundary.get("failure_class") or TaskBoundaryFailureClassV1.PASSED.value))
         != TaskBoundaryFailureClassV1.PASSED.value
     ):
         classification = build_qa_failure_classification_v1(

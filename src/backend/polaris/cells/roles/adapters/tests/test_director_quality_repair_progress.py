@@ -43,9 +43,7 @@ def test_quality_repair_progress_allows_unseen_verifier_forward_unmask_once() ->
         before_missing_count=0,
         after_missing_count=0,
         successful_write_paths=["engine.go"],
-        previously_seen_error_signatures={
-            execute_method_module._artifact_quality_error_signature(before_errors)
-        },
+        previously_seen_error_signatures={execute_method_module._artifact_quality_error_signature(before_errors)},
     )
     assert advanced["effective_progress"] is True
     assert advanced["progress_kind"] == "forward_unmask"

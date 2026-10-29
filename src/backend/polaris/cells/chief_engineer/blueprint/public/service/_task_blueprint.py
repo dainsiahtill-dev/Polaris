@@ -145,7 +145,9 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         if not recipes:
             raise ValueError("semantic PM task requires exact CE verifier recipe ownership")
         technical_plan = _mapping(_mapping(command.llm_blueprint).get("construction_plan"))
-        execution_checklist = _string_list(technical_plan.get("steps")) or _string_list(technical_plan.get("execution_checklist"))
+        execution_checklist = _string_list(technical_plan.get("steps")) or _string_list(
+            technical_plan.get("execution_checklist")
+        )
         scope_paths = list(target_files)
         acceptance_criteria = _merge_string_lists(
             acceptance_criteria,
@@ -160,14 +162,18 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
             "planning_contract_version": "pm.task_intent.v1",
             "verification_authority": "chief_engineer",
             "allowed_commands": sorted({item.command for item in recipes}),
-            "verification_commands": sorted({
-                item.command
-                for item in recipes
-                if item.modality != "entrypoint" and item.authority_hash in required_recipe_hashes
-            }),
-            "context_files": _string_list(_mapping(
-                _mapping(blueprint_portfolio_projection.get("project_interface_contract")).get("task_read_context")
-            ).get(command.task_id)),
+            "verification_commands": sorted(
+                {
+                    item.command
+                    for item in recipes
+                    if item.modality != "entrypoint" and item.authority_hash in required_recipe_hashes
+                }
+            ),
+            "context_files": _string_list(
+                _mapping(
+                    _mapping(blueprint_portfolio_projection.get("project_interface_contract")).get("task_read_context")
+                ).get(command.task_id)
+            ),
         }
         context.update(blueprint_portfolio_projection)
         context.update(validated_recipe_context)
@@ -219,11 +225,16 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         delivery_plan_document=delivery_plan_document,
         context=context,
     )
-    verification_only = is_verification_only_blueprint({
-        **blueprint_portfolio_projection, **validated_recipe_context,
-        "task_id": command.task_id, "run_id": command.run_id,
-        "target_files": target_files, "required_write_targets": required_write_targets,
-    })
+    verification_only = is_verification_only_blueprint(
+        {
+            **blueprint_portfolio_projection,
+            **validated_recipe_context,
+            "task_id": command.task_id,
+            "run_id": command.run_id,
+            "target_files": target_files,
+            "required_write_targets": required_write_targets,
+        }
+    )
     if light_intent and not target_files and not verification_only:
         raise ValueError("semantic readonly task requires exact CE read context and required verifier ownership")
     contract_completeness = _contract_completeness(
@@ -467,9 +478,7 @@ def get_blueprint_status(query: GetBlueprintStatusQueryV1) -> TaskBlueprintResul
         # D-05: Rich blueprint fields for Director context injection
         target_files=_tuple_from_payload(payload.get("target_files")),
         required_write_targets=(
-            _tuple_from_payload(payload["required_write_targets"])
-            if "required_write_targets" in payload
-            else None
+            _tuple_from_payload(payload["required_write_targets"]) if "required_write_targets" in payload else None
         ),
         acceptance_criteria=_tuple_from_payload(payload.get("acceptance_criteria")),
         execution_checklist=_tuple_from_payload(payload.get("execution_checklist")),

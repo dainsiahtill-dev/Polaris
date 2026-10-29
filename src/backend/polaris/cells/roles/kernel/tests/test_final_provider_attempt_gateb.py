@@ -1,69 +1,10 @@
 from __future__ import annotations
 
-import asyncio
-import copy
-import json
-import threading
-import time
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Coroutine, Mapping
+from collections.abc import AsyncIterator
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from polaris.cells.events.fact_stream.public import (
-    BootstrapFactStreamWorkspaceCommandV1,
-    QueryFactEventsV1,
-    bootstrap_fact_stream_workspace,
-    query_fact_events,
-)
-from polaris.cells.roles.kernel.internal.llm_caller import (
-    final_provider_attempt_gate as gate_module,
-    final_provider_attempt_qualification as qualification_module,
-    invoker as invoker_module,
-)
-from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
-    FinalRequestEvidenceCoverageError,
-)
-from polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_gate import (
-    DurableFinalProviderAttemptSnapshotStore,
-    FinalProviderAttemptGate,
-)
-from polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_inflight import (
-    ProviderAttemptDrainError,
-    ProviderAttemptInFlightCoordinator,
-)
-from polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_lifecycle import (
-    StrictProviderAttemptLifecycleStore,
-)
-from polaris.cells.roles.kernel.internal.llm_caller.final_request_metrics import (
-    provider_native_request_metrics,
-    validated_final_context_evidence,
-)
-from polaris.cells.roles.kernel.internal.llm_caller.response_types import PreparedLLMRequest
-from polaris.cells.roles.kernel.internal.llm_caller.stream_engine import StreamEngine
-from polaris.cells.roles.kernel.public.physical_attempt_control import (
-    FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
-    FactoryPhysicalAttemptGrantViewV1,
-)
-from polaris.cells.roles.kernel.tests import test_role_turn_request_fact_projection as request_fact_test
-from polaris.cells.roles.kernel.tests._physical_attempt_control_test_double import (
-    FactoryPhysicalAttemptTestControlError as FactoryPhysicalAttemptControlError,
-    FactoryPhysicalAttemptTestControlPort as FactoryPhysicalAttemptLiveControlPort,
-)
-from polaris.infrastructure.llm.providers import provider_helpers
-from polaris.infrastructure.llm.providers.anthropic_provider import AnthropicProvider
-from polaris.infrastructure.llm.providers.provider_helpers import (
-    invoke_stream_with_retry,
-    invoke_stream_with_retry_and_handler,
-    invoke_with_retry,
-)
-from polaris.kernelone.llm.engine.context_store_retention import ContextSnapshotAuditPinRepository
-from polaris.kernelone.llm.engine.contracts import FrozenFinalProviderAttemptV1, bind_physical_provider_dispatch_port
-from polaris.kernelone.llm.engine.executor import AIExecutor
-from polaris.kernelone.llm.types import Usage
-
 from polaris.cells.roles.kernel.tests._final_provider_attempt_gate_helpers import (
     _bootstrap,
     _gate,
@@ -84,8 +25,6 @@ class _Response:
 
 class ClientResponseError(RuntimeError):
     """Retry-shaped aiohttp response error for physical stream tests."""
-
-
 
 
 @pytest.mark.asyncio

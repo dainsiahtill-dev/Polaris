@@ -35,16 +35,11 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     empty_tool_lifecycle_summary,
     failure_evidence_from_lifecycle_receipt,
     merge_tool_lifecycle_summaries,
-    native_tool_call_count_from_facts,
-    native_tool_call_count_from_metadata,
-    native_tool_call_envelope_refs_from_metadata,
     native_tool_call_facts_from_lifecycle_receipt,
-    native_tool_call_facts_from_metadata,
     native_tool_call_facts_from_raw_calls,
     native_tool_call_facts_from_sources,
     native_tool_call_names_from_facts,
     normalize_native_tool_call_envelope_refs,
-    normalize_tool_call_lifecycle_receipt,
     observed_tool_call_names_from_sources,
     project_completion_audit_evidence_to_metadata,
     project_completion_dispatch_evidence_to_metadata,
@@ -55,14 +50,9 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     project_tool_lifecycle_event,
     project_tool_lifecycle_failure_status,
     project_tool_lifecycle_metadata,
-    project_tool_lifecycle_receipt_to_metadata,
     project_tool_lifecycle_summary,
     summarize_tool_lifecycle_events,
-    task_boundary_tool_dispatch_from_lifecycle_metadata,
-    task_boundary_tool_dispatch_from_lifecycle_receipt,
-    tool_call_lifecycle_receipts_from_metadata,
     tool_dispatch_dropped_error_message,
-    tool_dispatch_dropped_guard_applies,
 )
 
 
@@ -110,8 +100,6 @@ def _authoritative_deo3_receipt(*, receipt_outcome: str = "succeeded") -> tuple[
         "version": 3,
     }
     return effect, commit
-
-
 
 
 def test_tool_lifecycle_all_exports_source_projection_helpers() -> None:
@@ -2604,5 +2592,3 @@ def test_project_tool_lifecycle_metadata_projects_canonical_receipt_failure_and_
     assert metadata["native_tool_call_names"] == ["write_file"]
     assert failure_evidence_rows[-1]["failure_class"] == "TOOL_DISPATCH_DROPPED"
     assert failure_summary["latest_failure_class"] == "TOOL_DISPATCH_DROPPED"
-
-

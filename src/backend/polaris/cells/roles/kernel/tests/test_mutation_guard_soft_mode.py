@@ -223,8 +223,7 @@ async def test_tool_failure_circuit_breaker_preserves_partial_authoritative_prog
     assert receipt.get("failure_count") == 1
     assert ledger.tool_batch_count == 1
     assert any(
-        flag.get("type") == "TOOL_FAILURE_CIRCUIT_BREAKER_PARTIAL_PROGRESS_PRESERVED"
-        for flag in ledger.anomaly_flags
+        flag.get("type") == "TOOL_FAILURE_CIRCUIT_BREAKER_PARTIAL_PROGRESS_PRESERVED" for flag in ledger.anomaly_flags
     )
 
 

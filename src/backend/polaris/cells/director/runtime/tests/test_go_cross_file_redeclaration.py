@@ -23,26 +23,24 @@ def test_equivalent_cross_file_function_redeclaration_is_covered_and_plannable()
         "models/seed.go": (
             "package models\n\n"
             "func ParseNote(raw string) (string, bool) {\n"
-            "\tif raw == \"C\" {\n"
+            '\tif raw == "C" {\n'
             "\t\treturn raw, true\n"
             "\t}\n"
-            "\treturn \"\", false\n"
+            '\treturn "", false\n'
             "}\n"
         ),
         "models/model.go": (
             "package models\n\n"
             "func ParseNote(raw string) (string, bool) {\n"
-            "\tif raw == \"C\" {\n"
+            '\tif raw == "C" {\n'
             "\t\treturn raw, true\n"
             "\t}\n"
-            "\treturn \"\", false\n"
+            '\treturn "", false\n'
             "}\n"
         ),
     }
 
-    coverage = query_director_repair_coverage(
-        QueryDirectorRepairCoverageV1(artifact_quality_errors=errors)
-    ).to_dict()
+    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=errors)).to_dict()
     probe = query_director_repair_plan_probe(
         QueryDirectorRepairPlanProbeV1(
             source_tools=("deterministic_go_dedup_repair",),
@@ -67,7 +65,7 @@ def test_equivalent_cross_file_type_function_and_var_remove_only_primary_declara
         "func New() *Engine {\n"
         "\treturn &Engine{FloorY: 0}\n"
         "}\n\n"
-        "var ErrInvalidFloor = errors.New(\"engine: floor y must be finite\")\n"
+        'var ErrInvalidFloor = errors.New("engine: floor y must be finite")\n'
     )
     companion = primary.replace("package engine\n\n", "package engine\n\n// canonical declarations\n")
     errors = (
@@ -97,10 +95,7 @@ def test_equivalent_cross_file_type_function_and_var_remove_only_primary_declara
     assert all(operation.kind == "text_replace" for operation in plan.operations)
     assert all(operation.replacement == "" for operation in plan.operations)
     spans = sorted((operation.span_start, operation.span_end) for operation in plan.operations)
-    assert all(
-        previous_end <= next_start
-        for (_, previous_end), (next_start, _) in pairwise(spans)
-    )
+    assert all(previous_end <= next_start for (_, previous_end), (next_start, _) in pairwise(spans))
 
 
 def test_cross_file_redeclaration_with_different_body_fails_closed() -> None:
@@ -125,11 +120,7 @@ def test_equivalent_cross_file_method_redeclaration_is_plannable() -> None:
         "models/seed.go:5:18: Validate redeclared in this block",
         "models/model.go:5:18: other declaration of Validate",
     )
-    method = (
-        "package models\n\n"
-        "type Bubble struct{}\n\n"
-        "func (b Bubble) Validate() error { return nil }\n"
-    )
+    method = "package models\n\ntype Bubble struct{}\n\nfunc (b Bubble) Validate() error { return nil }\n"
 
     plan = build_go_dedup_plan(
         base_files={"models/seed.go": method, "models/model.go": method},
@@ -150,12 +141,7 @@ def test_cross_file_const_group_redeclaration_removes_group_once() -> None:
         "engine/engine.go:7:2: other declaration of ChordUnknown",
     )
     declarations = (
-        "package engine\n\n"
-        "type ChordQuality int\n\n"
-        "const (\n"
-        "\tChordSilence ChordQuality = iota\n"
-        "\tChordUnknown\n"
-        ")\n"
+        "package engine\n\ntype ChordQuality int\n\nconst (\n\tChordSilence ChordQuality = iota\n\tChordUnknown\n)\n"
     )
 
     plan = build_go_dedup_plan(
@@ -197,7 +183,7 @@ def test_multiple_redeclaration_pairs_in_one_compiler_receipt_are_planned_togeth
         "package engine\n\n"
         "type Engine struct{}\n\n"
         "func New() *Engine { return &Engine{} }\n\n"
-        "var ErrInvalidFloor = errors.New(\"invalid floor\")\n"
+        'var ErrInvalidFloor = errors.New("invalid floor")\n'
     )
 
     plan = build_go_dedup_plan(
@@ -216,19 +202,12 @@ def test_multiple_redeclaration_pairs_in_one_compiler_receipt_are_planned_togeth
 
 
 def test_go_method_already_declared_diagnostic_is_covered_and_plannable() -> None:
-    error = (
-        "engine/rules.go:5:23: method ChordQuality.String already declared at "
-        "engine/engine.go:5:23"
-    )
+    error = "engine/rules.go:5:23: method ChordQuality.String already declared at engine/engine.go:5:23"
     declarations = (
-        "package engine\n\n"
-        "type ChordQuality int\n\n"
-        "func (q ChordQuality) String() string { return \"major\" }\n"
+        'package engine\n\ntype ChordQuality int\n\nfunc (q ChordQuality) String() string { return "major" }\n'
     )
 
-    coverage = query_director_repair_coverage(
-        QueryDirectorRepairCoverageV1(artifact_quality_errors=(error,))
-    ).to_dict()
+    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=(error,))).to_dict()
     probe = query_director_repair_plan_probe(
         QueryDirectorRepairPlanProbeV1(
             source_tools=("deterministic_go_dedup_repair",),

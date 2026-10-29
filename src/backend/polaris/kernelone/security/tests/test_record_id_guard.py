@@ -11,7 +11,6 @@ the exact fail-closed semantics and surfaces the label for attribution.
 from __future__ import annotations
 
 import pytest
-
 from polaris.kernelone.security.record_id_guard import (
     SAFE_RECORD_ID_PATTERN,
     is_safe_record_id,

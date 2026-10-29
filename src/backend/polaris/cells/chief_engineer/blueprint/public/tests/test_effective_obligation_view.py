@@ -496,16 +496,20 @@ def test_immutable_owner_failure_cannot_acquire_entrypoint_repair_from_path(tmp_
         payload, tasks=tasks, authority_carrier=carrier
     )
     assert errors and any("owner" in error for error in errors)
-    assert OrchestrationStageExecutor._chief_engineer_semantic_repair_diagnosis(
-        candidate=candidate, output_errors=errors
-    ) is None
+    assert (
+        OrchestrationStageExecutor._chief_engineer_semantic_repair_diagnosis(candidate=candidate, output_errors=errors)
+        is None
+    )
     # A full unaccepted proposal can be corrected; unchanged ownership remains
     # invalid and the diagnostic grants no entrypoint patch authority.
     with pytest.raises(ChiefEngineerBlueprintErrorV1) as raised:
         _portfolio._build_portfolio_completion_contract(
             BuildChiefEngineerBlueprintPortfolioCommandV1(
-                workspace=str(tmp_path), run_id=carrier.run_id, tasks=tasks,
-                authority_carrier=carrier, llm_blueprint=payload,
+                workspace=str(tmp_path),
+                run_id=carrier.run_id,
+                tasks=tasks,
+                authority_carrier=carrier,
+                llm_blueprint=payload,
             ),
             payload["project_completion_contract"],
         )
@@ -519,9 +523,10 @@ def test_collision_id_vocabulary_cannot_acquire_entrypoint_repair(tmp_path):
         "invalid project completion contract: duplicate obligation_id across project completion obligations; "
         "obligation_id='entrypoint-collision'"
     ]
-    assert OrchestrationStageExecutor._chief_engineer_semantic_repair_diagnosis(
-        candidate=candidate, output_errors=errors
-    ) is None
+    assert (
+        OrchestrationStageExecutor._chief_engineer_semantic_repair_diagnosis(candidate=candidate, output_errors=errors)
+        is None
+    )
 
 
 def test_real_collision_diagnosis_retains_immutable_failure(tmp_path):
@@ -534,14 +539,18 @@ def test_real_collision_diagnosis_retains_immutable_failure(tmp_path):
         payload, tasks=tasks, authority_carrier=carrier
     )
     assert errors and any("obligation_id" in error for error in errors)
-    assert OrchestrationStageExecutor._chief_engineer_semantic_repair_diagnosis(
-        candidate=candidate, output_errors=errors
-    ) is None
+    assert (
+        OrchestrationStageExecutor._chief_engineer_semantic_repair_diagnosis(candidate=candidate, output_errors=errors)
+        is None
+    )
     with pytest.raises(ChiefEngineerBlueprintErrorV1) as raised:
         _portfolio._build_portfolio_completion_contract(
             BuildChiefEngineerBlueprintPortfolioCommandV1(
-                workspace=str(tmp_path), run_id=carrier.run_id, tasks=tasks,
-                authority_carrier=carrier, llm_blueprint=payload,
+                workspace=str(tmp_path),
+                run_id=carrier.run_id,
+                tasks=tasks,
+                authority_carrier=carrier,
+                llm_blueprint=payload,
             ),
             payload["project_completion_contract"],
         )

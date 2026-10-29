@@ -80,6 +80,7 @@ def _managed_process_receipt_owner() -> ManagedProcessReceiptOwnerPortV1:
         raise ControlPlaneRunLedgerV1Error("managed_process_receipt_owner_port_unbound")
     return port
 
+
 # Call-stack authorization for managed-process append.  Only
 # ``project_managed_process_lifecycle`` sets this; public append never takes a
 # caller-supplied authorize flag (skeptic: no public bool bypass).

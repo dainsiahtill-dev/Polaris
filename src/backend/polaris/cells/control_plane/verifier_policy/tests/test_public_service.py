@@ -401,13 +401,11 @@ def test_verifier_command_policy_rejects_mutating_or_nonterminal_commands(
 )
 def test_node_package_script_must_be_current_and_proof_producing(tmp_path: Path, script: str) -> None:
     (tmp_path / "package.json").write_text(
-        '{"scripts":{"test":' + json.dumps(script) + '}}\n',
+        '{"scripts":{"test":' + json.dumps(script) + "}}\n",
         encoding="utf-8",
     )
 
-    decision = evaluate_verifier_command_policy(
-        _command_policy_query(tmp_path, modality="test", argv=("npm", "test"))
-    )
+    decision = evaluate_verifier_command_policy(_command_policy_query(tmp_path, modality="test", argv=("npm", "test")))
 
     assert decision.authorized is False
     assert decision.error_code == "non_proving_package_script"
@@ -421,9 +419,7 @@ def test_node_package_script_must_be_current_and_proof_producing(tmp_path: Path,
     ],
 )
 def test_test_profile_rejects_compile_only_commands(tmp_path: Path, argv: tuple[str, ...]) -> None:
-    decision = evaluate_verifier_command_policy(
-        _command_policy_query(tmp_path, modality="test", argv=argv)
-    )
+    decision = evaluate_verifier_command_policy(_command_policy_query(tmp_path, modality="test", argv=argv))
 
     assert decision.authorized is False
     assert decision.error_code == "non_proving_verifier_command"

@@ -998,11 +998,7 @@ def _safe_provider_argument_audit(call: Mapping[str, Any]) -> dict[str, Any]:
     valid_hash_count = 0
     for key in _PROVIDER_ARGUMENT_AUDIT_HASH_FIELDS:
         value = candidate.get(key)
-        if (
-            isinstance(value, str)
-            and len(value) == 64
-            and all(character in "0123456789abcdef" for character in value)
-        ):
+        if isinstance(value, str) and len(value) == 64 and all(character in "0123456789abcdef" for character in value):
             projected[key] = value
             valid_hash_count += 1
 

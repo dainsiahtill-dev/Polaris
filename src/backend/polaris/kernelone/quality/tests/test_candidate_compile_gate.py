@@ -44,9 +44,7 @@ def test_allows_candidate_that_reduces_existing_go_diagnostics(tmp_path: Path) -
         "package engine\n\nfunc First() int { return missingOne }\nfunc Second() int { return missingTwo }\n",
         encoding="utf-8",
     )
-    candidate = (
-        "package engine\n\nfunc First() int { return 1 }\nfunc Second() int { return missingTwo }\n"
-    )
+    candidate = "package engine\n\nfunc First() int { return 1 }\nfunc Second() int { return missingTwo }\n"
 
     result = check_candidate_workspace_compile(tmp_path, "engine/engine.go", candidate)
 

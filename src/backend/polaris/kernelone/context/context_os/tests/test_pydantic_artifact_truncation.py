@@ -19,4 +19,3 @@ def test_large_pydantic_artifact_is_truncated_without_dataclass_replace() -> Non
     assert len(truncated.content) < len(artifact.content)
     assert dict(truncated.metadata)["truncated"] is True
     assert dict(truncated.metadata)["full_id"] == artifact.artifact_id
-

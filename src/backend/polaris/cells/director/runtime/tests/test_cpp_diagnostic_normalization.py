@@ -20,7 +20,7 @@ def test_nested_cmake_transcript_separates_warning_from_linker_failure() -> None
         "stderr:\\n/tmp/project/src/cipher.cpp:17:8: warning: sign conversion [-Wsign-conversion]\\n"
         "/usr/bin/ld: CMakeFiles/app.dir/src/main.cpp.o: undefined reference to "
         "`pkg::moon_token(pkg::MoonPhase)'\\n"
-        "collect2: error: ld returned 1 exit status\\n\""
+        'collect2: error: ld returned 1 exit status\\n"'
     )
     direct = (
         "/tmp/project/src/cipher.cpp:17:8: warning: sign conversion [-Wsign-conversion]\n"

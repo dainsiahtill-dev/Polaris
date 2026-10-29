@@ -419,9 +419,7 @@ def test_task_boundary_interface_discrepancy_with_contract_routes_to_director_re
     assert receipt["director_retry_allowed"] is True
     assert receipt["llm_fallback_blocked"] is False
     assert receipt["interface_delta"]["requested_symbols"] == ["WeatherKind"]
-    assert receipt["interface_delta"]["actual_public_symbols_by_path"]["src/models/weather.ts"] == [
-        "WeatherReport"
-    ]
+    assert receipt["interface_delta"]["actual_public_symbols_by_path"]["src/models/weather.ts"] == ["WeatherReport"]
     assert receipt["triage_summary"]["reason"] == "director_local_retry_with_interface_delta"
 
 

@@ -35,9 +35,7 @@ def test_custom_script_verifier_is_disabled_without_environment_flag(tmp_path: P
     script = tmp_path / "verify.py"
     script.write_text("import sys\nsys.exit(0)\n", encoding="utf-8")
 
-    result = run_verifier_policy(
-        RunVerifierPolicyCommandV1(workspace=str(tmp_path), policy=_policy("verify.py"))
-    )
+    result = run_verifier_policy(RunVerifierPolicyCommandV1(workspace=str(tmp_path), policy=_policy("verify.py")))
 
     verifier = result.gate_patch["user_verifiers"][0]
     assert verifier["ok"] is False
@@ -48,15 +46,12 @@ def test_custom_script_verifier_executes_when_explicitly_enabled(tmp_path: Path,
     monkeypatch.setenv("KERNELONE_CUSTOM_VERIFIER_SCRIPTS_ENABLED", "1")
     script = tmp_path / "verify.py"
     script.write_text(
-        "from pathlib import Path\n"
-        "assert Path('artifact.txt').read_text(encoding='utf-8') == 'ok'\n",
+        "from pathlib import Path\nassert Path('artifact.txt').read_text(encoding='utf-8') == 'ok'\n",
         encoding="utf-8",
     )
     (tmp_path / "artifact.txt").write_text("ok", encoding="utf-8")
 
-    result = run_verifier_policy(
-        RunVerifierPolicyCommandV1(workspace=str(tmp_path), policy=_policy("verify.py"))
-    )
+    result = run_verifier_policy(RunVerifierPolicyCommandV1(workspace=str(tmp_path), policy=_policy("verify.py")))
 
     verifier = result.gate_patch["user_verifiers"][0]
     assert verifier["ok"] is True
@@ -97,9 +92,7 @@ def test_custom_script_verifier_accepts_gate_policy_fragment(tmp_path: Path, mon
 def test_custom_script_verifier_rejects_path_traversal(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("KERNELONE_CUSTOM_VERIFIER_SCRIPTS_ENABLED", "1")
 
-    result = run_verifier_policy(
-        RunVerifierPolicyCommandV1(workspace=str(tmp_path), policy=_policy("../verify.py"))
-    )
+    result = run_verifier_policy(RunVerifierPolicyCommandV1(workspace=str(tmp_path), policy=_policy("../verify.py")))
 
     verifier = result.gate_patch["user_verifiers"][0]
     assert verifier["ok"] is False
@@ -111,9 +104,7 @@ def test_custom_script_verifier_reports_failure(tmp_path: Path, monkeypatch) -> 
     script = tmp_path / "verify.py"
     script.write_text("import sys\nprint('bad')\nsys.exit(3)\n", encoding="utf-8")
 
-    result = run_verifier_policy(
-        RunVerifierPolicyCommandV1(workspace=str(tmp_path), policy=_policy("verify.py"))
-    )
+    result = run_verifier_policy(RunVerifierPolicyCommandV1(workspace=str(tmp_path), policy=_policy("verify.py")))
 
     verifier = result.gate_patch["user_verifiers"][0]
     assert verifier["ok"] is False

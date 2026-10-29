@@ -37,7 +37,9 @@ class FactoryProjectCompletionNotificationResultV1:
         if not status:
             raise ValueError("status must be non-empty")
         object.__setattr__(self, "status", status)
-        object.__setattr__(self, "reason_codes", tuple(str(item).strip() for item in self.reason_codes if str(item).strip()))
+        object.__setattr__(
+            self, "reason_codes", tuple(str(item).strip() for item in self.reason_codes if str(item).strip())
+        )
 
 
 @runtime_checkable

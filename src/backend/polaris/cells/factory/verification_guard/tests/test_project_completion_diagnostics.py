@@ -367,9 +367,7 @@ def test_ready_entrypoint_controlled_termination_is_not_rejected_by_exit_code(tm
 
     contract = _contract()
     rows = tuple(
-        replace(row, verifier_exit_code=-15)
-        if row.obligation_id == "verify.entrypoint"
-        else row
+        replace(row, verifier_exit_code=-15) if row.obligation_id == "verify.entrypoint" else row
         for row in _full_evidence(tmp_path, contract)
     )
     observation = ProjectCompletionOwnerObservationV1(

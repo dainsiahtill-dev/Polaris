@@ -418,7 +418,9 @@ class ToolExecutor:
                 tool=tool_name,
                 result=result_data if success else None,
                 error=error_msg if not success else None,
-                error_category=_CanonicalErrorCategory.UNKNOWN if success else self._classify_error_from_message(error_msg),
+                error_category=_CanonicalErrorCategory.UNKNOWN
+                if success
+                else self._classify_error_from_message(error_msg),
                 retryable=False if success else retryable,
                 execution_time_ms=execution_time_ms,
                 call_id=call_id,

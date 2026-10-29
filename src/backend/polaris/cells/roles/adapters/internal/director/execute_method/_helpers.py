@@ -474,8 +474,7 @@ def _source_change_is_obvious_semantic_noop(before: str, after: str) -> bool:
             continue
         return False
     return saw_identity_addition or all(
-        not item[2:].strip() or item[2:].strip().startswith(("//", "#", "/*", "*", "*/"))
-        for item in changed_lines
+        not item[2:].strip() or item[2:].strip().startswith(("//", "#", "/*", "*", "*/")) for item in changed_lines
     )
 
 
@@ -562,16 +561,12 @@ def _quality_repair_progress_evidence(
     )
     forward_unmask_advances = bool(
         forward_unmask_candidate
-        and (
-            previously_seen_error_signatures is None
-            or after_signature_tuple not in previously_seen_error_signatures
-        )
+        and (previously_seen_error_signatures is None or after_signature_tuple not in previously_seen_error_signatures)
     )
     effective_progress = bool(
         mutation_evidenced
         and (
-            (not introduced and (converged or error_reduction > 0 or missing_reduction > 0))
-            or forward_unmask_advances
+            (not introduced and (converged or error_reduction > 0 or missing_reduction > 0)) or forward_unmask_advances
         )
     )
     return {
@@ -639,9 +634,7 @@ def _annotate_quality_repair_progress(
                 "retry_scope": "same_director_task_only",
                 "pm_ce_restart_allowed": False,
                 "root_cause_hint": (
-                    "physical_write_was_obvious_semantic_noop"
-                    if semantic_noop
-                    else "quality_repair_no_net_progress"
+                    "physical_write_was_obvious_semantic_noop" if semantic_noop else "quality_repair_no_net_progress"
                 ),
             }
         )
@@ -1361,8 +1354,16 @@ async def _run_no_write_materialization_retry(
             }
             fallback_allowed_tool_names = set(_NO_WRITE_MULTI_TARGET_FALLBACK_TOOL_NAMES)
     else:
-        retry_message = original_message + "\nContinue this same owned task. Read or search current files as needed, edit or create only authorized targets, then run the CE verification recipe. Resolve the observed failure locally; preserve existing code.\n" + "\n".join(quality_errors)
-        retry_context["failure_feedback"] = {"reason": "no_materialized_changes", "quality_errors": quality_errors, "target_files": retry_target_files}
+        retry_message = (
+            original_message
+            + "\nContinue this same owned task. Read or search current files as needed, edit or create only authorized targets, then run the CE verification recipe. Resolve the observed failure locally; preserve existing code.\n"
+            + "\n".join(quality_errors)
+        )
+        retry_context["failure_feedback"] = {
+            "reason": "no_materialized_changes",
+            "quality_errors": quality_errors,
+            "target_files": retry_target_files,
+        }
 
     async def _invoke_retry(message: str, *, stage_label: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         try:
@@ -1480,7 +1481,10 @@ async def _run_empty_write_content_materialization_retry(
                 }
             }
     else:
-        retry_message = original_message + "\nContinue this same owned task. Previous write had empty or malformed content. Inspect current authorized files, correct the tool arguments and code, then execute the CE verification recipe.\n"
+        retry_message = (
+            original_message
+            + "\nContinue this same owned task. Previous write had empty or malformed content. Inspect current authorized files, correct the tool arguments and code, then execute the CE verification recipe.\n"
+        )
         retry_context["failure_feedback"] = {"reason": "empty_write_content", "target_files": target_files}
 
     try:

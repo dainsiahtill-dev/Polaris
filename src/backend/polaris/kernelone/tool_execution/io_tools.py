@@ -14,6 +14,7 @@ try:
 except ImportError:  # pragma: no cover - script-mode fallback
     from polaris.kernelone.fs.encoding import build_utf8_env  # type: ignore
 
+
 def resolve_codex_path() -> str | None:
     def _prefer_windows_launcher(raw_path: str) -> str:
         candidate = str(raw_path or "").strip()

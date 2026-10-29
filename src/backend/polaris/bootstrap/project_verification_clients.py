@@ -26,10 +26,7 @@ class _ExecutionBrokerProjectVerificationClientV1:
     def record_project_artifact(command: Any) -> Any:
         return record_project_artifact(
             RecordProjectArtifactCommandV1(
-                **{
-                    name: getattr(command, name)
-                    for name in RecordProjectArtifactCommandV1.__dataclass_fields__
-                }
+                **{name: getattr(command, name) for name in RecordProjectArtifactCommandV1.__dataclass_fields__}
             )
         )
 
@@ -49,10 +46,7 @@ class _ExecutionBrokerProjectVerificationClientV1:
     def query_project_verification_receipt(query: Any) -> Any:
         return query_project_verification_receipt(
             QueryProjectVerificationReceiptV1(
-                **{
-                    name: getattr(query, name)
-                    for name in QueryProjectVerificationReceiptV1.__dataclass_fields__
-                }
+                **{name: getattr(query, name) for name in QueryProjectVerificationReceiptV1.__dataclass_fields__}
             )
         )
 

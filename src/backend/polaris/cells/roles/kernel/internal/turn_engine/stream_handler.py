@@ -219,9 +219,7 @@ class StreamEventHandler:
                             # This is the transaction boundary consumed by
                             # StreamOrchestrator. Preserve only the bounded
                             # argument audit, not provider-native/raw metadata.
-                            realtime_event["metadata"] = {
-                                "tool_call_argument_audit": dict(raw_argument_audit)
-                            }
+                            realtime_event["metadata"] = {"tool_call_argument_audit": dict(raw_argument_audit)}
                         yield realtime_event
             elif event_type == "error":
                 error_message = str(event.get("error") or event.get("message") or "unknown_error")

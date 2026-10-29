@@ -1535,10 +1535,6 @@ def _service_method_tree(name: str) -> ast.Module:
     return ast.parse(dedent(inspect.getsource(method)))
 
 
-
-
-
-
 def test_source_analysis_propagates_qualified_method_return_taint_to_writer() -> None:
     analysis = _analyze_source(
         dedent(

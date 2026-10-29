@@ -28,7 +28,12 @@ async def test_large_source_is_preserved_in_both_judgement_and_json_repair_slots
 
     async def invoke(**kwargs: Any) -> dict[str, Any]:
         calls.append(kwargs)
-        assert observe_review_source_request([{"role": "user", "content": kwargs["message"]}], {})["gateway_message_token_estimate"] < 8000
+        assert (
+            observe_review_source_request([{"role": "user", "content": kwargs["message"]}], {})[
+                "gateway_message_token_estimate"
+            ]
+            < 8000
+        )
         source = kwargs["context"]["context_evidence_slots"]["current_source"]
         records = {row["path"]: row for row in source["files"]}
         assert set(records) == set(originals)

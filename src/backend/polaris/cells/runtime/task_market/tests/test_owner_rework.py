@@ -137,7 +137,9 @@ def _claim(service: TaskMarketService, workspace: Path, task_id: str) -> str:
     return result.lease_token
 
 
-def _route_command(workspace: Path, requester_lease_token: str, *, max_reopen_count: int = 1) -> RouteOwnerReworkCommandV1:
+def _route_command(
+    workspace: Path, requester_lease_token: str, *, max_reopen_count: int = 1
+) -> RouteOwnerReworkCommandV1:
     return RouteOwnerReworkCommandV1(
         workspace=str(workspace),
         owner_task_id="owner",
@@ -231,9 +233,7 @@ def test_owner_rework_reopens_owner_blocks_requester_and_is_idempotent(
     assert requester.lease_token == ""
     assert requester.depends_on == ["owner"]
     assert "owner_rework_dependencies" not in requester.metadata
-    handoff = OwnerReworkHandoffV1.from_record(
-        requester.metadata["owner_rework_handoffs"][command.handoff_id]
-    )
+    handoff = OwnerReworkHandoffV1.from_record(requester.metadata["owner_rework_handoffs"][command.handoff_id])
     assert handoff.owner_task_id == owner.task_id
     assert handoff.requester_task_id == requester.task_id
     assert handoff.owner_reopened is True

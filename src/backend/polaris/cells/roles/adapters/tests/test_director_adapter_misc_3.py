@@ -1045,9 +1045,7 @@ def test_cpp_compile_target_parser_keeps_full_header_path(tmp_path: Any) -> None
         "unable to find numeric literal operator 'operator\"\"_289_240'\n"
     )
 
-    assert _embedded_cpp_compile_repair_target_files(diagnostic, tmp_path) == [
-        "include/invisible_diary/moon_phase.hpp"
-    ]
+    assert _embedded_cpp_compile_repair_target_files(diagnostic, tmp_path) == ["include/invisible_diary/moon_phase.hpp"]
     assert _explicit_artifact_quality_repair_target_files(
         artifact_quality_errors=[diagnostic],
         changed_files=["src/diary.cpp", "src/main.cpp", "src/moon_phase.cpp"],

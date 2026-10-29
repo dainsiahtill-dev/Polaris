@@ -667,7 +667,8 @@ def _canonical_director_preflight_failure(
     """Project a failed owner fact; this cannot authorize execution or success."""
     owned_ids = {str(task.get("id") or task.get("task_id") or "") for task in pm_tasks}
     attempted_runs = {
-        str(attempt.get("run_id") or "") for attempt in attempts
+        str(attempt.get("run_id") or "")
+        for attempt in attempts
         if isinstance(attempt.get("metadata"), dict)
         and attempt["metadata"].get("canonical_authoritative") is True
         and attempt["metadata"].get("terminal_source") == "task_runtime.execution_fact"
@@ -690,12 +691,17 @@ def _canonical_director_preflight_failure(
         primary_metadata = primary.get("metadata") if isinstance(primary, dict) else None
         continuous = primary_metadata.get("continuous_execution") if isinstance(primary_metadata, dict) else None
         if not (
-            isinstance(primary, dict) and primary.get("success") is False and primary.get("error") == code
-            and type(primary.get("llm_calls")) is int and primary["llm_calls"] == 0
+            isinstance(primary, dict)
+            and primary.get("success") is False
+            and primary.get("error") == code
+            and type(primary.get("llm_calls")) is int
+            and primary["llm_calls"] == 0
             and isinstance(primary_metadata, dict)
             and primary_metadata.get("role_runtime_entrypoint") == "roles.runtime.execute_role_session"
-            and isinstance(continuous, dict) and continuous.get("enabled") is True
-            and type(continuous.get("turns_executed")) is int and continuous["turns_executed"] == 0
+            and isinstance(continuous, dict)
+            and continuous.get("enabled") is True
+            and type(continuous.get("turns_executed")) is int
+            and continuous["turns_executed"] == 0
             and continuous.get("stop_reason") == code
             and primary_metadata.get("session_turn_commit_receipts") == []
             and primary_metadata.get("tool_results") == []
@@ -716,20 +722,25 @@ def _canonical_director_preflight_failure(
     # Any other owned task, prior attempt, or workspace delta requires genuine
     # quality settlement. Terminal failure alone never skips that work.
     no_execution_or_effects = (
-        no_effects and {item["task_id"] for item in failures} == owned_ids
+        no_effects
+        and {item["task_id"] for item in failures} == owned_ids
         and {item["run_id"] for item in failures} == {str(item.get("run_id") or "") for item in attempts}
         and len(attempts) == len({item["run_id"] for item in failures})
-        and all(isinstance(item.get("workspace_delta"), dict)
-                and item["workspace_delta"].get("delta_file_count") == 0 for item in attempts)
+        and all(
+            isinstance(item.get("workspace_delta"), dict) and item["workspace_delta"].get("delta_file_count") == 0
+            for item in attempts
+        )
         and all(not item.get("metadata", {}).get("inflight_run_continues") for item in attempts)
     )
     return {
-        "code": code, "severity": "error",
+        "code": code,
+        "severity": "error",
         "failure_class": FailureClassV1.BLUEPRINT_VERIFY_INVALID.value,
         "responsible_layer": "execution_control_plane",
         "root_cause_hint": code,
         "detail": "Director command authority was rejected before provider execution.",
-        "authority_source": "task_runtime.execution_fact", "failed_tasks": failures,
+        "authority_source": "task_runtime.execution_fact",
+        "failed_tasks": failures,
         "no_execution_or_effects": no_execution_or_effects,
     }
 
@@ -1589,8 +1600,13 @@ async def _execute_director_dispatch(executor, run: FactoryRun, context: dict[st
     failed_rows, failed_row_projection_error = executor._query_observable_task_rows(factory_run_id=run.id)
     preflight_failure = (
         _canonical_director_preflight_failure(
-            failed_rows, factory_run_id=run.id, pm_tasks=pm_tasks, attempts=attempts,
-        ) if failed_row_projection_error is None else None
+            failed_rows,
+            factory_run_id=run.id,
+            pm_tasks=pm_tasks,
+            attempts=attempts,
+        )
+        if failed_row_projection_error is None
+        else None
     )
     if preflight_failure is not None:
         stage_signals.insert(0, preflight_failure)
@@ -1797,7 +1813,8 @@ async def _execute_director_dispatch(executor, run: FactoryRun, context: dict[st
         materialization_settle: dict[str, Any] | None
         if preflight_failure is not None and preflight_failure["no_execution_or_effects"]:
             materialization_settle = {
-                "ok": False, "reason": "settle_not_applicable",
+                "ok": False,
+                "reason": "settle_not_applicable",
                 "not_applicable_reason": "preflight_blocked_without_execution_or_effects",
                 "detail": "No provider turn, tool dispatch, or workspace effect preceded the preflight block.",
             }
@@ -1827,7 +1844,8 @@ async def _execute_director_dispatch(executor, run: FactoryRun, context: dict[st
         # required tasks after settle so ledger integrity distinguishes incomplete
         # work from true missing evidence.
         lifecycle_seal = (
-            {} if preflight_failure is not None and preflight_failure["no_execution_or_effects"]
+            {}
+            if preflight_failure is not None and preflight_failure["no_execution_or_effects"]
             else executor._seal_director_stage_missing_tool_lifecycles(
                 run=run,
                 incomplete_task_ids=list(final_authority.incomplete_task_ids),

@@ -68,16 +68,12 @@ _GO_METHOD_RE = re.compile(r"(?m)^func\s+\((?P<recv>[^)]+)\)\s+(?P<name>[A-Za-z_
 _GO_DECLARATION_LINE_RE = re.compile(
     r"^(?P<indent>\s*)(?P<kind>type|const|var)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b(?P<body>[^\n]*)$"
 )
-_GO_TOP_LEVEL_FUNC_DECL_RE = re.compile(
-    r"^func\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:\[[^\]\n]+\]\s*)?\("
-)
+_GO_TOP_LEVEL_FUNC_DECL_RE = re.compile(r"^func\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:\[[^\]\n]+\]\s*)?\(")
 _GO_TOP_LEVEL_METHOD_DECL_RE = re.compile(
     r"^func\s+\((?P<receiver>[^)]+)\)\s+"
     r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:\[[^\]\n]+\]\s*)?\("
 )
-_GO_TOP_LEVEL_NAMED_DECL_RE = re.compile(
-    r"^(?P<kind>type|const|var)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b"
-)
+_GO_TOP_LEVEL_NAMED_DECL_RE = re.compile(r"^(?P<kind>type|const|var)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b")
 _GO_TOP_LEVEL_DECL_GROUP_RE = re.compile(r"^(?P<kind>const|var)\s*\(\s*$")
 _GO_REDECLARED_MESSAGE_RE = re.compile(
     r"\b(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s+redeclared in this block\b",
@@ -1020,8 +1016,8 @@ def _go_cross_file_dedup_operations(
     diagnostics: Sequence[RepairDiagnostic],
 ) -> tuple[RepairOperation, ...]:
     operations: list[RepairOperation] = []
-    for primary_name, primary_path, primary_line, companion_path, companion_line in (
-        _go_redeclaration_pairs(diagnostics)
+    for primary_name, primary_path, primary_line, companion_path, companion_line in _go_redeclaration_pairs(
+        diagnostics
     ):
         if (
             not companion_path
@@ -1060,8 +1056,7 @@ def _go_cross_file_dedup_operations(
             primary_decl_name != primary_name
             or companion_decl_name != primary_name
             or primary_kind != companion_kind
-            or _go_declaration_fingerprint(expected)
-            != _go_declaration_fingerprint(companion_expected)
+            or _go_declaration_fingerprint(expected) != _go_declaration_fingerprint(companion_expected)
         ):
             continue
         operations.append(
@@ -1168,9 +1163,7 @@ def _go_companion_declaration_locations(
         if path and line > 0:
             candidates.add((path, line))
     for diagnostic in diagnostics:
-        message_match = _GO_OTHER_DECLARATION_MESSAGE_RE.search(
-            str(diagnostic.message or diagnostic.raw or "")
-        )
+        message_match = _GO_OTHER_DECLARATION_MESSAGE_RE.search(str(diagnostic.message or diagnostic.raw or ""))
         if message_match is None or message_match.group("name") != name:
             continue
         path = _normalize_repair_path(str(diagnostic.path or ""))
@@ -1252,9 +1245,11 @@ def _go_enclosing_declaration_group_at_line(
             continue
         match = _GO_TOP_LEVEL_DECL_GROUP_RE.match(candidate_body)
         if match is None:
-            if _GO_TOP_LEVEL_FUNC_DECL_RE.match(candidate_body) or _GO_TOP_LEVEL_METHOD_DECL_RE.match(
-                candidate_body
-            ) or _GO_TOP_LEVEL_NAMED_DECL_RE.match(candidate_body):
+            if (
+                _GO_TOP_LEVEL_FUNC_DECL_RE.match(candidate_body)
+                or _GO_TOP_LEVEL_METHOD_DECL_RE.match(candidate_body)
+                or _GO_TOP_LEVEL_NAMED_DECL_RE.match(candidate_body)
+            ):
                 return None
             continue
         start = offsets[index]
@@ -1364,9 +1359,7 @@ def _go_lexical_chars(text: str, *, start: int = 0) -> Sequence[tuple[int, str, 
                 escaped = False
             elif char == "\\":
                 escaped = True
-            elif (state == "double_quote" and char == '"') or (
-                state == "single_quote" and char == "'"
-            ):
+            elif (state == "double_quote" and char == '"') or (state == "single_quote" and char == "'"):
                 state = "code"
         elif state == "raw_quote":
             if char == "`":

@@ -81,7 +81,9 @@ def test_exact_native_top_hint_is_advisory_and_roundtrips() -> None:
     before = deepcopy(raw)
     tasks = normalize_pm_task_intent(raw)
     assert raw == before
-    assert tasks[0]["metadata"]["planning_advisory"]["project_verification_recipe_hint"] == raw["verification_recipe_hint"]
+    assert (
+        tasks[0]["metadata"]["planning_advisory"]["project_verification_recipe_hint"] == raw["verification_recipe_hint"]
+    )
     assert tasks[0]["metadata"]["planning_advisory_execution_authority"] is False
     assert tasks[0]["target_files"] == tasks[0]["verification_commands"] == []
     assert evaluate_pm_task_quality({"tasks": tasks}, workspace_full="/example/workspace")["ok"] is True
@@ -99,7 +101,16 @@ def test_top_hint_rejects_non_json_objects(bad: Any) -> None:
 
 def test_top_and_task_hint_never_override_authority_or_each_other() -> None:
     payload = _intent()
-    injected = {"product_goal": "different", "acceptance": [], "id": "OTHER", "run_id": "foreign", "execution_authority_hash": "forged", "depth_policy": {"required": False}, "scope_paths": ["../escape"], "verification_commands": [{"argv": ["bash", "-c", "anything"], "cwd": "/outside"}]}
+    injected = {
+        "product_goal": "different",
+        "acceptance": [],
+        "id": "OTHER",
+        "run_id": "foreign",
+        "execution_authority_hash": "forged",
+        "depth_policy": {"required": False},
+        "scope_paths": ["../escape"],
+        "verification_commands": [{"argv": ["bash", "-c", "anything"], "cwd": "/outside"}],
+    }
     payload["verification_recipe_hint"] = injected
     payload["tasks"][0]["verification_recipe_hint"] = {"language": "python"}
     task = normalize_pm_task_intent(payload)[0]
@@ -122,16 +133,54 @@ def test_top_and_task_hint_never_override_authority_or_each_other() -> None:
 @pytest.mark.parametrize("projection", [False, True])
 def test_retry_generation_projection_keeps_diagnostics_without_control_ids(tmp_path: Path, projection: bool) -> None:
     raw = _native("top_verification_hint.txt")
-    own = RoleGenerationOutcomeV1(schema_version=GENERATION_OUTCOME_SCHEMA, run_id="pm-8e663fe945df", call_id="53c52fa4520f484e9b506a6a963c866a", native_finish_reason="end_turn", max_tokens=60000, response_sha256=hashlib.sha256(raw.encode("utf-8")).hexdigest(), request_freeze_id="69483c0d16134d9dbb9bd3535da433af", final_semantic_request_hash="fff989d4815ea316a430cd1263a4ff77820211ae5e6e466d46419674c7f0f154")
+    own = RoleGenerationOutcomeV1(
+        schema_version=GENERATION_OUTCOME_SCHEMA,
+        run_id="pm-8e663fe945df",
+        call_id="53c52fa4520f484e9b506a6a963c866a",
+        native_finish_reason="end_turn",
+        max_tokens=60000,
+        response_sha256=hashlib.sha256(raw.encode("utf-8")).hexdigest(),
+        request_freeze_id="69483c0d16134d9dbb9bd3535da433af",
+        final_semantic_request_hash="fff989d4815ea316a430cd1263a4ff77820211ae5e6e466d46419674c7f0f154",
+    )
     adapter = PMAdapter(workspace=str(tmp_path))
     signals: list[dict[str, Any]] = []
-    diagnostic = adapter._record_pm_generation_outcome({"metadata": {"generation_outcome": own.to_payload()}}, raw, {"run_id": own.run_id}, signals)
+    diagnostic = adapter._record_pm_generation_outcome(
+        {"metadata": {"generation_outcome": own.to_payload()}}, raw, {"run_id": own.run_id}, signals
+    )
     directive = "Preserve exact original requirements and constraints."
-    prompt = adapter._build_pm_retry_message(directive=directive, quality={"ok": False, "score": 0, "contract_diagnostics": [{"code": "pm_task_intent_invalid", "path": "$", "unknown_fields": ["foreign_field"]}]}, previous_output=raw, validated_candidate=False, generation_diagnostic=diagnostic, output_budget_tokens=60000, projection_hint={"projection": {"scenario_id": "sample", "project_slug": "sample"}} if projection else None)
+    prompt = adapter._build_pm_retry_message(
+        directive=directive,
+        quality={
+            "ok": False,
+            "score": 0,
+            "contract_diagnostics": [
+                {"code": "pm_task_intent_invalid", "path": "$", "unknown_fields": ["foreign_field"]}
+            ],
+        },
+        previous_output=raw,
+        validated_candidate=False,
+        generation_diagnostic=diagnostic,
+        output_budget_tokens=60000,
+        projection_hint={"projection": {"scenario_id": "sample", "project_slug": "sample"}} if projection else None,
+    )
     assert signals[0]["generation_outcome"] == diagnostic["generation_outcome"] == own.to_payload()
-    assert directive in prompt and own.response_sha256 in prompt and "3594" in prompt and "end_turn" in prompt and "60000" in prompt
-    assert all(value not in prompt for value in [own.run_id, own.call_id, own.request_freeze_id, own.final_semantic_request_hash])
-    audit = audit_context_os_prompt_messages(messages=[{"role": "system", "content": prompt}, {"role": "user", "content": directive}], expected=True, current_user_instruction=directive)
+    assert (
+        directive in prompt
+        and own.response_sha256 in prompt
+        and "3594" in prompt
+        and "end_turn" in prompt
+        and "60000" in prompt
+    )
+    assert all(
+        value not in prompt
+        for value in [own.run_id, own.call_id, own.request_freeze_id, own.final_semantic_request_hash]
+    )
+    audit = audit_context_os_prompt_messages(
+        messages=[{"role": "system", "content": prompt}, {"role": "user", "content": directive}],
+        expected=True,
+        current_user_instruction=directive,
+    )
     assert audit["requirements"]["control_plane_isolated"] is True, audit
 
 
@@ -143,15 +192,65 @@ def test_feedback_projects_runtime_metadata_without_clipping_repair_operands(tmp
     payload = _intent()
     payload["tasks"][0]["acceptance"] = []
     raw = json.dumps(payload)
-    quality = {"ok": False, "score": 0, "summary": "Repair acceptance", "critical_issues": ["missing_acceptance"], "warnings": [], "contract_diagnostics": [{"code": "missing_acceptance", "path": "$.tasks[0].acceptance", "task_id": "TASK-1", "message": "Acceptance required", "repair_fields": ["acceptance"], "provenance": {"original_task_id": "TASK-1", "run_id": "private-run", "call_id": "private-call"}, "evidence": {"primary_language": "python", "run_id": "private-run", "execution_authority_hash": "private-authority"}}], "generation_outcome": {"run_id": "private-run"}, "request_freeze_id": "private-freeze"}
+    quality = {
+        "ok": False,
+        "score": 0,
+        "summary": "Repair acceptance",
+        "critical_issues": ["missing_acceptance"],
+        "warnings": [],
+        "contract_diagnostics": [
+            {
+                "code": "missing_acceptance",
+                "path": "$.tasks[0].acceptance",
+                "task_id": "TASK-1",
+                "message": "Acceptance required",
+                "repair_fields": ["acceptance"],
+                "provenance": {"original_task_id": "TASK-1", "run_id": "private-run", "call_id": "private-call"},
+                "evidence": {
+                    "primary_language": "python",
+                    "run_id": "private-run",
+                    "execution_authority_hash": "private-authority",
+                },
+            }
+        ],
+        "generation_outcome": {"run_id": "private-run"},
+        "request_freeze_id": "private-freeze",
+    }
     original = deepcopy(quality)
-    base = make_revision_base(raw, workspace=str(tmp_path), run_id="base-run", task_id="base-task", directive="Exact original product requirement.", quality=quality) if typed else None
+    base = (
+        make_revision_base(
+            raw,
+            workspace=str(tmp_path),
+            run_id="base-run",
+            task_id="base-task",
+            directive="Exact original product requirement.",
+            quality=quality,
+        )
+        if typed
+        else None
+    )
     if typed:
         assert base is not None
-    prompt = adapter._build_pm_retry_message(directive="Exact original product requirement.", quality=quality, previous_output=raw, validated_candidate=bool(base), revision_base=base, output_budget_tokens=60000)
+    prompt = adapter._build_pm_retry_message(
+        directive="Exact original product requirement.",
+        quality=quality,
+        previous_output=raw,
+        validated_candidate=bool(base),
+        revision_base=base,
+        output_budget_tokens=60000,
+    )
     assert quality == original
     assert all(value not in prompt for value in ["private-run", "private-call", "private-authority", "private-freeze"])
-    assert all(value in prompt for value in ["missing_acceptance", "$.tasks[0].acceptance", "TASK-1", "python", "Exact original product requirement."])
+    assert all(
+        value in prompt
+        for value in [
+            "missing_acceptance",
+            "$.tasks[0].acceptance",
+            "TASK-1",
+            "python",
+            "Exact original product requirement.",
+        ]
+    )
     if typed:
         assert base.view_json in prompt and base.base_hash in prompt
 
@@ -259,20 +358,37 @@ def test_scope_alias_never_displaces_distinct_description() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("scenario", ["native", "syntax_then_duplicate", "repeat_duplicate", "unsafe_after_syntax", "bound_native_top", "bound_semantic_then_first", "bound_exact_first"])
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "native",
+        "syntax_then_duplicate",
+        "repeat_duplicate",
+        "unsafe_after_syntax",
+        "bound_native_top",
+        "bound_semantic_then_first",
+        "bound_exact_first",
+    ],
+)
 async def test_real_provider_http_semantic_and_format_recovery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scenario: str
 ) -> None:
     monkeypatch.setenv("KERNELONE_HOME", str(tmp_path / "kernel-home"))
     monkeypatch.setattr(JetStreamPublisher, "publish", lambda *_args, **_kwargs: True)
     register = RoleProfileRegistry.register
-    shipped = yaml.safe_load((Path(__file__).parents[2] / "profile/config/roles/core_roles.yaml").read_text(encoding="utf-8"))
-    shipped_pm_budget = next(row["context_policy"]["max_context_tokens"] for row in shipped["roles"] if row["role_id"] == "pm")
+    shipped = yaml.safe_load(
+        (Path(__file__).parents[2] / "profile/config/roles/core_roles.yaml").read_text(encoding="utf-8")
+    )
+    shipped_pm_budget = next(
+        row["context_policy"]["max_context_tokens"] for row in shipped["roles"] if row["role_id"] == "pm"
+    )
     assert shipped_pm_budget == 262144
 
     def register_current_pm(registry, profile):
         if profile.role_id == "pm":
-            profile = replace(profile, context_policy=replace(profile.context_policy, max_context_tokens=shipped_pm_budget))
+            profile = replace(
+                profile, context_policy=replace(profile.context_policy, max_context_tokens=shipped_pm_budget)
+            )
         return register(registry, profile)
 
     monkeypatch.setattr(RoleProfileRegistry, "register", register_current_pm)
@@ -342,22 +458,43 @@ async def test_real_provider_http_semantic_and_format_recovery(
     try:
         with bind_factory_role_evidence_authority(authority):
             result = await adapter._run_pm_stage(
-            "native-pm-task",
-            "Create a Python record validator that keeps identifiers and rejects missing ones.",
-            {},
-            {
-                "run_id": "native-pm-run",
-                "llm_call_timeout_seconds": 60,
-                "pm_planning_deadline_epoch_seconds": deadline,
-                "metadata": {"llm_max_tokens": 4096},
-            },
-        )
+                "native-pm-task",
+                "Create a Python record validator that keeps identifiers and rejects missing ones.",
+                {},
+                {
+                    "run_id": "native-pm-run",
+                    "llm_call_timeout_seconds": 60,
+                    "pm_planning_deadline_epoch_seconds": deadline,
+                    "metadata": {"llm_max_tokens": 4096},
+                },
+            )
     finally:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
-    expected_calls = {"bound_native_top": 1, "bound_semantic_then_first": 2, "bound_exact_first": 1, "native": 1, "syntax_then_duplicate": 3, "repeat_duplicate": 2, "unsafe_after_syntax": 2}
-    (tmp_path / "native-bound-result.json").write_text(json.dumps({"result": result, "commands": [asdict(command) for command in runtime._test_commands], "freezes": [asdict(frozen) for frozen in freezes], "wires": wires}, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    expected_calls = {
+        "bound_native_top": 1,
+        "bound_semantic_then_first": 2,
+        "bound_exact_first": 1,
+        "native": 1,
+        "syntax_then_duplicate": 3,
+        "repeat_duplicate": 2,
+        "unsafe_after_syntax": 2,
+    }
+    (tmp_path / "native-bound-result.json").write_text(
+        json.dumps(
+            {
+                "result": result,
+                "commands": [asdict(command) for command in runtime._test_commands],
+                "freezes": [asdict(frozen) for frozen in freezes],
+                "wires": wires,
+            },
+            ensure_ascii=False,
+            indent=2,
+            default=str,
+        ),
+        encoding="utf-8",
+    )
     assert len(wires) == expected_calls[scenario], json.dumps(result, ensure_ascii=False)
     assert not candidates
     assert len(freezes) == len(wires)
@@ -368,7 +505,13 @@ async def test_real_provider_http_semantic_and_format_recovery(
     assert all("Prospective output allowance: 4096 tokens" in text for text in wire_texts)
     example, _ = json.JSONDecoder().raw_decode(wire_texts[0].split("合同示例:\n", 1)[1])
     assert example["schema_version"] == "pm.task_intent.v1"
-    if scenario in {"native", "syntax_then_duplicate", "bound_native_top", "bound_semantic_then_first", "bound_exact_first"}:
+    if scenario in {
+        "native",
+        "syntax_then_duplicate",
+        "bound_native_top",
+        "bound_semantic_then_first",
+        "bound_exact_first",
+    }:
         assert result["success"] is True, result
         assert result["real_planning_qualified"] is True
         artifact = json.loads((tmp_path / ".polaris/runtime/tasks/plan.json").read_text(encoding="utf-8"))
@@ -409,7 +552,10 @@ async def test_real_provider_http_semantic_and_format_recovery(
         assert audit["request_identity"]["call_id"] == frozen.identity.call_id
     if scenario in {"bound_exact_first", "bound_semantic_then_first"}:
         task = artifact["tasks"][0]
-        assert task["metadata"]["planning_advisory"]["task_metadata"] == json.loads(exact_first)["tasks"][0]["task_metadata"]
+        assert (
+            task["metadata"]["planning_advisory"]["task_metadata"]
+            == json.loads(exact_first)["tasks"][0]["task_metadata"]
+        )
         assert task["metadata"]["planning_advisory_execution_authority"] is False
     if scenario == "bound_semantic_then_first":
         outcome = runtime._test_results[0].metadata["generation_outcome"]
@@ -417,12 +563,20 @@ async def test_real_provider_http_semantic_and_format_recovery(
         assert outcome["request_freeze_id"] == freezes[0].identity.request_freeze_id
         assert outcome["final_semantic_request_hash"] == freezes[0].final_semantic_request_hash
         assert any(signal.get("generation_outcome") == outcome for signal in result["quality_gate"]["signals"])
-        assert all(outcome[key] not in wire_texts[1] for key in ["run_id", "call_id", "request_freeze_id", "final_semantic_request_hash"])
+        assert all(
+            outcome[key] not in wire_texts[1]
+            for key in ["run_id", "call_id", "request_freeze_id", "final_semantic_request_hash"]
+        )
         assert "Expected a nonempty text array" in wire_texts[1] and outcome["response_sha256"] in wire_texts[1]
         assert ordinary not in wire_texts[1]
-        assert all(field not in wire_texts[1] for field in ["scope_paths", "target_files", "verification_commands", "generated_outputs"])
+        assert all(
+            field not in wire_texts[1]
+            for field in ["scope_paths", "target_files", "verification_commands", "generated_outputs"]
+        )
         assert [command.context["llm_call_timeout_seconds"] for command in runtime._test_commands] == [60, 60]
         assert [command.context["llm_max_tokens"] for command in runtime._test_commands] == [4096, 4096]
         assert time.time() < deadline
-        private_signals = json.loads((tmp_path / ".polaris/runtime/signals/pm_planning.pm.signals.json").read_text(encoding="utf-8"))
+        private_signals = json.loads(
+            (tmp_path / ".polaris/runtime/signals/pm_planning.pm.signals.json").read_text(encoding="utf-8")
+        )
         assert any(signal.get("generation_outcome") == outcome for signal in private_signals["signals"])

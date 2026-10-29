@@ -76,7 +76,9 @@ def evaluate_materialize_violation_gate(
     """
     from polaris.cells.roles.kernel.internal.transaction.phase_manager import has_authoritative_write_receipt
 
-    if not materialization_required or (committed_tool_results and has_authoritative_write_receipt({"results": committed_tool_results})):
+    if not materialization_required or (
+        committed_tool_results and has_authoritative_write_receipt({"results": committed_tool_results})
+    ):
         return None
     # MATERIALIZE_CHANGES 模式下，FINAL_ANSWER 意味着没有 write receipt —— 违反 Invariant A
     if not (ledger.delivery_contract.must_materialize and not ledger.mutation_obligation.mutation_satisfied):

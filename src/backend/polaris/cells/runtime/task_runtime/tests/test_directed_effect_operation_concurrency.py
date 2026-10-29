@@ -801,9 +801,7 @@ def test_r145_inventory_finalize_survives_same_owner_lease_renew_after_admits(
     sealed = seal_directed_effect_inventory(seal_command)
     assert sealed.projection is not None
     for index, member in enumerate(sealed.projection.members, start=1):
-        admitted = admit_directed_effect_operation(
-            _admission_for_member(identity, binding, member, expected_seq=index)
-        )
+        admitted = admit_directed_effect_operation(_admission_for_member(identity, binding, member, expected_seq=index))
         assert admitted.code == "admitted"
 
     # Concurrent same-owner heartbeat advances lease_expires_at while finalize

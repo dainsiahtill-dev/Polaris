@@ -95,11 +95,11 @@ def test_public_coverage_routes_node_typescript_configuration_diagnostics_to_run
             artifact_quality_errors=(
                 "Artifact quality scan failed: TypeScript node builtin import 'node:url' "
                 "requires '@types/node' in src/main.ts",
-            "src/main.ts(43,5): error TS2580: Cannot find name 'process'. "
-            "Do you need to install type definitions for node? Try npm i --save-dev @types/node.",
-            "error TS2688: Cannot find type definition file for 'node'.",
-            "src/main.ts(152,16): error TS1343: The 'import.meta' meta-property is only "
-            "allowed when '--module' is es2020/es2022/esnext/system/node16/nodenext.",
+                "src/main.ts(43,5): error TS2580: Cannot find name 'process'. "
+                "Do you need to install type definitions for node? Try npm i --save-dev @types/node.",
+                "error TS2688: Cannot find type definition file for 'node'.",
+                "src/main.ts(152,16): error TS1343: The 'import.meta' meta-property is only "
+                "allowed when '--module' is es2020/es2022/esnext/system/node16/nodenext.",
                 "src/verify.ts(201,40): error TS2550: Property 'replaceAll' does not exist "
                 "on type 'string'. Do you need to change your target library? Try changing "
                 "the 'lib' compiler option to 'es2021' or later.",
@@ -406,10 +406,7 @@ def test_public_coverage_matches_rust_lib_root_facade_signals_with_path_rewrite_
 
 
 def test_public_coverage_matches_rust_missing_canonical_root_module() -> None:
-    raw_error = (
-        "error[E0433]: cannot find `engine` in `fantasy_restaurant_queue_ai`\n"
-        " --> tests/product.rs:22:34\n"
-    )
+    raw_error = "error[E0433]: cannot find `engine` in `fantasy_restaurant_queue_ai`\n --> tests/product.rs:22:34\n"
     payload = query_director_repair_coverage(
         QueryDirectorRepairCoverageV1(artifact_quality_errors=(raw_error,))
     ).to_dict()

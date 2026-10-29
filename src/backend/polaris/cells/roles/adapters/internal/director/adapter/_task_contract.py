@@ -324,7 +324,9 @@ def _project_completion_command_authority(context: dict[str, Any]) -> None:
     # The execution projection retains recipe order; command-authority rows
     # are hash-sorted and must not accidentally reorder environment preparation.
     recipes = projection.get("verification_execution_authority")
-    if isinstance(recipes, list) and all(isinstance(row, dict) and isinstance(row.get("command"), str) for row in recipes):
+    if isinstance(recipes, list) and all(
+        isinstance(row, dict) and isinstance(row.get("command"), str) for row in recipes
+    ):
         commands = [row["command"] for row in recipes]
         context["verification_commands"] = commands
         metadata["verification_commands"] = list(commands)
@@ -552,13 +554,16 @@ def _build_director_blueprint_handoff_lines(workspace: str, blueprint_id: str) -
         lines.append(f"- project_interface_contract: authority={interface_authority}")
         blueprint_task_id = str(payload.get("task_id") or payload.get("pm_task_id") or "").strip()
         consumers = project_interface_contract.get("consumer_declarations")
-        task_consumers = [
-            item
-            for item in consumers if isinstance(item, dict) and str(item.get("task_id") or "").strip() == blueprint_task_id
-        ] if isinstance(consumers, list) else []
-        consumed_contract_ids = {
-            str(item.get("depends_on_contract") or "").strip() for item in task_consumers
-        }
+        task_consumers = (
+            [
+                item
+                for item in consumers
+                if isinstance(item, dict) and str(item.get("task_id") or "").strip() == blueprint_task_id
+            ]
+            if isinstance(consumers, list)
+            else []
+        )
+        consumed_contract_ids = {str(item.get("depends_on_contract") or "").strip() for item in task_consumers}
         providers = project_interface_contract.get("provider_declarations")
         if isinstance(providers, list):
             for provider in providers[:16]:

@@ -30,9 +30,7 @@ def _request(
     task_id: str = "task-verifier",
     round_number: int = 0,
     environment_prep_plans: tuple[DirectorRepairEnvironmentPrepPlanV1, ...] = (),
-) -> (
-    DirectorRepairConvergenceVerifierRequestV1
-):
+) -> DirectorRepairConvergenceVerifierRequestV1:
     return DirectorRepairConvergenceVerifierRequestV1(
         task_id=task_id,
         workspace=str(workspace),
@@ -316,14 +314,14 @@ def test_artifact_quality_convergence_verifier_failure_reports_real_scan_output(
     payload = _raw_output_payload(snapshot)
     assert payload["exit_code"] != 0
     assert payload["residual_artifact_quality_errors"]
-    assert payload["residual_artifact_quality_issues"] == [dict(item) for item in snapshot.residual_artifact_quality_issues]
+    assert payload["residual_artifact_quality_issues"] == [
+        dict(item) for item in snapshot.residual_artifact_quality_issues
+    ]
     assert payload["metadata"]["command_kind"] == "in_process_artifact_quality_scan"
 
 
 def test_repair_convergence_verifier_factory_does_not_import_runtime_internal_repair_kernel() -> None:
-    module_path = (
-        Path(__file__).resolve().parent.parent / "internal" / "director" / "repair_convergence_verifier.py"
-    )
+    module_path = Path(__file__).resolve().parent.parent / "internal" / "director" / "repair_convergence_verifier.py"
     source = module_path.read_text(encoding="utf-8")
     tree = ast.parse(source)
     imported_modules: list[str] = []

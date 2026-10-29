@@ -1,23 +1,17 @@
 from __future__ import annotations
 
-import json
-import posixpath
 import re
 from collections.abc import Mapping, Sequence
-from difflib import SequenceMatcher
 from pathlib import PurePosixPath
-from typing import Any
 
-from ...contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
-from ...javascript_syntax import repair_javascript_export_contract_placeholders
-from ...path_files import normalize_base_files_strict, normalize_repair_path_strict
 from ..constants import *  # noqa: F403
+from .misc_ops import *  # noqa: F403
+from .parse_ops import *  # noqa: F403
 from .path_ops import *  # noqa: F403
 from .plan_ops import *  # noqa: F403
-from .parse_ops import *  # noqa: F403
-from .misc_ops import *  # noqa: F403
 
 """Shared TypeScript repair helpers: null_dom_ops."""
+
 
 def _typescript_global_guard_precedes(repaired_lines: Sequence[str], symbol: str) -> bool:
     guard_fragments = (
@@ -34,6 +28,7 @@ def _typescript_global_guard_precedes(repaired_lines: Sequence[str], symbol: str
         if any(fragment in previous for fragment in guard_fragments):
             return True
     return False
+
 
 def _repair_html_entrypoint_quality_text_with_metadata(
     content: str,
@@ -85,6 +80,7 @@ def _repair_html_entrypoint_quality_text_with_metadata(
         "unsafe_cases_fail_closed": True,
     }
 
+
 def _html_javascript_entrypoint_for_typescript_source(
     source_ref: str,
     *,
@@ -112,6 +108,7 @@ def _html_javascript_entrypoint_for_typescript_source(
     js_path = re.sub(r"\.tsx?$", ".js", normalized)
     return f"./{js_path}" if leading_dot_slash else js_path
 
+
 def _html_compiled_javascript_entrypoint_for_script(source_ref: str, *, base_files: Mapping[str, str]) -> str:
     source = str(source_ref or "").strip().replace("\\", "/")
     normalized = source[2:] if source.startswith("./") else source.lstrip("/")
@@ -124,6 +121,7 @@ def _html_compiled_javascript_entrypoint_for_script(source_ref: str, *, base_fil
         compiled = _html_compiled_typescript_output_path(base_files, candidate)
         return f"./{compiled}" if source.startswith("./") else compiled
     return ""
+
 
 def _html_compiled_typescript_output_path(base_files: Mapping[str, str], source_entry: str) -> str:
     source_path = _normalize_repair_path(source_entry)
@@ -140,12 +138,14 @@ def _html_compiled_typescript_output_path(base_files: Mapping[str, str], source_
         relative_source = source_path.removeprefix("src/")
     return f"{normalized_out.rstrip('/')}/{PurePosixPath(relative_source).with_suffix('.js').as_posix()}"
 
+
 def _html_typescript_compiler_option(base_files: Mapping[str, str], key: str) -> str:
     tsconfig = _json_object(str(base_files.get("tsconfig.json") or ""))
     compiler_options = tsconfig.get("compilerOptions")
     if not isinstance(compiler_options, Mapping):
         return ""
     return str(compiler_options.get(key) or "").strip().replace("\\", "/")
+
 
 def _repair_typescript_multiline_dom_handle_declarations(
     text: str,
@@ -185,6 +185,7 @@ def _repair_typescript_multiline_dom_handle_declarations(
     repaired = declaration_re.sub(_replace, text)
     return repaired, _dedupe_preserve_order(guarded)
 
+
 def _typescript_nullable_guard_in_text_window(window: str, symbol: str) -> bool:
     compact = re.sub(r"\s+", "", window)
     return (
@@ -194,6 +195,7 @@ def _typescript_nullable_guard_in_text_window(window: str, symbol: str) -> bool:
         or f"if(null==={symbol})" in compact
         or f"if(null=={symbol})" in compact
     )
+
 
 def _typescript_base_files_have_dom_lib(base_files: Mapping[str, str]) -> bool:
     for path, content in base_files.items():
@@ -208,6 +210,7 @@ def _typescript_base_files_have_dom_lib(base_files: Mapping[str, str]) -> bool:
         if isinstance(libs, list) and any(str(lib).strip().lower() == "dom" for lib in libs):
             return True
     return False
+
 
 def _remove_typescript_local_dom_shims(text: str) -> tuple[str, tuple[str, ...]]:
     lines = str(text or "").splitlines(keepends=True)
@@ -229,6 +232,7 @@ def _remove_typescript_local_dom_shims(text: str) -> tuple[str, tuple[str, ...]]
     repaired = re.sub(r"\n{3,}", "\n\n", repaired)
     return repaired, tuple(dict.fromkeys(removed))
 
+
 def _typescript_local_dom_shim_start_symbol(line: str) -> str:
     declare_match = _TS_LOCAL_DOM_DECLARE_CONST_START_RE.match(line)
     if declare_match:
@@ -237,6 +241,7 @@ def _typescript_local_dom_shim_start_symbol(line: str) -> str:
     if interface_match:
         return str(interface_match.group("name") or "").strip()
     return ""
+
 
 def _typescript_block_end(lines: Sequence[str], start_index: int) -> int:
     depth = 0
@@ -253,16 +258,16 @@ def _typescript_block_end(lines: Sequence[str], start_index: int) -> int:
 
 
 __all__ = (
-    "_typescript_global_guard_precedes",
-    "_repair_html_entrypoint_quality_text_with_metadata",
-    "_html_javascript_entrypoint_for_typescript_source",
     "_html_compiled_javascript_entrypoint_for_script",
     "_html_compiled_typescript_output_path",
+    "_html_javascript_entrypoint_for_typescript_source",
     "_html_typescript_compiler_option",
-    "_repair_typescript_multiline_dom_handle_declarations",
-    "_typescript_nullable_guard_in_text_window",
-    "_typescript_base_files_have_dom_lib",
     "_remove_typescript_local_dom_shims",
-    "_typescript_local_dom_shim_start_symbol",
+    "_repair_html_entrypoint_quality_text_with_metadata",
+    "_repair_typescript_multiline_dom_handle_declarations",
+    "_typescript_base_files_have_dom_lib",
     "_typescript_block_end",
+    "_typescript_global_guard_precedes",
+    "_typescript_local_dom_shim_start_symbol",
+    "_typescript_nullable_guard_in_text_window",
 )

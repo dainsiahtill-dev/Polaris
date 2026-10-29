@@ -554,11 +554,15 @@ def reduce_factory_stage_persistence(
                     "Quarantine error fields exceed their exact UTF-8 bounds",
                 )
             quarantine_event_id = _text(event.get("event_id"), field="event_id")
-            if quarantine.get("failed_step") in {
-                "cancelled_before_commit_ack",
-                "checkpoint",
-                "commit_marker",
-            } and pending is not None:
+            if (
+                quarantine.get("failed_step")
+                in {
+                    "cancelled_before_commit_ack",
+                    "checkpoint",
+                    "commit_marker",
+                }
+                and pending is not None
+            ):
                 intent, event_id, sequence, event_hash = pending
                 if (
                     quarantine.get("stage_completed_event_id") == event_id

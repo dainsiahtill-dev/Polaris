@@ -144,9 +144,7 @@ async def test_transaction_setup_exposes_current_repair_request_to_kernel_guard(
 ) -> None:
     """Transaction guards must see request.message before provider preparation."""
     current_request = (
-        "[mode:materialize]\n"
-        "MATERIALIZATION QUALITY REPAIR MODE:\n"
-        "Edit index.html; do not read files first."
+        "[mode:materialize]\nMATERIALIZATION QUALITY REPAIR MODE:\nEdit index.html; do not read files first."
     )
     captured: dict[str, Any] = {}
 

@@ -526,9 +526,7 @@ class TestQAConsumerPollOnce:
         assert len(commit_kwargs["audit_result"]["findings"]) == 1
 
     @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
-    def test_missing_verifier_receipt_stays_bounded_in_qa_not_contract_blocked(
-        self, mock_get_svc: MagicMock
-    ) -> None:
+    def test_missing_verifier_receipt_stays_bounded_in_qa_not_contract_blocked(self, mock_get_svc: MagicMock) -> None:
         mock_svc = MagicMock()
         mock_get_svc.return_value = mock_svc
         claim = MagicMock(

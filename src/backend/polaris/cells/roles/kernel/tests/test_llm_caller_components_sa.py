@@ -12,10 +12,8 @@
 from __future__ import annotations
 
 import asyncio
-import gc
 import hashlib
 import time
-import warnings
 from dataclasses import fields
 from types import SimpleNamespace
 from typing import Any
@@ -25,55 +23,22 @@ import pytest
 from polaris.cells.roles.kernel.internal import context_gateway as context_gateway_module
 from polaris.cells.roles.kernel.internal.llm_caller import request_preparer as request_preparer_module
 from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
-    build_final_provider_request_snapshot,
     build_final_request_context_audit,
-    build_final_request_context_audit_for_request,
 )
-from polaris.cells.roles.kernel.internal.llm_caller.decision_caller import DecisionCaller
 from polaris.cells.roles.kernel.internal.llm_caller.error_handling import (
-    ERROR_CATEGORY_AUTH,
-    ERROR_CATEGORY_CANCELLED,
-    ERROR_CATEGORY_NETWORK,
     ERROR_CATEGORY_RATE_LIMIT,
-    ERROR_CATEGORY_TIMEOUT,
-    ERROR_CATEGORY_UNKNOWN,
-    build_native_tool_unavailable_error,
-    build_text_response_fallback_instruction,
-    classify_error,
-    is_native_tool_calling_unsupported,
-    is_response_format_unsupported,
-    is_retryable_error,
 )
-from polaris.cells.roles.kernel.internal.llm_caller.event_emitter import LLMEventEmitter
-from polaris.cells.roles.kernel.internal.llm_caller.finalization_caller import FinalizationCaller
 from polaris.cells.roles.kernel.internal.llm_caller.invoker import (
     LLMInvoker,
     _clear_context_snapshot_context,
     _physical_dispatch_port_for_request,
-    _profile_lacks_forced_tool_choice,
-    _required_tool_not_called_error,
-)
-from polaris.cells.roles.kernel.internal.llm_caller.provider_formatter import (
-    AnnotatedProviderFormatter,
-    NativeProviderFormatter,
-    create_formatter,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import (
     LLMRequestPreparer,
     _ensure_core_role_identity,
-    _ensure_current_user_message_final,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.response_types import (
-    LLMResponse,
     PreparedLLMRequest,
-)
-from polaris.cells.roles.kernel.internal.llm_caller.stream_engine import (
-    StreamEngine,
-    _store_context_messages_accepts_provider_request,
-)
-from polaris.cells.roles.kernel.internal.structured_output_transport import (
-    STRUCTURED_OUTPUT_TOOL_NAME,
-    resolve_structured_output_transport,
 )
 from polaris.cells.roles.kernel.public import final_request_evidence_cutoff as cutoff_contract
 from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
@@ -84,10 +49,6 @@ from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FactoryRoleEvidenceCutoffRequestV1,
     FactoryRoleSemanticRequestIdentityV1,
     bind_factory_role_evidence_authority,
-)
-from polaris.cells.roles.kernel.public.structured_output_contracts import (
-    STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY,
-    RoleStructuredOutputContractV1,
 )
 from polaris.kernelone.audit.omniscient.dedup import LLMEventDeduplicator, set_global_llm_dedup
 from polaris.kernelone.context.contracts import TurnEngineContextResult
@@ -545,8 +506,6 @@ async def test_factory_physical_attempt_control_port_drift_during_acquire_fails_
     assert cutoff_port.resolve_count == 0
 
 
-
-
 async def test_factory_authority_mutation_after_bind_fails_before_cutoff(
     field_name: str,
     corrupted_value: object,
@@ -767,8 +726,6 @@ async def test_factory_physical_attempt_control_port_drift_during_acquire_fails_
 
     assert cutoff_port.acquire_count == 1
     assert cutoff_port.resolve_count == 0
-
-
 
 
 @pytest.mark.parametrize(

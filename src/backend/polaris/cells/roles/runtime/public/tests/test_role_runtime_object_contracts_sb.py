@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-import ast
 import dataclasses
 import time
 from collections.abc import Mapping
-from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Literal, TypedDict, cast
 
 import pytest
-import yaml
 from polaris.cells.chief_engineer.blueprint.public.contracts import (
     GenerateTaskBlueprintCommandV1,
     TaskBlueprintResultV1,
@@ -68,32 +65,20 @@ from polaris.cells.qa.audit_verdict.public.contracts import (
     VisualQaAuditResultV1,
 )
 from polaris.cells.roles.runtime.public import (
-    capability_commands as runtime_capability_commands,
     contracts as runtime_contracts,
     service as runtime_service,
 )
 from polaris.cells.roles.runtime.public.contracts import (
     AssembleRoleRuntimeChainCommandV1,
-    ExecuteRoleCapabilityInvocationCommandV1,
     ExecuteRoleTaskMarketLifecycleCommandV1,
-    InstantiateRoleRuntimeObjectCommandV1,
-    RoleAssetMount,
-    RoleAssetMountTable,
-    RoleAssetRef,
-    RoleCapabilityDecision,
-    RoleCapabilityDescriptor,
-    RoleCapabilityFingerprint,
     RoleCapabilityInvocation,
-    RoleCapabilityInvocationResultV1,
     RoleCapabilityPorts,
     RoleIdentity,
     RoleLedgerBinding,
     RoleProfileBinding,
     RoleRuntimeChainAssemblyResultV1,
-    RoleRuntimeChainEnvelope,
     RoleRuntimeChainStepRef,
     RoleRuntimeObject,
-    RoleRuntimeObjectResultV1,
     RoleStateCommitReceipt,
     RoleStateCommitRequest,
     RoleTaskMarketBinding,
@@ -104,9 +89,7 @@ from polaris.cells.roles.runtime.public.contracts import (
 from polaris.cells.roles.runtime.public.service import (
     assemble_role_runtime_chain,
     commit_role_state,
-    execute_role_capability_invocation,
     execute_role_task_market_lifecycle,
-    instantiate_role_runtime_object,
 )
 from polaris.cells.runtime.projection.public.contracts import RuntimeProjectionQueryV1, RuntimeProjectionResultV1
 from polaris.cells.runtime.task_market.public import (
@@ -818,25 +801,25 @@ def _profile_binding(role_id: str = "pm") -> RoleProfileBinding:
     )
 
 
-
-
-
-
 @pytest.mark.parametrize(
     "payload, expected_error",
     (
         (
-            {"runtime_receipt_refs": (
-                "factory.cognitive_runtime:receipt-1",
-                "factory.cognitive_runtime:receipt-1",
-            )},
+            {
+                "runtime_receipt_refs": (
+                    "factory.cognitive_runtime:receipt-1",
+                    "factory.cognitive_runtime:receipt-1",
+                )
+            },
             "runtime_receipt_refs must not contain duplicate refs",
         ),
         (
-            {"handoff_pack_refs": (
-                "factory.cognitive_runtime:handoff:handoff-1",
-                "factory.cognitive_runtime:handoff:handoff-1",
-            )},
+            {
+                "handoff_pack_refs": (
+                    "factory.cognitive_runtime:handoff:handoff-1",
+                    "factory.cognitive_runtime:handoff:handoff-1",
+                )
+            },
             "handoff_pack_refs must not contain duplicate refs",
         ),
     ),
@@ -1866,4 +1849,3 @@ def test_role_runtime_chain_assembly_rejects_missing_required_role() -> None:
     assert result.chain is None
     assert result.missing_roles == ("qa",)
     assert result.error_code == "missing_required_chain_roles"
-

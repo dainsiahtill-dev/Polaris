@@ -1243,9 +1243,7 @@ def _rust_trait_import_operation(
 
     suggested_line = _rust_import_suggested_line_number(diagnostic, import_line)
     suggested_expected = (
-        lines[suggested_line - 1]
-        if suggested_line is not None and suggested_line <= len(lines)
-        else ""
+        lines[suggested_line - 1] if suggested_line is not None and suggested_line <= len(lines) else ""
     )
     # Rustc commonly renders a top-level import suggestion as ``1 + use ...``
     # even when the canonical insertion point belongs after crate attributes and

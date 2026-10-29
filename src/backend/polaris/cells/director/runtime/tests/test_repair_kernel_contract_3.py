@@ -2544,5 +2544,3 @@ def test_public_typescript_unresolved_identifier_repairs_array_length_type_asser
     assert planning_result["composition_summary"]["patch_count"] == 1
     content_after = planning_result["composition_summary"]["patches"][0]["content_after"]
     assert "(snap.history as unknown[]).length = 0;" in content_after
-
-

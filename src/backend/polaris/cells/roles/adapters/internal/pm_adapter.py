@@ -557,8 +557,10 @@ class PMAdapter(
                 isinstance(item, dict) and item.get("hard_boundary") is True
                 for item in quality.get("contract_diagnostics", [])
             )
-            if not using_deterministic_contracts and not hard_contract_boundary and (
-                (not contracts) or (not quality.get("ok", False) or int(quality.get("score") or 0) < 80)
+            if (
+                not using_deterministic_contracts
+                and not hard_contract_boundary
+                and ((not contracts) or (not quality.get("ok", False) or int(quality.get("score") or 0) < 80))
             ):
                 first_critical = quality.get("critical_issues")
                 quality_signals.append(

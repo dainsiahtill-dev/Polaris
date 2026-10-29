@@ -194,15 +194,9 @@ class BaseRoleAdapter(RoleOrchestrationAdapter):
             return False
         normalized_status = str(status or "").strip().lower()
         if _is_terminal_task_row_status(normalized_status):
-            raise RuntimeError(
-                "terminal_task_status_requires_task_runtime_owner_transition:"
-                f"{normalized_status}"
-            )
+            raise RuntimeError(f"terminal_task_status_requires_task_runtime_owner_transition:{normalized_status}")
         if _is_execution_task_row_status(normalized_status):
-            raise RuntimeError(
-                "execution_task_status_requires_task_runtime_owner_transition:"
-                f"{normalized_status}"
-            )
+            raise RuntimeError(f"execution_task_status_requires_task_runtime_owner_transition:{normalized_status}")
         if not self.task_runtime.task_exists(normalized):
             return False
         updated = self.task_runtime.update_task_row(

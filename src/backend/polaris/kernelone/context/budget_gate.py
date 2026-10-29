@@ -350,6 +350,7 @@ class ContextBudgetGate:
 # Internal helpers
 # ------------------------------------------------------------------
 
+
 def _resolve_model_window_from_spec(provider_name: str, model_name: str, workspace: str = ".") -> int:
     """Resolve model window from ModelCatalog (SSOT for model specs).
 

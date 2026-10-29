@@ -48,28 +48,51 @@ def _pol77_model_revision(wire: dict[str, Any], *, root_template: bool = False) 
     content = "\n".join(m.get("content", "") for m in wire["messages"])
     view, _ = jsonlib.JSONDecoder().raw_decode(content.split("Revision base/view/manifest (server-owned):\n", 1)[1])
     updates = []
-    for identity, output, source in [("TASK-5", "dist/browser.js", "src/entry/browser.ts"),
-                                     ("TASK-6", "dist/cli.js", "src/entry/cli.ts")]:
-        fields: dict[str, Any] = {"generated_outputs": [{"path": output, "inputs": [{"task_id": identity, "path": source}],
-                                                       "build": {"argv": ["npm", "run", "build"], "cwd": "."}}]}
+    for identity, output, source in [
+        ("TASK-5", "dist/browser.js", "src/entry/browser.ts"),
+        ("TASK-6", "dist/cli.js", "src/entry/cli.ts"),
+    ]:
+        fields: dict[str, Any] = {
+            "generated_outputs": [
+                {
+                    "path": output,
+                    "inputs": [{"task_id": identity, "path": source}],
+                    "build": {"argv": ["npm", "run", "build"], "cwd": "."},
+                }
+            ]
+        }
         if identity == "TASK-6" and not root_template:
             fields["depends_on"] = ["TASK-5"]
         updates.append({"task_id": identity, "set": fields})
     if root_template:
         for update in updates[:2]:
             update["append"] = {}
-        for identity, name, contexts in zip(["TASK-8", "TASK-10"], ["entrypoint", "contract-integration"], [
-            ["dist/browser.js", "dist/cli.js", "index.html"],
-            ["requirements.md", "src/garden/dance.ts", "tests/garden.test.ts", "dist/cli.js", "dist/browser.js"],
-        ], strict=True):
+        for identity, name, contexts in zip(
+            ["TASK-8", "TASK-10"],
+            ["entrypoint", "contract-integration"],
+            [
+                ["dist/browser.js", "dist/cli.js", "index.html"],
+                ["requirements.md", "src/garden/dance.ts", "tests/garden.test.ts", "dist/cli.js", "dist/browser.js"],
+            ],
+            strict=True,
+        ):
             path = f"tests/{name}.test.ts"
             fields = {
-                "target_files": [path], "scope_paths": [path], "context_files": contexts,
+                "target_files": [path],
+                "scope_paths": [path],
+                "context_files": contexts,
                 "scope": f"Create and maintain {path}; listed context files are read-only.",
                 "goal": "Implement executable firefly/flower/moon/humidity integration assertions.",
                 "description": "Write TypeScript tests for observable garden behavior and executable entrypoint results; do not alter build outputs.",
-                "steps": ["Add normal, boundary and invalid input assertions for firefly/flower/moon/humidity behavior", "Execute the declared test and record actual failures"],
-                "acceptance": ["Tests assert business values for normal, boundary and invalid cases", "Entry output reflects moon phase and humidity effects on firefly glow and flower mood", "Declared test command exits zero"],
+                "steps": [
+                    "Add normal, boundary and invalid input assertions for firefly/flower/moon/humidity behavior",
+                    "Execute the declared test and record actual failures",
+                ],
+                "acceptance": [
+                    "Tests assert business values for normal, boundary and invalid cases",
+                    "Entry output reflects moon phase and humidity effects on firefly glow and flower mood",
+                    "Declared test command exits zero",
+                ],
                 "verification_commands": [{"modality": "test", "argv": ["npx", "vitest", "run", path], "cwd": "."}],
             }
             updates.append({"task_id": identity, "set": fields, "append": {}})
@@ -77,24 +100,67 @@ def _pol77_model_revision(wire: dict[str, Any], *, root_template: bool = False) 
         if root_template:
             break
         fields = {
-            "target_files": [path], "scope_paths": [path], "scope": path,
-            "context_files": ["dist/browser.js", "dist/cli.js", "index.html", "requirements.md", "tests/garden.test.ts"],
+            "target_files": [path],
+            "scope_paths": [path],
+            "scope": path,
+            "context_files": [
+                "dist/browser.js",
+                "dist/cli.js",
+                "index.html",
+                "requirements.md",
+                "tests/garden.test.ts",
+            ],
             "goal": "Implement a useful executable qualification test for the owned delivery obligations",
             "description": "Create the test artifact; read dependencies, assert output behavior and record verifier failures",
-            "steps": ["Read requirements and dependency artifacts", "Implement explicit assertions for build outputs and CLI behavior",
-                      "Run the owned test with Node and record exit code"],
-            "acceptance": ["node " + path + " exits zero with genuine assertions", "Missing outputs or incorrect behavior fail the test",
-                           "The test validates browser references and firefly/flower/moon/humidity CLI output"],
+            "steps": [
+                "Read requirements and dependency artifacts",
+                "Implement explicit assertions for build outputs and CLI behavior",
+                "Run the owned test with Node and record exit code",
+            ],
+            "acceptance": [
+                "node " + path + " exits zero with genuine assertions",
+                "Missing outputs or incorrect behavior fail the test",
+                "The test validates browser references and firefly/flower/moon/humidity CLI output",
+            ],
             "verification_commands": [{"modality": "test", "argv": ["node", path], "cwd": "."}],
         }
         updates.append({"task_id": identity, "set": fields})
-    return {"role": "assistant", "content": jsonlib.dumps({"schema_version": "pm.task_revision.v1",
-            "base_hash": view["base_hash"], "updates": updates, "add_tasks": [], "remove_task_ids": []})}
+    return {
+        "role": "assistant",
+        "content": jsonlib.dumps(
+            {
+                "schema_version": "pm.task_revision.v1",
+                "base_hash": view["base_hash"],
+                "updates": updates,
+                "add_tasks": [],
+                "remove_task_ids": [],
+            }
+        ),
+    }
 
 
-@pytest.mark.parametrize("revision", ["valid", "noop", "malformed", "hidden", "wrong_owner", "wrong_build", "routing", "late_readonly",
-                                      "root_legal", "root_noop", "root_hidden", "root_wrong_input", "root_foreign_language", "root_remove"])
-async def test_pol77_exact_raw10_one_legal_revision_through_real_budget_guard(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, revision: str) -> None:
+@pytest.mark.parametrize(
+    "revision",
+    [
+        "valid",
+        "noop",
+        "malformed",
+        "hidden",
+        "wrong_owner",
+        "wrong_build",
+        "routing",
+        "late_readonly",
+        "root_legal",
+        "root_noop",
+        "root_hidden",
+        "root_wrong_input",
+        "root_foreign_language",
+        "root_remove",
+    ],
+)
+async def test_pol77_exact_raw10_one_legal_revision_through_real_budget_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, revision: str
+) -> None:
     import sys
     from dataclasses import replace
 
@@ -118,25 +184,32 @@ async def test_pol77_exact_raw10_one_legal_revision_through_real_budget_guard(tm
 
     _native_fake_capacity(monkeypatch)
     register = RoleProfileRegistry.register
+
     def bounded_register(registry: Any, profile: Any) -> Any:
         if profile.role_id == "pm":
             profile = replace(profile, context_policy=replace(profile.context_policy, max_context_tokens=8000))
         return register(registry, profile)
+
     monkeypatch.setattr(RoleProfileRegistry, "register", bounded_register)
     raw, directive = _pol77_input("RAW_PM_RESPONSE.txt"), _pol77_input("DIRECTIVE.txt")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     store = FactoryStore(workspace / ".polaris/runtime/factory")
     factory_run = FactoryRun(
-        id="factory-run-1", config=FactoryConfig(name="POL77 isolated contract proof", description=directive,
-                                                  stages=["pm_planning"]),
-        status=FactoryRunStatus.RUNNING, created_at="2026-10-09T06:49:03+00:00",
+        id="factory-run-1",
+        config=FactoryConfig(name="POL77 isolated contract proof", description=directive, stages=["pm_planning"]),
+        status=FactoryRunStatus.RUNNING,
+        created_at="2026-10-09T06:49:03+00:00",
         metadata={"current_stage": "pm_planning", "factory_stage_in_flight": True},
     )
-    admitted = build_factory_run_admitted_event(FactoryRunAdmissionV1(
-        factory_run_id=factory_run.id, created_at=factory_run.created_at,
-        name=factory_run.config.name, description=directive,
-    ))
+    admitted = build_factory_run_admitted_event(
+        FactoryRunAdmissionV1(
+            factory_run_id=factory_run.id,
+            created_at=factory_run.created_at,
+            name=factory_run.config.name,
+            description=directive,
+        )
+    )
     admitted.update(run_id=factory_run.id, event_id="pol77-admission", timestamp=factory_run.created_at)
     await store.append_authoritative_event(factory_run.id, admitted)
     await store.save_run(factory_run)
@@ -145,15 +218,22 @@ async def test_pol77_exact_raw10_one_legal_revision_through_real_budget_guard(tm
     )
     public_facts: Any = _PublicFactoryRoleEvidenceFactStream()
     port, _, _, _ = _authority(
-        tmp_path=tmp_path, stage="pm_planning", run=factory_run, resolver=source, facts=public_facts,
+        tmp_path=tmp_path,
+        stage="pm_planning",
+        run=factory_run,
+        resolver=source,
+        facts=public_facts,
         run_loader=lambda: store.get_run(factory_run.id),
     )
+
     def reply(wire: dict[str, Any]) -> dict[str, Any]:
         model = _pol77_model_revision(wire, root_template=revision.startswith("root_"))
         patch = jsonlib.loads(model["content"])
         if revision.startswith("root_"):
             rendered = "\n".join(m.get("content", "") for m in wire["messages"])
-            view, _ = jsonlib.JSONDecoder().raw_decode(rendered.split("Revision base/view/manifest (server-owned):\n", 1)[1])
+            view, _ = jsonlib.JSONDecoder().raw_decode(
+                rendered.split("Revision base/view/manifest (server-owned):\n", 1)[1]
+            )
             rows = {row["id"]: row for row in view["tasks"]}
             original = jsonlib.loads(raw)["tasks"]
             assert len(rows) == len(original)
@@ -166,15 +246,21 @@ async def test_pol77_exact_raw10_one_legal_revision_through_real_budget_guard(tm
                     else:
                         assert field in row["absent_fields"]
             for identity in ["TASK-1", "TASK-2", "TASK-3", "TASK-4", "TASK-5", "TASK-6"]:
-                assert rows[identity]["target_files"] == next(t["target_files"] for t in original if t["id"] == identity)
+                assert rows[identity]["target_files"] == next(
+                    t["target_files"] for t in original if t["id"] == identity
+                )
             for identity in ["TASK-5", "TASK-6"]:
                 assert "target_files" not in view["edit_manifest"]["tasks"][identity]["set"]
         if revision == "root_noop":
             patch["updates"] = []
         elif revision == "root_hidden":
-            patch["updates"].append({"task_id": "TASK-3", "set": {"description": "Unauthorized hidden-field change"}, "append": {}})
+            patch["updates"].append(
+                {"task_id": "TASK-3", "set": {"description": "Unauthorized hidden-field change"}, "append": {}}
+            )
         elif revision == "root_wrong_input":
-            patch["updates"][0]["set"]["generated_outputs"][0]["inputs"] = [{"task_id": "TASK-10", "path": "src/entry/browser.ts"}]
+            patch["updates"][0]["set"]["generated_outputs"][0]["inputs"] = [
+                {"task_id": "TASK-10", "path": "src/entry/browser.ts"}
+            ]
         elif revision == "root_foreign_language":
             patch["updates"][2]["set"].update(target_files=["tests/Entry.java"], scope_paths=["tests/Entry.java"])
         elif revision == "root_remove":
@@ -195,29 +281,71 @@ async def test_pol77_exact_raw10_one_legal_revision_through_real_budget_guard(tm
             patch["updates"][2]["set"]["context_files"].append("qa/entrypoints.mjs")
         model["content"] = jsonlib.dumps(patch)
         return model
+
     runtime, freezes, wires = _local_runtime(workspace, monkeypatch, [{"role": "assistant", "content": raw}, reply])
     adapter = PMAdapter(workspace=str(workspace))
     authority = port.mint_authority_binding("pm")
     budget_frames = []
     old_profile = sys.getprofile()
+
     def observe(frame: Any, event: str, arg: Any) -> None:
-        if event == "return" and frame.f_code.co_name == "_build_context_impl" and frame.f_locals.get("current_instruction_tokens") is not None:
+        if (
+            event == "return"
+            and frame.f_code.co_name == "_build_context_impl"
+            and frame.f_locals.get("current_instruction_tokens") is not None
+        ):
             gateway = frame.f_locals["self"]
-            budget_frames.append({**{key: frame.f_locals.get(key) for key in ["reserved_system_prompt_tokens", "enforcement_budget_tokens", "current_instruction_tokens"]},
-                                  "role_policy": gateway.policy.max_context_tokens, "model_window": gateway._context_os.resolved_context_window})
+            budget_frames.append(
+                {
+                    **{
+                        key: frame.f_locals.get(key)
+                        for key in [
+                            "reserved_system_prompt_tokens",
+                            "enforcement_budget_tokens",
+                            "current_instruction_tokens",
+                        ]
+                    },
+                    "role_policy": gateway.policy.max_context_tokens,
+                    "model_window": gateway._context_os.resolved_context_window,
+                }
+            )
         if old_profile:
             old_profile(frame, event, arg)
+
     try:
         sys.setprofile(observe)
         with bind_factory_role_evidence_authority(authority):
-            result = await adapter._run_pm_stage("pol77-pm-task", directive, {}, {"run_id": "pol77-child", "timeout_seconds": 43})
+            result = await adapter._run_pm_stage(
+                "pol77-pm-task", directive, {}, {"run_id": "pol77-child", "timeout_seconds": 43}
+            )
     finally:
         sys.setprofile(old_profile)
-    (tmp_path / "pol77-physical-proof.json").write_text(jsonlib.dumps({"revision": revision, "wires": wires, "budget_frames": budget_frames,
-        "factory_admission_chain": store._read_authoritative_events_read_only_sync(factory_run.id),
-        "source_resolver": type(source).__name__, "fact_stream": type(public_facts).__name__,
-        "result": result, "freezes": [{"run_id": f.identity.run_id, "call_id": f.identity.call_id, "freeze_id": f.identity.request_freeze_id,
-                                       "final_payload": jsonlib.loads(f.canonical_final_payload_json)} for f in freezes]}, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    (tmp_path / "pol77-physical-proof.json").write_text(
+        jsonlib.dumps(
+            {
+                "revision": revision,
+                "wires": wires,
+                "budget_frames": budget_frames,
+                "factory_admission_chain": store._read_authoritative_events_read_only_sync(factory_run.id),
+                "source_resolver": type(source).__name__,
+                "fact_stream": type(public_facts).__name__,
+                "result": result,
+                "freezes": [
+                    {
+                        "run_id": f.identity.run_id,
+                        "call_id": f.identity.call_id,
+                        "freeze_id": f.identity.request_freeze_id,
+                        "final_payload": jsonlib.loads(f.canonical_final_payload_json),
+                    }
+                    for f in freezes
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+            default=str,
+        ),
+        encoding="utf-8",
+    )
     assert result["success"] is (revision in {"valid", "root_legal"}), (result, runtime._test_results)
     assert len(wires) == len(freezes) == 2
     assert all(w["max_tokens"] == 4000 for w in wires)
@@ -226,7 +354,9 @@ async def test_pol77_exact_raw10_one_legal_revision_through_real_budget_guard(tm
     assert directive in "\n".join(m.get("content", "") for m in wires[1]["messages"])
     assert budget_frames and all(f["role_policy"] == 8000 and f["model_window"] == 1000000 for f in budget_frames)
     assert all(f["current_instruction_tokens"] <= f["enforcement_budget_tokens"] for f in budget_frames)
-    assert port._test_physical_attempt_coordinator.budget_state(authority.execution_authority_hash).consumed_attempts == 2
+    assert (
+        port._test_physical_attempt_coordinator.budget_state(authority.execution_authority_hash).consumed_attempts == 2
+    )
     assert len([s for s in result["quality_gate"]["signals"] if s["code"] == "pm.contracts.quality_revision"]) == 1
     for frozen in freezes:
         payload = jsonlib.loads(frozen.canonical_final_payload_json)
@@ -249,16 +379,24 @@ async def test_pol77_exact_raw10_one_legal_revision_through_real_budget_guard(tm
                 assert audit["context_window_tokens"] == 1000000
                 assert audit["final_request_token_estimate"] <= 8000
                 assert audit["tool_schema_token_estimate"] > 0
-                assert audit["final_request_token_estimate"] == (audit["message_token_estimate"]
-                    + audit["tool_schema_token_estimate"] + audit["response_format_token_estimate"]
-                    + audit.get("request_control_token_estimate", 0))
+                assert audit["final_request_token_estimate"] == (
+                    audit["message_token_estimate"]
+                    + audit["tool_schema_token_estimate"]
+                    + audit["response_format_token_estimate"]
+                    + audit.get("request_control_token_estimate", 0)
+                )
                 assert audit["final_request_evidence_coverage"]["role_identity_ok"]
                 assert audit["final_request_evidence_coverage"]["tool_schema_registry_coverage"]["arg_aliases_present"]
-                intent = next(slot for slot in audit["final_request_evidence_coverage"]["evidence_slots"]
-                              if slot["ref_type"] == "pm_raw_intent")
+                intent = next(
+                    slot
+                    for slot in audit["final_request_evidence_coverage"]["evidence_slots"]
+                    if slot["ref_type"] == "pm_raw_intent"
+                )
                 assert intent["present"] and intent["details"]["source_fact_schema"] == "factory.event_chain.v1"
                 snapshots.append({"context_snapshot_ref": path.name, "snapshot": snapshot})
-    assert {s["snapshot"]["provider_request"]["factory_final_request"]["request_identity"]["call_id"] for s in snapshots} == {f.identity.call_id for f in freezes}
+    assert {
+        s["snapshot"]["provider_request"]["factory_final_request"]["request_identity"]["call_id"] for s in snapshots
+    } == {f.identity.call_id for f in freezes}
     (tmp_path / "pol77-final-request-snapshots.json").write_text(
         jsonlib.dumps(snapshots, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -266,11 +404,17 @@ async def test_pol77_exact_raw10_one_legal_revision_through_real_budget_guard(tm
         assert result["tasks_created"] == 0
         assert adapter.task_runtime.list_observable_task_rows() == []
         if revision.startswith("root_"):
-            signal = next(s for s in result["quality_gate"]["signals"] if s["code"] == "pm.contracts.revision_derivation")
+            signal = next(
+                s for s in result["quality_gate"]["signals"] if s["code"] == "pm.contracts.revision_derivation"
+            )
             evidence = jsonlib.loads(Path(signal["artifact_path"]).read_text(encoding="utf-8"))
-            required = {"root_noop": "artifact_action_contract_invalid", "root_hidden": "pm_revision_invalid",
-                        "root_wrong_input": "generated_output_input_invalid", "root_foreign_language": "pm_plan_language_mismatch",
-                        "root_remove": "pm_revision_invalid"}[revision]
+            required = {
+                "root_noop": "artifact_action_contract_invalid",
+                "root_hidden": "pm_revision_invalid",
+                "root_wrong_input": "generated_output_input_invalid",
+                "root_foreign_language": "pm_plan_language_mismatch",
+                "root_remove": "pm_revision_invalid",
+            }[revision]
             assert required in {d["code"] for d in evidence["quality"]["contract_diagnostics"]}
             if revision in {"root_hidden", "root_remove"}:
                 assert evidence["raw_merged_candidate"] is None
@@ -282,6 +426,7 @@ async def test_pol77_exact_raw10_one_legal_revision_through_real_budget_guard(tm
     original = jsonlib.loads(raw)["tasks"]
     if revision == "root_legal":
         from copy import deepcopy
+
         expected = {"tasks": deepcopy(original)}
         by_id = {t["id"]: t for t in expected["tasks"]}
         patch = jsonlib.loads(_pol77_model_revision(wires[1], root_template=True)["content"])

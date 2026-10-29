@@ -88,7 +88,10 @@ async def turn_session_scope(
     ledger = TurnLedger(turn_id=turn_id)
     if controller.config.session_id:
         from polaris.cells.roles.kernel.internal.transaction.continuation_evidence import capture_task_source_state
-        ledger.source_state_before = capture_task_source_state(controller.config.workspace, controller.config.source_targets)
+
+        ledger.source_state_before = capture_task_source_state(
+            controller.config.workspace, controller.config.source_targets
+        )
     # FIX-20250422: Restore session-level PhaseManager so phase survives across turns
     if controller._session_phase_manager is not None:
         _restored_phase = controller._session_phase_manager.current_phase.value

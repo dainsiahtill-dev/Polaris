@@ -121,7 +121,9 @@ def canonical_settle_owner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> d
         OrchestrationStageExecutor, "_factory_role_evidence_cutoff_port", staticmethod(lambda _context: unit_port)
     )
     monkeypatch.setattr(
-        OrchestrationStageExecutor, "_call_with_factory_role_evidence_authority", staticmethod(unavailable_provider_scope)
+        OrchestrationStageExecutor,
+        "_call_with_factory_role_evidence_authority",
+        staticmethod(unavailable_provider_scope),
     )
     return owner
 

@@ -73,9 +73,6 @@ from polaris.cells.roles.runtime.public import (
     service as runtime_service,
 )
 from polaris.cells.roles.runtime.public.contracts import (
-    AssembleRoleRuntimeChainCommandV1,
-    ExecuteRoleCapabilityInvocationCommandV1,
-    ExecuteRoleTaskMarketLifecycleCommandV1,
     InstantiateRoleRuntimeObjectCommandV1,
     RoleAssetMount,
     RoleAssetMountTable,
@@ -89,23 +86,16 @@ from polaris.cells.roles.runtime.public.contracts import (
     RoleIdentity,
     RoleLedgerBinding,
     RoleProfileBinding,
-    RoleRuntimeChainAssemblyResultV1,
-    RoleRuntimeChainEnvelope,
     RoleRuntimeChainStepRef,
     RoleRuntimeObject,
     RoleRuntimeObjectResultV1,
     RoleStateCommitReceipt,
     RoleStateCommitRequest,
     RoleTaskMarketBinding,
-    RoleTaskMarketLifecycleResultV1,
     RoleTurnContext,
     RoleTurnEnvelope,
 )
 from polaris.cells.roles.runtime.public.service import (
-    assemble_role_runtime_chain,
-    commit_role_state,
-    execute_role_capability_invocation,
-    execute_role_task_market_lifecycle,
     instantiate_role_runtime_object,
 )
 from polaris.cells.roles.runtime.public.tests._object_contract_fixtures import (
@@ -823,10 +813,6 @@ def _profile_binding(role_id: str = "pm") -> RoleProfileBinding:
         data_policy_ref=f"roles.profile:{role_id}:data_policy",
         profile_fingerprint="profile-fp",
     )
-
-
-
-
 
 
 def test_profile_binding_rejects_non_profile_owner_cell() -> None:

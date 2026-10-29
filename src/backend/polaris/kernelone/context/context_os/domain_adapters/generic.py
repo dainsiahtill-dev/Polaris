@@ -284,7 +284,9 @@ class GenericContextDomainAdapter(ContextDomainAdapter):
             mime_type=_guess_mime(event.content),
             token_count=_estimate_tokens(event.content),
             char_count=len(event.content),
-            peek=model_proposal_reference(event.content, event.metadata) if proposal else _trim_text(event.content, max_chars=180),
+            peek=model_proposal_reference(event.content, event.metadata)
+            if proposal
+            else _trim_text(event.content, max_chars=180),
             keys=() if proposal else _extract_json_keys(event.content),
             content=event.content,
             source_event_ids=(event.event_id,),

@@ -7,18 +7,18 @@ Implementation lives in domain modules + common helpers + constants.
 
 from __future__ import annotations
 
-from .constants import *  # noqa: F403
 from .common import *  # noqa: F403
-from .object_literals import *  # noqa: F403
-from .nullability import *  # noqa: F403
-from .imports_exports import *  # noqa: F403
-from .modules import *  # noqa: F403
-from .members import *  # noqa: F403
 from .config_scaffold import *  # noqa: F403
-from .html_dom import *  # noqa: F403
-from .type_shapes import *  # noqa: F403
-from .text_repairs import *  # noqa: F403
+from .constants import *  # noqa: F403
 from .dispatch import *  # noqa: F403
+from .html_dom import *  # noqa: F403
+from .imports_exports import *  # noqa: F403
+from .members import *  # noqa: F403
+from .modules import *  # noqa: F403
+from .nullability import *  # noqa: F403
+from .object_literals import *  # noqa: F403
+from .text_repairs import *  # noqa: F403
+from .type_shapes import *  # noqa: F403
 
 __all__ = (
     "HTML_TYPESCRIPT_MODULE_SCRIPT_SOURCE_TOOL",
@@ -53,6 +53,7 @@ __all__ = (
     "TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL",
     "TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL",
     "TYPESCRIPT_MISSING_RELATIVE_MODULE_SOURCE_TOOL",
+    "TYPESCRIPT_NONFINITE_ALTITUDE_GUARD_SOURCE_TOOL",
     "TYPESCRIPT_NULLABLE_CANVAS_CONTEXT_SOURCE_TOOL",
     "TYPESCRIPT_NUMBER_PROPERTY_CALL_SOURCE_TOOL",
     "TYPESCRIPT_NUMBER_TO_STRING_ARGUMENT_SOURCE_TOOL",
@@ -61,7 +62,6 @@ __all__ = (
     "TYPESCRIPT_PARAM_OBJECT_PROPERTY_SOURCE_TOOL",
     "TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL",
     "TYPESCRIPT_PRIVATE_PROPERTY_ACCESS_SOURCE_TOOL",
-    "TYPESCRIPT_NONFINITE_ALTITUDE_GUARD_SOURCE_TOOL",
     "TYPESCRIPT_READONLY_ARRAY_MUTATION_SOURCE_TOOL",
     "TYPESCRIPT_READONLY_ASSIGNMENT_SOURCE_TOOL",
     "TYPESCRIPT_REEXPORTED_TYPE_BINDING_SOURCE_TOOL",

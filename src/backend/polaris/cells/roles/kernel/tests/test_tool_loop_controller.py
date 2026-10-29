@@ -111,10 +111,7 @@ class TestToolLoopController:
         mock_request.task_id = "task-1"
         mock_request.context_override = {
             "context_os_snapshot": {
-                "transcript_log": [
-                    {"role": "tool", "content": failure, "sequence": index}
-                    for index in range(6)
-                ]
+                "transcript_log": [{"role": "tool", "content": failure, "sequence": index} for index in range(6)]
                 + [{"role": "user", "content": "continue", "sequence": 6}],
                 "working_state": {},
             }

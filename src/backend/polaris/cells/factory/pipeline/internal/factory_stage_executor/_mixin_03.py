@@ -531,7 +531,11 @@ class _Mixin03:
         owner_target_files: list[str] | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         exact_owner = context.get("_factory_qa_repair_owner_task_id")
-        executor = qa_recovery.ExactQaOwnerExecutor(self, exact_owner) if isinstance(exact_owner, str) and exact_owner else self
+        executor = (
+            qa_recovery.ExactQaOwnerExecutor(self, exact_owner)
+            if isinstance(exact_owner, str) and exact_owner
+            else self
+        )
         # This diagnostic branch has no role child or provider send. Return it
         # here rather than checking, then delegating an unbound implementation
         # that could observe new source files on its second read.
@@ -1051,7 +1055,11 @@ class _Mixin03:
         return metadata
 
     def _qa_delivery_targets(
-        self, pm_tasks: list[dict[str, Any]], *, run_id: str, required_only: bool = False,
+        self,
+        pm_tasks: list[dict[str, Any]],
+        *,
+        run_id: str,
+        required_only: bool = False,
     ) -> list[str]:
         """Read same-run CE artifact ownership when PM delegates technical topology."""
         from polaris.cells.chief_engineer.blueprint.public import (
@@ -1180,9 +1188,13 @@ class _Mixin03:
             *(qa_payload.get("warnings") or []),
         ]
         findings = tuple(str(item).strip() for item in raw_findings if str(item).strip())
-        target_files = tuple(self._qa_delivery_targets(
-            self._load_pm_plan_tasks("tasks/plan.json"), run_id=run.id, required_only=True,
-        ))
+        target_files = tuple(
+            self._qa_delivery_targets(
+                self._load_pm_plan_tasks("tasks/plan.json"),
+                run_id=run.id,
+                required_only=True,
+            )
+        )
         # QA publishes report evidence, not a Director workspace mutation.
         # Reuse the exact canonical boundary's committed lineage metadata.
         from polaris.cells.events.fact_stream.public import QueryFactEventsV1, query_fact_events
@@ -1496,10 +1508,19 @@ class _Mixin03:
         return {"success": True, "reconciled_task_ids": reconciled}
 
     async def _repair_qa_role_findings(
-        self, *, run: FactoryRun, context: dict[str, Any], qa_payload: dict[str, Any], report_hash: str,
+        self,
+        *,
+        run: FactoryRun,
+        context: dict[str, Any],
+        qa_payload: dict[str, Any],
+        report_hash: str,
     ) -> qa_recovery.QaRepairReverification | None:
         return await qa_recovery.repair_qa_role_findings(
-            self, run=run, context=context, qa_payload=qa_payload, report_hash=report_hash,
+            self,
+            run=run,
+            context=context,
+            qa_payload=qa_payload,
+            report_hash=report_hash,
         )
 
     async def _execute_quality_gate(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
@@ -1525,20 +1546,30 @@ class _Mixin03:
             previous_findings = findings
             # Reuse the existing nonprogress bound. A real Factory deadline
             # remains the aggregate bound when residuals demonstrably change.
-            if stagnant >= 3 or (self._factory_deadline_remaining_seconds(working) is None and round_number >= _QA_ROLE_REPAIR_MAX_ROUNDS_WITHOUT_DEADLINE):
+            if stagnant >= 3 or (
+                self._factory_deadline_remaining_seconds(working) is None
+                and round_number >= _QA_ROLE_REPAIR_MAX_ROUNDS_WITHOUT_DEADLINE
+            ):
                 return result
             working["_factory_qa_repair_round"] = round_number
             try:
                 proof = await self._repair_qa_role_findings(
-                    run=run, context=working, qa_payload=payload, report_hash=qa_recovery.report_hash(payload),
+                    run=run,
+                    context=working,
+                    qa_payload=payload,
+                    report_hash=qa_recovery.report_hash(payload),
                 )
             except (OSError, RuntimeError, TypeError, ValueError) as exc:
                 return self._build_quality_gate_failure_stage(
-                    run, reason_code="factory_quality_gate_qa_owned_repair_rejected",
-                    detail=f"QA exact-owner repair failed closed: {type(exc).__name__}: {exc}", context=working,
+                    run,
+                    reason_code="factory_quality_gate_qa_owned_repair_rejected",
+                    detail=f"QA exact-owner repair failed closed: {type(exc).__name__}: {exc}",
+                    context=working,
                     qa_invoked=True,
                 )
-            if not isinstance(proof, qa_recovery.QaRepairReverification) or not proof.matches(str(self.workspace), run.id):
+            if not isinstance(proof, qa_recovery.QaRepairReverification) or not proof.matches(
+                str(self.workspace), run.id
+            ):
                 return result
             working["_factory_qa_reverification"] = proof
             round_number += 1
@@ -1726,29 +1757,39 @@ class _Mixin03:
 
         reverified = context.get("_factory_qa_reverification")
         fresh_reverified_qa = isinstance(reverified, qa_recovery.QaRepairReverification) and reverified.matches(
-            str(self.workspace), run.id,
+            str(self.workspace),
+            run.id,
         )
         preexisting_authority = helpers.evaluate_canonical_factory_authority(
             self._canonical_factory_projection(run, context)
         )
-        if qa_invoked and (fresh_reverified_qa or (report_ready and qa_payload and not preexisting_authority.qa_verdict_present)):
+        if qa_invoked and (
+            fresh_reverified_qa or (report_ready and qa_payload and not preexisting_authority.qa_verdict_present)
+        ):
             stale_report = (
-                not qa_payload or qa_report_path.read_bytes() == prior_report_bytes
+                not qa_payload
+                or qa_report_path.read_bytes() == prior_report_bytes
                 or (fresh_reverified_qa and qa_recovery.report_hash(qa_payload) == reverified.report_hash)
             )
             identity_error = await qa_recovery.qa_report_identity_error(
-                qa_payload, workspace=str(self.workspace), factory_run_id=run.id,
+                qa_payload,
+                workspace=str(self.workspace),
+                factory_run_id=run.id,
                 review_run_id=str(final_result.run_id or ""),
             )
             if stale_report or identity_error:
                 return self._build_quality_gate_failure_stage(
-                    run, reason_code=(
+                    run,
+                    reason_code=(
                         "factory_quality_gate_qa_report_stale_or_foreign_after_repair"
-                        if fresh_reverified_qa else "factory_quality_gate_qa_report_stale_or_foreign_before_commit"
+                        if fresh_reverified_qa
+                        else "factory_quality_gate_qa_report_stale_or_foreign_before_commit"
                     ),
                     detail=f"Fresh independent QA report is stale or foreign: {identity_error or 'stale_report'}",
-                    context=context, workspace_checks_artifact=workspace_checks_artifact,
-                    workspace_checks_passed=workspace_checks_passed, qa_invoked=qa_invoked,
+                    context=context,
+                    workspace_checks_artifact=workspace_checks_artifact,
+                    workspace_checks_passed=workspace_checks_passed,
+                    qa_invoked=qa_invoked,
                 )
 
         qa_commit: dict[str, Any] = {"success": False, "reason": "qa_role_report_unavailable"}

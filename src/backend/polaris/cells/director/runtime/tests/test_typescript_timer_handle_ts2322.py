@@ -10,10 +10,7 @@ from polaris.cells.director.runtime.internal.repair_kernel import (
     runtime_repair_bindings,
 )
 
-DIAGNOSTIC = (
-    "src/render/gardenCanvas.ts(8,7): error TS2322: "
-    "Type 'Timeout' is not assignable to type 'number'."
-)
+DIAGNOSTIC = "src/render/gardenCanvas.ts(8,7): error TS2322: Type 'Timeout' is not assignable to type 'number'."
 
 
 def _browser_source() -> str:

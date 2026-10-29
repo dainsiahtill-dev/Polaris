@@ -29,8 +29,11 @@ def preflight_summary() -> dict:
             "session_turn_commit_receipts": [],
             "tool_results": [],
             "batch_receipt": {
-                "batch_receipts": [], "results": [], "success_count": 0,
-                "failure_count": 0, "projection_only": True,
+                "batch_receipts": [],
+                "results": [],
+                "success_count": 0,
+                "failure_count": 0,
+                "projection_only": True,
             },
         },
     }
@@ -40,17 +43,27 @@ def test_native_preflight_authority_failure_preserves_owner(tmp_path: Path) -> N
     adapter = _make_adapter(tmp_path)
     result = _phase_no_materialized_changes(
         adapter,
-        baseline_files={}, board_claim_applied=False,
-        can_accept_existing_scope=False, context={},
-        direct_fallback_summary=None, empty_write_content_retry_summary=None,
+        baseline_files={},
+        board_claim_applied=False,
+        can_accept_existing_scope=False,
+        context={},
+        direct_fallback_summary=None,
+        empty_write_content_retry_summary=None,
         no_write_materialization_retry_summary=None,
         existing_contract_evidence={"ok": False},
-        primary_llm_summary=preflight_summary(), requires_fresh_materialization=True,
-        run_id="director-preflight", target_task_id="1",
-        task={"target_files": ["src/index.ts"]}, task_claim_session_id="",
-        workspace_name=tmp_path.name, write_tool_evidence=False,
+        primary_llm_summary=preflight_summary(),
+        requires_fresh_materialization=True,
+        run_id="director-preflight",
+        target_task_id="1",
+        task={"target_files": ["src/index.ts"]},
+        task_claim_session_id="",
+        workspace_name=tmp_path.name,
+        write_tool_evidence=False,
         state=MaterializationState(
-            current_files={}, new_files=[], modified_files=[], all_affected_files=[],
+            current_files={},
+            new_files=[],
+            modified_files=[],
+            all_affected_files=[],
             tool_results=[{"tool": "deterministic_repair_summary", "success": True, "files": []}],
         ),
     )
@@ -65,7 +78,8 @@ def test_native_preflight_authority_failure_preserves_owner(tmp_path: Path) -> N
 
 @pytest.mark.parametrize("change", ["one_turn", "one_call", "different_reason"])
 def test_authority_words_without_exact_zero_turn_preflight_are_not_reclassified(
-    tmp_path: Path, change: str,
+    tmp_path: Path,
+    change: str,
 ) -> None:
     from polaris.cells.roles.adapters.internal.director.execute_method._phases_failure import (
         _primary_llm_provider_failure_payload,

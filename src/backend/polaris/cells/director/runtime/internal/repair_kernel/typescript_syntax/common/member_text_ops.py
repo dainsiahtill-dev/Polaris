@@ -1,23 +1,18 @@
 from __future__ import annotations
 
 import json
-import posixpath
 import re
 from collections.abc import Mapping, Sequence
-from difflib import SequenceMatcher
-from pathlib import PurePosixPath
-from typing import Any
 
-from ...contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
-from ...javascript_syntax import repair_javascript_export_contract_placeholders
-from ...path_files import normalize_base_files_strict, normalize_repair_path_strict
+from ...contracts import RepairDiagnostic, RepairOperation, sha256_text
 from ..constants import *  # noqa: F403
+from .misc_ops import *  # noqa: F403
+from .parse_ops import *  # noqa: F403
 from .path_ops import *  # noqa: F403
 from .plan_ops import *  # noqa: F403
-from .parse_ops import *  # noqa: F403
-from .misc_ops import *  # noqa: F403
 
 """Shared TypeScript repair helpers: member_text_ops."""
+
 
 def _typescript_enum_has_runtime_member_access(
     *,
@@ -35,6 +30,7 @@ def _typescript_enum_has_runtime_member_access(
             return True
     return False
 
+
 def _parse_typescript_missing_member_errors(diagnostics: Sequence[RepairDiagnostic]) -> list[dict[str, str]]:
     parsed: list[dict[str, str]] = []
     for diagnostic in diagnostics:
@@ -48,6 +44,7 @@ def _parse_typescript_missing_member_errors(diagnostics: Sequence[RepairDiagnost
                 }
             )
     return [item for item in parsed if item["file"] and item["member"]]
+
 
 def _parse_typescript_object_missing_member_errors(diagnostics: Sequence[RepairDiagnostic]) -> list[dict[str, str]]:
     parsed: list[dict[str, str]] = []
@@ -77,6 +74,7 @@ def _parse_typescript_object_missing_member_errors(diagnostics: Sequence[RepairD
                 }
             )
     return [item for item in parsed if item["file"] and item["member"] and item["type"]]
+
 
 def _typescript_object_literal_missing_member_operations(
     *,
@@ -130,9 +128,11 @@ def _typescript_object_literal_missing_member_operations(
             operations.append(property_operation)
     return tuple(operations)
 
+
 def _typescript_declaration_type_name(raw: str) -> str:
     match = re.search(r"[A-Za-z_$][A-Za-z0-9_$]*", str(raw or ""))
     return str(match.group(0) if match else "")
+
 
 def _typescript_inline_object_missing_member_operations(
     *,
@@ -177,6 +177,7 @@ def _typescript_inline_object_missing_member_operations(
             operations.append(literal_operation)
     return tuple(operations), members
 
+
 def _typescript_inline_object_shape_members(raw_type: str) -> dict[str, str]:
     text = str(raw_type or "").strip()
     if not text.startswith("{") or not text.endswith("}"):
@@ -193,6 +194,7 @@ def _typescript_inline_object_shape_members(raw_type: str) -> dict[str, str]:
         if name and ts_type:
             members[name] = ts_type
     return members
+
 
 def _typescript_inline_object_type_member_operation(
     *,
@@ -223,6 +225,7 @@ def _typescript_inline_object_type_member_operation(
                 return operation
     return None
 
+
 def _typescript_inline_array_object_type_braces(content: str) -> tuple[int, ...]:
     starts: list[int] = []
     for match in re.finditer(r"\b(?:ReadonlyArray|Array)\s*<\s*\{", str(content or "")):
@@ -232,6 +235,7 @@ def _typescript_inline_array_object_type_braces(content: str) -> tuple[int, ...]
             if close_brace >= 0 and str(content or "")[close_brace + 1 :].lstrip().startswith(">"):
                 starts.append(open_brace)
     return tuple(starts)
+
 
 def _typescript_inline_object_literal_member_operation(
     *,
@@ -268,6 +272,7 @@ def _typescript_inline_object_literal_member_operation(
                 return operation
     return None
 
+
 def _typescript_object_literal_member_names(body: str) -> set[str]:
     names: set[str] = set()
     depth = 0
@@ -278,6 +283,7 @@ def _typescript_object_literal_member_names(body: str) -> set[str]:
         if depth < 0:
             depth = 0
     return names
+
 
 def _typescript_insert_object_member_operation(
     *,
@@ -315,6 +321,7 @@ def _typescript_insert_object_member_operation(
         },
     )
 
+
 def _typescript_member_insert_indent(body: str, *, fallback: str) -> str:
     for line in reversed(str(body or "").splitlines()):
         if not line.strip():
@@ -323,9 +330,11 @@ def _typescript_member_insert_indent(body: str, *, fallback: str) -> str:
         return indent_match.group(0) if indent_match else fallback
     return fallback
 
+
 def _typescript_receiver_for_member_access(line: str, member: str) -> str:
     match = re.search(rf"\b(?P<receiver>[A-Za-z_$][\w$]*!?)\s*\.\s*{re.escape(member)}\b", str(line or ""))
     return str(match.group("receiver") if match else "")
+
 
 def _typescript_type_declaration_body(content: str, type_name: str) -> str:
     """Return the brace-balanced body of a class/interface declaration.
@@ -356,6 +365,7 @@ def _typescript_type_declaration_body(content: str, type_name: str) -> str:
             if depth == 0:
                 return text[start:index]
     return ""
+
 
 def _typescript_existing_member_names_for_type(
     *,
@@ -400,6 +410,7 @@ def _typescript_existing_member_names_for_type(
                 members.add(name)
     return members
 
+
 def _typescript_method_delegate_specs(
     *,
     content: str,
@@ -429,6 +440,7 @@ def _typescript_method_delegate_specs(
         }
     return specs
 
+
 def _typescript_normalized_parameter_list(params: str) -> str:
     normalized: list[str] = []
     for raw in str(params or "").split(","):
@@ -442,6 +454,7 @@ def _typescript_normalized_parameter_list(params: str) -> str:
         normalized.append(part)
     return ", ".join(normalized)
 
+
 def _typescript_parameter_argument_list(params: str) -> str:
     args: list[str] = []
     for raw in str(params or "").split(","):
@@ -450,6 +463,7 @@ def _typescript_parameter_argument_list(params: str) -> str:
             return ""
         args.append(name)
     return ", ".join(args)
+
 
 def _typescript_interface_method_return_operations(
     *,
@@ -495,6 +509,7 @@ def _typescript_interface_method_return_operations(
             )
         )
     return tuple(operations)
+
 
 def _typescript_object_literal_method_implementation_operation(
     *,
@@ -559,6 +574,7 @@ def _typescript_object_literal_method_implementation_operation(
         },
     )
 
+
 def _typescript_object_literal_required_properties_operation(
     *,
     base_files: Mapping[str, str],
@@ -612,6 +628,7 @@ def _typescript_object_literal_required_properties_operation(
         },
     )
 
+
 def _typescript_declared_member_types_for_type(*, base_files: Mapping[str, str], type_name: str) -> dict[str, str]:
     if not _TS_IDENTIFIER_RE.fullmatch(type_name):
         return {}
@@ -638,6 +655,7 @@ def _typescript_declared_member_types_for_type(*, base_files: Mapping[str, str],
             if _TS_IDENTIFIER_RE.fullmatch(name) and ts_type:
                 member_types[name] = ts_type
     return member_types
+
 
 def _typescript_object_literal_bounds_near_line(
     *,
@@ -668,10 +686,12 @@ def _typescript_object_literal_bounds_near_line(
         return (open_brace + 1, close_line_start, close_indent)
     return None
 
+
 def _typescript_line_invokes_constructor(line: str, class_name: str) -> bool:
     if not _TS_IDENTIFIER_RE.fullmatch(class_name):
         return False
     return bool(re.search(rf"\bnew\s+{re.escape(class_name)}\s*\(", str(line or "")))
+
 
 def _typescript_safe_structural_member_type(ts_type: str) -> bool:
     normalized = " ".join(str(ts_type or "").strip().split())
@@ -689,6 +709,7 @@ def _typescript_safe_structural_member_type(ts_type: str) -> bool:
     if re.fullmatch(r"(?:readonly\s+)?[A-Za-z_$][A-Za-z0-9_$]*(?:\[\])+", normalized):
         return True
     return bool(re.fullmatch(r"(?:\"[^\"]+\"|'[^']+')(?:\s*\|\s*(?:\"[^\"]+\"|'[^']+'))*", normalized))
+
 
 def _typescript_default_value_for_required_property_type(ts_type: str) -> str:
     normalized = " ".join(str(ts_type or "").strip().split())
@@ -710,8 +731,10 @@ def _typescript_default_value_for_required_property_type(ts_type: str) -> str:
     default_value = _typescript_default_value_for_type(normalized)
     return default_value if default_value != "undefined" else ""
 
+
 def _typescript_symbol_is_constructed(text: str, symbol: str) -> bool:
     return bool(re.search(rf"\bnew\s+{re.escape(symbol)}\s*\(", str(text or "")))
+
 
 def _typescript_symbol_has_named_constructor_binding(text: str, symbol: str) -> bool:
     token = str(text or "")
@@ -727,6 +750,7 @@ def _typescript_symbol_has_named_constructor_binding(text: str, symbol: str) -> 
         )
     )
 
+
 def _typescript_symbol_has_field_constructor_binding(text: str, symbol: str) -> bool:
     """True when ``this.field = new Symbol(...)`` or typed field is assigned."""
 
@@ -740,6 +764,7 @@ def _typescript_symbol_has_field_constructor_binding(text: str, symbol: str) -> 
         )
     )
 
+
 def _typescript_methods_used_on_constructed_symbol(text: str, symbol: str) -> list[str]:
     token = str(text or "")
     variables: list[str] = []
@@ -749,9 +774,7 @@ def _typescript_methods_used_on_constructed_symbol(text: str, symbol: str) -> li
     for match in constructed_var_re.finditer(token):
         variables.append(str(match.group("name") or ""))
     # Field assignment: this.scene = new GardenScene(...)
-    field_re = re.compile(
-        rf"\bthis\.(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*new\s+{re.escape(symbol)}\s*\("
-    )
+    field_re = re.compile(rf"\bthis\.(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*new\s+{re.escape(symbol)}\s*\(")
     for match in field_re.finditer(token):
         variables.append(str(match.group("name") or ""))
     # Typed field receivers: private readonly scene: GardenScene;
@@ -770,18 +793,18 @@ def _typescript_methods_used_on_constructed_symbol(text: str, symbol: str) -> li
             token,
         ):
             methods.append(str(match.group("method") or ""))
-    direct_re = re.compile(
-        rf"\bnew\s+{re.escape(symbol)}\s*\([^)]*\)\s*\.\s*(?P<method>[A-Za-z_$][A-Za-z0-9_$]*)\s*\("
-    )
+    direct_re = re.compile(rf"\bnew\s+{re.escape(symbol)}\s*\([^)]*\)\s*\.\s*(?P<method>[A-Za-z_$][A-Za-z0-9_$]*)\s*\(")
     for match in direct_re.finditer(token):
         methods.append(str(match.group("method") or ""))
     return _dedupe_preserve_order([method for method in methods if method and method != "constructor"])
+
 
 def _typescript_line_at(text: str, line_number: int) -> str:
     lines = str(text or "").splitlines()
     if line_number <= 0 or line_number > len(lines):
         return ""
     return lines[line_number - 1]
+
 
 def _typescript_member_usage_is_call(text: str, line_number: int, member: str) -> bool:
     line = _typescript_line_at(text, line_number)
@@ -793,6 +816,7 @@ def _typescript_member_usage_is_call(text: str, line_number: int, member: str) -
         )
     )
 
+
 def _typescript_missing_member_declared_type(text: str, line_number: int, member: str, *, member_is_call: bool) -> str:
     line = _typescript_line_at(text, line_number)
     if member_is_call:
@@ -801,6 +825,7 @@ def _typescript_missing_member_declared_type(text: str, line_number: int, member
             return "any"
         return "number"
     return _typescript_usage_compatible_member_type(line, member) or "unknown"
+
 
 def _typescript_usage_compatible_member_type(usage_line: str, member: str) -> str:
     if not _TS_IDENTIFIER_RE.fullmatch(member):
@@ -830,6 +855,7 @@ def _typescript_usage_compatible_member_type(usage_line: str, member: str) -> st
         return "string"
     return ""
 
+
 def _typescript_member_name_suggests_string(member: str) -> bool:
     lowered = str(member or "").lower()
     return lowered in {
@@ -845,9 +871,11 @@ def _typescript_member_name_suggests_string(member: str) -> bool:
         "colour",
     } or lowered.endswith(("id", "key", "name", "title", "label", "slug", "type", "status", "color", "colour"))
 
+
 def _typescript_member_name_strongly_suggests_string(member: str) -> bool:
     lowered = str(member or "").lower()
     return lowered in {"color", "colour"} or lowered.endswith(("color", "colour"))
+
 
 def _typescript_member_name_suggests_number(member: str) -> bool:
     lowered = str(member or "").lower()
@@ -896,6 +924,7 @@ def _typescript_member_name_suggests_number(member: str) -> bool:
         )
     )
 
+
 def _add_typescript_member_operation(
     *,
     base_files: Mapping[str, str],
@@ -930,6 +959,7 @@ def _add_typescript_member_operation(
             },
         )
     return None
+
 
 def _add_typescript_members_operation(
     *,
@@ -985,8 +1015,7 @@ def _add_typescript_members_operation(
                 else:
                     default_value = _typescript_default_value_for_required_property_type(return_type)
                 declarations.append(
-                    f"\n  public {member}(..._args: unknown[]): {return_type} {{"
-                    f"\n    return {default_value};\n  }}"
+                    f"\n  public {member}(..._args: unknown[]): {return_type} {{\n    return {default_value};\n  }}"
                 )
             elif is_class:
                 declarations.append(
@@ -1020,6 +1049,7 @@ def _add_typescript_members_operation(
         )
     return None
 
+
 def _order_type_declaration_paths_for_usage(
     *,
     base_files: Mapping[str, str],
@@ -1048,9 +1078,14 @@ def _order_type_declaration_paths_for_usage(
             if resolved and resolved in declaring and resolved not in preferred:
                 preferred.append(resolved)
     rest = [path for path in declaring if path not in preferred]
+
     # Prefer incomplete stubs (few members) over full implementations when usage imports them.
     def _member_count(path: str) -> int:
-        return len(_typescript_existing_member_names_for_type(base_files={path: str(base_files.get(path) or "")}, type_name=type_name))
+        return len(
+            _typescript_existing_member_names_for_type(
+                base_files={path: str(base_files.get(path) or "")}, type_name=type_name
+            )
+        )
 
     preferred.sort(key=_member_count)
     rest.sort(key=_member_count)
@@ -1060,6 +1095,7 @@ def _order_type_declaration_paths_for_usage(
         if path not in ordered:
             ordered.append(path)
     return ordered
+
 
 def _typescript_constructor_default_arguments(class_text: str) -> str:
     match = re.search(r"\bconstructor\s*\((?P<params>[^)]*)\)", str(class_text or ""), re.DOTALL)
@@ -1075,6 +1111,7 @@ def _typescript_constructor_default_arguments(class_text: str) -> str:
         default_value = _typescript_default_value_for_required_property_type(param_type)
         defaults.append(default_value if default_value else "undefined")
     return ", ".join(defaults)
+
 
 def _typescript_type_value_dot_member(
     *,
@@ -1103,47 +1140,47 @@ def _typescript_type_value_dot_member(
 
 
 __all__ = (
-    "_typescript_enum_has_runtime_member_access",
-    "_parse_typescript_missing_member_errors",
-    "_parse_typescript_object_missing_member_errors",
-    "_typescript_object_literal_missing_member_operations",
-    "_typescript_declaration_type_name",
-    "_typescript_inline_object_missing_member_operations",
-    "_typescript_inline_object_shape_members",
-    "_typescript_inline_object_type_member_operation",
-    "_typescript_inline_array_object_type_braces",
-    "_typescript_inline_object_literal_member_operation",
-    "_typescript_object_literal_member_names",
-    "_typescript_insert_object_member_operation",
-    "_typescript_member_insert_indent",
-    "_typescript_receiver_for_member_access",
-    "_typescript_type_declaration_body",
-    "_typescript_existing_member_names_for_type",
-    "_typescript_method_delegate_specs",
-    "_typescript_normalized_parameter_list",
-    "_typescript_parameter_argument_list",
-    "_typescript_interface_method_return_operations",
-    "_typescript_object_literal_method_implementation_operation",
-    "_typescript_object_literal_required_properties_operation",
-    "_typescript_declared_member_types_for_type",
-    "_typescript_object_literal_bounds_near_line",
-    "_typescript_line_invokes_constructor",
-    "_typescript_safe_structural_member_type",
-    "_typescript_default_value_for_required_property_type",
-    "_typescript_symbol_is_constructed",
-    "_typescript_symbol_has_named_constructor_binding",
-    "_typescript_symbol_has_field_constructor_binding",
-    "_typescript_methods_used_on_constructed_symbol",
-    "_typescript_line_at",
-    "_typescript_member_usage_is_call",
-    "_typescript_missing_member_declared_type",
-    "_typescript_usage_compatible_member_type",
-    "_typescript_member_name_suggests_string",
-    "_typescript_member_name_strongly_suggests_string",
-    "_typescript_member_name_suggests_number",
     "_add_typescript_member_operation",
     "_add_typescript_members_operation",
     "_order_type_declaration_paths_for_usage",
+    "_parse_typescript_missing_member_errors",
+    "_parse_typescript_object_missing_member_errors",
     "_typescript_constructor_default_arguments",
+    "_typescript_declaration_type_name",
+    "_typescript_declared_member_types_for_type",
+    "_typescript_default_value_for_required_property_type",
+    "_typescript_enum_has_runtime_member_access",
+    "_typescript_existing_member_names_for_type",
+    "_typescript_inline_array_object_type_braces",
+    "_typescript_inline_object_literal_member_operation",
+    "_typescript_inline_object_missing_member_operations",
+    "_typescript_inline_object_shape_members",
+    "_typescript_inline_object_type_member_operation",
+    "_typescript_insert_object_member_operation",
+    "_typescript_interface_method_return_operations",
+    "_typescript_line_at",
+    "_typescript_line_invokes_constructor",
+    "_typescript_member_insert_indent",
+    "_typescript_member_name_strongly_suggests_string",
+    "_typescript_member_name_suggests_number",
+    "_typescript_member_name_suggests_string",
+    "_typescript_member_usage_is_call",
+    "_typescript_method_delegate_specs",
+    "_typescript_methods_used_on_constructed_symbol",
+    "_typescript_missing_member_declared_type",
+    "_typescript_normalized_parameter_list",
+    "_typescript_object_literal_bounds_near_line",
+    "_typescript_object_literal_member_names",
+    "_typescript_object_literal_method_implementation_operation",
+    "_typescript_object_literal_missing_member_operations",
+    "_typescript_object_literal_required_properties_operation",
+    "_typescript_parameter_argument_list",
+    "_typescript_receiver_for_member_access",
+    "_typescript_safe_structural_member_type",
+    "_typescript_symbol_has_field_constructor_binding",
+    "_typescript_symbol_has_named_constructor_binding",
+    "_typescript_symbol_is_constructed",
+    "_typescript_type_declaration_body",
     "_typescript_type_value_dot_member",
+    "_typescript_usage_compatible_member_type",
 )

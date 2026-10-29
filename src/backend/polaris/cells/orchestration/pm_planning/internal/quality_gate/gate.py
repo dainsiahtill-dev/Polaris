@@ -814,23 +814,46 @@ def evaluate_pm_task_quality(
     """
     tasks_raw = normalized.get("tasks")
     tasks: list[Any] = tasks_raw if isinstance(tasks_raw, list) else []
-    if any(isinstance(task, dict) and (
-        task.get("schema_version") == PM_TASK_INTENT_SCHEMA_VERSION or
-        (isinstance(task.get("metadata"), dict) and task["metadata"].get("planning_contract_version") == PM_TASK_INTENT_SCHEMA_VERSION)
-    ) for task in tasks):
+    if any(
+        isinstance(task, dict)
+        and (
+            task.get("schema_version") == PM_TASK_INTENT_SCHEMA_VERSION
+            or (
+                isinstance(task.get("metadata"), dict)
+                and task["metadata"].get("planning_contract_version") == PM_TASK_INTENT_SCHEMA_VERSION
+            )
+        )
+        for task in tasks
+    ):
         try:
             validate_pm_task_intent_tasks(tasks)
             errors: list[dict[str, Any]] = []
             for task in tasks:
-                text = " ".join([task["product_goal"], task["title"], task["goal"], task.get("description", ""),
-                                 *task["required_requirements"], *task["optional_requirements"],
-                                 *task["explicit_constraints"], *task["product_acceptance"], *task["acceptance"]])
+                text = " ".join(
+                    [
+                        task["product_goal"],
+                        task["title"],
+                        task["goal"],
+                        task.get("description", ""),
+                        *task["required_requirements"],
+                        *task["optional_requirements"],
+                        *task["explicit_constraints"],
+                        *task["product_acceptance"],
+                        *task["acceptance"],
+                    ]
+                )
                 # Global product obligations may mention CE/Director scope coverage.
                 # Governance-task classification belongs to the task purpose;
                 # prompt-leakage markers still cover all required semantic text.
                 purpose = " ".join([task["title"], task["goal"], task.get("description", ""), *task["acceptance"]])
                 if _contains_prompt_leakage(text) or _contains_pm_contract_governance_task(purpose):
-                    errors.append({"code": "pm_task_intent_invalid", "path": "$.tasks", "message": "Product tasks contain role/prompt governance leakage"})
+                    errors.append(
+                        {
+                            "code": "pm_task_intent_invalid",
+                            "path": "$.tasks",
+                            "message": "Product tasks contain role/prompt governance leakage",
+                        }
+                    )
         except PmTaskIntentError as exc:
             errors = [exc.diagnostic]
         advisory_diagnostics = [

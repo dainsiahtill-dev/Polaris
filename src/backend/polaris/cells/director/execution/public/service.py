@@ -207,14 +207,11 @@ def _build_execution_contract_audit(metadata: Mapping[str, Any]) -> dict[str, An
 def _director_execution_contract_error(
     audit: Mapping[str, Any],
 ) -> tuple[str, str, dict[str, Any]] | None:
-    missing_required_refs = [
-        str(item) for item in audit.get("missing_required_refs") or [] if str(item).strip()
-    ]
+    missing_required_refs = [str(item) for item in audit.get("missing_required_refs") or [] if str(item).strip()]
     if missing_required_refs:
         return (
             "director_execution_contract_refs_missing",
-            "Director execution contract is missing required refs: "
-            + ", ".join(missing_required_refs),
+            "Director execution contract is missing required refs: " + ", ".join(missing_required_refs),
             {"missing_required_refs": missing_required_refs},
         )
 

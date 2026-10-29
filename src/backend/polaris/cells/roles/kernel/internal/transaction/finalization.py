@@ -179,8 +179,7 @@ class FinalizationHandler:
             provider_task.cancel()
             await asyncio.gather(provider_task, return_exceptions=True)
             _finalization_logger.warning(
-                "finalization_llm_call_cancelled_and_drained: turn_id=%s "
-                "using_receipt_backed_fallback",
+                "finalization_llm_call_cancelled_and_drained: turn_id=%s using_receipt_backed_fallback",
                 decision.get("turn_id"),
             )
             response = {

@@ -530,17 +530,23 @@ def _select_catalog_entries(
     entries: list[EnvironmentPrepCatalogEntry] = []
     for entry in environment_prep_catalog():
         if changed_paths.intersection(entry.manifests) or changed_paths.intersection(entry.lockfiles):
-            if entry.ecosystem == "node" and entry.lockfiles and not _lockfile_available(
-                entry.lockfiles,
-                changed_paths,
-                workspace,
+            if (
+                entry.ecosystem == "node"
+                and entry.lockfiles
+                and not _lockfile_available(
+                    entry.lockfiles,
+                    changed_paths,
+                    workspace,
+                )
             ):
                 continue
             entries.append(entry)
     node_lock_entries = [entry for entry in entries if entry.ecosystem == "node" and entry.lockfiles]
     if node_lock_entries:
         return tuple(
-            entry for entry in entries if entry.ecosystem != "node" or entry.lockfiles or entry.manifests != ("package.json",)
+            entry
+            for entry in entries
+            if entry.ecosystem != "node" or entry.lockfiles or entry.manifests != ("package.json",)
         )
     return tuple(entries)
 

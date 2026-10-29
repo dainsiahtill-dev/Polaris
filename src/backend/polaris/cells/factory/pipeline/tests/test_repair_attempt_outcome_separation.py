@@ -154,6 +154,7 @@ async def test_real_rollover_keeps_immutable_commit_binding_and_rejects_tamperin
     elif attack == "commit_hash":
         rows = deepcopy(rows)
         rows[0]["effect_receipt_commit"]["receipt_hash"] = "a" * 64
+
     def operation() -> Any:
         return inputs.overlay_native_validation_candidate(
             baseline,
@@ -161,6 +162,7 @@ async def test_real_rollover_keeps_immutable_commit_binding_and_rejects_tamperin
             task_completion_projection=_projection(portfolio, contract),
             round_repair_results=rows,
         )
+
     if attack is None:
         candidate = operation()
         assert candidate.input_bytes["src/a.py"] == b"after\n"

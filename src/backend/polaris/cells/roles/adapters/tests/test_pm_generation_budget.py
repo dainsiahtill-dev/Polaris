@@ -140,7 +140,10 @@ def test_initial_and_replacement_share_optional_prose_rule(tmp_path):
         directive=directive, quality={"score": 0}, previous_output="bad", output_budget_tokens=4000
     )
     for message in (initial, retry):
-        assert all(field not in message for field in ("scope_paths", "target_files", "verification_commands", "generated_outputs"))
+        assert all(
+            field not in message
+            for field in ("scope_paths", "target_files", "verification_commands", "generated_outputs")
+        )
         assert "每个任务必须含 goal/scope/steps/acceptance" not in message
         assert directive in message
         assert "不猜路径、命令或生成产物" in message

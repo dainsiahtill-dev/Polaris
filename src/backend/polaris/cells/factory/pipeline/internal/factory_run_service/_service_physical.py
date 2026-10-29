@@ -393,9 +393,7 @@ class _FactoryRunServicePhysicalMixin:
 
         run = await self.store.get_run(run_id)
         stage_results_raw = (
-            run.metadata.get("stage_results")
-            if run is not None and isinstance(run.metadata, Mapping)
-            else None
+            run.metadata.get("stage_results") if run is not None and isinstance(run.metadata, Mapping) else None
         )
         stage_results = stage_results_raw if isinstance(stage_results_raw, Mapping) else {}
         quality_result_raw = stage_results.get("quality_gate")

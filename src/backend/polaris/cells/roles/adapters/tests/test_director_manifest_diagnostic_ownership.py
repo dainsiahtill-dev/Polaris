@@ -119,9 +119,7 @@ def test_serve_repair_request_does_not_direct_changes_to_unrelated_test_script(t
         workspace_full=str(tmp_path),
     )
 
-    manifest_guidance = message.split("NPM PACKAGE MANIFEST REPAIR:", 1)[1].split(
-        "EDIT CONSISTENCY PREFLIGHT", 1
-    )[0]
+    manifest_guidance = message.split("NPM PACKAGE MANIFEST REPAIR:", 1)[1].split("EDIT CONSISTENCY PREFLIGHT", 1)[0]
     assert "Make `npm test`" not in manifest_guidance
     assert "test script" not in manifest_guidance
     assert "scripts/serve.js" in message.split("Quality errors:", 1)[1]

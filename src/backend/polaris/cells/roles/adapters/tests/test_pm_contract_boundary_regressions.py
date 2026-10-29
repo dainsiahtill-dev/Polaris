@@ -650,7 +650,10 @@ async def test_boundary_failure_uses_one_revision_under_real_factory_authority(
     authority = port.mint_authority_binding("pm")
     with bind_factory_role_evidence_authority(authority):
         result = await PMAdapter(workspace=str(workspace))._run_pm_stage(
-            "pm-task", "Create model", {}, {"run_id": "pm-owned-child", "timeout_seconds": 2100, "llm_call_timeout_seconds": 900}
+            "pm-task",
+            "Create model",
+            {},
+            {"run_id": "pm-owned-child", "timeout_seconds": 2100, "llm_call_timeout_seconds": 900},
         )
     assert result["success"] is revision_valid, (result, runtime._test_results)
     assert len(wires) == len(freezes) == len(runtime._test_commands) == 2
@@ -854,7 +857,10 @@ async def test_pol71_complete_candidate_survives_real_revision_wire(
     adapter = PMAdapter(workspace=str(workspace))
     with bind_factory_role_evidence_authority(authority):
         result = await adapter._run_pm_stage(
-            "pm-task", _pol72_input("FACTORY_DIRECTIVE.txt"), {}, {"run_id": "pm-pol71-child", "timeout_seconds": 2100, "llm_call_timeout_seconds": 900}
+            "pm-task",
+            _pol72_input("FACTORY_DIRECTIVE.txt"),
+            {},
+            {"run_id": "pm-pol71-child", "timeout_seconds": 2100, "llm_call_timeout_seconds": 900},
         )
     expected_calls = 1 if first_good else 2
     assert len(wires) == len(freezes) == len(runtime._test_commands) == expected_calls
@@ -1122,7 +1128,7 @@ def test_pol88_captured_parent_conserves_case_sensitive_sources_and_nested_html(
     parent = normalized[1]
     for field in ("goal", "target_files", "verification_commands", "depends_on"):
         assert parent[field] == before[1][field]
-    assert parent["acceptance_criteria"][:len(before[1]["acceptance_criteria"])] == before[1]["acceptance_criteria"]
+    assert parent["acceptance_criteria"][: len(before[1]["acceptance_criteria"])] == before[1]["acceptance_criteria"]
     assert normalized[2]["depends_on"] == ["TASK-2"]
     assert "task_fission" not in quality
     assert quality["ok"] is True
@@ -1193,7 +1199,10 @@ async def test_pol88_captured_html_admitted_without_unnecessary_full_reanswer(
     adapter = PMAdapter(workspace=str(workspace))
     with bind_factory_role_evidence_authority(port.mint_authority_binding("pm")):
         result = await adapter._run_pm_stage(
-            "pm-task", _POL88_DIRECTIVE, {}, {"run_id": "pm-pol88-captured", "timeout_seconds": 2100, "llm_call_timeout_seconds": 900}
+            "pm-task",
+            _POL88_DIRECTIVE,
+            {},
+            {"run_id": "pm-pol88-captured", "timeout_seconds": 2100, "llm_call_timeout_seconds": 900},
         )
     assert len(wires) == len(freezes) == len(runtime._test_commands) == 1
     assert all(wire["max_tokens"] == 60000 for wire in wires)
@@ -1258,9 +1267,7 @@ def test_normalization_keeps_codegen_inputs_bound_to_authored_parent(tmp_path: P
         contracts, directive="TypeScript modules"
     )
     consumer = next(task for task in normalized if task["id"] == "CODEGEN")
-    assert consumer["generated_outputs"][0]["inputs"] == [
-        {"task_id": "BUILD", "path": "src/models/item.ts"}
-    ]
+    assert consumer["generated_outputs"][0]["inputs"] == [{"task_id": "BUILD", "path": "src/models/item.ts"}]
     assert consumer["generated_outputs"][0]["build"] == build
     assert contracts[-1]["generated_outputs"][0]["inputs"][0]["task_id"] == "BUILD"
     assert [task["id"] for task in normalized] == ["BUILD", "CODEGEN"]

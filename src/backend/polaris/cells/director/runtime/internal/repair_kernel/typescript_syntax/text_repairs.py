@@ -1,20 +1,14 @@
 from __future__ import annotations
 
-import json
-import posixpath
 import re
 from collections.abc import Mapping, Sequence
-from difflib import SequenceMatcher
-from pathlib import PurePosixPath
-from typing import Any
 
 from ..contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
-from ..javascript_syntax import repair_javascript_export_contract_placeholders
-from ..path_files import normalize_base_files_strict, normalize_repair_path_strict
-from .constants import *  # noqa: F403
 from .common import *  # noqa: F403
+from .constants import *  # noqa: F403
 
 """TypeScript syntax repair module: text_repairs."""
+
 
 def build_typescript_duplicate_function_plan(
     *,
@@ -70,6 +64,7 @@ def build_typescript_duplicate_function_plan(
         mode=mode,
         metadata={"functions": repaired},
     )
+
 
 def _build_typescript_test_block_residue_plan(
     *,
@@ -140,6 +135,7 @@ def _build_typescript_test_block_residue_plan(
         metadata={"test_block_residue_removals": repaired_items},
     )
 
+
 def _build_typescript_expect_error_placement_plan(
     *,
     base_files: Mapping[str, str],
@@ -187,6 +183,7 @@ def _build_typescript_expect_error_placement_plan(
         metadata={"moved_comments": moved_comments},
     )
 
+
 def _build_typescript_escaped_newline_plan(
     *,
     base_files: Mapping[str, str],
@@ -218,6 +215,7 @@ def _build_typescript_escaped_newline_plan(
         metadata={"files": repaired_files},
     )
 
+
 def _parse_typescript_escaped_newline_paths(diagnostics: Sequence[RepairDiagnostic]) -> list[str]:
     paths: list[str] = []
     for diagnostic in diagnostics:
@@ -232,6 +230,7 @@ def _parse_typescript_escaped_newline_paths(diagnostics: Sequence[RepairDiagnost
                 paths.append(path)
     return _dedupe_preserve_order(paths)
 
+
 def _typed_typescript_escaped_newline_path(diagnostic: RepairDiagnostic) -> str:
     path = _normalize_repair_path(str(diagnostic.path or ""))
     if not path:
@@ -243,6 +242,7 @@ def _typed_typescript_escaped_newline_path(diagnostic: RepairDiagnostic) -> str:
     if "escaped_newline" in metadata_kind:
         return path
     return ""
+
 
 def repair_typescript_escaped_newline_in_line_comments(text: str) -> str:
     changed = False
@@ -265,6 +265,7 @@ def repair_typescript_escaped_newline_in_line_comments(text: str) -> str:
             f"{prefix}{_TS_LINE_COMMENT_ESCAPED_NEWLINE_CODE_RE.sub(replace, line_body[comment_index:])}{newline}"
         )
     return "".join(repaired_lines) if changed else str(text or "")
+
 
 def _parse_duplicate_function_targets(
     diagnostics: Sequence[RepairDiagnostic],
@@ -302,6 +303,7 @@ def _parse_duplicate_function_targets(
     # Resolve __line__ tokens using nothing here — resolved in operation builder via content
     return by_path
 
+
 def _resolve_duplicate_function_name(*, content: str, name: str) -> str:
     """Resolve a diagnostic name token (including ``__line__N``) to a function id."""
 
@@ -324,6 +326,7 @@ def _resolve_duplicate_function_name(*, content: str, name: str) -> str:
             if _TS_IDENTIFIER_RE.fullmatch(candidate):
                 return candidate
     return ""
+
 
 def _duplicate_function_removal_operation(
     *,
@@ -371,6 +374,7 @@ def _duplicate_function_removal_operation(
         },
     )
 
+
 def _typescript_expect_error_diagnostics_by_path(
     diagnostics: Sequence[RepairDiagnostic],
 ) -> dict[str, list[RepairDiagnostic]]:
@@ -384,6 +388,7 @@ def _typescript_expect_error_diagnostics_by_path(
         grouped.setdefault(path, []).append(diagnostic)
     return grouped
 
+
 def _is_typescript_expect_error_placement_diagnostic(diagnostic: RepairDiagnostic) -> bool:
     code = str(diagnostic.code or "").lower()
     text = f"{diagnostic.message}\n{diagnostic.raw}".lower()
@@ -392,6 +397,7 @@ def _is_typescript_expect_error_placement_diagnostic(diagnostic: RepairDiagnosti
     if code == "typescript_ts2345":
         return "argument of type" in text and "not assignable to parameter of type" in text
     return False
+
 
 def _repair_typescript_expect_error_placement(
     text: str,
@@ -450,6 +456,7 @@ def _repair_typescript_expect_error_placement(
             repaired_lines.append(line)
     return "".join(repaired_lines), tuple(moved)
 
+
 def _typescript_previous_line_is_expect_error(lines: Sequence[str], target_index: int) -> bool:
     previous_index = target_index - 1
     while previous_index >= 0:
@@ -460,9 +467,11 @@ def _typescript_previous_line_is_expect_error(lines: Sequence[str], target_index
         return "@ts-expect-error" in previous
     return False
 
+
 def _is_typescript_test_block_residue_diagnostic(diagnostic: RepairDiagnostic) -> bool:
     message = f"{diagnostic.message}\n{diagnostic.raw}".lower()
     return diagnostic.code.lower() == "typescript_ts1128" and "declaration or statement expected" in message
+
 
 def _typescript_test_block_residue_operations(
     *,
@@ -513,6 +522,7 @@ def _typescript_test_block_residue_operations(
         )
     return tuple(operations)
 
+
 def _find_typescript_test_block_residue_suffix_start(lines: Sequence[str], diagnostic_index: int) -> int | None:
     diagnostic_line = lines[diagnostic_index].rstrip("\r\n")
     if not _TS_TEST_BLOCK_RESIDUE_CLOSER_RE.match(diagnostic_line):
@@ -525,6 +535,7 @@ def _find_typescript_test_block_residue_suffix_start(lines: Sequence[str], diagn
         if _typescript_test_block_residue_suffix_is_safe(lines, index, diagnostic_index):
             return index
     return None
+
 
 def _typescript_test_block_residue_suffix_is_safe(
     lines: Sequence[str],
@@ -552,6 +563,7 @@ def _typescript_test_block_residue_suffix_is_safe(
         _TS_TEST_BLOCK_RESIDUE_STATEMENT_RE.match(line) or _TS_TEST_BLOCK_RESIDUE_CLOSER_RE.match(line)
         for line in nonblank_lines
     )
+
 
 def build_typescript_truncated_eof_plan(
     *,
@@ -604,6 +616,7 @@ def build_typescript_truncated_eof_plan(
         mode=mode,
         metadata={"truncated_eof_repairs": len(operations)},
     )
+
 
 def _typescript_truncated_eof_operation(*, path: str, content: str) -> RepairOperation | None:
     if not _typescript_file_looks_truncated(content):
@@ -684,25 +697,26 @@ def _typescript_truncated_eof_operation(*, path: str, content: str) -> RepairOpe
         },
     )
 
+
 __all__ = (
-    "build_typescript_duplicate_function_plan",
-    "_build_typescript_test_block_residue_plan",
-    "_build_typescript_expect_error_placement_plan",
     "_build_typescript_escaped_newline_plan",
-    "_parse_typescript_escaped_newline_paths",
-    "_typed_typescript_escaped_newline_path",
-    "repair_typescript_escaped_newline_in_line_comments",
-    "_parse_duplicate_function_targets",
-    "_resolve_duplicate_function_name",
+    "_build_typescript_expect_error_placement_plan",
+    "_build_typescript_test_block_residue_plan",
     "_duplicate_function_removal_operation",
-    "_typescript_expect_error_diagnostics_by_path",
-    "_is_typescript_expect_error_placement_diagnostic",
-    "_repair_typescript_expect_error_placement",
-    "_typescript_previous_line_is_expect_error",
-    "_is_typescript_test_block_residue_diagnostic",
-    "_typescript_test_block_residue_operations",
     "_find_typescript_test_block_residue_suffix_start",
+    "_is_typescript_expect_error_placement_diagnostic",
+    "_is_typescript_test_block_residue_diagnostic",
+    "_parse_duplicate_function_targets",
+    "_parse_typescript_escaped_newline_paths",
+    "_repair_typescript_expect_error_placement",
+    "_resolve_duplicate_function_name",
+    "_typed_typescript_escaped_newline_path",
+    "_typescript_expect_error_diagnostics_by_path",
+    "_typescript_previous_line_is_expect_error",
+    "_typescript_test_block_residue_operations",
     "_typescript_test_block_residue_suffix_is_safe",
-    "build_typescript_truncated_eof_plan",
     "_typescript_truncated_eof_operation",
+    "build_typescript_duplicate_function_plan",
+    "build_typescript_truncated_eof_plan",
+    "repair_typescript_escaped_newline_in_line_comments",
 )

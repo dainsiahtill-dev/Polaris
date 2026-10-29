@@ -195,7 +195,9 @@ class ExplorationWorkflowRuntime:
                 additional_results = await self._continue_exploration(plan, remaining_steps)
                 tools_executed.extend(additional_results)
 
-            failures = [row for row in tools_executed if row.get("status") not in {"success", "pending", "pending_async"}]
+            failures = [
+                row for row in tools_executed if row.get("status") not in {"success", "pending", "pending_async"}
+            ]
             if failures:
                 raise RuntimeError(str(failures[0].get("error") or "workflow_tool_failed"))
 
@@ -351,7 +353,9 @@ class ExplorationWorkflowRuntime:
                     }
                 )
 
-            failures = [row for row in tools_executed if row.get("status") not in {"success", "pending", "pending_async"}]
+            failures = [
+                row for row in tools_executed if row.get("status") not in {"success", "pending", "pending_async"}
+            ]
             if failures:
                 raise RuntimeError(str(failures[0].get("error") or "workflow_tool_failed"))
 
@@ -489,7 +493,12 @@ class ExplorationWorkflowRuntime:
         captured = {str(item.get("call_id")): item for item in batch.get("invocations", [])}
         for invocation in expected.get("invocations", []):
             item = captured.get(str(invocation.get("call_id")))
-            if item is None or item.get("tool_name") != invocation.get("tool_name") or dict(item.get("native_arguments") or item.get("arguments") or {}) != dict(invocation.get("native_arguments") or invocation.get("arguments") or {}):
+            if (
+                item is None
+                or item.get("tool_name") != invocation.get("tool_name")
+                or dict(item.get("native_arguments") or item.get("arguments") or {})
+                != dict(invocation.get("native_arguments") or invocation.get("arguments") or {})
+            ):
                 raise RuntimeError("workflow_initial_receipt_invocation_mismatch")
         results = [dict(row) for receipt in receipts for row in receipt.get("results", [])]
         seen: set[str] = set()
@@ -537,17 +546,25 @@ class ExplorationWorkflowRuntime:
         return results
 
     async def _execute_tools_stream(
-        self, tools: list[ToolInvocation], turn_id: str,
+        self,
+        tools: list[ToolInvocation],
+        turn_id: str,
     ) -> AsyncIterator[ToolBatchEvent]:
         for tool in tools:
-            yield ToolBatchEvent(turn_id=turn_id, tool_name=tool.tool_name, call_id=str(tool.call_id), status="started", progress=0.0)
+            yield ToolBatchEvent(
+                turn_id=turn_id, tool_name=tool.tool_name, call_id=str(tool.call_id), status="started", progress=0.0
+            )
         for row in await self._execute_tools(tools):
             status = str(row.get("status") or "error")
             yield ToolBatchEvent(
-                turn_id=turn_id, tool_name=str(row["tool_name"]), call_id=str(row["call_id"]),
+                turn_id=turn_id,
+                tool_name=str(row["tool_name"]),
+                call_id=str(row["call_id"]),
                 status=status if status in {"success", "error", "timeout"} else "started",
                 progress=1.0 if status in {"success", "error", "timeout"} else 0.0,
-                result=row.get("result"), error=row.get("error"), arguments=row.get("arguments"),
+                result=row.get("result"),
+                error=row.get("error"),
+                arguments=row.get("arguments"),
             )
 
     async def _continue_exploration(self, plan: ExplorationPlan, max_additional: int) -> list[dict]:

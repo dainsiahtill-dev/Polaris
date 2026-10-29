@@ -485,16 +485,26 @@ class _ContextOSStateMixin:
             for item in closed_events
             if item.artifact_id and any(artifact.artifact_id == item.artifact_id for artifact in artifacts)
         )
-        combined = "\n".join(prompt_contribution_content(item.role, item.content, item.metadata) for item in closed_events)
+        combined = "\n".join(
+            prompt_contribution_content(item.role, item.content, item.metadata) for item in closed_events
+        )
         intent = (
             working_state.task_state.current_goal.value
             if working_state.task_state.current_goal is not None
-            else _trim_text(prompt_contribution_content(closed_events[0].role, closed_events[0].content, closed_events[0].metadata), max_chars=96)
+            else _trim_text(
+                prompt_contribution_content(closed_events[0].role, closed_events[0].content, closed_events[0].metadata),
+                max_chars=96,
+            )
         )
         outcome = (
             working_state.decision_log[-1].summary
             if working_state.decision_log
-            else _trim_text(prompt_contribution_content(closed_events[-1].role, closed_events[-1].content, closed_events[-1].metadata), max_chars=160)
+            else _trim_text(
+                prompt_contribution_content(
+                    closed_events[-1].role, closed_events[-1].content, closed_events[-1].metadata
+                ),
+                max_chars=160,
+            )
         )
         episode = EpisodeCard(
             episode_id=f"ep_{len(existing_episodes) + 1}",

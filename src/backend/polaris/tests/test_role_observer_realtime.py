@@ -4,9 +4,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from polaris.cells.roles.kernel.public.service import RoleExecutionKernel
 from polaris.cells.roles.profile.public.service import load_core_roles
 from polaris.cells.roles.runtime.public.service import (
-    RoleExecutionKernel,
     RoleExecutionMode,
     RoleProfileRegistry,
     RoleTurnRequest,

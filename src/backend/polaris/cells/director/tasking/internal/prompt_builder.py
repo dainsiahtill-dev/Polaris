@@ -545,9 +545,13 @@ class PromptBuilder:
         manifest_policy = self._metadata_mapping(metadata.get("manifest_entrypoint_contract"))
         generated = manifest_policy.get("generated_outputs") or metadata.get("generated_outputs")
         if isinstance(generated, list) and generated:
-            lines.append("- Expected generated outputs (read/build obligations; no direct write grant): "
-                         + json.dumps(generated, ensure_ascii=False, separators=(",", ":")))
-            lines.append("- Declarations promise outputs after the approved build; actual build/test/effect evidence is required.")
+            lines.append(
+                "- Expected generated outputs (read/build obligations; no direct write grant): "
+                + json.dumps(generated, ensure_ascii=False, separators=(",", ":"))
+            )
+            lines.append(
+                "- Declarations promise outputs after the approved build; actual build/test/effect evidence is required."
+            )
         if declared_targets or manifest_policy:
             allowed = self._metadata_items(
                 manifest_policy.get("allowed_local_entrypoints"),

@@ -1,4 +1,5 @@
 """Pure fixtures recovered losslessly from the pre-split contract test module."""
+
 from __future__ import annotations
 
 from polaris.cells.roles.runtime.public import contracts as runtime_contracts
@@ -31,6 +32,7 @@ def _identity(role_id: str = "pm") -> RoleIdentity:
         host_kind="headless",
     )
 
+
 def _profile_binding(role_id: str = "pm") -> RoleProfileBinding:
     return RoleProfileBinding(
         role_id=role_id,
@@ -41,6 +43,7 @@ def _profile_binding(role_id: str = "pm") -> RoleProfileBinding:
         profile_fingerprint="profile-fp",
     )
 
+
 def _architect_validation_runtime_object() -> RoleRuntimeObject:
     spec = runtime_contracts.get_builtin_role_runtime_spec("architect")
     return spec.instantiate(
@@ -50,6 +53,7 @@ def _architect_validation_runtime_object() -> RoleRuntimeObject:
         policy_fingerprint="architect-policy",
         capability_id="validate_cell_boundary_change",
     )
+
 
 def _pm_mount_table() -> RoleAssetMountTable:
     return RoleAssetMountTable(
@@ -102,6 +106,7 @@ def _pm_mount_table() -> RoleAssetMountTable:
         )
     )
 
+
 def _capability_ports() -> RoleCapabilityPorts:
     return RoleCapabilityPorts(
         capabilities=(
@@ -124,6 +129,7 @@ def _capability_ports() -> RoleCapabilityPorts:
         )
     )
 
+
 def _mixed_role_capability_ports() -> RoleCapabilityPorts:
     return RoleCapabilityPorts(
         capabilities=(
@@ -144,6 +150,7 @@ def _mixed_role_capability_ports() -> RoleCapabilityPorts:
         )
     )
 
+
 def _role_runtime_effect_is_allowed(effect: str, allowed_effects: tuple[str, ...]) -> bool:
     for allowed_effect in allowed_effects:
         if allowed_effect == effect:
@@ -155,6 +162,7 @@ def _role_runtime_effect_is_allowed(effect: str, allowed_effects: tuple[str, ...
         elif allowed_effect.endswith("*") and effect.startswith(allowed_effect[:-1]):
             return True
     return False
+
 
 def _commit_envelope() -> RoleTurnEnvelope:
     invocation = RoleCapabilityInvocation(
@@ -181,6 +189,7 @@ def _commit_envelope() -> RoleTurnEnvelope:
         ),
         task_market_binding=RoleTaskMarketBinding(work_item_ref="runtime.task_market:task:task-1"),
     )
+
 
 def _phase5_chain_steps(
     *,
@@ -242,6 +251,7 @@ def _phase5_chain_steps(
         ),
     )
 
+
 def _valid_phase5_chain_command(chain_id: str = "phase5-chain-valid") -> AssembleRoleRuntimeChainCommandV1:
     return AssembleRoleRuntimeChainCommandV1(
         chain_id=chain_id,
@@ -253,5 +263,3 @@ def _valid_phase5_chain_command(chain_id: str = "phase5-chain-valid") -> Assembl
         runtime_projection_refs=("runtime.projection:runtime:run-1",),
         audit_evidence_refs=("audit.evidence:truth-log:task-1",),
     )
-
-

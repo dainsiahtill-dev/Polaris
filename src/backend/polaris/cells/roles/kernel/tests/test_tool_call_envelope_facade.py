@@ -146,8 +146,7 @@ class _NativeCallNameParsingVisitor(ast.NodeVisitor):
             and node.args[0].value == "function"
         ):
             self.violations.append(
-                f"{self._filename}:{node.lineno}: "
-                "native tool-call name parsing must use native_tool_call_name()"
+                f"{self._filename}:{node.lineno}: native tool-call name parsing must use native_tool_call_name()"
             )
         self.generic_visit(node)
 

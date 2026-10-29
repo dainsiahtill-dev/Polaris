@@ -602,6 +602,7 @@ def _authorized_request(
     values.update(overrides)
     return _request(**values)
 
+
 @pytest.mark.asyncio
 async def test_physical_attempt_replay_candidate_matches_cutoff_and_never_exposes_admission(tmp_path: Path) -> None:
     port, _, _, facts = _authority(tmp_path=tmp_path)

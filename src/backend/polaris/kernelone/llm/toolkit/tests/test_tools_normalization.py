@@ -938,15 +938,8 @@ def test_write_file_recovers_text_continuation_map_content() -> None:
     )
 
     structured = {
-        "$text": (
-            "if (!(node instanceof HTMLCanvasElement)) {\n"
-            "    console.warn('[glow-garden] #garden is not a "
-        ),
-        "canvas": (
-            " element; falling back to detached renderer.');\n"
-            "    return null;\n"
-            "}\n"
-        ),
+        "$text": ("if (!(node instanceof HTMLCanvasElement)) {\n    console.warn('[glow-garden] #garden is not a "),
+        "canvas": (" element; falling back to detached renderer.');\n    return null;\n}\n"),
     }
     recovered = recover_write_body_string(structured)
     assert recovered is not None
@@ -965,9 +958,9 @@ def test_write_file_recovers_htmlish_nested_text_map_content() -> None:
     """R138: nested HTML-ish $text maps must flatten rather than fail DEO."""
 
     structured = {
-        "$text": "<!doctype html>\n<html lang=\"en\">\n",
+        "$text": '<!doctype html>\n<html lang="en">\n',
         "head": {
-            "$text": "\n    <meta charset=\"utf-8\" />\n",
+            "$text": '\n    <meta charset="utf-8" />\n',
             "title": {"$text": "Garden"},
         },
         "body": {

@@ -131,7 +131,9 @@ class GeminiCLIProvider(BaseProvider):
             normalized["cli_mode"] = "headless"
             warnings.append("Invalid cli_mode, using headless")
 
-        return ProviderConfigValidationResult(valid=len(errors) == 0, errors=errors, warnings=warnings, normalized_config=normalized)
+        return ProviderConfigValidationResult(
+            valid=len(errors) == 0, errors=errors, warnings=warnings, normalized_config=normalized
+        )
 
     def __init__(self) -> None:
         pass

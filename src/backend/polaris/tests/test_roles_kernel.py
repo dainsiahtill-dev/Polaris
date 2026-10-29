@@ -15,14 +15,20 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from polaris.cells.control_plane.run_ledger.public import JobToken
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.roles.adapters.internal import runtime_dialogue
 from polaris.cells.roles.adapters.public.service import WorkflowRoleAdapter
 from polaris.cells.roles.kernel.internal.kernel.helpers import extract_structured_tool_calls
 from polaris.cells.roles.kernel.internal.kernel.request_appendix import build_prompt_appendix_from_request
 from polaris.cells.roles.kernel.internal.kernel.tool_executor import KernelToolExecutor
+from polaris.cells.roles.kernel.internal.prompt_builder import PromptBuilder
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
+from polaris.cells.roles.kernel.public.service import RoleExecutionKernel
 from polaris.cells.roles.runtime.public.service import (
-    RoleExecutionKernel,
     RoleExecutionMode,
     RoleProfileRegistry,
     RoleToolGateway,
@@ -748,19 +754,20 @@ class TestRoleToolGateway:
             metadata={"job_token": {"allowed_write_paths": ["src/task-b.py"]}},
         )
 
-        result_a = await kernel._execute_single_tool(
-            "write_file",
-            {"file": "src/task-a.py", "content": "value = 'a'\n"},
-            {"profile": director_profile, "request": request_a},
+        executor = KernelToolExecutor(kernel, workspace)
+        result_a = await executor.execute_tools(
+            director_profile,
+            request_a,
+            [SimpleNamespace(tool="write_file", args={"file": "src/task-a.py", "content": "value = 'a'\n"})],
         )
-        result_b = await kernel._execute_single_tool(
-            "write_file",
-            {"file": "src/task-b.py", "content": "value = 'b'\n"},
-            {"profile": director_profile, "request": request_b},
+        result_b = await executor.execute_tools(
+            director_profile,
+            request_b,
+            [SimpleNamespace(tool="write_file", args={"file": "src/task-b.py", "content": "value = 'b'\n"})],
         )
 
-        assert result_a["success"] is True
-        assert result_b["success"] is True
+        assert result_a[0]["success"] is True
+        assert result_b[0]["success"] is True
         assert (workspace / "src" / "task-a.py").read_text(encoding="utf-8") == 'value = "a"\n'
         assert (workspace / "src" / "task-b.py").read_text(encoding="utf-8") == 'value = "b"\n'
 
@@ -825,8 +832,9 @@ class TestPromptFingerprint:
         # 构建两次指纹应相同
         profile = kernel.registry.get_profile("pm")
 
-        fp1 = kernel._get_prompt_builder().build_fingerprint(profile, "")
-        fp2 = kernel._get_prompt_builder().build_fingerprint(profile, "")
+        builder = PromptBuilder()
+        fp1 = builder.build_fingerprint(profile, "")
+        fp2 = builder.build_fingerprint(profile, "")
 
         assert fp1.full_hash == fp2.full_hash
 
@@ -834,8 +842,9 @@ class TestPromptFingerprint:
         """测试带appendix的指纹"""
         profile = kernel.registry.get_profile("pm")
 
-        fp1 = kernel._get_prompt_builder().build_fingerprint(profile, "")
-        fp2 = kernel._get_prompt_builder().build_fingerprint(profile, "额外上下文")
+        builder = PromptBuilder()
+        fp1 = builder.build_fingerprint(profile, "")
+        fp2 = builder.build_fingerprint(profile, "额外上下文")
 
         # 有appendix时指纹应不同
         assert fp1.full_hash != fp2.full_hash
@@ -851,6 +860,7 @@ class TestRoleExecutionKernel:
         request = RoleTurnRequest(
             mode=RoleExecutionMode.CHAT,
             message="Hello",
+            metadata={"execution_attempt_id": "attempt-kernel-basic-1"},
         )
 
         # 注意：这需要LLM provider配置，如果没有会失败
@@ -874,6 +884,7 @@ class TestRoleExecutionKernel:
         request = RoleTurnRequest(
             mode=RoleExecutionMode.CHAT,
             message="Hello",
+            metadata={"execution_attempt_id": "attempt-kernel-stream-1"},
         )
 
         events = []
@@ -950,13 +961,14 @@ class TestRoleExecutionKernel:
                     metadata={},
                 )
 
-        kernel.inject_llm_invoker(_FakeLLMInvoker())
+        kernel._injected_llm_invoker = _FakeLLMInvoker()
 
         request = RoleTurnRequest(
             mode=RoleExecutionMode.CHAT,
             message="请执行任务",
             validate_output=True,
             max_retries=0,
+            metadata={"execution_attempt_id": "attempt-kernel-empty-output-1"},
         )
 
         result = await kernel.run(role="director", request=request)
@@ -993,7 +1005,7 @@ class TestRoleExecutionKernel:
             def validate_output(self, *args, **kwargs):
                 raise AssertionError("validate_output should not run after thinking-only rejection")
 
-        kernel.inject_llm_invoker(_FakeLLMInvoker())
+        kernel._injected_llm_invoker = _FakeLLMInvoker()
         kernel._injected_quality_checker = _FakeQualityChecker()
 
         request = RoleTurnRequest(
@@ -1001,6 +1013,7 @@ class TestRoleExecutionKernel:
             message="执行代码修改",
             validate_output=True,
             max_retries=0,
+            metadata={"execution_attempt_id": "attempt-kernel-thinking-only-1"},
         )
 
         result = await kernel.run(role="director", request=request)
@@ -1016,7 +1029,7 @@ class TestRoleExecutionKernel:
         assert result.is_complete is False
 
     @pytest.mark.asyncio
-    async def test_kernel_accepts_native_tool_calls_without_text_output(self, kernel, monkeypatch):
+    async def test_kernel_accepts_native_tool_calls_without_text_output(self, kernel, monkeypatch, tmp_path: Path):
         """当模型返回原生 tool_calls 且文本为空时，内核应直接执行工具。"""
         call_count = {"value": 0}
 
@@ -1064,16 +1077,37 @@ class TestRoleExecutionKernel:
                 nonlocal captured
                 captured["count"] += 1
                 captured["tool"] = tool_name
-                return {"tool": captured["tool"], "success": True, "result": {"exists": True}}
+                return {
+                    "tool": captured["tool"],
+                    "tool_name": captured["tool"],
+                    "status": "success",
+                    "success": True,
+                    "result": {"exists": True},
+                    "arguments": dict(args),
+                }
 
-        kernel.inject_llm_invoker(_FakeLLMInvoker())
-        kernel.inject_tool_executor(_FakeToolExecutorWithCapture())
+        kernel._injected_llm_invoker = _FakeLLMInvoker()
+        kernel._injected_tool_executor = _FakeToolExecutorWithCapture()
+
+        # Task turns commit canonical outcomes through the fact stream —
+        # bootstrap an isolated workspace so the durable commit succeeds.
+        monkeypatch.chdir(tmp_path)
+        bootstrap_fact_stream_workspace(
+            BootstrapFactStreamWorkspaceCommandV1(
+                workspace=str(tmp_path),
+                maintenance_reason="roles_kernel_native_tool_calls_test",
+                streams=fact_stream_bootstrap_streams(),
+            )
+        )
 
         request = RoleTurnRequest(
             mode=RoleExecutionMode.CHAT,
             message="读取 README 内容",
             validate_output=False,
             max_retries=0,
+            run_id="run-native-tools",
+            task_id="task-readme",
+            metadata={"execution_attempt_id": "attempt-kernel-readme-1"},
         )
 
         result = await kernel.run(role="pm", request=request)
@@ -1189,6 +1223,7 @@ class TestRoleExecutionKernel:
             message="读取 README 内容",
             validate_output=False,
             max_retries=0,
+            metadata={"execution_attempt_id": "attempt-kernel-readme-1"},
         )
         result = await structured_kernel.run(role="pm", request=request)
 
@@ -1417,8 +1452,9 @@ class TestChatWorkflowConsistency:
         RoleTurnRequest(mode=RoleExecutionMode.WORKFLOW, message="test")
 
         # 构建指纹（不依赖LLM调用）
-        chat_fp = kernel._get_prompt_builder().build_fingerprint(profile, "")
-        workflow_fp = kernel._get_prompt_builder().build_fingerprint(profile, "")
+        builder = PromptBuilder()
+        chat_fp = builder.build_fingerprint(profile, "")
+        workflow_fp = builder.build_fingerprint(profile, "")
 
         # 同角色同appendix时指纹应相同
         assert chat_fp.full_hash == workflow_fp.full_hash

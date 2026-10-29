@@ -4,20 +4,17 @@ import hashlib
 import json
 import multiprocessing as mp
 import sys
-import threading
 import time
 from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from queue import Empty
-from typing import Any, Callable, NamedTuple, NoReturn, cast
+from typing import Any, Callable, NamedTuple, NoReturn
 
 import pytest
 from polaris.cells.events.fact_stream.public import (
     BootstrapFactStreamWorkspaceCommandV1,
-    FactStreamError,
     bootstrap_fact_stream_workspace,
     fact_stream_bootstrap_streams,
 )
@@ -27,36 +24,24 @@ from polaris.cells.events.fact_stream.public.service import (
     append_fact_event,
     query_fact_events,
 )
-from polaris.cells.runtime.task_runtime.internal import service as service_module
 from polaris.cells.runtime.task_runtime.internal.execution_session import (
     TaskExecutionSession,
-    build_task_runtime_execution_event_payload,
-    terminal_session_timestamp,
 )
 from polaris.cells.runtime.task_runtime.internal.task_board import (
-    InvalidTaskStateTransitionError,
     TaskBoard,
 )
 from polaris.cells.runtime.task_runtime.public.contracts import (
     OWNER_REWORK_EXECUTION_AUTHORIZATION_SCHEMA_V1,
-    SAME_TASK_LOCAL_REWORK_AUTHORIZATION_SCHEMA_V1,
-    BindRuntimeTaskToFactoryRunCommandV1,
-    FenceExpiredFactoryRunSessionsCommandV1,
     HeartbeatTaskRuntimeExecutionAttemptCommandV1,
     OwnerReworkExecutionAuthorizationV1,
     PrepareOwnerReworkExecutionCommandV1,
-    PrepareSameTaskLocalReworkCommandV1,
     SettleTaskRuntimeExecutionAttemptCommandV1,
     TaskRuntimeExecutionAttemptIdentityV1,
-    TaskRuntimeExecutionFactV1,
     ValidateTaskRuntimeExecutionAttemptQueryV1,
 )
 from polaris.cells.runtime.task_runtime.public.service import (
     TaskRuntimeService,
-    bind_runtime_task_to_factory_run,
     heartbeat_task_runtime_execution_attempt,
-    query_observable_task_rows,
-    reset_runtime_task_records,
     validate_task_runtime_execution_attempt,
 )
 from polaris.kernelone.storage import resolve_runtime_path
@@ -661,8 +646,6 @@ def _assert_terminal_reconcile_result_shape(
     assert isinstance(error, str)
     assert event is None or isinstance(event, dict)
     return row, error, event
-
-
 
 
 def test_claim_execution_spawn_contenders_have_one_session_winner(tmp_path: Path) -> None:

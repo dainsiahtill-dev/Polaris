@@ -2,24 +2,14 @@ from __future__ import annotations
 
 import ast
 import inspect
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 from pathlib import Path
 from textwrap import dedent
 
 import pytest
-from polaris.cells.runtime.task_runtime import public as task_runtime_public
 from polaris.cells.runtime.task_runtime.internal import (
     directed_effect_operation as deo_internal,
     service as runtime_service_internal,
-)
-from polaris.cells.runtime.task_runtime.public import (
-    contracts as runtime_public_contracts,
-    service as runtime_public_service,
-)
-from polaris.cells.runtime.task_runtime.public.contracts import (
-    DirectedEffectParentReadinessProjectionV1,
-    DirectedEffectParentReadinessResultV1,
-    DirectedEffectParentReadinessStateCountV1,
 )
 
 _DEO_INTERNAL_MODULE = "polaris.cells.runtime.task_runtime.internal.directed_effect_operation"
@@ -1535,10 +1525,6 @@ def _service_method_tree(name: str) -> ast.Module:
     return ast.parse(dedent(inspect.getsource(method)))
 
 
-
-
-
-
 def test_qualified_resolver_catches_repository_alias_and_getattr_escapes() -> None:
     tree = ast.parse(
         dedent(
@@ -2313,4 +2299,3 @@ def test_source_analysis_handles_conditional_named_and_boxed_protected_assignmen
         reference.kind == "unresolved_protected_assignment" and reference.owner == "<module>"
         for reference in analysis.references
     )
-

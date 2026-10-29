@@ -211,7 +211,9 @@ class PMContractParsingMixin(_PMAdapterMixinBase):
                 verifier_diagnostics = contract["metadata"]["pm_verification_command_diagnostics"]
                 for diagnostic in verifier_diagnostics:
                     diagnostic["path"] = source_path + diagnostic["path"][len(canonical_path) :]
-                if not is_pm_task_intent(item) and (_pm_raw_task_is_dependency_chain(item) or _pm_raw_task_is_meta_diagnostic(item)):
+                if not is_pm_task_intent(item) and (
+                    _pm_raw_task_is_dependency_chain(item) or _pm_raw_task_is_meta_diagnostic(item)
+                ):
                     excluded_diagnostics.extend(verifier_diagnostics)
                     continue
                 if not is_pm_task_intent(item) and _pm_raw_task_is_non_delivery_constraint(item):

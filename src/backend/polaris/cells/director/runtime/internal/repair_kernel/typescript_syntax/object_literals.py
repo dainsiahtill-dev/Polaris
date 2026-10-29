@@ -1,20 +1,14 @@
 from __future__ import annotations
 
-import json
-import posixpath
 import re
 from collections.abc import Mapping, Sequence
-from difflib import SequenceMatcher
-from pathlib import PurePosixPath
-from typing import Any
 
 from ..contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
-from ..javascript_syntax import repair_javascript_export_contract_placeholders
-from ..path_files import normalize_base_files_strict, normalize_repair_path_strict
-from .constants import *  # noqa: F403
 from .common import *  # noqa: F403
+from .constants import *  # noqa: F403
 
 """TypeScript syntax repair module: object_literals."""
+
 
 def repair_typescript_object_literal_commas(text: str) -> str:
     """Repair narrow object-literal comma omissions reported as TS1005."""
@@ -57,6 +51,7 @@ def repair_typescript_object_literal_commas(text: str) -> str:
         while object_literal_depths and brace_depth < object_literal_depths[-1]:
             object_literal_depths.pop()
     return "".join(repaired) if changed else str(text or "")
+
 
 def build_typescript_object_literal_comma_plan(
     *,
@@ -116,6 +111,7 @@ def build_typescript_object_literal_comma_plan(
         priority=1,
     )
 
+
 def build_typescript_duplicate_object_property_plan(
     *,
     base_files: Mapping[str, str],
@@ -169,6 +165,7 @@ def build_typescript_duplicate_object_property_plan(
         priority=1,
         metadata={"duplicates": removed_lines},
     )
+
 
 def build_typescript_enum_member_separator_plan(
     *,
@@ -224,6 +221,7 @@ def build_typescript_enum_member_separator_plan(
         metadata={"enum_members": repaired_members},
     )
 
+
 def repair_typescript_missing_closing_braces(text: str) -> str:
     """Repair narrow TypeScript TS1005 missing closing-brace diagnostics."""
 
@@ -233,6 +231,7 @@ def repair_typescript_missing_closing_braces(text: str) -> str:
     repaired = str(text or "").rstrip() + "\n"
     repaired += "\n".join("}" for _ in range(missing_count))
     return repaired + "\n"
+
 
 def build_typescript_missing_closing_brace_plan(
     *,
@@ -279,6 +278,7 @@ def build_typescript_missing_closing_brace_plan(
         priority=1,
         metadata={"syntax_errors": repaired_items},
     )
+
 
 def build_typescript_shorthand_property_scope_plan(
     *,
@@ -328,8 +328,10 @@ def build_typescript_shorthand_property_scope_plan(
         metadata={"shorthand_properties": repaired_items},
     )
 
+
 def _repair_missing_object_property_comma_line(line_body: str) -> str:
     return _TS_INLINE_OBJECT_MISSING_COMMA_RE.sub(r"\g<value>, \g<key>", line_body)
+
 
 def _repair_object_property_semicolon_line(line_body: str) -> str:
     match = _TS_OBJECT_PROPERTY_SEMICOLON_LINE_RE.match(line_body)
@@ -339,6 +341,7 @@ def _repair_object_property_semicolon_line(line_body: str) -> str:
     if value_match:
         return f"{value_match.group('indent')}{value_match.group('property').rstrip()},"
     return line_body
+
 
 def _object_property_line_needs_previous_comma(
     line_body: str,
@@ -352,10 +355,12 @@ def _object_property_line_needs_previous_comma(
         return False
     return not previous_stripped.lstrip().startswith(("//", "*", "/*"))
 
+
 def _append_object_property_comma(line: str) -> str:
     line_body = line.rstrip("\r\n")
     newline = line[len(line_body) :]
     return f"{line_body.rstrip()},{newline}"
+
 
 def _parse_duplicate_object_property_targets(
     diagnostics: Sequence[RepairDiagnostic],
@@ -394,6 +399,7 @@ def _parse_duplicate_object_property_targets(
                 by_path.setdefault(path, set()).add(line)
     return by_path
 
+
 def _parse_enum_member_separator_targets(
     diagnostics: Sequence[RepairDiagnostic],
 ) -> dict[str, set[int]]:
@@ -409,6 +415,7 @@ def _parse_enum_member_separator_targets(
         if diagnostic.code.lower() == "typescript_ts1357" and path and diagnostic.line:
             by_path.setdefault(path, set()).add(int(diagnostic.line))
     return by_path
+
 
 def _parse_missing_closing_brace_targets(
     diagnostics: Sequence[RepairDiagnostic],
@@ -426,6 +433,7 @@ def _parse_missing_closing_brace_targets(
         if _is_missing_closing_brace_diagnostic(diagnostic) and path and diagnostic.line and diagnostic.column:
             by_path.setdefault(path, set()).add((int(diagnostic.line), int(diagnostic.column)))
     return by_path
+
 
 def _parse_shorthand_property_scope_targets(
     diagnostics: Sequence[RepairDiagnostic],
@@ -452,9 +460,11 @@ def _parse_shorthand_property_scope_targets(
                 by_path.setdefault(path, set()).add((int(diagnostic.line), int(diagnostic.column), prop))
     return by_path
 
+
 def _is_missing_closing_brace_diagnostic(diagnostic: RepairDiagnostic) -> bool:
     message = str(diagnostic.message or diagnostic.raw or "").lower()
     return diagnostic.code.lower() == "typescript_ts1005" and "expected" in message and "}" in message
+
 
 def _is_shorthand_property_scope_diagnostic(diagnostic: RepairDiagnostic) -> bool:
     message = f"{diagnostic.message}\n{diagnostic.raw}".lower()
@@ -463,6 +473,7 @@ def _is_shorthand_property_scope_diagnostic(diagnostic: RepairDiagnostic) -> boo
         and "no value exists in scope" in message
         and "shorthand property" in message
     )
+
 
 def _missing_closing_brace_operation(*, path: str, content: str) -> RepairOperation | None:
     missing_count = _typescript_brace_balance_delta(content)
@@ -487,6 +498,7 @@ def _missing_closing_brace_operation(*, path: str, content: str) -> RepairOperat
             "unique_context": unique_context,
         },
     )
+
 
 def _shorthand_property_scope_operations(
     *,
@@ -532,6 +544,7 @@ def _shorthand_property_scope_operations(
             )
         )
     return tuple(operations)
+
 
 def _enum_member_separator_operations(
     *,
@@ -580,6 +593,7 @@ def _enum_member_separator_operations(
             enum_depth = None
     return tuple(operations)
 
+
 def _repair_typescript_enum_member_line(line_body: str) -> str:
     match = _TS_ENUM_MEMBER_LINE_RE.match(line_body)
     if not match:
@@ -592,6 +606,7 @@ def _repair_typescript_enum_member_line(line_body: str) -> str:
     comment = str(match.group("comment") or "")
     space = " " if comment else str(match.group("space") or "")
     return f"{prefix},{space}{comment}"
+
 
 def _duplicate_object_property_delete_operations(
     *,
@@ -630,6 +645,7 @@ def _duplicate_object_property_delete_operations(
         )
     return tuple(operations)
 
+
 def _looks_like_single_line_typescript_object_property(line: str) -> bool:
     stripped = str(line or "").strip()
     if not stripped or ":" not in stripped:
@@ -642,6 +658,7 @@ def _looks_like_single_line_typescript_object_property(line: str) -> bool:
         r"(?:[A-Za-z_$][A-Za-z0-9_$]*|['\"][^'\"]+['\"]|\[[^\]]+\])\s*[?]?\s*:\s*.+[,;]?\s*(?://.*)?$"
     )
     return bool(property_re.match(stripped))
+
 
 def build_typescript_param_object_property_plan(
     *,
@@ -713,6 +730,7 @@ def build_typescript_param_object_property_plan(
         mode=mode,
         metadata={"param_object_property_repairs": len(operations)},
     )
+
 
 def build_typescript_object_literal_missing_props_plan(
     *,
@@ -796,6 +814,7 @@ def build_typescript_object_literal_missing_props_plan(
         metadata={"object_literal_missing_props_repairs": repairs},
     )
 
+
 def _typescript_exported_class_exists(base_files: Mapping[str, str], type_name: str) -> bool:
     if not re.fullmatch(r"[A-Za-z_$][\w$]*", type_name or ""):
         return False
@@ -822,9 +841,7 @@ def _typescript_rewrite_class_return_annotation(
     lines = content.splitlines(keepends=True)
     if line < 1 or line > len(lines):
         return None
-    header_re = re.compile(
-        rf"(?P<prefix>\)\s*:\s*){re.escape(type_name)}(?P<suffix>\s*\{{?\s*(?:\r?\n)?)$"
-    )
+    header_re = re.compile(rf"(?P<prefix>\)\s*:\s*){re.escape(type_name)}(?P<suffix>\s*\{{?\s*(?:\r?\n)?)$")
     replacement = f"ConstructorParameters<typeof {type_name}>[0]"
     for index in range(line - 1, -1, -1):
         current = lines[index]
@@ -850,6 +867,7 @@ def _typescript_object_prop_stub_expression(prop: str) -> str:
     ):
         return "(..._args: never[]) => undefined as never"
     return "undefined as never"
+
 
 def _typescript_object_literal_open_at_diagnostic(
     content: str,
@@ -902,6 +920,7 @@ def _typescript_object_literal_open_at_diagnostic(
     if body_missing_count(best) <= 0:
         return -1
     return best
+
 
 def _typescript_inject_missing_object_props_operation(
     *,
@@ -974,33 +993,34 @@ def _typescript_inject_missing_object_props_operation(
         },
     )
 
+
 __all__ = (
-    "repair_typescript_object_literal_commas",
-    "build_typescript_object_literal_comma_plan",
-    "build_typescript_duplicate_object_property_plan",
-    "build_typescript_enum_member_separator_plan",
-    "repair_typescript_missing_closing_braces",
-    "build_typescript_missing_closing_brace_plan",
-    "build_typescript_shorthand_property_scope_plan",
-    "_repair_missing_object_property_comma_line",
-    "_repair_object_property_semicolon_line",
-    "_object_property_line_needs_previous_comma",
     "_append_object_property_comma",
+    "_duplicate_object_property_delete_operations",
+    "_enum_member_separator_operations",
+    "_is_missing_closing_brace_diagnostic",
+    "_is_shorthand_property_scope_diagnostic",
+    "_looks_like_single_line_typescript_object_property",
+    "_missing_closing_brace_operation",
+    "_object_property_line_needs_previous_comma",
     "_parse_duplicate_object_property_targets",
     "_parse_enum_member_separator_targets",
     "_parse_missing_closing_brace_targets",
     "_parse_shorthand_property_scope_targets",
-    "_is_missing_closing_brace_diagnostic",
-    "_is_shorthand_property_scope_diagnostic",
-    "_missing_closing_brace_operation",
-    "_shorthand_property_scope_operations",
-    "_enum_member_separator_operations",
+    "_repair_missing_object_property_comma_line",
+    "_repair_object_property_semicolon_line",
     "_repair_typescript_enum_member_line",
-    "_duplicate_object_property_delete_operations",
-    "_looks_like_single_line_typescript_object_property",
-    "build_typescript_param_object_property_plan",
-    "build_typescript_object_literal_missing_props_plan",
-    "_typescript_object_prop_stub_expression",
-    "_typescript_object_literal_open_at_diagnostic",
+    "_shorthand_property_scope_operations",
     "_typescript_inject_missing_object_props_operation",
+    "_typescript_object_literal_open_at_diagnostic",
+    "_typescript_object_prop_stub_expression",
+    "build_typescript_duplicate_object_property_plan",
+    "build_typescript_enum_member_separator_plan",
+    "build_typescript_missing_closing_brace_plan",
+    "build_typescript_object_literal_comma_plan",
+    "build_typescript_object_literal_missing_props_plan",
+    "build_typescript_param_object_property_plan",
+    "build_typescript_shorthand_property_scope_plan",
+    "repair_typescript_missing_closing_braces",
+    "repair_typescript_object_literal_commas",
 )

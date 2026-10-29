@@ -381,9 +381,7 @@ def test_lock_timeout_releases_already_acquired_lock(tmp_path: Path) -> None:
         pytest.raises(EventSourcingError) as exc_info,
     ):
         read_guarded_fact_snapshot(
-            ReadGuardedFactSnapshotCommandV1(
-                workspace=str(workspace), target_stream="alpha", guard_stream="omega"
-            )
+            ReadGuardedFactSnapshotCommandV1(workspace=str(workspace), target_stream="alpha", guard_stream="omega")
         )
 
     assert exc_info.value.code == "lock_acquisition_timeout"

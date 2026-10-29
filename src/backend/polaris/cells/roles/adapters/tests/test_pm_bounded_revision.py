@@ -496,17 +496,27 @@ def test_absent_diagnosed_field_can_be_set_without_overwriting_hidden_values(tmp
 
 
 def test_advisory_readiness_diagnostic_cannot_grant_revision_fields(tmp_path: Path) -> None:
-    base = _base(tmp_path, quality={
-        "critical_issues": ["pm_plan_language_mismatch"],
-        "contract_diagnostics": [{
-            "code": "pm_plan_language_mismatch", "path": "$.tasks[0].target_files",
-            "task_id": "TASK-1", "repair_fields": ["target_files"],
-        }, {
-            "code": "verification_operand_producer_ambiguous", "severity": "warning",
-            "path": "$.tasks[0].verification_commands[0]", "task_id": "TASK-1",
-            "repair_fields": ["verification_commands", "depends_on"],
-        }],
-    })
+    base = _base(
+        tmp_path,
+        quality={
+            "critical_issues": ["pm_plan_language_mismatch"],
+            "contract_diagnostics": [
+                {
+                    "code": "pm_plan_language_mismatch",
+                    "path": "$.tasks[0].target_files",
+                    "task_id": "TASK-1",
+                    "repair_fields": ["target_files"],
+                },
+                {
+                    "code": "verification_operand_producer_ambiguous",
+                    "severity": "warning",
+                    "path": "$.tasks[0].verification_commands[0]",
+                    "task_id": "TASK-1",
+                    "repair_fields": ["verification_commands", "depends_on"],
+                },
+            ],
+        },
+    )
     assert base is not None
     assert set(base.view["edit_manifest"]["tasks"]["TASK-1"]["set"]) == {"target_files"}
 

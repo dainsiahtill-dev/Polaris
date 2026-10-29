@@ -148,10 +148,11 @@ def make_revision_base(
     overview = []
     manifest_tasks = {}
     raw_diagnostics = quality.get("contract_diagnostics")
-    diagnostics = [
-        item for item in raw_diagnostics
-        if isinstance(item, dict) and item.get("severity", "error") == "error"
-    ] if isinstance(raw_diagnostics, list) else []
+    diagnostics = (
+        [item for item in raw_diagnostics if isinstance(item, dict) and item.get("severity", "error") == "error"]
+        if isinstance(raw_diagnostics, list)
+        else []
+    )
     semantic_fields = _semantic_revision_fields(tasks, paths, quality, diagnostics)
     if semantic_fields is None:
         return None
@@ -199,8 +200,12 @@ def make_revision_base(
     for task, source_path in zip(tasks, paths, strict=True):
         set_fields = dict(_SET_TYPES)
         if is_pm_task_intent(task):
-            set_fields = {"title": "nonempty_string", "goal": "nonempty_string", "depends_on": "string_array",
-                          "acceptance": "nonempty_string_array"}
+            set_fields = {
+                "title": "nonempty_string",
+                "goal": "nonempty_string",
+                "depends_on": "string_array",
+                "acceptance": "nonempty_string_array",
+            }
         row = {field: task[field] for field in _OVERVIEW if field in task}
         for field, type_name in _DIAGNOSTIC_TYPES.items():
             if (
@@ -215,7 +220,13 @@ def make_revision_base(
                     for d in diagnostics
                 )
             ):
-                if is_pm_task_intent(task) and field not in {"title", "goal", "acceptance", "description", "depends_on"}:
+                if is_pm_task_intent(task) and field not in {
+                    "title",
+                    "goal",
+                    "acceptance",
+                    "description",
+                    "depends_on",
+                }:
                     continue
                 set_fields[field] = type_name
                 if field in task:
@@ -390,12 +401,25 @@ def _validate_value(field: str, value: Any, type_name: str) -> None:
 
 def _validate_added_task(task: Any, *, semantic: bool = False) -> None:
     if semantic:
-        allowed = {"id", "title", "goal", "acceptance", "depends_on", "description", "scope_paths", "target_files",
-                   "context_files", "verification_commands", "generated_outputs"}
+        allowed = {
+            "id",
+            "title",
+            "goal",
+            "acceptance",
+            "depends_on",
+            "description",
+            "scope_paths",
+            "target_files",
+            "context_files",
+            "verification_commands",
+            "generated_outputs",
+        }
         if not isinstance(task, dict) or task.keys() - allowed or not _canonical_id(task.get("id")):
             raise _error("New semantic task requires a unique ID and declared product fields")
         for field in ("title", "goal", "acceptance"):
-            _validate_value(field, task.get(field), "nonempty_string_array" if field == "acceptance" else "nonempty_string")
+            _validate_value(
+                field, task.get(field), "nonempty_string_array" if field == "acceptance" else "nonempty_string"
+            )
         return
     if not isinstance(task, dict) or task.keys() - _ADD_FIELDS:
         raise _error("New task must use the complete original task contract, with known fields")

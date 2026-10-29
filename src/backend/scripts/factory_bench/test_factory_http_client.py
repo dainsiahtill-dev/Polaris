@@ -311,9 +311,7 @@ class TestHelpers(unittest.TestCase):
         self.assertEqual(req.get_header("Authorization"), "Bearer t")
 
     def test_retry_factory_run_from_director_uses_same_run_control(self) -> None:
-        fake_resp = FakeHTTPResponse(
-            json.dumps({"run_id": "run-42", "status": "recovering"}).encode("utf-8")
-        )
+        fake_resp = FakeHTTPResponse(json.dumps({"run_id": "run-42", "status": "recovering"}).encode("utf-8"))
         with patch("urllib.request.urlopen", return_value=fake_resp) as mock_urlopen:
             result = retry_factory_run_from_director(
                 "http://localhost:49977",

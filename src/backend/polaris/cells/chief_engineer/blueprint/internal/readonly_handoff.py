@@ -26,8 +26,10 @@ def is_verification_only_blueprint(payload: Mapping[str, Any]) -> bool:
         return False
     if task_id not in completion.covered_task_ids or str(payload.get("run_id") or "") != completion.run_id:
         return False
-    if any(item.owner_task_id == task_id and item.applicability != "not_applicable"
-           for item in completion.obligations.artifacts):
+    if any(
+        item.owner_task_id == task_id and item.applicability != "not_applicable"
+        for item in completion.obligations.artifacts
+    ):
         return False
     inputs_by_task = interface.get("task_read_context")
     if not isinstance(inputs_by_task, Mapping):
@@ -35,8 +37,14 @@ def is_verification_only_blueprint(payload: Mapping[str, Any]) -> bool:
     inputs = inputs_by_task.get(task_id)
     if not isinstance(inputs, (list, tuple)) or not inputs or list(inputs) != list(payload.get("context_files") or ()):
         return False
-    required_hashes = {item.command_authority_hash for item in completion.obligations.verification
-                       if item.owner_task_id == task_id and item.applicability == "required"}
-    commands = {item.command for item in completion.verification_command_authority
-                if item.task_id == task_id and item.authority_hash in required_hashes and item.modality != "entrypoint"}
+    required_hashes = {
+        item.command_authority_hash
+        for item in completion.obligations.verification
+        if item.owner_task_id == task_id and item.applicability == "required"
+    }
+    commands = {
+        item.command
+        for item in completion.verification_command_authority
+        if item.task_id == task_id and item.authority_hash in required_hashes and item.modality != "entrypoint"
+    }
     return bool(commands) and commands == set(payload.get("verification_commands") or ())

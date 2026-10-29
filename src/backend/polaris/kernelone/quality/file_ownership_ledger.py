@@ -176,9 +176,7 @@ def _ledger_write_lock(
     with _PROCESS_LOCK, file_lock(f"{ledger_path}.rmw.lock") as acquired:
         if not acquired:
             if fail_closed:
-                raise FileOwnershipLedgerError(
-                    f"file ownership ledger lock acquisition failed: {ledger_path}"
-                )
+                raise FileOwnershipLedgerError(f"file ownership ledger lock acquisition failed: {ledger_path}")
             logger.warning("file ownership ledger rmw lock not acquired (non-fatal); proceeding")
         yield
 
@@ -218,17 +216,11 @@ def _normalize_authoritative_task_target(raw: object) -> str:
     target = _normalize_target(raw)
     if not target:
         raise ValueError("authoritative target file must be non-empty")
-    if (
-        target.startswith(("/", "~"))
-        or _WINDOWS_DRIVE_PATH_RE.match(target)
-        or "://" in target
-        or "\x00" in target
-    ):
+    if target.startswith(("/", "~")) or _WINDOWS_DRIVE_PATH_RE.match(target) or "://" in target or "\x00" in target:
         raise ValueError(f"authoritative target file is not workspace-relative: {raw!r}")
     parts = target.split("/")
-    if (
-        any(not part or part in {".", ".."} for part in parts)
-        or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in target)
+    if any(not part or part in {".", ".."} for part in parts) or any(
+        char.isspace() or ord(char) < 32 or ord(char) == 127 for char in target
     ):
         raise ValueError(f"authoritative target file is invalid: {raw!r}")
     return "/".join(parts)
@@ -256,21 +248,15 @@ def _load(
         return _empty_ledger()
     except (OSError, json.JSONDecodeError) as exc:
         if fail_closed:
-            raise FileOwnershipLedgerError(
-                f"file ownership ledger read failed: {path}"
-            ) from exc
+            raise FileOwnershipLedgerError(f"file ownership ledger read failed: {path}") from exc
         return _empty_ledger()
     if not isinstance(data, dict):
         if fail_closed:
-            raise FileOwnershipLedgerError(
-                f"file ownership ledger must contain a JSON object: {path}"
-            )
+            raise FileOwnershipLedgerError(f"file ownership ledger must contain a JSON object: {path}")
         return _empty_ledger()
     if not isinstance(data.get("files"), dict):
         if fail_closed:
-            raise FileOwnershipLedgerError(
-                f"file ownership ledger has an invalid files mapping: {path}"
-            )
+            raise FileOwnershipLedgerError(f"file ownership ledger has an invalid files mapping: {path}")
         data["files"] = {}
     return data
 
@@ -312,9 +298,7 @@ def _record_file_owners(
             write_json_atomic(ledger_path, ledger)
         except OSError as exc:
             if fail_closed:
-                raise FileOwnershipLedgerError(
-                    f"file ownership ledger write failed: {ledger_path}"
-                ) from exc
+                raise FileOwnershipLedgerError(f"file ownership ledger write failed: {ledger_path}") from exc
             logger.warning("file ownership ledger write failed (non-fatal): %s", exc)
 
 
@@ -403,8 +387,7 @@ def record_task_file_owners(
         len(normalized_task_id) > _MAX_TASK_ID_LENGTH
         or normalized_task_id in {".", ".."}
         or any(
-            char.isspace() or char in {"/", "\\"} or ord(char) < 32 or ord(char) == 127
-            for char in normalized_task_id
+            char.isspace() or char in {"/", "\\"} or ord(char) < 32 or ord(char) == 127 for char in normalized_task_id
         )
     ):
         raise ValueError("task_id contains unsupported characters")
@@ -412,16 +395,12 @@ def record_task_file_owners(
     roots = resolve_storage_roots(normalized_workspace)
     resolved_cache_root = os.path.abspath(os.path.expanduser(str(roots.runtime_root).strip()))
     if not resolved_cache_root:
-        raise FileOwnershipLedgerError(
-            "resolved storage roots did not provide a runtime_root"
-        )
+        raise FileOwnershipLedgerError("resolved storage roots did not provide a runtime_root")
     requested_cache_root = str(cache_root or "").strip()
     if requested_cache_root:
         requested_cache_root = os.path.abspath(os.path.expanduser(requested_cache_root))
         if os.path.normcase(requested_cache_root) != os.path.normcase(resolved_cache_root):
-            raise ValueError(
-                "cache_root must match the workspace runtime_root resolved by storage layout"
-            )
+            raise ValueError("cache_root must match the workspace runtime_root resolved by storage layout")
 
     normalized_targets = list(dict.fromkeys(_normalize_authoritative_task_target(raw) for raw in target_files))
     if not normalized_targets:
@@ -461,8 +440,7 @@ def record_task_file_owners(
     missing = [target for target in normalized_targets if target not in owners]
     if missing:
         raise FileOwnershipLedgerError(
-            "file ownership ledger has missing or unverifiable task target owners: "
-            + ", ".join(missing[:12])
+            "file ownership ledger has missing or unverifiable task target owners: " + ", ".join(missing[:12])
         )
     return owners
 

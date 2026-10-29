@@ -395,9 +395,7 @@ _QA_FAILURE_CLASS_ALIASES = {
     "incomplete_materialization": FailureClassV1.INCOMPLETE_MATERIALIZATION.value,
     "missing_entrypoint_target": FailureClassV1.MISSING_ENTRYPOINT_TARGET.value,
     "tool_dispatch_dropped": FailureClassV1.TOOL_DISPATCH_DROPPED.value,
-    "required_tool_text_fallback_not_dispatched": (
-        FailureClassV1.REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED.value
-    ),
+    "required_tool_text_fallback_not_dispatched": (FailureClassV1.REQUIRED_TOOL_TEXT_FALLBACK_NOT_DISPATCHED.value),
     "no_materialized_effect": FailureClassV1.NO_MATERIALIZED_EFFECT.value,
     "execution_evidence_missing": FailureClassV1.EXECUTION_EVIDENCE_MISSING.value,
     "implementation_defect": FailureClassV1.IMPLEMENTATION_DEFECT.value,

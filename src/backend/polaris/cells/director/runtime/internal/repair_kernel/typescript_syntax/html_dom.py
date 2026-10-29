@@ -1,20 +1,15 @@
 from __future__ import annotations
 
-import json
-import posixpath
 import re
 from collections.abc import Mapping, Sequence
-from difflib import SequenceMatcher
-from pathlib import PurePosixPath
-from typing import Any
 
 from ..contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
 from ..javascript_syntax import repair_javascript_export_contract_placeholders
-from ..path_files import normalize_base_files_strict, normalize_repair_path_strict
-from .constants import *  # noqa: F403
 from .common import *  # noqa: F403
+from .constants import *  # noqa: F403
 
 """TypeScript syntax repair module: html_dom."""
+
 
 def _build_html_typescript_module_script_plan(
     *,
@@ -136,6 +131,7 @@ def _build_html_typescript_module_script_plan(
         metadata={"scripts": repaired, "truncated_closures": truncated_repairs},
     )
 
+
 def _build_typescript_html_container_selector_plan(
     *,
     base_files: Mapping[str, str],
@@ -196,6 +192,7 @@ def _build_typescript_html_container_selector_plan(
         metadata={"selectors": repaired},
     )
 
+
 def _build_typescript_dom_local_shim_cleanup_plan(
     *,
     base_files: Mapping[str, str],
@@ -245,6 +242,7 @@ def _build_typescript_dom_local_shim_cleanup_plan(
         metadata={"cleaned_files": cleaned_files},
     )
 
+
 def _build_javascript_typescript_annotation_plan(
     *,
     base_files: Mapping[str, str],
@@ -286,6 +284,7 @@ def _build_javascript_typescript_annotation_plan(
         metadata={"files": repaired_files},
     )
 
+
 def _build_typeorm_model_normalization_plan(
     *,
     base_files: Mapping[str, str],
@@ -319,6 +318,7 @@ def _build_typeorm_model_normalization_plan(
         metadata={"files": repaired_files},
     )
 
+
 def _parse_html_typescript_module_script_errors(diagnostics: Sequence[RepairDiagnostic]) -> list[dict[str, str]]:
     parsed: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
@@ -345,6 +345,7 @@ def _parse_html_typescript_module_script_errors(diagnostics: Sequence[RepairDiag
                 parsed.append(item)
     return parsed
 
+
 def _html_container_ids(base_files: Mapping[str, str]) -> set[str]:
     ids: set[str] = set()
     for path, content in base_files.items():
@@ -356,6 +357,7 @@ def _html_container_ids(base_files: Mapping[str, str]) -> set[str]:
                 ids.add(value)
     return ids
 
+
 def _html_container_selector_tokens(token_group: str) -> tuple[str, ...]:
     tokens: list[str] = []
     for raw in str(token_group or "").split("|"):
@@ -363,6 +365,7 @@ def _html_container_selector_tokens(token_group: str) -> tuple[str, ...]:
         if token and re.fullmatch(r"[A-Za-z0-9_-]+", token):
             tokens.append(token)
     return tuple(_dedupe_preserve_order(tokens))
+
 
 def _html_ids_support_container_tokens(html_ids: set[str], tokens: Sequence[str]) -> bool:
     lowered_ids = {item.lower() for item in html_ids}
@@ -372,10 +375,12 @@ def _html_ids_support_container_tokens(html_ids: set[str], tokens: Sequence[str]
             return True
     return False
 
+
 def _looks_like_javascript_typescript_annotation_error(error: object) -> bool:
     text = str(error or "")
     lowered = text.lower()
     return ".js:" in text and "syntaxerror: unexpected token ':'" in lowered
+
 
 def _normalize_undeclared_typeorm_model_source(text: str) -> str:
     lines: list[str] = []
@@ -384,6 +389,7 @@ def _normalize_undeclared_typeorm_model_source(text: str) -> str:
             continue
         lines.append(_normalize_ts_class_field_initialization(raw_line))
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines).strip() + "\n")
+
 
 def _is_typescript_dom_local_shim_diagnostic(
     diagnostic: RepairDiagnostic,
@@ -403,10 +409,12 @@ def _is_typescript_dom_local_shim_diagnostic(
         base_files
     )
 
+
 def _is_typescript_dom_local_shim_type_conflict(*, code: str, text: str) -> bool:
     if code not in {"typescript_ts2739", "typescript_ts2740", "typescript_ts2741"}:
         return False
     return "missing" in text and any(name.lower() in text for name in _TS_LOCAL_DOM_SHIM_NAMES)
+
 
 def _is_typescript_dom_local_shim_member_gap(*, code: str, text: str) -> bool:
     if code != "typescript_ts2339":
@@ -415,19 +423,20 @@ def _is_typescript_dom_local_shim_member_gap(*, code: str, text: str) -> bool:
         "property 'queryselector'" in text and "htmlelement" in text
     )
 
+
 __all__ = (
     "_build_html_typescript_module_script_plan",
-    "_build_typescript_html_container_selector_plan",
-    "_build_typescript_dom_local_shim_cleanup_plan",
     "_build_javascript_typescript_annotation_plan",
     "_build_typeorm_model_normalization_plan",
-    "_parse_html_typescript_module_script_errors",
+    "_build_typescript_dom_local_shim_cleanup_plan",
+    "_build_typescript_html_container_selector_plan",
     "_html_container_ids",
     "_html_container_selector_tokens",
     "_html_ids_support_container_tokens",
+    "_is_typescript_dom_local_shim_diagnostic",
+    "_is_typescript_dom_local_shim_member_gap",
+    "_is_typescript_dom_local_shim_type_conflict",
     "_looks_like_javascript_typescript_annotation_error",
     "_normalize_undeclared_typeorm_model_source",
-    "_is_typescript_dom_local_shim_diagnostic",
-    "_is_typescript_dom_local_shim_type_conflict",
-    "_is_typescript_dom_local_shim_member_gap",
+    "_parse_html_typescript_module_script_errors",
 )

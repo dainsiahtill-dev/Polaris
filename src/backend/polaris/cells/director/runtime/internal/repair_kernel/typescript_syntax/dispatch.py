@@ -1,29 +1,22 @@
 from __future__ import annotations
 
-import json
-import posixpath
-import re
 from collections.abc import Mapping, Sequence
-from difflib import SequenceMatcher
-from pathlib import PurePosixPath
-from typing import Any
 
-from ..contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
-from ..javascript_syntax import repair_javascript_export_contract_placeholders
-from ..path_files import normalize_base_files_strict, normalize_repair_path_strict
-from .constants import *  # noqa: F403
+from ..contracts import RepairDiagnostic, RepairPlan
 from .common import *  # noqa: F403
-from .object_literals import *  # noqa: F403
-from .nullability import *  # noqa: F403
-from .imports_exports import *  # noqa: F403
-from .modules import *  # noqa: F403
-from .members import *  # noqa: F403
 from .config_scaffold import *  # noqa: F403
+from .constants import *  # noqa: F403
 from .html_dom import *  # noqa: F403
-from .type_shapes import *  # noqa: F403
+from .imports_exports import *  # noqa: F403
+from .members import *  # noqa: F403
+from .modules import *  # noqa: F403
+from .nullability import *  # noqa: F403
+from .object_literals import *  # noqa: F403
 from .text_repairs import *  # noqa: F403
+from .type_shapes import *  # noqa: F403
 
 """TypeScript syntax repair module: dispatch."""
+
 
 def build_typescript_runtime_plan_for_source_tool(
     *,
@@ -102,6 +95,5 @@ def build_typescript_runtime_plan_for_source_tool(
         return None
     return builder(base_files=_normalized_base_files(base_files), diagnostics=tuple(diagnostics or ()), mode=mode)
 
-__all__ = (
-    "build_typescript_runtime_plan_for_source_tool",
-)
+
+__all__ = ("build_typescript_runtime_plan_for_source_tool",)

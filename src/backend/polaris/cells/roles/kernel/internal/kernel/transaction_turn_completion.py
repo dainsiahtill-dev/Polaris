@@ -501,8 +501,12 @@ def _append_task_boundary_verdict(
     error_msg: str | None,
 ) -> dict[str, Any] | None:
     from polaris.cells.roles.kernel.internal.kernel.task_boundary import committed_task_tool_results
+
     if not metadata.get("needs_followup_workflow"):
-        tool_results = [*committed_task_tool_results(request, str(request.workspace or kernel.workspace or ".")), *tool_results]
+        tool_results = [
+            *committed_task_tool_results(request, str(request.workspace or kernel.workspace or ".")),
+            *tool_results,
+        ]
     try:
         return append_role_turn_task_boundary_verdict(
             role=role,

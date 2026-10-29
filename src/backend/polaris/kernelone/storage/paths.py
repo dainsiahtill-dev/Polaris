@@ -100,7 +100,9 @@ def resolve_runtime_path(
         完整的runtime路径
     """
     normalized = str(relative_path or "").replace("\\", "/").strip("/")
-    logical_path = normalized if normalized == "runtime" or normalized.startswith("runtime/") else f"runtime/{normalized}"
+    logical_path = (
+        normalized if normalized == "runtime" or normalized.startswith("runtime/") else f"runtime/{normalized}"
+    )
     return Path(resolve_logical_runtime_path(workspace, logical_path))
 
 

@@ -206,7 +206,9 @@ def test_node_test_file_glob_does_not_make_static_command_coverage_unknown(patte
     assert unknown == []
 
 
-@pytest.mark.parametrize("script", ["echo *.js", "node *.js --test", "node --test --import loaders/*.js tests/*.test.js"])
+@pytest.mark.parametrize(
+    "script", ["echo *.js", "node *.js --test", "node --test --import loaders/*.js tests/*.test.js"]
+)
 def test_glob_outside_recognized_node_test_sources_remains_unknown(script: str) -> None:
     from polaris.kernelone.quality.artifact_quality._scan_package import _static_shell_node_sources
 

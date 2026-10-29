@@ -651,8 +651,7 @@ class ProjectionEngine:
                     )
                     tool_name = str((output_summary_payload or {}).get("tool") or "").strip()
                     is_recent_tool_result = (
-                        int(getattr(event, "sequence", 0))
-                        >= latest_sequence - _RECENT_TOOL_SEQUENCE_WINDOW
+                        int(getattr(event, "sequence", 0)) >= latest_sequence - _RECENT_TOOL_SEQUENCE_WINDOW
                     )
                     inline_threshold = (
                         _RECENT_READ_RESULT_INLINE_CHARS

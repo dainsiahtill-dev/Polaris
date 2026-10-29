@@ -11,7 +11,7 @@ from polaris.cells.director.runtime.public.repair_kernel_contracts import (
 from polaris.cells.roles.adapters.internal.director.runtime_repair_tool_adapter import (
     run_runtime_repair_with_director_tools,
 )
-from polaris.cells.roles.adapters.tests.test_director_adapter_pure import (
+from polaris.cells.roles.adapters.tests._execution_attempt_helpers import (
     _project_deferred_repair_results_for_test,
     _test_execution_attempt,
 )

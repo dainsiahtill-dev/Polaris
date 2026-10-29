@@ -158,8 +158,6 @@ def _audit_required_actual_sibling_payload(
     )
 
 
-
-
 def test_delivery_contracts_satisfy_architecture_file_plan_requirement_for_retry_context() -> None:
     ai_request = AIRequest(
         task_type=TaskType.DIALOGUE,

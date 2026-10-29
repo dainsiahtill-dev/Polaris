@@ -227,7 +227,7 @@ def test_exact_qa_verifier_revalidation_binds_prior_and_new_receipts(
                 "receipt_ref": "execution-broker://project-verification/" + "1" * 64,
             },
             "repair_policy": {"same_task_only": True, "rerun_exact_failed_verifier": True},
-        }
+        },
     }
 
     result = _revalidate_qa_exact_verifier(workspace=str(tmp_path), task_id="TASK-1", payload=payload)

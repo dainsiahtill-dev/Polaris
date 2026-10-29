@@ -10,8 +10,6 @@ No external LLM calls — pure unit tests with mocked dependencies.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import time
 from typing import Any
 

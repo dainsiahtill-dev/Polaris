@@ -513,9 +513,7 @@ def test_schema_proven_duplicate_root_member_is_removed_without_provider_retry()
 
     payload = json.loads(normalized["content"])
     assert "when" not in payload
-    assert payload["behavior_invariant_upserts"][0]["verification_examples"][0]["when"] == (
-        "the queue is evaluated"
-    )
+    assert payload["behavior_invariant_upserts"][0]["verification_examples"][0]["when"] == ("the queue is evaluated")
     evidence = normalized["structured_output_transport"]
     assert "schema_proven_duplicate_root_members_v1" in evidence["schema_normalization_policy"]
     assert evidence["schema_normalization_details"]["duplicate_root_members"] == ["when"]

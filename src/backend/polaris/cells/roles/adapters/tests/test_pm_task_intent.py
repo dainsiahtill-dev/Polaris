@@ -304,6 +304,7 @@ async def test_unsafe_explicit_scope_is_terminal_before_pm_retry_or_task_creatio
 @pytest.mark.parametrize("defect", ["unknown_dependency", "cycle"])
 def test_semantic_dependency_correction_uses_the_original_base(tmp_path: Path, defect: str) -> None:
     from polaris.cells.roles.adapters.internal.pm.revision import apply_revision, make_revision_base
+
     intent = _intent()
     intent["tasks"][0]["depends_on"] = ["missing" if defect == "unknown_dependency" else "TASK-1"]
     raw = json.dumps(intent)
@@ -312,11 +313,22 @@ def test_semantic_dependency_correction_uses_the_original_base(tmp_path: Path, d
     assert len(tasks) == 1, "correctable dependency draft must remain retained, without execution authority"
     _, quality = adapter._evaluate_contract_quality(tasks, directive="Create a Python validator")
     assert quality["ok"] is False
-    base = make_revision_base(raw, workspace=str(tmp_path), run_id="dependency-revision", task_id="pm-deps",
-                              directive="Create a Python validator", quality=quality)
+    base = make_revision_base(
+        raw,
+        workspace=str(tmp_path),
+        run_id="dependency-revision",
+        task_id="pm-deps",
+        directive="Create a Python validator",
+        quality=quality,
+    )
     assert base is not None
-    patch = {"schema_version": "pm.task_revision.v1", "base_hash": base.base_hash,
-             "updates": [{"task_id": "TASK-1", "set": {"depends_on": []}}], "add_tasks": [], "remove_task_ids": []}
+    patch = {
+        "schema_version": "pm.task_revision.v1",
+        "base_hash": base.base_hash,
+        "updates": [{"task_id": "TASK-1", "set": {"depends_on": []}}],
+        "add_tasks": [],
+        "remove_task_ids": [],
+    }
     revised = apply_revision(base, json.dumps(patch))
     assert revised["required_requirements"] == intent["required_requirements"]
     tasks = adapter._extract_task_contracts(json.dumps(revised), directive="Create a Python validator")

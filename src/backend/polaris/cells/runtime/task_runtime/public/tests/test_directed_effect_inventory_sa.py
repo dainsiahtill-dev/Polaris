@@ -1,18 +1,12 @@
 from __future__ import annotations
 
-import ast
 import hashlib
-import inspect
 import json
-import operator
-import textwrap
 from collections.abc import Mapping
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError, replace
 from datetime import datetime
 from pathlib import Path
-from threading import Barrier, Lock
-from typing import Any, cast, get_args, get_type_hints
+from typing import Any, cast
 
 import pytest
 from polaris.cells.events.fact_stream.public import (
@@ -37,9 +31,7 @@ from polaris.cells.runtime.task_runtime.public import (
     AdmitDirectedEffectOperationCommandV1,
     AdmitDirectedEffectParentCommandV1,
     ClaimDirectedEffectCommandV1,
-    DirectedEffectAuthorityFailureCodeV1,
     DirectedEffectClaimGrantV1,
-    DirectedEffectInventoryCodeV1,
     DirectedEffectInventoryContingencyKindV1,
     DirectedEffectInventoryEffectTypeV1,
     DirectedEffectInventoryExecutionModeV1,
@@ -47,7 +39,6 @@ from polaris.cells.runtime.task_runtime.public import (
     DirectedEffectInventoryMemberV1,
     DirectedEffectInventoryProjectionV1,
     DirectedEffectInventoryResultV1,
-    DirectedEffectOperationCodeV1,
     DirectedEffectOperationIdentityV1,
     DirectedEffectOperationResultV1,
     DirectedEffectParentBindingV1,
@@ -60,10 +51,8 @@ from polaris.cells.runtime.task_runtime.public import (
     SealDirectedEffectInventoryCommandV1,
     TaskRuntimeExecutionAttemptIdentityV1,
     TaskRuntimeService,
-    abort_directed_effect_operation,
     admit_directed_effect_operation,
     admit_directed_effect_parent,
-    claim_directed_effect,
     enroll_directed_effect_operation_stream,
     enroll_directed_effect_parent_registry_stream,
     seal_directed_effect_inventory,

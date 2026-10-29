@@ -178,9 +178,7 @@ def test_exact_run_pins_prefer_final_physical_snapshot_per_role(monkeypatch: pyt
         ),
     )
 
-    assert _factory_run_pinned_context_refs(workspace="/tmp/project", factory_run_id="factory-exact") == [
-        physical
-    ]
+    assert _factory_run_pinned_context_refs(workspace="/tmp/project", factory_run_id="factory-exact") == [physical]
 
 
 def test_structured_failure_signal_uses_typed_fields_not_message_prose() -> None:

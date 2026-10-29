@@ -22,8 +22,10 @@ from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 def _admit(arguments: dict[str, object]) -> None:
     request = SimpleNamespace(options={"tools": [{"type": "function", "function": {"name": "edit_file"}}]})
     assert_tool_in_final_request_surface(
-        tool_name="edit_file", tool_arguments=arguments,
-        active_request=request, prepared=SimpleNamespace(request_options={}),
+        tool_name="edit_file",
+        tool_arguments=arguments,
+        active_request=request,
+        prepared=SimpleNamespace(request_options={}),
     )
 
 
@@ -53,20 +55,29 @@ def test_native_dialect_edits_real_file_without_losing_new_body(tmp_path: Path, 
 def test_all_occurrences_intent_is_honored(tmp_path: Path) -> None:
     target = tmp_path / "values.txt"
     target.write_text("old\nold\n", encoding="utf-8")
-    normalized = normalize_tool_arguments("edit_file", {
-        "file": "values.txt", "oldText": "old", "newText": "new", "replace": "all",
-    })
+    normalized = normalize_tool_arguments(
+        "edit_file",
+        {
+            "file": "values.txt",
+            "oldText": "old",
+            "newText": "new",
+            "replace": "all",
+        },
+    )
     result = _handle_edit_file(AgentAccelToolExecutor(workspace=str(tmp_path)), **normalized)
     assert result["ok"] is True, result
     assert target.read_text(encoding="utf-8") == "new\nnew\n"
     assert result["replacements_count"] == 2
 
 
-@pytest.mark.parametrize("arguments", [
-    {"file": "x.py", "search": "old", "replace": "one", "newText": "two"},
-    {"file": "x.py", "oldText": "old", "newText": "one", "newCode": "two"},
-    {"file": "x.py", "search": "old", "oldText": "other", "newText": "new"},
-])
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"file": "x.py", "search": "old", "replace": "one", "newText": "two"},
+        {"file": "x.py", "oldText": "old", "newText": "one", "newCode": "two"},
+        {"file": "x.py", "search": "old", "oldText": "other", "newText": "new"},
+    ],
+)
 def test_conflicting_edit_bodies_are_rejected(arguments: dict[str, object]) -> None:
     with pytest.raises(ValueError, match="conflicting_edit_argument"):
         normalize_tool_arguments("edit_file", arguments)
@@ -89,9 +100,16 @@ def test_literal_all_replacement_and_default_single_occurrence_stay_literal(tmp_
 
 
 def test_equal_literal_all_alias_does_not_change_occurrence_intent() -> None:
-    normalized = normalize_tool_arguments("edit_file", {
-        "file": "x.py", "search": "old", "replace": "all", "newText": "all", "replace_all": False,
-    })
+    normalized = normalize_tool_arguments(
+        "edit_file",
+        {
+            "file": "x.py",
+            "search": "old",
+            "replace": "all",
+            "newText": "all",
+            "replace_all": False,
+        },
+    )
     assert normalized["replace"] == "all"
     assert normalized["replace_all"] is False
 
@@ -104,9 +122,15 @@ def test_inverted_regex_dialect_is_not_inferred() -> None:
 def test_all_dialect_does_not_fuzzily_apply_stale_old_body(tmp_path: Path) -> None:
     target = tmp_path / "stale.txt"
     target.write_text("current bytes\n", encoding="utf-8")
-    normalized = normalize_tool_arguments("edit_file", {
-        "file": "stale.txt", "oldText": "current  bytes", "newText": "new bytes", "replace": "all",
-    })
+    normalized = normalize_tool_arguments(
+        "edit_file",
+        {
+            "file": "stale.txt",
+            "oldText": "current  bytes",
+            "newText": "new bytes",
+            "replace": "all",
+        },
+    )
     result = _handle_edit_file(AgentAccelToolExecutor(workspace=str(tmp_path)), **normalized)
     assert result["ok"] is False, result
     assert "effect_receipt" not in result
@@ -117,9 +141,15 @@ def test_destructive_shrink_guard_still_rejects_real_short_body(tmp_path: Path) 
     target = tmp_path / "guard.py"
     old = "".join(f"value_{i} = {i}\n" for i in range(172))
     target.write_text(old, encoding="utf-8")
-    normalized = normalize_tool_arguments("edit_file", {
-        "file": "guard.py", "oldText": old, "newText": "x = 1\n", "replace": "all",
-    })
+    normalized = normalize_tool_arguments(
+        "edit_file",
+        {
+            "file": "guard.py",
+            "oldText": old,
+            "newText": "x = 1\n",
+            "replace": "all",
+        },
+    )
     executor = _create_director_tool_executor(str(tmp_path))
     result = executor._tool_edit_file(normalized, tmp_path)
     assert result["ok"] is False, result
@@ -130,9 +160,15 @@ def test_destructive_shrink_guard_still_rejects_real_short_body(tmp_path: Path) 
 def test_director_executes_all_occurrences_consistently(tmp_path: Path) -> None:
     target = tmp_path / "values.txt"
     target.write_text("old\nold\n", encoding="utf-8")
-    normalized = normalize_tool_arguments("edit_file", {
-        "file": "values.txt", "oldText": "old", "newText": "new", "replace": "all",
-    })
+    normalized = normalize_tool_arguments(
+        "edit_file",
+        {
+            "file": "values.txt",
+            "oldText": "old",
+            "newText": "new",
+            "replace": "all",
+        },
+    )
     executor = _create_director_tool_executor(str(tmp_path))
     executor._bind_authorized_scope(("values.txt",))
     result = executor._tool_edit_file(normalized, tmp_path)

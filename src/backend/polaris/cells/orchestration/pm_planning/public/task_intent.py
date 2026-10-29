@@ -80,15 +80,51 @@ def _path(value: Any, path: str) -> None:
 _ADVISORY_MAX_BYTES = 65536
 _ADVISORY_MAX_NODES = 4096
 _ADVISORY_MAX_DEPTH = 8
-_RESERVED_FIELDS = frozenset({
-    "id", "role", "role_id", "assigned_to", "owner", "assignee", "routing", "route",
-    "execution_backend", "backend", "projection", "metadata", "job_token", "run_id",
-    "trace_id", "call_id", "request_freeze_id", "request_hash", "prompt_hash", "scope",
-    "command", "argv", "cwd", "tools", "tool_choice", "response_format", "stage", "phase",
-    "status", "depth_policy", "level_contract", "context_snapshot_ref", "capabilities",
-    "product_goal", "product_acceptance", "title", "goal", "depends_on", "schema_version",
-    *_GLOBAL_LISTS, *_TECHNICAL_FIELDS,
-})
+_RESERVED_FIELDS = frozenset(
+    {
+        "id",
+        "role",
+        "role_id",
+        "assigned_to",
+        "owner",
+        "assignee",
+        "routing",
+        "route",
+        "execution_backend",
+        "backend",
+        "projection",
+        "metadata",
+        "job_token",
+        "run_id",
+        "trace_id",
+        "call_id",
+        "request_freeze_id",
+        "request_hash",
+        "prompt_hash",
+        "scope",
+        "command",
+        "argv",
+        "cwd",
+        "tools",
+        "tool_choice",
+        "response_format",
+        "stage",
+        "phase",
+        "status",
+        "depth_policy",
+        "level_contract",
+        "context_snapshot_ref",
+        "capabilities",
+        "product_goal",
+        "product_acceptance",
+        "title",
+        "goal",
+        "depends_on",
+        "schema_version",
+        *_GLOBAL_LISTS,
+        *_TECHNICAL_FIELDS,
+    }
+)
 
 
 def _advisory(value: Any, path: str) -> None:
@@ -126,8 +162,44 @@ def _reserved_authority_field(key: str) -> bool:
     token = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", key).lower().replace("-", "_")
     return (
         token in _RESERVED_FIELDS
-        or token.split("_", 1)[0] in {"execution", "runtime", "provider", "trusted", "job", "jobs", "role", "roles", "projection", "depth", "identity", "protocol", "schema"}
-        or token.split("_")[-1] in {"hash", "hashes", "token", "tokens", "authority", "scope", "scopes", "path", "paths", "file", "files", "command", "commands", "id", "ids", "ref", "refs", "reference", "references"}
+        or token.split("_", 1)[0]
+        in {
+            "execution",
+            "runtime",
+            "provider",
+            "trusted",
+            "job",
+            "jobs",
+            "role",
+            "roles",
+            "projection",
+            "depth",
+            "identity",
+            "protocol",
+            "schema",
+        }
+        or token.split("_")[-1]
+        in {
+            "hash",
+            "hashes",
+            "token",
+            "tokens",
+            "authority",
+            "scope",
+            "scopes",
+            "path",
+            "paths",
+            "file",
+            "files",
+            "command",
+            "commands",
+            "id",
+            "ids",
+            "ref",
+            "refs",
+            "reference",
+            "references",
+        }
     )
 
 
@@ -159,7 +231,15 @@ def _collect_advisory(payload: dict[str, Any], allowed: set[str], path: str) -> 
 def _validate(payload: Any, *, draft: bool = False) -> dict[str, Any]:
     if not isinstance(payload, Mapping) or payload.get("schema_version") != PM_TASK_INTENT_SCHEMA_VERSION:
         raise PmTaskIntentError("$.schema_version", "Expected pm.task_intent.v1")
-    allowed = {"schema_version", "product_goal", *_GLOBAL_LISTS, "tasks", "project_metadata", "verification_recipe_hint", "planning_advisory"}
+    allowed = {
+        "schema_version",
+        "product_goal",
+        *_GLOBAL_LISTS,
+        "tasks",
+        "project_metadata",
+        "verification_recipe_hint",
+        "planning_advisory",
+    }
     result = deepcopy(dict(payload))
     _collect_advisory(result, allowed, "$")
     for key in ("project_metadata", "verification_recipe_hint"):
@@ -216,8 +296,24 @@ def _validate(payload: Any, *, draft: bool = False) -> dict[str, Any]:
             _, errors = validate_generated_outputs(row["generated_outputs"], path=path + ".generated_outputs")
             if errors:
                 raise PmTaskIntentError(errors[0]["path"], errors[0]["message"], hard_boundary=True)
-    _advisory({"project": {key: result[key] for key in ("project_metadata", "verification_recipe_hint", "planning_advisory") if key in result},
-               "tasks": [{key: row[key] for key in ("task_metadata", "verification_recipe_hint", "planning_advisory", "scope") if key in row} for row in rows]}, "$.planning_advisory")
+    _advisory(
+        {
+            "project": {
+                key: result[key]
+                for key in ("project_metadata", "verification_recipe_hint", "planning_advisory")
+                if key in result
+            },
+            "tasks": [
+                {
+                    key: row[key]
+                    for key in ("task_metadata", "verification_recipe_hint", "planning_advisory", "scope")
+                    if key in row
+                }
+                for row in rows
+            ],
+        },
+        "$.planning_advisory",
+    )
     if draft:
         return result
     graph = {row["id"]: row["depends_on"] for row in rows}
@@ -377,7 +473,10 @@ def pm_task_intent_payload(tasks: list[dict[str, Any]]) -> dict[str, Any]:
             if key in task
         }
         advisory = task["metadata"].get("planning_advisory", {})
-        if any(advisory.get(key) != first_advisory.get(key) for key in ("project_metadata", "project_verification_recipe_hint", "project_advisory")):
+        if any(
+            advisory.get(key) != first_advisory.get(key)
+            for key in ("project_metadata", "project_verification_recipe_hint", "project_advisory")
+        ):
             raise PmTaskIntentError(f"$.tasks[{i}].project_metadata", "Tasks disagree about read-only product advice")
         for key in ("verification_recipe_hint", "task_metadata", "scope", "task_advisory"):
             if key in advisory:

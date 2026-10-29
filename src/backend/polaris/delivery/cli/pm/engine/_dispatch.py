@@ -512,10 +512,7 @@ def _dispatch_director_tasks_impl(
         target_failure_rate = 0.05
     failure_rate = float(failed_count + blocked_count) / float(terminal_count) if terminal_count > 0 else 0.0
     hard_failure = (
-        failed_count > 0
-        or blocked_count > 0
-        or bool(taskboard_claim_failures)
-        or bool(taskboard_transition_failures)
+        failed_count > 0 or blocked_count > 0 or bool(taskboard_claim_failures) or bool(taskboard_transition_failures)
     )
     delivery_floor = _evaluate_delivery_floor(records, workspace_full=workspace_full)
     if (

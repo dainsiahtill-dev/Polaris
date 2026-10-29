@@ -64,9 +64,7 @@ _REQUIRED_TRANSITION_FIELDS: dict[str, dict[str, type[object]]] = {
     },
     "project_completion.terminal.v1": {"status": str, "reason_codes": list},
 }
-_OPTIONAL_TERMINAL_FIELDS = frozenset(
-    {"diagnostic_id", "action_id", "owner_binding_hash", "owner_snapshot_hash"}
-)
+_OPTIONAL_TERMINAL_FIELDS = frozenset({"diagnostic_id", "action_id", "owner_binding_hash", "owner_snapshot_hash"})
 _OPTIONAL_TRANSITION_FIELDS: dict[str, dict[str, type[object]]] = {
     "project_completion.action_dispatch_failed.v1": {
         "error_code": str,
@@ -152,9 +150,7 @@ class ProjectCompletionCursorTransitionV1:
             if type(value) is not expected_type:
                 raise TypeError(f"cursor transition {name} must be an exact {expected_type.__name__}")
         reason_codes = self.payload.get("reason_codes")
-        if reason_codes is not None and any(
-            type(item) is not str for item in cast(list[object], reason_codes)
-        ):
+        if reason_codes is not None and any(type(item) is not str for item in cast(list[object], reason_codes)):
             raise TypeError("cursor terminal reason_codes must contain exact strings")
         for name, expected_type in optional.items():
             if name in self.payload and type(self.payload[name]) is not expected_type:

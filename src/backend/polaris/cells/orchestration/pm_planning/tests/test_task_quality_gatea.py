@@ -6,12 +6,10 @@ check_quality_promote_candidate, get_quality_gate_config, and helpers.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
 from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
-    _CARD3D_PM_REQUIRED_DOMAINS,
     _card3d_domains_for_task,
     _contains_prompt_leakage,
     _has_executable_or_file_acceptance_anchor,
@@ -24,10 +22,7 @@ from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
     _path_matches_card3d_domain,
     _strip_wrapping_quotes,
     _title_is_too_short,
-    autofix_pm_contract_for_quality,
-    check_quality_promote_candidate,
     evaluate_pm_task_quality,
-    get_quality_gate_config,
 )
 
 # ---------------------------------------------------------------------------
@@ -35,18 +30,25 @@ from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("path,allowed", [
-    ("pom.xml", True), ("maven/pom.xml", True), ("config.xml", True),
-    ("/tmp/pom.xml", False), ("../pom.xml", False), ("config/../pom.xml", False),
-    ("C:/tmp/pom.xml", False), ("modify pom.xml outside workspace", False),
-])
+@pytest.mark.parametrize(
+    "path,allowed",
+    [
+        ("pom.xml", True),
+        ("maven/pom.xml", True),
+        ("config.xml", True),
+        ("/tmp/pom.xml", False),
+        ("../pom.xml", False),
+        ("config/../pom.xml", False),
+        ("C:/tmp/pom.xml", False),
+        ("modify pom.xml outside workspace", False),
+    ],
+)
 def test_xml_scope_classification_keeps_relative_containment(path: str, allowed: bool) -> None:
     from polaris.cells.orchestration.pm_planning.internal.quality_gate.primitives import (
         _is_concrete_pm_scope_path,
     )
+
     assert _is_concrete_pm_scope_path(path) is allowed
-
-
 
 
 class TestStripWrappingQuotes:
@@ -839,4 +841,3 @@ class TestEvaluatePmTaskQualityEdgeCases:
 # ---------------------------------------------------------------------------
 # autofix_pm_contract_for_quality
 # ---------------------------------------------------------------------------
-

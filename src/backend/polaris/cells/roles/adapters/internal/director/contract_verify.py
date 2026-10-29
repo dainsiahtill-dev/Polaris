@@ -125,7 +125,9 @@ def resolve_contract_step_verify(
         return ContractStepVerifyResolution(
             command=" && ".join(authoritative_commands),
             disposition="run" if authoritative_commands else "absent",
-            reason="chief_engineer_verification_recipe" if authoritative_commands else "chief_engineer_verification_recipe_missing",
+            reason="chief_engineer_verification_recipe"
+            if authoritative_commands
+            else "chief_engineer_verification_recipe_missing",
         )
 
     records = list(_candidate_records(context))

@@ -38,7 +38,7 @@ def test_cmake_missing_source_routes_to_declaring_manifest(tmp_path: Path) -> No
         "CMake Error at CMakeLists.txt:3 (add_library):\n"
         "  Cannot find source file:\n\n"
         "    src/missing.cpp\n\n"
-        "CMake Error at CMakeLists.txt:3 (add_library): No SOURCES given to target: sample"
+        "CMake Error at CMakeLists.txt:3 (add_library): No SOURCES given to target: sample",
     ]
 
     targets = resolve_director_causal_quality_repair_target_files(

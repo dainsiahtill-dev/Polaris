@@ -37,9 +37,7 @@ def coerce_task_execution_profile(payload: Mapping[str, Any]) -> TaskExecutionPr
     still validates required field normalization and value bounds.
     """
 
-    profile_fields = {
-        key: payload[key] for key in TaskExecutionProfileV1.__dataclass_fields__ if key in payload
-    }
+    profile_fields = {key: payload[key] for key in TaskExecutionProfileV1.__dataclass_fields__ if key in payload}
     return TaskExecutionProfileV1(**profile_fields)
 
 

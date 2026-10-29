@@ -253,11 +253,7 @@ async def test_simultaneous_ready_event_precedes_status_that_can_observe_it(
         # After EVENT:1 schedules a status refresh, force the refresh and the
         # already-queued EVENT:2 consume to complete before the owner loop
         # resumes. This deterministically exercises the simultaneous-ready path.
-        non_receive = {
-            task
-            for task in tasks
-            if getattr(task.get_coro(), "__name__", "") != "receive_text"
-        }
+        non_receive = {task for task in tasks if getattr(task.get_coro(), "__name__", "") != "receive_text"}
         if not simultaneous_forced and len(tasks) == 3 and len(non_receive) == 2:
             simultaneous_forced = True
             await asyncio.gather(*non_receive)
@@ -329,11 +325,7 @@ async def test_failed_simultaneous_event_suppresses_status_that_can_observe_it(
         return_when: str = asyncio.FIRST_COMPLETED,
     ) -> tuple[set[asyncio.Task[Any]], set[asyncio.Task[Any]]]:
         nonlocal simultaneous_forced
-        non_receive = {
-            task
-            for task in tasks
-            if getattr(task.get_coro(), "__name__", "") != "receive_text"
-        }
+        non_receive = {task for task in tasks if getattr(task.get_coro(), "__name__", "") != "receive_text"}
         if not simultaneous_forced and len(tasks) == 3 and len(non_receive) == 2:
             simultaneous_forced = True
             await asyncio.gather(*non_receive)

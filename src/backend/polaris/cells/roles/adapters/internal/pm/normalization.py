@@ -854,10 +854,13 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
         for diagnostic in artifact_diagnostics:
             if diagnostic not in contract_diagnostics:
                 contract_diagnostics.append(diagnostic)
-        artifact_issues = list(dict.fromkeys(
-            d["code"] for d in artifact_diagnostics
-            if d["code"].startswith(("artifact_", "generated_output_", "pm_plan_language_mismatch"))
-        ))
+        artifact_issues = list(
+            dict.fromkeys(
+                d["code"]
+                for d in artifact_diagnostics
+                if d["code"].startswith(("artifact_", "generated_output_", "pm_plan_language_mismatch"))
+            )
+        )
         missing_typescript_contract = _pm_typescript_factory_contract_missing(normalized, directive)
         if missing_typescript_contract or verification_command_issues or artifact_issues:
             quality = dict(quality)

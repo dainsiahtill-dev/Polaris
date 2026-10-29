@@ -1,28 +1,24 @@
 from __future__ import annotations
 
-import json
 import posixpath
 import re
 from collections.abc import Mapping, Sequence
-from difflib import SequenceMatcher
 from pathlib import PurePosixPath
-from typing import Any
 
 from polaris.kernelone.quality.artifact_quality import _ts_js_code_mask
 
-from ...contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
-from ...javascript_syntax import repair_javascript_export_contract_placeholders
-from ...path_files import normalize_base_files_strict, normalize_repair_path_strict
+from ...contracts import RepairOperation, sha256_text
 from ..constants import *  # noqa: F403
 from ..constants import _TS_IDENTIFIER_RE
 from ..module_binding_proof import parse_module_binding_facts
-from .path_ops import *  # noqa: F403
-from .plan_ops import *  # noqa: F403
-from .parse_ops import *  # noqa: F403
 from .misc_ops import *  # noqa: F403
 from .misc_ops import _typescript_brace_balance_delta, _typescript_import_pairs_from_clause
+from .parse_ops import *  # noqa: F403
+from .path_ops import *  # noqa: F403
+from .plan_ops import *  # noqa: F403
 
 """Shared TypeScript repair helpers: import_text_ops."""
+
 
 def _rewrite_named_import_binding_lines(
     *,
@@ -83,6 +79,7 @@ def _rewrite_named_import_binding_lines(
             in_named_import = False
     return results
 
+
 def _typescript_line_is_import_binding_context(*, content: str, line: int, name: str) -> bool:
     """Return True when ``name`` on ``line`` is an import/type import binding."""
 
@@ -117,6 +114,7 @@ def _typescript_line_is_import_binding_context(*, content: str, line: int, name:
                 return True
     return False
 
+
 def _typescript_exported_private_constructor_modifier_span(text: str, class_name: str) -> tuple[int, int, int] | None:
     if not _TS_IDENTIFIER_RE.fullmatch(class_name):
         return None
@@ -144,6 +142,7 @@ def _typescript_exported_private_constructor_modifier_span(text: str, class_name
         return line_index, start, end
     return None
 
+
 def _line_index_for_offset(offsets: Sequence[int], offset: int) -> int:
     if offset < 0:
         return -1
@@ -153,6 +152,7 @@ def _line_index_for_offset(offsets: Sequence[int], offset: int) -> int:
             return index
     return -1
 
+
 def _normalize_typescript_module_ref(raw: object) -> str:
     value = str(raw or "").strip().rstrip(".")
     previous = None
@@ -160,6 +160,7 @@ def _normalize_typescript_module_ref(raw: object) -> str:
         previous = value
         value = value.strip().strip("'\"`").strip()
     return value.rstrip(".")
+
 
 def _repair_typescript_unresolved_identifier_import(
     *,
@@ -210,6 +211,7 @@ def _repair_typescript_unresolved_identifier_import(
             return import_line + original, f"import:{module_ref}:{missing_symbol}"
     return original, ""
 
+
 def _parse_named_import_symbols(symbols: str) -> list[str]:
     parsed: list[str] = []
     for raw in str(symbols or "").split(","):
@@ -217,6 +219,7 @@ def _parse_named_import_symbols(symbols: str) -> list[str]:
         if _TS_IDENTIFIER_RE.fullmatch(token):
             parsed.append(token)
     return _dedupe_preserve_order(parsed)
+
 
 def _typescript_named_import_symbols_with_added_symbol(symbols: str, missing_symbol: str) -> str:
     if not _TS_IDENTIFIER_RE.fullmatch(missing_symbol):
@@ -232,6 +235,7 @@ def _typescript_named_import_symbols_with_added_symbol(symbols: str, missing_sym
     newline = "\r\n" if "\r\n" in raw_symbols else "\n"
     indent = _typescript_named_specifier_indent(raw_symbols)
     return newline + "".join(f"{indent}{part},{newline}" for part in [*parts, missing_symbol])
+
 
 def _typescript_imported_const_class_alias_available(
     *,
@@ -251,6 +255,7 @@ def _typescript_imported_const_class_alias_available(
             return True
     return False
 
+
 def _typescript_module_exports_const_class_alias(module_text: str, symbol: str) -> bool:
     if not _TS_IDENTIFIER_RE.fullmatch(symbol):
         return False
@@ -267,12 +272,14 @@ def _typescript_module_exports_const_class_alias(module_text: str, symbol: str) 
     class_re = re.compile(rf"\b(?:export\s+)?class\s+{re.escape(class_name)}\b", re.MULTILINE)
     return bool(class_re.search(module_text))
 
+
 def _typescript_file_has_type_name_import(content: str, type_name: str) -> bool:
     escaped = re.escape(type_name)
     return bool(
         re.search(rf"\bimport\s+type\s*\{{[^}}]*\b{escaped}\b[^}}]*\}}\s+from\b", content, re.DOTALL)
         or re.search(rf"\bimport\s*\{{[^}}]*\btype\s+{escaped}\b[^}}]*\}}\s+from\b", content, re.DOTALL)
     )
+
 
 def _typescript_insert_type_import_operation(
     *,
@@ -306,12 +313,14 @@ def _typescript_insert_type_import_operation(
         },
     )
 
+
 def _typescript_import_insert_offset(content: str) -> int:
     matches = list(re.finditer(r"^import\b[^\n]*(?:\n|$)", content, re.MULTILINE))
     if matches:
         return matches[-1].end()
     header_match = re.match(r"^(?:/\*.*?\*/\s*)", content, re.DOTALL)
     return header_match.end() if header_match else 0
+
 
 def _typescript_named_type_specifier_names(symbols: str) -> set[str]:
     names: set[str] = set()
@@ -324,6 +333,7 @@ def _typescript_named_type_specifier_names(symbols: str) -> set[str]:
             names.add(name)
     return names
 
+
 def _typescript_named_value_specifier_names(symbols: str) -> set[str]:
     names: set[str] = set()
     for raw in str(symbols or "").split(","):
@@ -332,11 +342,13 @@ def _typescript_named_value_specifier_names(symbols: str) -> set[str]:
             names.add(name)
     return names
 
+
 def _typescript_named_value_specifier_name(raw: str) -> str:
     token = str(raw or "").strip()
     if not token or token.startswith("type "):
         return ""
     return _typescript_named_export_specifier_name(token)
+
 
 def _typescript_named_export_specifier_name(raw: str) -> str:
     token = str(raw or "").strip()
@@ -345,6 +357,7 @@ def _typescript_named_export_specifier_name(raw: str) -> str:
     candidate = re.split(r"\s+as\s+", token, maxsplit=1, flags=re.IGNORECASE)[0].strip()
     return candidate if _TS_IDENTIFIER_RE.fullmatch(candidate) else ""
 
+
 def _typescript_named_specifier_indent(symbols: str) -> str:
     for line in str(symbols or "").splitlines():
         if line.strip():
@@ -352,6 +365,7 @@ def _typescript_named_specifier_indent(symbols: str) -> str:
             indent = match.group(0) if match else ""
             return indent or "  "
     return "  "
+
 
 def _typescript_module_exports_symbol(module_text: str, symbol: str, *, require_value: bool = False) -> bool:
     """Require export syntax in code, never source examples in non-code spans."""
@@ -389,6 +403,7 @@ def _typescript_module_exports_symbol(module_text: str, symbol: str, *, require_
             if exported == symbol:
                 return True
     return False
+
 
 def _typescript_module_exports_symbol_resolved(
     *,
@@ -430,6 +445,7 @@ def _typescript_module_exports_symbol_resolved(
             return True
     return False
 
+
 def _relative_import_specifier_for_actual_path(
     *,
     importer_rel: str,
@@ -446,12 +462,14 @@ def _relative_import_specifier_for_actual_path(
                 break
     return relative
 
+
 def _relative_import_suffix_order(importer_rel: str) -> tuple[str, ...]:
     if importer_rel.endswith(".tsx"):
         return (".tsx", ".ts", ".jsx", ".js")
     if importer_rel.endswith(".jsx"):
         return (".jsx", ".js", ".tsx", ".ts")
     return (".ts", ".tsx", ".js", ".jsx")
+
 
 def _typescript_module_allows_import_meta(raw_module: object) -> bool:
     return str(raw_module or "").strip().lower() in {
@@ -465,6 +483,7 @@ def _typescript_module_allows_import_meta(raw_module: object) -> bool:
         "nodenext",
     }
 
+
 def _add_vitest_import_to_typescript_test(text: str, symbols: set[str]) -> str:
     requested = sorted(symbol for symbol in symbols if symbol in _TS_TEST_GLOBAL_NAMES)
     if not requested:
@@ -475,6 +494,7 @@ def _add_vitest_import_to_typescript_test(text: str, symbols: set[str]) -> str:
         replacement = f"import {{ {', '.join(sorted(existing | set(requested)))} }} from 'vitest';"
         return text[: match.start()] + replacement + text[match.end() :]
     return f"import {{ {', '.join(requested)} }} from 'vitest';\n{text}"
+
 
 def _prepend_typescript_vitest_import_operation(
     *,
@@ -510,6 +530,7 @@ def _prepend_typescript_vitest_import_operation(
             "prepend_import": True,
         },
     )
+
 
 def _typescript_ensure_named_type_import_operation(
     *,
@@ -599,30 +620,30 @@ def _typescript_ensure_named_type_import_operation(
 
 
 __all__ = (
-    "_rewrite_named_import_binding_lines",
-    "_typescript_line_is_import_binding_context",
-    "_typescript_exported_private_constructor_modifier_span",
+    "_add_vitest_import_to_typescript_test",
     "_line_index_for_offset",
     "_normalize_typescript_module_ref",
-    "_repair_typescript_unresolved_identifier_import",
     "_parse_named_import_symbols",
-    "_typescript_named_import_symbols_with_added_symbol",
-    "_typescript_imported_const_class_alias_available",
-    "_typescript_module_exports_const_class_alias",
-    "_typescript_file_has_type_name_import",
-    "_typescript_insert_type_import_operation",
-    "_typescript_import_insert_offset",
-    "_typescript_named_type_specifier_names",
-    "_typescript_named_value_specifier_names",
-    "_typescript_named_value_specifier_name",
-    "_typescript_named_export_specifier_name",
-    "_typescript_named_specifier_indent",
-    "_typescript_module_exports_symbol",
-    "_typescript_module_exports_symbol_resolved",
+    "_prepend_typescript_vitest_import_operation",
     "_relative_import_specifier_for_actual_path",
     "_relative_import_suffix_order",
-    "_typescript_module_allows_import_meta",
-    "_add_vitest_import_to_typescript_test",
-    "_prepend_typescript_vitest_import_operation",
+    "_repair_typescript_unresolved_identifier_import",
+    "_rewrite_named_import_binding_lines",
     "_typescript_ensure_named_type_import_operation",
+    "_typescript_exported_private_constructor_modifier_span",
+    "_typescript_file_has_type_name_import",
+    "_typescript_import_insert_offset",
+    "_typescript_imported_const_class_alias_available",
+    "_typescript_insert_type_import_operation",
+    "_typescript_line_is_import_binding_context",
+    "_typescript_module_allows_import_meta",
+    "_typescript_module_exports_const_class_alias",
+    "_typescript_module_exports_symbol",
+    "_typescript_module_exports_symbol_resolved",
+    "_typescript_named_export_specifier_name",
+    "_typescript_named_import_symbols_with_added_symbol",
+    "_typescript_named_specifier_indent",
+    "_typescript_named_type_specifier_names",
+    "_typescript_named_value_specifier_name",
+    "_typescript_named_value_specifier_names",
 )

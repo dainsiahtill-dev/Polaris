@@ -800,9 +800,7 @@ class ProjectCompletionConvergenceEngineV1:
         try:
             binding = await self._outcome_port.query_project_completion_outcome(identity)
         except Exception as exc:  # noqa: BLE001 -- owner boundary failures must fail closed
-            owner_error_code = str(
-                getattr(exc, "error_code", "") or getattr(exc, "code", "") or ""
-            ).strip()
+            owner_error_code = str(getattr(exc, "error_code", "") or getattr(exc, "code", "") or "").strip()
             reason_codes = ["project_outcome_owner_query_failed"]
             if owner_error_code and owner_error_code not in reason_codes:
                 reason_codes.append(owner_error_code)
@@ -1538,7 +1536,10 @@ class ProjectCompletionConvergenceEngineV1:
             if type(owner_binding_hash) is not str:
                 return await self._invalidate_terminal_projection(identity, workflow_id, event.seq)
             binding_result = await self._query_outcome(identity, workflow_id, event.seq)
-            if isinstance(binding_result, ProjectCompletionAdvanceResultV1) or not binding_result.outcome.completed_verified:
+            if (
+                isinstance(binding_result, ProjectCompletionAdvanceResultV1)
+                or not binding_result.outcome.completed_verified
+            ):
                 return await self._invalidate_terminal_projection(identity, workflow_id, event.seq)
             current_binding_hash = _binding_hash(binding_result)
             if current_binding_hash != owner_binding_hash:

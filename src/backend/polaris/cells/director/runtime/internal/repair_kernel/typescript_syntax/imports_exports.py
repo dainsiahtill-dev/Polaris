@@ -1,18 +1,12 @@
 from __future__ import annotations
 
-import json
 import posixpath
 import re
 from collections.abc import Mapping, Sequence
-from difflib import SequenceMatcher
-from pathlib import PurePosixPath
-from typing import Any
 
 from polaris.kernelone.quality.artifact_quality import _ts_js_code_mask
 
 from ..contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
-from ..javascript_syntax import repair_javascript_export_contract_placeholders
-from ..path_files import normalize_base_files_strict, normalize_repair_path_strict
 from .common import *  # noqa: F403
 from .common.import_text_ops import _parse_named_import_symbols
 from .common.misc_ops import (
@@ -1858,52 +1852,52 @@ def _export_existing_typescript_declaration(text: str, symbol: str) -> str:
 
 
 __all__ = (
-    "_build_typescript_import_specifier_keyword_plan",
-    "_build_typescript_missing_export_plan",
-    "_build_typescript_reexport_plan",
+    "_add_typescript_reexported_type_binding",
+    "_append_typescript_missing_export_declaration_operation",
+    "_build_relative_import_plan",
+    "_build_typescript_duplicate_export_import_binding_plan",
     "_build_typescript_export_ambiguity_plan",
+    "_build_typescript_import_specifier_keyword_plan",
+    "_build_typescript_import_type_value_conflict_plan",
+    "_build_typescript_missing_export_class_declaration",
+    "_build_typescript_missing_export_declaration",
+    "_build_typescript_missing_export_plan",
+    "_build_typescript_reexport_line",
+    "_build_typescript_reexport_plan",
     "_build_typescript_reexported_type_binding_plan",
     "_build_typescript_relative_import_case_plan",
+    "_build_typescript_suggested_export_alias_declaration",
     "_build_typescript_unique_export_import_plan",
-    "_import_type_value_conflict_symbols",
-    "_rewrite_import_type_value_conflict_content",
-    "_build_typescript_import_type_value_conflict_plan",
-    "_build_typescript_duplicate_export_import_binding_plan",
     "_build_typescript_unused_import_plan",
+    "_export_existing_typescript_declaration",
+    "_find_unique_runtime_export_source",
+    "_find_unique_typescript_export_for_import",
+    "_import_type_value_conflict_symbols",
+    "_looks_like_typescript_reexport_signal",
+    "_missing_export_operation",
+    "_parse_typescript_missing_export_errors",
+    "_parse_unresolved_relative_import_errors",
+    "_reexport_imported_typescript_symbol",
+    "_relative_import_repair_target_candidates",
+    "_remove_typescript_named_export_symbols",
+    "_remove_unused_typescript_import_operation",
     "_repair_typescript_embedded_import_type_declarations",
     "_repair_typescript_import_specifier_keywords",
-    "_typescript_remove_named_import_binding_anywhere",
-    "_parse_typescript_missing_export_errors",
-    "_missing_export_operation",
-    "_build_typescript_missing_export_declaration",
-    "_build_typescript_suggested_export_alias_declaration",
-    "_build_typescript_missing_export_class_declaration",
-    "_reexport_imported_typescript_symbol",
-    "_typescript_import_specifiers",
-    "_append_typescript_missing_export_declaration_operation",
-    "_typescript_export_ambiguity_targets",
+    "_replace_import_specifier_operation",
+    "_resolve_relative_import_target",
+    "_rewrite_import_type_value_conflict_content",
     "_typescript_duplicate_export_import_operations",
-    "_typescript_named_imports_by_module",
-    "_typescript_named_reexports_by_module",
+    "_typescript_export_ambiguity_targets",
+    "_typescript_exported_symbol_is_type_only",
+    "_typescript_file_has_named_reexport",
+    "_typescript_import_pairs_for_specifier",
+    "_typescript_import_specifiers",
+    "_typescript_import_statement_for_specifier",
     "_typescript_local_named_export_names",
     "_typescript_local_type_named_export_names",
     "_typescript_named_export_specifier_names",
-    "_remove_typescript_named_export_symbols",
-    "_typescript_exported_symbol_is_type_only",
-    "_typescript_file_has_named_reexport",
-    "_find_unique_runtime_export_source",
+    "_typescript_named_imports_by_module",
+    "_typescript_named_reexports_by_module",
     "_typescript_reexport_would_cycle",
-    "_build_typescript_reexport_line",
-    "_looks_like_typescript_reexport_signal",
-    "_add_typescript_reexported_type_binding",
-    "_build_relative_import_plan",
-    "_parse_unresolved_relative_import_errors",
-    "_resolve_relative_import_target",
-    "_relative_import_repair_target_candidates",
-    "_replace_import_specifier_operation",
-    "_typescript_import_statement_for_specifier",
-    "_typescript_import_pairs_for_specifier",
-    "_remove_unused_typescript_import_operation",
-    "_find_unique_typescript_export_for_import",
-    "_export_existing_typescript_declaration",
+    "_typescript_remove_named_import_binding_anywhere",
 )

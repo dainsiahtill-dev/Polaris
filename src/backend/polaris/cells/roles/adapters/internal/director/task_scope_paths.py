@@ -125,8 +125,7 @@ def _extract_project_declared_target_path_candidates(source: dict[str, Any] | No
         [
             candidate
             for candidate in candidates
-            if _looks_like_task_path_candidate(candidate)
-            or _looks_like_task_scope_directory_candidate(candidate)
+            if _looks_like_task_path_candidate(candidate) or _looks_like_task_scope_directory_candidate(candidate)
         ]
     )
 
@@ -139,9 +138,7 @@ def _path_matches_declared_candidate(path: str, candidate: str) -> bool:
     return path_matches_declared_scope_candidate(path, candidate)
 
 
-def _workspace_path_exists_case_insensitive(
-    root: Path, rel_path: str, *, require_materialized: bool = False
-) -> bool:
+def _workspace_path_exists_case_insensitive(root: Path, rel_path: str, *, require_materialized: bool = False) -> bool:
     """Observe existence or materialization without changing the declared path.
 
     Default behavior retains directory/existence matching. Byte evidence is

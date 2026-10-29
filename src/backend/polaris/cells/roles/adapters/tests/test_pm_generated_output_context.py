@@ -117,9 +117,18 @@ def test_bounded_revision_explains_exclusive_field_operations(tmp_path: Path) ->
     candidate = _candidate()
     diagnostics = list(validate_pm_artifact_contracts(candidate["tasks"], primary_language="python").diagnostics)
     quality = {"critical_issues": ["generated_output_ownership_invalid"], "contract_diagnostics": diagnostics}
-    base = revision.make_revision_base(json.dumps(candidate), workspace=str(tmp_path), run_id="run", task_id="pm", directive="Create model", quality=quality)
+    base = revision.make_revision_base(
+        json.dumps(candidate),
+        workspace=str(tmp_path),
+        run_id="run",
+        task_id="pm",
+        directive="Create model",
+        quality=quality,
+    )
     assert base is not None
-    prompt = PMAdapter(workspace=str(tmp_path))._build_pm_retry_message(directive="Create model", quality=quality, previous_output=base.response, revision_base=base)
+    prompt = PMAdapter(workspace=str(tmp_path))._build_pm_retry_message(
+        directive="Create model", quality=quality, previous_output=base.response, revision_base=base
+    )
     assert "同一字段只能选择 set 或 append" in prompt
     assert "phase" in prompt
     assert "不在 edit_manifest" in prompt

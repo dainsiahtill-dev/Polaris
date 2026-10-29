@@ -402,15 +402,9 @@ def test_lib_root_facade_export_runtime_runs_with_editor_only(tmp_path: Path) ->
 
 
 def test_lib_root_module_declaration_plans_and_runs_with_editor_only(tmp_path: Path) -> None:
-    raw_error = (
-        "error[E0433]: cannot find `engine` in `fantasy_restaurant_queue_ai`\n"
-        " --> tests/product.rs:22:34\n"
-    )
+    raw_error = "error[E0433]: cannot find `engine` in `fantasy_restaurant_queue_ai`\n --> tests/product.rs:22:34\n"
     base_files = {
-        "Cargo.toml": (
-            '[package]\nname = "fantasy-restaurant-queue-ai"\nversion = "0.1.0"\n'
-            'edition = "2021"\n'
-        ),
+        "Cargo.toml": ('[package]\nname = "fantasy-restaurant-queue-ai"\nversion = "0.1.0"\nedition = "2021"\n'),
         "src/lib.rs": "pub mod domain;\n\npub use domain::Menu;\n",
         "src/domain/mod.rs": "pub struct Menu;\n",
         "src/engine/mod.rs": "pub mod rules;\n",
@@ -455,9 +449,7 @@ def test_lib_root_module_declaration_plans_and_runs_with_editor_only(tmp_path: P
     assert planning.plan.operations[0].replacement == "pub mod engine;\n"
     assert run.ok is True
     assert len(edits) == 1
-    assert target.read_text(encoding="utf-8") == (
-        "pub mod domain;\npub mod engine;\n\npub use domain::Menu;\n"
-    )
+    assert target.read_text(encoding="utf-8") == ("pub mod domain;\npub mod engine;\n\npub use domain::Menu;\n")
 
 
 def test_lib_root_module_declaration_rejects_noncanonical_or_missing_disk_module() -> None:

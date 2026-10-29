@@ -9,9 +9,7 @@ from polaris.cells.director.runtime.public import (
 
 
 def _coverage(*raw: str) -> dict[str, object]:
-    return query_director_repair_coverage(
-        QueryDirectorRepairCoverageV1(artifact_quality_errors=raw)
-    ).to_dict()
+    return query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=raw)).to_dict()
 
 
 def test_cpp20_only_api_does_not_match_missing_standard_include_rule() -> None:
@@ -24,16 +22,12 @@ def test_cpp20_only_api_does_not_match_missing_standard_include_rule() -> None:
     )
     payload = _coverage(truncated_primary, complete_compiler_blob)
     cpp_items = [
-        item
-        for item in payload["items"]
-        if item["diagnostic"]["code"] == "cpp_language_standard_incompatibility"
+        item for item in payload["items"] if item["diagnostic"]["code"] == "cpp_language_standard_incompatibility"
     ]
 
     assert cpp_items
     assert all("cpp.standard_include" not in item["matched_rule_ids"] for item in cpp_items)
-    assert all(
-        "deterministic_cpp_standard_include_repair" not in item["matched_source_tools"] for item in cpp_items
-    )
+    assert all("deterministic_cpp_standard_include_repair" not in item["matched_source_tools"] for item in cpp_items)
     assert all(item["diagnostic"]["metadata"]["required_standard"] == "c++20" for item in cpp_items)
 
 
@@ -50,9 +44,7 @@ def test_cpp20_chrono_calendar_api_without_compiler_note_is_standard_incompatibi
 
     assert len(items) == 1
     assert items[0]["diagnostic"]["code"] == "cpp_language_standard_incompatibility"
-    assert items[0]["diagnostic"]["metadata"]["incompatible_symbol"] == (
-        "std::chrono::year_month_day"
-    )
+    assert items[0]["diagnostic"]["metadata"]["incompatible_symbol"] == ("std::chrono::year_month_day")
     assert items[0]["diagnostic"]["metadata"]["required_standard"] == "c++20"
     assert "cpp.standard_include" not in items[0]["matched_rule_ids"]
     assert "deterministic_cpp_standard_include_repair" not in items[0]["matched_source_tools"]
@@ -100,9 +92,7 @@ def test_multi_error_cpp_transcript_preserves_same_message_at_distinct_lines() -
         "   46 |     Ink ink(cipher_);\n"
     )
     payload = _coverage(raw)
-    cpp_items = [
-        item for item in payload["items"] if item["diagnostic"]["code"] == "cpp_compile_error"
-    ]
+    cpp_items = [item for item in payload["items"] if item["diagnostic"]["code"] == "cpp_compile_error"]
 
     assert len(cpp_items) == 2
     assert {item["diagnostic"]["line"] for item in cpp_items} == {24, 46}

@@ -83,9 +83,12 @@ def _edit_file_invalid_reason(value: Any) -> str:
     from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments_from_snapshot
 
     try:
-        arguments = dict(normalize_tool_arguments_from_snapshot(
-            ToolSpecRegistry.capture_effective_spec("edit_file"), arguments,
-        ))
+        arguments = dict(
+            normalize_tool_arguments_from_snapshot(
+                ToolSpecRegistry.capture_effective_spec("edit_file"),
+                arguments,
+            )
+        )
     except (TypeError, ValueError) as exc:
         return str(exc) or "invalid_arguments"
 

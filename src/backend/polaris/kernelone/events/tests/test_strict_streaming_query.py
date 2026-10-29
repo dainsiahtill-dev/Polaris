@@ -69,8 +69,7 @@ def test_public_strict_query_paginates_complete_history_larger_than_memory_budge
     physical_lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
     expected = [json.loads(line) for line in physical_lines]
     record_bytes = {
-        record["event_id"]: len(line.encode("utf-8"))
-        for record, line in zip(expected, physical_lines, strict=True)
+        record["event_id"]: len(line.encode("utf-8")) for record, line in zip(expected, physical_lines, strict=True)
     }
 
     def full_history_read_forbidden(_lease: StreamLeaseV1) -> bytes:

@@ -1009,9 +1009,7 @@ class RoleConsoleHost:
         if include_terminal:
             return rows
         return [
-            row
-            for row in rows
-            if str(row.get("status") or "").strip().lower() not in _CONSOLE_TERMINAL_TASK_STATUSES
+            row for row in rows if str(row.get("status") or "").strip().lower() not in _CONSOLE_TERMINAL_TASK_STATUSES
         ]
 
     def create_task(
@@ -1044,8 +1042,7 @@ class RoleConsoleHost:
         execution_failure = task_row_execution_event_failure(task_row)
         if execution_failure is not None:
             raise RoleConsoleHostError(
-                "task_runtime_execution_event_append_failed:"
-                f"{execution_failure.get('event_type') or 'task_created'}"
+                f"task_runtime_execution_event_append_failed:{execution_failure.get('event_type') or 'task_created'}"
             )
         return dict(task_row)
 

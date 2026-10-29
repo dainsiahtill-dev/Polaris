@@ -329,6 +329,7 @@ def test_deferred_repair_read_dependency_never_expands_write_scope() -> None:
     from polaris.cells.roles.adapters.internal.director.deferred_repair_commit_bridge import (
         _capability_scope_from_context,
     )
+
     context = _strict_leaf_authority_context()
     token = context["job_token"]
     assert isinstance(token, dict)

@@ -1032,8 +1032,18 @@ def test_pol77_artifact_admission_is_required_without_language_catalog(tmp_path:
     from polaris.cells.factory.pipeline.internal.factory_stage_executor import OrchestrationStageExecutor
 
     executor = OrchestrationStageExecutor(tmp_path)
-    executor._write_json_artifact("tasks/plan.json", {"tasks": [
-        {"id": "TASK-1", "target_files": ["qa/report.md"], "context_files": ["qa/report.md"],
-         "depends_on": [], "execution_backend": "code_edit"}
-    ]})
+    executor._write_json_artifact(
+        "tasks/plan.json",
+        {
+            "tasks": [
+                {
+                    "id": "TASK-1",
+                    "target_files": ["qa/report.md"],
+                    "context_files": ["qa/report.md"],
+                    "depends_on": [],
+                    "execution_backend": "code_edit",
+                }
+            ]
+        },
+    )
     assert "artifact_readonly_write_collision" in executor._validate_pm_plan_artifact_contract()

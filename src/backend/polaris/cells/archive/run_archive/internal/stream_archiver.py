@@ -36,6 +36,7 @@ def _json_event_default(value: Any) -> str:
         return value.isoformat()
     raise TypeError(f"unsupported archive event value: {type(value).__name__}")
 
+
 # ---------------------------------------------------------------------------
 # Internal archiver (no public contract dependency)
 # ---------------------------------------------------------------------------

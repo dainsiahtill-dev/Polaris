@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import threading
 import time
 from pathlib import Path
@@ -17,7 +16,6 @@ from polaris.cells.events.fact_stream.public import (
 from polaris.cells.runtime.task_market.internal.errors import FSMTransitionError, StaleLeaseTokenError
 from polaris.cells.runtime.task_market.internal.store import get_store
 from polaris.cells.runtime.task_market.public.contracts import (
-    TASK_REQUEUE_RECEIPTS_METADATA_KEY,
     AcknowledgeTaskStageCommandV1,
     ClaimTaskWorkItemCommandV1,
     FailTaskStageCommandV1,
@@ -27,18 +25,19 @@ from polaris.cells.runtime.task_market.public.contracts import (
     QueryPendingHumanReviewsV1,
     QueryPlanRevisionsV1,
     QueryTaskMarketStatusV1,
-    QueryTaskRequeueReceiptV1,
     RegisterPlanRevisionCommandV1,
     RenewTaskLeaseCommandV1,
     RequestHumanReviewCommandV1,
-    RequeueTaskCommandV1,
     ResolveHumanReviewCommandV1,
     SubmitChangeOrderCommandV1,
     TaskMarketError,
-    TaskRequeueReceiptV1,
     TaskWorkItemResultV1,
 )
 from polaris.cells.runtime.task_market.public.service import TaskMarketService
+from polaris.cells.runtime.task_market.tests._claim_gate_helpers import (
+    publish_gate_item,
+    scan_claim,
+)
 
 
 class _FakeCognitiveRuntimeService:
@@ -102,8 +101,6 @@ class _RecordingStore:
             dead_letter_records=dead_letter_records,
             human_review_records=human_review_records,
         )
-
-
 
 
 def test_publish_claim_ack_flow(tmp_path: Path) -> None:
@@ -2082,6 +2079,33 @@ def test_atomic_rollback_on_store_failure(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+class FakeConsumerForService:
+    """Minimal consumer stub for consumer-loop lifecycle tests."""
+
+    def __init__(
+        self,
+        workspace: str = "",
+        worker_id: str = "",
+        poll_interval: float = 0.02,
+        **kwargs: Any,
+    ) -> None:
+        self.workspace = workspace
+        self.worker_id = worker_id
+        self.poll_interval = poll_interval
+        self._stop_event = threading.Event()
+        self.run_count = 0
+        self.stopped = False
+
+    def run(self) -> None:
+        self.run_count += 1
+        while not self._stop_event.wait(self.poll_interval):
+            pass
+        self.stopped = True
+
+    def stop(self) -> None:
+        self._stop_event.set()
+
+
 def test_start_consumer_loops_creates_manager(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -2168,41 +2192,8 @@ class TestExecClaimReadinessGate:
     """Three-tier fission (I2): queue-scan claims at pending_exec must skip
     non-leaf supervision rows and dependency-unready steps."""
 
-    @staticmethod
-    def _publish(
-        service: TaskMarketService,
-        workspace: Path,
-        task_id: str,
-        *,
-        is_leaf: bool = True,
-        depends_on: tuple[str, ...] = (),
-        parent: str = "",
-    ) -> None:
-        service.publish_work_item(
-            PublishTaskWorkItemCommandV1(
-                workspace=str(workspace),
-                trace_id=f"tr-{task_id}",
-                run_id="run-gate",
-                task_id=task_id,
-                stage="pending_exec",
-                source_role="chief_engineer",
-                payload={"title": task_id},
-                is_leaf=is_leaf,
-                depends_on=tuple(depends_on),
-                parent_task_id=parent,
-            )
-        )
-
-    @staticmethod
-    def _scan_claim(service: TaskMarketService, workspace: Path) -> TaskWorkItemResultV1:
-        return service.claim_work_item(
-            ClaimTaskWorkItemCommandV1(
-                workspace=str(workspace),
-                stage="pending_exec",
-                worker_id="dw-1",
-                worker_role="director",
-            )
-        )
+    _publish = staticmethod(publish_gate_item)
+    _scan_claim = staticmethod(scan_claim)
 
     def test_non_leaf_parent_skipped_on_scan(self, tmp_path: Path) -> None:
         workspace = tmp_path / "ws"
@@ -2353,5 +2344,3 @@ class TestDesignClaimOrderingGate:
         claim = self._claim_design(service, workspace)
         assert claim.ok is True
         assert claim.task_id == "PM-X"
-
-

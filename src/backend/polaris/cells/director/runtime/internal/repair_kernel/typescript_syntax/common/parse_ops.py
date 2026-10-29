@@ -1,21 +1,14 @@
 from __future__ import annotations
 
-import json
-import posixpath
-import re
-from collections.abc import Mapping, Sequence
-from difflib import SequenceMatcher
-from pathlib import PurePosixPath
-from typing import Any
+from collections.abc import Sequence
 
-from ...contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
-from ...javascript_syntax import repair_javascript_export_contract_placeholders
-from ...path_files import normalize_base_files_strict, normalize_repair_path_strict
+from ...contracts import RepairDiagnostic
 from ..constants import *  # noqa: F403
 from .path_ops import *  # noqa: F403
 from .plan_ops import *  # noqa: F403
 
 """Shared TypeScript repair helpers: parse_ops."""
+
 
 def _typescript_syntax_error_paths(diagnostics: Sequence[RepairDiagnostic]) -> tuple[str, ...]:
     paths: list[str] = []
@@ -29,8 +22,10 @@ def _typescript_syntax_error_paths(diagnostics: Sequence[RepairDiagnostic]) -> t
             paths.append(path)
     return tuple(paths)
 
+
 def _diagnostic_text(diagnostics: Sequence[RepairDiagnostic]) -> str:
     return "\n".join(f"{diagnostic.message}\n{diagnostic.raw}" for diagnostic in diagnostics)
+
 
 def _typescript_glob_points_outside_root(entry: str, *, root_dir: str) -> bool:
     normalized_entry = str(entry or "").strip().replace("\\", "/")
@@ -40,6 +35,7 @@ def _typescript_glob_points_outside_root(entry: str, *, root_dir: str) -> bool:
     if normalized_entry.startswith(f"{normalized_root}/") or normalized_entry == normalized_root:
         return False
     return normalized_entry.startswith(("tests/", "test/", "*."))
+
 
 def _parse_html_truncated_entrypoint_paths(diagnostics: Sequence[RepairDiagnostic]) -> list[str]:
     """Return unique HTML paths with truncated/incomplete HTML diagnostics."""
@@ -66,6 +62,7 @@ def _parse_html_truncated_entrypoint_paths(diagnostics: Sequence[RepairDiagnosti
             paths.append(normalized)
     return paths
 
+
 def _parse_undeclared_runtime_import_paths(
     diagnostics: Sequence[RepairDiagnostic],
     *,
@@ -81,6 +78,7 @@ def _parse_undeclared_runtime_import_paths(
                 paths.append(path)
     return _dedupe_preserve_order(paths)
 
+
 def _parse_typescript_cannot_find_name_errors(diagnostics: Sequence[RepairDiagnostic]) -> list[dict[str, str]]:
     parsed: list[dict[str, str]] = []
     for diagnostic in diagnostics:
@@ -95,6 +93,7 @@ def _parse_typescript_cannot_find_name_errors(diagnostics: Sequence[RepairDiagno
             )
     return [item for item in parsed if item["file"] and item["symbol"]]
 
+
 def _typescript_errors_require_dom_lib(diagnostics: Sequence[RepairDiagnostic]) -> bool:
     text = _diagnostic_text(diagnostics).lower()
     dom_global_names = ("console", "window", "document", "navigator", "location")
@@ -103,9 +102,11 @@ def _typescript_errors_require_dom_lib(diagnostics: Sequence[RepairDiagnostic]) 
         f"cannot find name '{name}'" in text for name in dom_type_names
     )
 
+
 def _typescript_errors_require_import_meta_module(diagnostics: Sequence[RepairDiagnostic]) -> bool:
     text = _diagnostic_text(diagnostics).lower()
     return "ts1343" in text and "import.meta" in text and "module" in text
+
 
 def _typescript_errors_require_es2021_lib(diagnostics: Sequence[RepairDiagnostic]) -> bool:
     text = _diagnostic_text(diagnostics).lower()
@@ -114,6 +115,7 @@ def _typescript_errors_require_es2021_lib(diagnostics: Sequence[RepairDiagnostic
         and "replaceall" in text
         and ("es2021" in text or "target library" in text or "lib" in text)
     )
+
 
 def _parse_typescript_missing_test_global_errors(diagnostics: Sequence[RepairDiagnostic]) -> list[dict[str, str]]:
     parsed: list[dict[str, str]] = []
@@ -125,6 +127,7 @@ def _parse_typescript_missing_test_global_errors(diagnostics: Sequence[RepairDia
                 parsed.append({"file": path, "symbol": symbol})
     return parsed
 
+
 def _is_typescript_config_file(path: str) -> bool:
     normalized = _normalize_repair_path(path).lower()
     if not normalized:
@@ -132,12 +135,14 @@ def _is_typescript_config_file(path: str) -> bool:
     basename = normalized.rsplit("/", maxsplit=1)[-1]
     return basename.endswith((".config.ts", ".config.tsx"))
 
+
 def _is_typescript_test_file(path: str) -> bool:
     normalized = _normalize_repair_path(path).lower()
     if not normalized:
         return False
     basename = normalized.rsplit("/", maxsplit=1)[-1]
     return "/__tests__/" in f"/{normalized}" or basename.endswith((".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx"))
+
 
 def _is_typescript_comma_expected_diagnostic(diagnostic: RepairDiagnostic) -> bool:
     if diagnostic.code == "typescript_return_object_property_semicolon":
@@ -147,6 +152,7 @@ def _is_typescript_comma_expected_diagnostic(diagnostic: RepairDiagnostic) -> bo
     message = diagnostic.message.lower()
     raw = diagnostic.raw.lower()
     return "expected" in message and "," in (message + raw)
+
 
 def _parse_typescript_argument_missing_props_diagnostic(
     diagnostic: RepairDiagnostic,
@@ -184,6 +190,7 @@ def _parse_typescript_argument_missing_props_diagnostic(
         return None
     return path, line, col, source_type, target_shape, props
 
+
 def _parse_typescript_missing_props_diagnostic(
     diagnostic: RepairDiagnostic,
 ) -> tuple[str, int, int, str, list[str]] | None:
@@ -219,19 +226,19 @@ def _parse_typescript_missing_props_diagnostic(
 
 
 __all__ = (
-    "_typescript_syntax_error_paths",
     "_diagnostic_text",
-    "_typescript_glob_points_outside_root",
-    "_parse_html_truncated_entrypoint_paths",
-    "_parse_undeclared_runtime_import_paths",
-    "_parse_typescript_cannot_find_name_errors",
-    "_typescript_errors_require_dom_lib",
-    "_typescript_errors_require_import_meta_module",
-    "_typescript_errors_require_es2021_lib",
-    "_parse_typescript_missing_test_global_errors",
+    "_is_typescript_comma_expected_diagnostic",
     "_is_typescript_config_file",
     "_is_typescript_test_file",
-    "_is_typescript_comma_expected_diagnostic",
+    "_parse_html_truncated_entrypoint_paths",
     "_parse_typescript_argument_missing_props_diagnostic",
+    "_parse_typescript_cannot_find_name_errors",
     "_parse_typescript_missing_props_diagnostic",
+    "_parse_typescript_missing_test_global_errors",
+    "_parse_undeclared_runtime_import_paths",
+    "_typescript_errors_require_dom_lib",
+    "_typescript_errors_require_es2021_lib",
+    "_typescript_errors_require_import_meta_module",
+    "_typescript_glob_points_outside_root",
+    "_typescript_syntax_error_paths",
 )

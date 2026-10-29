@@ -1529,8 +1529,6 @@ def _service_method_tree(name: str) -> ast.Module:
     return ast.parse(dedent(inspect.getsource(method)))
 
 
-
-
 def test_deo3_terminal_authority_has_no_cross_cell_internal_or_parent_close_bypass() -> None:
     polaris_root = Path(inspect.getfile(deo_internal)).resolve().parents[4]
     protected_consumers = (
@@ -1684,12 +1682,18 @@ def test_all_taskruntime_factstream_writer_references_have_closed_owners() -> No
                 "internal/directed_effect_operation/_repository_class.source",
                 "DirectedEffectOperationRepository._canonical_receipt_for_durable_transition",
             ),
-            ("internal/directed_effect_operation/_repository_class.source", "DirectedEffectOperationRepository._confirm_inventory_append"),
+            (
+                "internal/directed_effect_operation/_repository_class.source",
+                "DirectedEffectOperationRepository._confirm_inventory_append",
+            ),
             (
                 "internal/directed_effect_operation/_repository_class.source",
                 "DirectedEffectOperationRepository._confirm_inventory_ready_append",
             ),
-            ("internal/directed_effect_operation/_repository_class.source", "DirectedEffectOperationRepository._mutate"),
+            (
+                "internal/directed_effect_operation/_repository_class.source",
+                "DirectedEffectOperationRepository._mutate",
+            ),
             (
                 "internal/directed_effect_operation/_repository_class.source",
                 "DirectedEffectOperationRepository._reconcile_inventory_append",
@@ -1702,21 +1706,36 @@ def test_all_taskruntime_factstream_writer_references_have_closed_owners() -> No
                 "internal/directed_effect_operation/_repository_class.source",
                 "DirectedEffectOperationRepository._append_parent_batch_rollover_close",
             ),
-            ("internal/directed_effect_operation/_repository_class.source", "DirectedEffectOperationRepository.finalize_inventory"),
-            ("internal/directed_effect_operation/_repository_class.source", "DirectedEffectOperationRepository.seal_inventory"),
+            (
+                "internal/directed_effect_operation/_repository_class.source",
+                "DirectedEffectOperationRepository.finalize_inventory",
+            ),
+            (
+                "internal/directed_effect_operation/_repository_class.source",
+                "DirectedEffectOperationRepository.seal_inventory",
+            ),
         },
         "GuardedFactEventV1": {
             (
                 "internal/directed_effect_operation/_repository_class.source",
                 "DirectedEffectOperationRepository._append_parent_batch_rollover_close",
             ),
-            ("internal/directed_effect_operation/_repository_class.source", "DirectedEffectOperationRepository._mutate"),
+            (
+                "internal/directed_effect_operation/_repository_class.source",
+                "DirectedEffectOperationRepository._mutate",
+            ),
             (
                 "internal/directed_effect_operation/_repository_class.source",
                 "DirectedEffectOperationRepository._parent_settlement_close_command",
             ),
-            ("internal/directed_effect_operation/_repository_class.source", "DirectedEffectOperationRepository.finalize_inventory"),
-            ("internal/directed_effect_operation/_repository_class.source", "DirectedEffectOperationRepository.seal_inventory"),
+            (
+                "internal/directed_effect_operation/_repository_class.source",
+                "DirectedEffectOperationRepository.finalize_inventory",
+            ),
+            (
+                "internal/directed_effect_operation/_repository_class.source",
+                "DirectedEffectOperationRepository.seal_inventory",
+            ),
         },
     }
     restricted_writer_constants = {
@@ -1811,7 +1830,9 @@ def test_all_taskruntime_factstream_writer_references_have_closed_owners() -> No
             )
         )
         expected = (
-            allowed_terminal_writer_violations if relative_path == "internal/directed_effect_operation/_repository_class.source" else set()
+            allowed_terminal_writer_violations
+            if relative_path == "internal/directed_effect_operation/_repository_class.source"
+            else set()
         )
         assert violations == expected, relative_path
 
@@ -1857,13 +1878,17 @@ def test_all_taskruntime_factstream_writer_references_have_closed_owners() -> No
             else (
                 _QualifiedReference(
                     owner="DirectedEffectOperationRepository._append_unsealed_failure_close",
-                    target="append_fact_event", kind="conservative_forbidden_call",
+                    target="append_fact_event",
+                    kind="conservative_forbidden_call",
                 ),
                 _QualifiedReference(
                     owner="DirectedEffectOperationRepository._append_unsealed_failure_close",
-                    target=f"{_FACT_STREAM_PUBLIC}.append_fact_event", kind="call",
+                    target=f"{_FACT_STREAM_PUBLIC}.append_fact_event",
+                    kind="call",
                 ),
-            ) if root == "_settle_parent_for_terminal_intent" else ()
+            )
+            if root == "_settle_parent_for_terminal_intent"
+            else ()
         )
         assert forbidden_closure_references == expected_forbidden_closure_references, root
         writer_violations = set(

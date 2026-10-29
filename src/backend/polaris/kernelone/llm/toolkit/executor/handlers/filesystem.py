@@ -132,6 +132,7 @@ _SOURCE_NARRATION_LEAK_RE = re.compile(
     r")"
 )
 
+
 def _coerce_syntax_error_line(value: Any) -> int | None:
     if value is None or isinstance(value, bool):
         return None
@@ -859,8 +860,14 @@ def _handle_edit_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
     # Text replace mode
     if search is not None:
         return _edit_file_replace_mode(
-            self, rel, file_content, search, replace or "", regex,
-            replace_all=kwargs.get("replace_all", False), tool_kwargs=kwargs,
+            self,
+            rel,
+            file_content,
+            search,
+            replace or "",
+            regex,
+            replace_all=kwargs.get("replace_all", False),
+            tool_kwargs=kwargs,
         )
 
     return {"ok": False, "error": "Must specify either line range (start_line/end_line) or search/replace"}

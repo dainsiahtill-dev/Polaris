@@ -99,8 +99,7 @@ def test_quality_repair_message_prioritizes_exact_compile_site_before_full_verif
     message = _build_materialization_quality_repair_message(
         original_message="Repair Go tests.",
         artifact_quality_errors=[
-            "internal/bubbletea/note_test.go:6:9: assignment mismatch: "
-            "1 variable but b.Assign returns 2 values"
+            "internal/bubbletea/note_test.go:6:9: assignment mismatch: 1 variable but b.Assign returns 2 values"
         ],
         changed_files=["internal/bubbletea/note_test.go"],
         repair_target_files=["internal/bubbletea/note_test.go"],

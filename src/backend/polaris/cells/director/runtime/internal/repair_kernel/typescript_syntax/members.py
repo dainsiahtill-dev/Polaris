@@ -9,6 +9,7 @@ from .constants import *  # noqa: F403
 
 """TypeScript syntax repair module: members."""
 
+
 def build_typescript_unknown_member_access_plan(
     *,
     base_files: Mapping[str, str],
@@ -73,6 +74,7 @@ def build_typescript_unknown_member_access_plan(
         mode=mode,
         metadata={"unknown_member_accesses": repaired_items},
     )
+
 
 def _build_typescript_member_alias_plan(
     *,
@@ -214,6 +216,7 @@ def _build_typescript_member_alias_plan(
         metadata={"aliases": aliases},
     )
 
+
 def _build_typescript_private_constructor_access_plan(
     *,
     base_files: Mapping[str, str],
@@ -283,6 +286,7 @@ def _build_typescript_private_constructor_access_plan(
         metadata={"repairs": repairs},
     )
 
+
 def _build_typescript_private_property_access_plan(
     *,
     base_files: Mapping[str, str],
@@ -344,6 +348,7 @@ def _build_typescript_private_property_access_plan(
         mode=mode,
         metadata={"repairs": repairs},
     )
+
 
 def _build_typescript_missing_member_plan(
     *,
@@ -430,9 +435,7 @@ def _build_typescript_missing_member_plan(
         # Prefer declaration nearest to the usage import graph when multiple
         # same-named types exist (R180 GardenScene in models stub vs index demo).
         preferred_paths = {
-            str(spec.get("usage_path") or "")
-            for spec in type_members.values()
-            if str(spec.get("usage_path") or "")
+            str(spec.get("usage_path") or "") for spec in type_members.values() if str(spec.get("usage_path") or "")
         }
         operation = _add_typescript_members_operation(
             base_files=base_files,
@@ -462,6 +465,7 @@ def _build_typescript_missing_member_plan(
         mode=mode,
         metadata={"members": members},
     )
+
 
 def _build_typescript_uninitialized_property_plan(
     *,
@@ -504,6 +508,7 @@ def _build_typescript_uninitialized_property_plan(
         metadata={"properties": properties},
     )
 
+
 def _parse_typescript_private_constructor_access_errors(
     diagnostics: Sequence[RepairDiagnostic],
 ) -> list[dict[str, str]]:
@@ -537,6 +542,7 @@ def _parse_typescript_private_constructor_access_errors(
                 seen.add(key)
                 parsed.append(item)
     return parsed
+
 
 def _parse_typescript_private_property_access_errors(
     diagnostics: Sequence[RepairDiagnostic],
@@ -575,6 +581,7 @@ def _parse_typescript_private_property_access_errors(
                 parsed.append(item)
     return parsed
 
+
 def _typescript_class_owner_file(
     base_files: Mapping[str, str],
     class_name: str,
@@ -588,6 +595,7 @@ def _typescript_class_owner_file(
     if len(matches) != 1:
         return "", ""
     return matches[0]
+
 
 def _typescript_private_field_modifier_span(
     content: str,
@@ -604,6 +612,7 @@ def _typescript_private_field_modifier_span(
     if match is None:
         return None
     return match.start("mod"), match.end("mod")
+
 
 def _typescript_member_alias_replacement(*, receiver: str, missing_member: str, existing_members: set[str]) -> str:
     if missing_member == "checks" and "results" in existing_members:
@@ -651,6 +660,7 @@ def _typescript_member_alias_replacement(*, receiver: str, missing_member: str, 
         return f"{receiver}.id"
     return ""
 
+
 def _typescript_unknown_member_receiver_type(
     *,
     base_files: Mapping[str, str],
@@ -684,6 +694,7 @@ def _typescript_unknown_member_receiver_type(
         if return_type_match:
             return str(return_type_match.group("type") or "")
     return ""
+
 
 def _typescript_unknown_member_type_operation(
     *,
@@ -737,6 +748,7 @@ def _typescript_unknown_member_type_operation(
         )
     return None
 
+
 def _parse_typescript_uninitialized_property_errors(diagnostics: Sequence[RepairDiagnostic]) -> list[dict[str, str]]:
     parsed: list[dict[str, str]] = []
     for diagnostic in diagnostics:
@@ -749,6 +761,7 @@ def _parse_typescript_uninitialized_property_errors(diagnostics: Sequence[Repair
                 }
             )
     return [item for item in parsed if item["file"] and item["line"] and item["member"]]
+
 
 def _parse_unknown_member_access_targets(diagnostics: Sequence[RepairDiagnostic]) -> list[dict[str, str]]:
     parsed: list[dict[str, str]] = []
@@ -808,6 +821,7 @@ def _parse_unknown_member_access_targets(diagnostics: Sequence[RepairDiagnostic]
         and _TS_IDENTIFIER_RE.fullmatch(item["member"])
     ]
 
+
 _STEPFLIGHT_AIRSPEED_NEEDLE = "  const airspeed = Math.hypot(velocity.x, velocity.y);"
 _STEPFLIGHT_NONFINITE_LANDING_CLAMP = (
     "  if (\n"
@@ -856,10 +870,7 @@ def _build_typescript_nonfinite_altitude_guard_plan(
             continue
         if _STEPFLIGHT_AIRSPEED_NEEDLE not in text:
             continue
-        if (
-            "phase: { kind: FlightPhaseKind.Landed, impactSpeed: 0 }" in text
-            and "!Number.isFinite(position.y)" in text
-        ):
+        if "phase: { kind: FlightPhaseKind.Landed, impactSpeed: 0 }" in text and "!Number.isFinite(position.y)" in text:
             continue
         repaired = text.replace(
             _STEPFLIGHT_AIRSPEED_NEEDLE,

@@ -123,8 +123,7 @@ norecursedirs = [
     "build",
     "*.egg-info",
     "src/backend/scripts",
-    "src/backend/polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/director_root_cause_locator/tests",
-    "src/backend/polaris/cells/llm/evaluation/fixtures/agentic_benchmark/workspaces/director_safe_scope_plan/tests",
+    "src/backend/polaris/cells/llm/evaluation/fixtures",
 ]
 markers = [
     "integration: integration/e2e style tests",

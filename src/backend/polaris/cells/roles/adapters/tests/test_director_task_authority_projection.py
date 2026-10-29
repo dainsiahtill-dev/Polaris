@@ -27,9 +27,7 @@ def test_director_blueprint_handoff_projects_task_local_interface_authority(tmp_
                         "description": "Export the core API from package main.",
                     }
                 ],
-                "consumer_declarations": [
-                    {"task_id": "TASK-2", "depends_on_contract": "bubble_physics_v1"}
-                ],
+                "consumer_declarations": [{"task_id": "TASK-2", "depends_on_contract": "bubble_physics_v1"}],
             },
         },
     )

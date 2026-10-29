@@ -23,9 +23,9 @@ from polaris.cells.roles.adapters.public.service import (  # noqa: E402
     WorkflowRoleAdapter,
     WorkflowRoleResult,
 )
+from polaris.cells.roles.kernel.public.service import RoleExecutionKernel  # noqa: E402
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1  # noqa: E402
 from polaris.cells.roles.runtime.public.service import (  # noqa: E402
-    RoleExecutionKernel,
     RoleExecutionMode,
     RoleTurnRequest,
     load_core_roles,

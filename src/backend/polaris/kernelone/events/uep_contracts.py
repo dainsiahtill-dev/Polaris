@@ -67,4 +67,3 @@ class UEPAuditEventPayload:
     event_type: str = ""
     data: dict[str, Any] = field(default_factory=dict)
     timestamp: str = ""
-

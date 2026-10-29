@@ -594,9 +594,7 @@ def _persist_and_project(
         _save_journal(command.workspace, journal)
 
     return ManagedProcessExecutionResultV1(
-        code=code
-        if not ledger_projection_pending
-        else "execution_broker.managed_process_ledger_projection_pending",
+        code=code if not ledger_projection_pending else "execution_broker.managed_process_ledger_projection_pending",
         spawned=spawned,
         exit_code=None if exit_code is None else int(exit_code),
         timed_out=timed_out,

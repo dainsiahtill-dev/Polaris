@@ -214,9 +214,7 @@ def configure_project_completion_convergence_runtime(
         canonical_workspace,
         "runtime/state/project_completion/convergence.sqlite3",
     )
-    cursor = compose_project_completion_cursor(
-        SqliteRuntimeStore(database_path, workspace=canonical_workspace)
-    )
+    cursor = compose_project_completion_cursor(SqliteRuntimeStore(database_path, workspace=canonical_workspace))
     task_market = get_task_market_service()
     factory_notification_port = _FactoryProjectCompletionNotificationPort()
     bind_factory_project_completion_notification_port(factory_notification_port)

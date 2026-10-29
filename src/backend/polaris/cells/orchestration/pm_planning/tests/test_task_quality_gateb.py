@@ -171,9 +171,7 @@ def test_autofix_keeps_codegen_consumer_inputs_bound_to_authored_parent(tmp_path
     assert stats["oversized_director_tasks_split"] == 0
     assert [task["id"] for task in payload["tasks"]] == ["BUILD", "CODEGEN"]
     consumer = next(task for task in payload["tasks"] if task["id"] == "CODEGEN")
-    assert consumer["generated_outputs"][0]["inputs"] == [
-        {"task_id": "BUILD", "path": "src/models/item.ts"}
-    ]
+    assert consumer["generated_outputs"][0]["inputs"] == [{"task_id": "BUILD", "path": "src/models/item.ts"}]
     assert consumer["generated_outputs"][0]["build"] == build
     assert consumer["verification_commands"] == [{"modality": "build", **build}]
     assert consumer["depends_on"] == ["BUILD"]
@@ -304,7 +302,17 @@ class TestAutofixPmContractForQuality:
         assert stats["task_boundary_tasks_added"] == 0
         assert [task["id"] for task in payload["tasks"]] == ["TASK-1"]
         task = payload["tasks"][0]
-        for field in ("title", "goal", "description", "target_files", "scope_paths", "scope", "steps", "acceptance", "acceptance_criteria"):
+        for field in (
+            "title",
+            "goal",
+            "description",
+            "target_files",
+            "scope_paths",
+            "scope",
+            "steps",
+            "acceptance",
+            "acceptance_criteria",
+        ):
             assert task[field] == original[field]
         assert "task_boundary_split" not in task.get("metadata", {})
 
@@ -1871,7 +1879,7 @@ class TestAutofixPmContractForQuality:
         task = payload["tasks"][0]
         assert task["target_files"] == original["target_files"]
         assert task["goal"] == original["goal"]
-        assert task["acceptance_criteria"][:len(original["acceptance_criteria"])] == original["acceptance_criteria"]
+        assert task["acceptance_criteria"][: len(original["acceptance_criteria"])] == original["acceptance_criteria"]
         assert "CMakeLists.txt" in task["target_files"]
         assert "cmakelists.txt" not in task["target_files"]
 

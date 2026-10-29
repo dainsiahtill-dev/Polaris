@@ -183,7 +183,9 @@ class CodexCLIProvider(BaseProvider):
             warnings.append("codex_exec should be a dictionary")
             normalized["codex_exec"] = cls.get_default_config()["codex_exec"]
 
-        return ProviderConfigValidationResult(valid=len(errors) == 0, errors=errors, warnings=warnings, normalized_config=normalized)
+        return ProviderConfigValidationResult(
+            valid=len(errors) == 0, errors=errors, warnings=warnings, normalized_config=normalized
+        )
 
     def health(self, config: dict[str, Any]) -> HealthResult:
         command = str(config.get("command", "codex")).strip()

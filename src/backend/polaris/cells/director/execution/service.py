@@ -94,6 +94,7 @@ _TASK_ROW_STATUS_TO_DIRECTOR_STATUS = {
     "timeout": "TIMEOUT",
 }
 
+
 @dataclass
 class DirectorConfig:
     """Director configuration."""

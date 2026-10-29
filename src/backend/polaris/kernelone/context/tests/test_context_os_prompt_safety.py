@@ -545,8 +545,7 @@ class TestProjectionEngineBuildTurns:
             "'file': 'src/models/weather.py', 'bytes_written': 2048, "
             "'effect_receipt': {'operation': 'create', "
             "'changed_files': ['src/models/weather.py']}, "
-            "'syntax_check': 'passed'}"
-            + ("x" * 1000)
+            "'syntax_check': 'passed'}" + ("x" * 1000)
         )
 
         class MockEvent:

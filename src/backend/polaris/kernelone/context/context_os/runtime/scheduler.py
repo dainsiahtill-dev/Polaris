@@ -316,7 +316,11 @@ class _ContextOSSchedulerMixin:
         for item in transcript:
             # Classify dialog act for user and assistant messages
             dialog_act_result: DialogActResult | None = None
-            if item.role in ("user", "assistant") and self._dialog_act_classifier is not None and not is_model_proposal(item.role, item.metadata):
+            if (
+                item.role in ("user", "assistant")
+                and self._dialog_act_classifier is not None
+                and not is_model_proposal(item.role, item.metadata)
+            ):
                 dialog_act_result = self._dialog_act_classifier.classify(item.content, role=item.role)
 
             if item.role == "assistant" and not is_model_proposal(item.role, item.metadata):

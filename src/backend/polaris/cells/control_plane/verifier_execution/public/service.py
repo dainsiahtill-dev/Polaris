@@ -144,9 +144,7 @@ def _enabled_custom_scripts(policy: dict[str, Any]) -> list[dict[str, Any]]:
     enabled_items = raw_enabled_modalities if isinstance(raw_enabled_modalities, (list, tuple, set)) else []
     enabled_modalities = {str(item or "").strip().lower() for item in enabled_items if str(item or "").strip()}
     custom_enabled = (
-        bool(custom_status.get("enabled"))
-        if isinstance(custom_status, dict)
-        else "custom_script" in enabled_modalities
+        bool(custom_status.get("enabled")) if isinstance(custom_status, dict) else "custom_script" in enabled_modalities
     )
     if not custom_enabled:
         return []

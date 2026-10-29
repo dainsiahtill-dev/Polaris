@@ -94,7 +94,9 @@ class ProjectionFormatter:
                 # Full: print all events with metadata
                 for event in transcript:
                     role = event.get("role", "?")
-                    source_content = prompt_contribution_content(str(role), str(event.get("content", "")), event.get("metadata"))
+                    source_content = prompt_contribution_content(
+                        str(role), str(event.get("content", "")), event.get("metadata")
+                    )
                     content = prompt_safe_message_content(str(role), source_content)
                     event_id = event.get("event_id", "")
                     sequence = event.get("sequence", 0)
@@ -108,7 +110,9 @@ class ProjectionFormatter:
                 # Summary: show last 5 events
                 for event in transcript[-5:]:
                     role = event.get("role", "?")
-                    source_content = prompt_contribution_content(str(role), str(event.get("content", "")), event.get("metadata"))
+                    source_content = prompt_contribution_content(
+                        str(role), str(event.get("content", "")), event.get("metadata")
+                    )
                     content = prompt_safe_message_content(str(role), source_content)
                     if not is_model_proposal(str(role), event.get("metadata")):
                         content = content[:80]
@@ -359,7 +363,9 @@ class ProjectionFormatter:
         # Add active window events with routing-aware processing
         for event in sorted_events:
             if is_model_proposal(event.role, event.metadata):
-                messages.append({"role": event.role, "content": model_proposal_reference(event.content, event.metadata)})
+                messages.append(
+                    {"role": event.role, "content": model_proposal_reference(event.content, event.metadata)}
+                )
                 continue
             route = str(event.route or "clear").lower()
 

@@ -22,4 +22,3 @@ def test_edit_fragment_write_guidance_uses_active_edit_tools(tmp_path: Path) -> 
     error = str(result.get("error") or "")
     assert "edit_blocks/edit_file" in error
     assert "precision_edit" not in error
-

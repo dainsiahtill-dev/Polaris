@@ -48,46 +48,122 @@ _PM_VERIFICATION_REPAIR_GUIDANCE = (
 )
 
 
-_PM_FEEDBACK_FIELDS = frozenset({
-    "ok", "score", "summary", "critical_issues", "warnings", "contract_diagnostics",
-    "code", "severity", "path", "paths", "task_id", "message", "hard_boundary", "repairable",
-    "allowed", "allowed_fields", "unknown_fields", "repair_fields", "expected", "actual",
-    "provenance", "original_task_id", "derived_task_id", "stage", "evidence",
-    "generated_output_path", "authored_owner_task_ids", "generated_owner_task_ids",
-    "declared_output_build", "task_build_verifiers", "primary_language", "wrong_authored_targets",
-    "allowed_source_suffixes", "foreign_scope_file_owners", "command_profile_feedback",
-    "profile_id", "policy_error_code", "schema_version", "error_code", "reason",
-    "argv", "cwd", "modality", "capabilities", "source", "operands", "operand", "value",
-    "classification", "supported", "safe", "required", "profile", "command", "status",
-    "guidance_only", "execution_authority", "candidate_profile_id", "accepted_shape", "argument_index",
-    "rejected_argument", "reason_code", "materialization_note",
-})
+_PM_FEEDBACK_FIELDS = frozenset(
+    {
+        "ok",
+        "score",
+        "summary",
+        "critical_issues",
+        "warnings",
+        "contract_diagnostics",
+        "code",
+        "severity",
+        "path",
+        "paths",
+        "task_id",
+        "message",
+        "hard_boundary",
+        "repairable",
+        "allowed",
+        "allowed_fields",
+        "unknown_fields",
+        "repair_fields",
+        "expected",
+        "actual",
+        "provenance",
+        "original_task_id",
+        "derived_task_id",
+        "stage",
+        "evidence",
+        "generated_output_path",
+        "authored_owner_task_ids",
+        "generated_owner_task_ids",
+        "declared_output_build",
+        "task_build_verifiers",
+        "primary_language",
+        "wrong_authored_targets",
+        "allowed_source_suffixes",
+        "foreign_scope_file_owners",
+        "command_profile_feedback",
+        "profile_id",
+        "policy_error_code",
+        "schema_version",
+        "error_code",
+        "reason",
+        "argv",
+        "cwd",
+        "modality",
+        "capabilities",
+        "source",
+        "operands",
+        "operand",
+        "value",
+        "classification",
+        "supported",
+        "safe",
+        "required",
+        "profile",
+        "command",
+        "status",
+        "guidance_only",
+        "execution_authority",
+        "candidate_profile_id",
+        "accepted_shape",
+        "argument_index",
+        "rejected_argument",
+        "reason_code",
+        "materialization_note",
+    }
+)
 
 
-_PM_OPTIONAL_TECHNICAL_FIELDS = frozenset({"scope_paths", "target_files", "context_files", "verification_commands", "generated_outputs"})
+_PM_OPTIONAL_TECHNICAL_FIELDS = frozenset(
+    {"scope_paths", "target_files", "context_files", "verification_commands", "generated_outputs"}
+)
 
 
 def _pm_explicit_technical_fields(directive: str) -> frozenset[str]:
     """Field guidance follows original explicit declarations, never model drafts."""
-    return frozenset(field for field in _PM_OPTIONAL_TECHNICAL_FIELDS if re.search(r"(?<![A-Za-z0-9_])" + field + r"(?![A-Za-z0-9_])", directive))
+    return frozenset(
+        field
+        for field in _PM_OPTIONAL_TECHNICAL_FIELDS
+        if re.search(r"(?<![A-Za-z0-9_])" + field + r"(?![A-Za-z0-9_])", directive)
+    )
 
 
 def _pm_quality_feedback(quality: dict[str, Any], *, technical_fields: frozenset[str] | None = None) -> dict[str, Any]:
     """Project repair facts, never arbitrary runtime metadata, into model text."""
+
     def project(value: Any) -> Any:
         if isinstance(value, dict):
             return {
-                key: ({path: project(owners) for path, owners in item.items()}
-                      if key == "foreign_scope_file_owners" and isinstance(item, dict) else ([field for field in item if field not in _PM_OPTIONAL_TECHNICAL_FIELDS or field in technical_fields]
-                             if key in {"allowed_fields", "repair_fields"} and isinstance(item, list) and technical_fields is not None
-                             else project(item)))
-                for key, item in value.items() if key in _PM_FEEDBACK_FIELDS
+                key: (
+                    {path: project(owners) for path, owners in item.items()}
+                    if key == "foreign_scope_file_owners" and isinstance(item, dict)
+                    else (
+                        [
+                            field
+                            for field in item
+                            if field not in _PM_OPTIONAL_TECHNICAL_FIELDS or field in technical_fields
+                        ]
+                        if key in {"allowed_fields", "repair_fields"}
+                        and isinstance(item, list)
+                        and technical_fields is not None
+                        else project(item)
+                    )
+                )
+                for key, item in value.items()
+                if key in _PM_FEEDBACK_FIELDS
             }
         if isinstance(value, list):
             return [project(item) for item in value]
         return value
 
-    return {key: project(quality[key]) for key in ("ok", "score", "summary", "critical_issues", "warnings", "contract_diagnostics") if key in quality}
+    return {
+        key: project(quality[key])
+        for key in ("ok", "score", "summary", "critical_issues", "warnings", "contract_diagnostics")
+        if key in quality
+    }
 
 
 def _pm_generation_feedback(diagnostic: dict[str, Any] | None, previous_output: str) -> dict[str, Any]:
@@ -100,9 +176,7 @@ def _pm_generation_feedback(diagnostic: dict[str, Any] | None, previous_output: 
         outcome = diagnostic.get("generation_outcome")
         if isinstance(outcome, dict):
             result["generation_outcome"] = {
-                key: outcome[key]
-                for key in ("native_finish_reason", "max_tokens", "response_sha256")
-                if key in outcome
+                key: outcome[key] for key in ("native_finish_reason", "max_tokens", "response_sha256") if key in outcome
             }
         elif isinstance(diagnostic.get("generation_outcome_unavailable"), str):
             result["generation_outcome_unavailable"] = diagnostic["generation_outcome_unavailable"]
@@ -232,7 +306,15 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
                     "PM 规划、CE 蓝图、QA 审查是原生阶段，不创建对应文档任务。用户独立要求交付文档时保留该需求。",
                     "完整保留原始需求与约束；optional_requirements 不得变为必需交付。验收描述用户可观察行为，不要求猜文件或命令。",
                     "任务只需 id/title/goal/acceptance/depends_on；其它字段可省略。没有用户明确技术约束时，不猜路径、命令或生成产物，由 CE 提供。",
-                    *( ["用户原文明确声明的技术字段（可选，值保持精确）: " + "/".join(sorted(_pm_explicit_technical_fields(directive))) + "。只保留这些原始约束，命令必须使用完整 modality/argv 数组/cwd，不是 shell 字符串。"] if _pm_explicit_technical_fields(directive) else []),
+                    *(
+                        [
+                            "用户原文明确声明的技术字段（可选，值保持精确）: "
+                            + "/".join(sorted(_pm_explicit_technical_fields(directive)))
+                            + "。只保留这些原始约束，命令必须使用完整 modality/argv 数组/cwd，不是 shell 字符串。"
+                        ]
+                        if _pm_explicit_technical_fields(directive)
+                        else []
+                    ),
                     "可选顶层 project_metadata、任务 task_metadata 与顶层/任务 planning_advisory JSON 对象保留产品背景和其它补充事实；verification_recipe_hint 保存建议。建议有深度、数量和大小限制，始终不授予路径、命令、角色、身份或深度门禁权限。",
                     "任务 description 与 scope 可分别保存互补的产品文字，不产生技术权限。直接角色、路由、运行身份、token/hash、执行命令或权限字段不得作为补充事实提交；建议必须置于 planning_advisory。",
                     "Output contract: exactly one JSON object; no Markdown fences or surrounding prose.",
@@ -357,22 +439,29 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
         directive_analysis: dict[str, Any] | None = None,
     ) -> str:
         """Revise full JSON; only strictly parsed candidates receive full feedback."""
-        quality = _pm_quality_feedback(quality, technical_fields=_pm_explicit_technical_fields(directive) if not projection_hint else None)
+        quality = _pm_quality_feedback(
+            quality, technical_fields=_pm_explicit_technical_fields(directive) if not projection_hint else None
+        )
         generation_diagnostic = _pm_generation_feedback(generation_diagnostic, previous_output)
         generation_lines = ["Prior generation diagnostic (not task authority):", canonical_json(generation_diagnostic)]
         if revision_base is not None and "product_contract_readonly" in revision_base.view:
-            return "\n".join([
-                "PM product intent quality feedback. Private bounded revision of the same original draft.",
-                "Return one bare pm.task_revision.v1 JSON object with exact keys schema_version/base_hash/updates/add_tasks/remove_task_ids.",
-                "Only edit_manifest set/append fields permit edits; immutable product goal, required/optional requirements, global acceptance and user constraints remain unchanged.",
-                "Task IDs, routing and metadata remain immutable. No task removal; no invented technical topology, steps, phase tasks or verifier commands.",
-                "New tasks use id/title/goal/acceptance/depends_on. Small coupled products may remain one task.",
-                "修复诊断指出的产品验收或目标问题。不要用 guessed 路径或命令修复语义合同；显式技术约束保持原值，由 CE 处理。",
-                "Original requirement (complete):", directive,
-                "Quality evidence (not execution authority):", canonical_json(quality),
-                *generation_lines,
-                "Revision base/view/manifest (server-owned):", revision_base.view_json,
-            ])
+            return "\n".join(
+                [
+                    "PM product intent quality feedback. Private bounded revision of the same original draft.",
+                    "Return one bare pm.task_revision.v1 JSON object with exact keys schema_version/base_hash/updates/add_tasks/remove_task_ids.",
+                    "Only edit_manifest set/append fields permit edits; immutable product goal, required/optional requirements, global acceptance and user constraints remain unchanged.",
+                    "Task IDs, routing and metadata remain immutable. No task removal; no invented technical topology, steps, phase tasks or verifier commands.",
+                    "New tasks use id/title/goal/acceptance/depends_on. Small coupled products may remain one task.",
+                    "修复诊断指出的产品验收或目标问题。不要用 guessed 路径或命令修复语义合同；显式技术约束保持原值，由 CE 处理。",
+                    "Original requirement (complete):",
+                    directive,
+                    "Quality evidence (not execution authority):",
+                    canonical_json(quality),
+                    *generation_lines,
+                    "Revision base/view/manifest (server-owned):",
+                    revision_base.view_json,
+                ]
+            )
         if revision_base is not None:
             # Lossless grouping avoids repeating the same program explanation
             # for every verifier/output row in a bounded context window.
@@ -464,25 +553,30 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
         )
         if not projection_hint:
             lines = [
-                self._build_pm_message([], directive, directive_analysis=directive_analysis,
-                                       output_budget_tokens=output_budget_tokens),
+                self._build_pm_message(
+                    [], directive, directive_analysis=directive_analysis, output_budget_tokens=output_budget_tokens
+                ),
                 "Correct the complete semantic draft using this quality evidence; preserve the original user requirements and constraints:",
                 canonical_json(quality),
             ]
             if validated_candidate:
-                lines.extend([
-                    "Complete validated candidate (model-authored; quality failed):",
-                    "Preserve its protocol, every original task ID, acceptance and exact declared constraints. "
-                    "Return the complete replacement JSON, not a delta or fragment.",
-                    previous_output,
-                ])
+                lines.extend(
+                    [
+                        "Complete validated candidate (model-authored; quality failed):",
+                        "Preserve its protocol, every original task ID, acceptance and exact declared constraints. "
+                        "Return the complete replacement JSON, not a delta or fragment.",
+                        previous_output,
+                    ]
+                )
             else:
-                lines.extend([
-                    "Incomplete/unparseable candidate: no revision base or executable prefix. Return one complete replacement JSON under the unchanged original requirement and remaining stage budget.",
-                    "Every JSON field must occur exactly once, including schema_version. Keep required semantic fields strict. Preserve supplementary product facts in bounded planning_advisory; remove unauthorized direct authority fields. Omit unrequested optional technical fields; never salvage a partial task prefix.",
-                    "Prior generation diagnostic (not task authority):",
-                    canonical_json(generation_diagnostic),
-                ])
+                lines.extend(
+                    [
+                        "Incomplete/unparseable candidate: no revision base or executable prefix. Return one complete replacement JSON under the unchanged original requirement and remaining stage budget.",
+                        "Every JSON field must occur exactly once, including schema_version. Keep required semantic fields strict. Preserve supplementary product facts in bounded planning_advisory; remove unauthorized direct authority fields. Omit unrequested optional technical fields; never salvage a partial task prefix.",
+                        "Prior generation diagnostic (not task authority):",
+                        canonical_json(generation_diagnostic),
+                    ]
+                )
             return "\n".join(lines)
         _raw_critical = quality.get("critical_issues") if isinstance(quality, dict) else None
         critical: list[str] = _raw_critical if isinstance(_raw_critical, list) else []

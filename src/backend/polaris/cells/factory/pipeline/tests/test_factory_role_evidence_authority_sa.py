@@ -584,8 +584,6 @@ def _authorized_request(
     return _request(**values)
 
 
-
-
 def test_port_mints_exact_factory_owned_stage_role_budget_grant(tmp_path: Path) -> None:
     port, _admission, resolver, facts = _authority(tmp_path=tmp_path)
 
@@ -672,6 +670,8 @@ def test_director_capacity_preflight_rejects_513_without_minting_any_grant(tmp_p
     assert port._grants == {}
     assert resolver.calls == 0
     assert facts.ensure_calls == 0
+
+
 async def test_same_grant_same_child_accepts_32_freezes_then_33rd_has_zero_new_effect(
     tmp_path: Path,
 ) -> None:

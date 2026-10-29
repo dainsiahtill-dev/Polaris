@@ -469,8 +469,7 @@ def test_write_file_rejects_undeclared_missing_cpp_local_include_before_commit(t
         {
             "file": "src/cipher_engine.cpp",
             "content": (
-                '#include "invisible_ink_diary/cipher_engine.hpp"\n\n'
-                "int cipher_engine_value() { return 1; }\n"
+                '#include "invisible_ink_diary/cipher_engine.hpp"\n\nint cipher_engine_value() { return 1; }\n'
             ),
             "target_files": [
                 "src/cipher_engine.cpp",
@@ -492,10 +491,7 @@ def test_write_file_allows_declared_cpp_local_include_pending_same_batch(tmp_pat
     include_dir = tmp_path / "include" / "invisible_ink_diary"
     include_dir.mkdir(parents=True)
     executor = _create_director_tool_executor(str(tmp_path))
-    body = (
-        '#include "invisible_ink_diary/cipher_engine.hpp"\n\n'
-        "int cipher_engine_value() { return 1; }\n"
-    )
+    body = '#include "invisible_ink_diary/cipher_engine.hpp"\n\nint cipher_engine_value() { return 1; }\n'
 
     result = executor.execute_tool(
         "write_file",
@@ -565,13 +561,7 @@ def test_write_file_defers_go_test_compile_failure_to_workspace_quality(tmp_path
     (tmp_path / "go.mod").write_text("module example.com/candidate\n\ngo 1.21\n", encoding="utf-8")
     (tmp_path / "main.go").write_text("package main\n\nfunc main() {}\n", encoding="utf-8")
     executor = _create_director_tool_executor(str(tmp_path))
-    test_body = (
-        "package main\n\n"
-        'import "testing"\n\n'
-        "func TestRunDemo(t *testing.T) {\n"
-        "\tRunDemo()\n"
-        "}\n"
-    )
+    test_body = 'package main\n\nimport "testing"\n\nfunc TestRunDemo(t *testing.T) {\n\tRunDemo()\n}\n'
 
     result = executor.execute_tool(
         "write_file",
@@ -625,10 +615,7 @@ def test_edit_file_rejects_destructive_full_file_search_replace_before_commit(tm
 
     target = tmp_path / "tests" / "test_product.py"
     target.parent.mkdir(parents=True)
-    original = "".join(
-        f"def test_case_{index}():\n    assert {index} == {index}\n\n"
-        for index in range(80)
-    )
+    original = "".join(f"def test_case_{index}():\n    assert {index} == {index}\n\n" for index in range(80))
     target.write_text(original, encoding="utf-8")
     executor = _create_director_tool_executor(str(tmp_path))
     shortened = '"""Product tests."""\n\nfrom unittest import TestCase\n'

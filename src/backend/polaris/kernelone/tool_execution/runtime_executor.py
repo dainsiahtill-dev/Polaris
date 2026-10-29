@@ -50,6 +50,7 @@ _DIRECT_TOOL_NAMES: tuple[str, ...] = (
     "append_to_file",
 )
 
+
 def _job_token_to_dict(value: Any) -> dict[str, Any]:
     if value is None:
         return {}
@@ -61,18 +62,17 @@ def _job_token_to_dict(value: Any) -> dict[str, Any]:
         return dict(raw) if isinstance(raw, dict) else {}
     return {}
 
+
 def _normalize_scope_items(value: Iterable[Any] | None) -> tuple[str, ...]:
-    return tuple(
-        str(item or "").replace("\\", "/").strip("/")
-        for item in (value or ())
-        if str(item or "").strip()
-    )
+    return tuple(str(item or "").replace("\\", "/").strip("/") for item in (value or ()) if str(item or "").strip())
+
 
 def _scope_from_job_token(value: dict[str, Any]) -> tuple[str, ...]:
     raw_scope = value.get("allowed_paths") or value.get("target_files")
     if not isinstance(raw_scope, (list, tuple, set)):
         return ()
     return _normalize_scope_items(raw_scope)
+
 
 def _job_token_evidence(value: dict[str, Any], scope: Iterable[str]) -> dict[str, Any]:
     if not value:
@@ -90,6 +90,7 @@ def _job_token_evidence(value: dict[str, Any], scope: Iterable[str]) -> dict[str
         "capability_audit_ok": bool(capability_audit_map.get("ok")),
         "allowed_scope": list(scope),
     }
+
 
 class ReadBudgetGuard:
     """Layer-1 budget guard for read_file operations.

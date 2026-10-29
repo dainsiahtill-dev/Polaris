@@ -124,9 +124,7 @@ async def test_restart_recovers_active_identity_from_sqlite_cursor(tmp_path: Pat
         max_no_progress_observations=3,
         dispatch_lease_seconds=120,
     )
-    first_cursor = compose_project_completion_cursor(
-        SqliteRuntimeStore(database_path, workspace=workspace)
-    )
+    first_cursor = compose_project_completion_cursor(SqliteRuntimeStore(database_path, workspace=workspace))
     await first_cursor.ensure_cursor(_hash("restart-workflow"), cursor_identity, limits)
 
     calls: list[str] = []
@@ -147,12 +145,9 @@ async def test_restart_recovers_active_identity_from_sqlite_cursor(tmp_path: Pat
         )
 
     async def recover() -> tuple[AdvanceProjectCompletionCommandV1, ...]:
-        restarted_cursor = compose_project_completion_cursor(
-            SqliteRuntimeStore(database_path, workspace=workspace)
-        )
+        restarted_cursor = compose_project_completion_cursor(SqliteRuntimeStore(database_path, workspace=workspace))
         return tuple(
-            _command_from_registration(registration)
-            for registration in await restarted_cursor.list_resumable_cursors()
+            _command_from_registration(registration) for registration in await restarted_cursor.list_resumable_cursors()
         )
 
     first_process = EventDrivenProjectCompletionSupervisorV1(advance=advance, recover=recover)

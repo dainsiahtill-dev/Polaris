@@ -101,9 +101,12 @@ def test_complete_html_accepts_plain_placeholder_explanation_comment(tmp_path: P
     assert _validate(tmp_path, "index.html", content) is None
 
 
-@pytest.mark.parametrize("content", [
-    "# Track TODO from upstream.\ndef stub():\n    return 42\n",
-    "# Generated Project Scaffold\nVALUE = 42\n",
-])
+@pytest.mark.parametrize(
+    "content",
+    [
+        "# Track TODO from upstream.\ndef stub():\n    return 42\n",
+        "# Generated Project Scaffold\nVALUE = 42\n",
+    ],
+)
 def test_functioning_source_is_not_rejected_by_keyword_heuristics(tmp_path: Path, content: str) -> None:
     assert _validate(tmp_path, "answer.py", content) is None

@@ -14,7 +14,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from polaris.cells.roles.adapters.internal.director.post_execution_repair_bridge import (
     _helpers,
 )
@@ -72,7 +71,7 @@ class TestCollectorVendoredExclusion:
         """Rust regression: ``target/`` build output stays excluded after consolidation."""
         ws = tmp_path / "rustws"
         ws.mkdir()
-        (ws / "Cargo.toml").write_text("[package]\nname=\"x\"\n", encoding="utf-8")
+        (ws / "Cargo.toml").write_text('[package]\nname="x"\n', encoding="utf-8")
         (ws / "src").mkdir()
         (ws / "src" / "main.rs").write_text("fn main(){}\n", encoding="utf-8")
         (ws / "target" / "debug").mkdir(parents=True)

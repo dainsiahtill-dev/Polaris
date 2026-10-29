@@ -183,7 +183,9 @@ class StringValidator(BaseValidator):
 
     def _validate_type(self, value: Any) -> ToolArgValidationResult | None:
         if not isinstance(value, str):
-            return ToolArgValidationResult.failure(ERROR_INVALID_TYPE, f"Expected string, got {self._get_type_name(value)}")
+            return ToolArgValidationResult.failure(
+                ERROR_INVALID_TYPE, f"Expected string, got {self._get_type_name(value)}"
+            )
         return None
 
     def _validate_constraints(self, value: Any, spec: dict[str, Any]) -> ToolArgValidationResult | None:
@@ -234,12 +236,16 @@ class IntegerValidator(BaseValidator):
 
     def _validate_type(self, value: Any) -> ToolArgValidationResult | None:
         if isinstance(value, bool):
-            return ToolArgValidationResult.failure(ERROR_INVALID_TYPE, f"Expected integer, got {self._get_type_name(value)}")
+            return ToolArgValidationResult.failure(
+                ERROR_INVALID_TYPE, f"Expected integer, got {self._get_type_name(value)}"
+            )
         if isinstance(value, int):
             return None
         if isinstance(value, float) and value.is_integer():
             return None
-        return ToolArgValidationResult.failure(ERROR_INVALID_TYPE, f"Expected integer, got {self._get_type_name(value)}")
+        return ToolArgValidationResult.failure(
+            ERROR_INVALID_TYPE, f"Expected integer, got {self._get_type_name(value)}"
+        )
 
     def _validate_constraints(self, value: Any, spec: dict[str, Any]) -> ToolArgValidationResult | None:
         int_value = int(value) if isinstance(value, float) else value
@@ -322,7 +328,9 @@ class BooleanValidator(BaseValidator):
 
     def _validate_type(self, value: Any) -> ToolArgValidationResult | None:
         if not isinstance(value, bool):
-            return ToolArgValidationResult.failure(ERROR_INVALID_TYPE, f"Expected boolean, got {self._get_type_name(value)}")
+            return ToolArgValidationResult.failure(
+                ERROR_INVALID_TYPE, f"Expected boolean, got {self._get_type_name(value)}"
+            )
         return None
 
     def _validate_constraints(self, value: Any, spec: dict[str, Any]) -> ToolArgValidationResult | None:

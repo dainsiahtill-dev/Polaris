@@ -2,43 +2,30 @@ from __future__ import annotations
 
 import json
 import threading
-import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
 
 import pytest
-from polaris.cells.events.fact_stream.public import (
-    BootstrapFactStreamWorkspaceCommandV1,
-    bootstrap_fact_stream_workspace,
-    fact_stream_bootstrap_streams,
-)
-from polaris.cells.runtime.task_market.internal.errors import FSMTransitionError, StaleLeaseTokenError
 from polaris.cells.runtime.task_market.internal.store import get_store
 from polaris.cells.runtime.task_market.public.contracts import (
     TASK_REQUEUE_RECEIPTS_METADATA_KEY,
     AcknowledgeTaskStageCommandV1,
     ClaimTaskWorkItemCommandV1,
     FailTaskStageCommandV1,
-    MoveTaskToDeadLetterCommandV1,
     PublishTaskWorkItemCommandV1,
-    QueryChangeOrdersV1,
-    QueryPendingHumanReviewsV1,
-    QueryPlanRevisionsV1,
     QueryTaskMarketStatusV1,
     QueryTaskRequeueReceiptV1,
-    RegisterPlanRevisionCommandV1,
-    RenewTaskLeaseCommandV1,
-    RequestHumanReviewCommandV1,
     RequeueTaskCommandV1,
-    ResolveHumanReviewCommandV1,
-    SubmitChangeOrderCommandV1,
     TaskMarketError,
     TaskRequeueReceiptV1,
     TaskWorkItemResultV1,
 )
 from polaris.cells.runtime.task_market.public.service import TaskMarketService
+from polaris.cells.runtime.task_market.tests._claim_gate_helpers import (
+    publish_gate_item,
+    scan_claim,
+)
 
 
 class _FakeCognitiveRuntimeService:
@@ -104,15 +91,13 @@ class _RecordingStore:
         )
 
 
-
-
 class TestDependencyTerminalCascade:
     """Dependents of a terminally-failed dependency must cascade into the
     DLQ at claim time instead of stranding as permanently-unclaimable
     ``pending_exec`` rows (live I3-r7)."""
 
-    _publish = staticmethod(TestExecClaimReadinessGate._publish)
-    _scan_claim = staticmethod(TestExecClaimReadinessGate._scan_claim)
+    _publish = staticmethod(publish_gate_item)
+    _scan_claim = staticmethod(scan_claim)
 
     @staticmethod
     def _claim_targeted(service: TaskMarketService, workspace: Path, task_id: str) -> TaskWorkItemResultV1:

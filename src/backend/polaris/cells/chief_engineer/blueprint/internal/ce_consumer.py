@@ -231,8 +231,13 @@ def _control_plane_job_token(
         from polaris.cells.chief_engineer.blueprint.public.service._portfolio import (
             _project_blueprint_portfolio_context,
         )
+
         canonical = _project_blueprint_portfolio_context(
-            payload, workspace=workspace, run_id=run_id, task_id=task_id, target_files=target_files,
+            payload,
+            workspace=workspace,
+            run_id=run_id,
+            task_id=task_id,
+            target_files=target_files,
         )
         completion_contract = _mapping(canonical.get("project_completion_contract"))
         validated_completion = ProjectCompletionContractV1.from_dict(completion_contract)
@@ -245,7 +250,9 @@ def _control_plane_job_token(
             if item.owner_task_id == task_id and item.applicability == "required"
         ]
         command_authority_hashes = sorted(
-            item.authority_hash for item in validated_completion.verification_command_authority if item.task_id == task_id
+            item.authority_hash
+            for item in validated_completion.verification_command_authority
+            if item.task_id == task_id
         )
         interface = _mapping(payload.get("project_interface_contract"))
         if not interface:
@@ -253,15 +260,25 @@ def _control_plane_job_token(
         authorized_context_files = _string_list(_mapping(interface.get("task_read_context")).get(task_id))
         if _string_list(payload.get("context_files")) != authorized_context_files:
             raise ValueError("job token read context must match the exact CE interface binding")
-        owned_paths = {item.path for item in validated_completion.obligations.artifacts
-                       if item.owner_task_id == task_id and item.applicability != "not_applicable"}
+        owned_paths = {
+            item.path
+            for item in validated_completion.obligations.artifacts
+            if item.owner_task_id == task_id and item.applicability != "not_applicable"
+        }
         if set(target_files) - owned_paths or set(scope_paths) - owned_paths:
             raise ValueError("job token scope must remain within exact CE artifact ownership")
         if authorized_context_files:
             interface_hash = str(interface.get("project_interface_contract_hash") or "")
-            interface_basis = {key: value for key, value in interface.items()
-                               if key not in {"project_interface_contract_id", "project_interface_contract_ref",
-                                              "project_interface_contract_hash"}}
+            interface_basis = {
+                key: value
+                for key, value in interface.items()
+                if key
+                not in {
+                    "project_interface_contract_id",
+                    "project_interface_contract_ref",
+                    "project_interface_contract_hash",
+                }
+            }
             if not interface_hash or stable_hash(interface_basis) != interface_hash:
                 raise ValueError("job token read context interface hash mismatch")
     token_basis = {
@@ -282,12 +299,15 @@ def _control_plane_job_token(
         token_basis["command_authority_hashes"] = command_authority_hashes
     token_id = f"job-{stable_hash(token_basis)[:24]}"
     allowed_write_paths = list(dict.fromkeys(target_files))
-    verification_only = is_verification_only_blueprint({
-        **payload, "task_id": task_id, "target_files": target_files,
-        "required_write_targets": required_write_targets,
-    })
-    allowed_read_paths = list(dict.fromkeys([*allowed_write_paths, *scope_paths,
-                                           *authorized_context_files]))
+    verification_only = is_verification_only_blueprint(
+        {
+            **payload,
+            "task_id": task_id,
+            "target_files": target_files,
+            "required_write_targets": required_write_targets,
+        }
+    )
+    allowed_read_paths = list(dict.fromkeys([*allowed_write_paths, *scope_paths, *authorized_context_files]))
     missing_issues = [
         issue
         for issue, missing in (
@@ -660,8 +680,11 @@ def _contract_completeness(
     return {
         "handoff_ready": not missing_fields,
         "missing_fields": missing_fields,
-        "requires": [*(["context_files", "verification_commands"] if verification_only else ["target_files"]),
-                     "acceptance_criteria", "execution_checklist"],
+        "requires": [
+            *(["context_files", "verification_commands"] if verification_only else ["target_files"]),
+            "acceptance_criteria",
+            "execution_checklist",
+        ],
     }
 
 
@@ -757,23 +780,41 @@ class CEConsumer:
             semantic_technical_context: dict[str, Any] = {}
             if payload.get("planning_contract_version") == "pm.task_intent.v1":
                 from polaris.cells.chief_engineer.blueprint.public.contracts import ProjectCompletionContractV1
+
                 completion = ProjectCompletionContractV1.from_dict(_mapping(payload.get("project_completion_contract")))
                 if task_id not in completion.covered_task_ids or str(payload.get("run_id") or "") != completion.run_id:
                     raise ValueError("consumer completion contract identity mismatch")
-                target_files = [item.path for item in completion.obligations.artifacts
-                                if item.owner_task_id == task_id and item.applicability != "not_applicable"]
+                target_files = [
+                    item.path
+                    for item in completion.obligations.artifacts
+                    if item.owner_task_id == task_id and item.applicability != "not_applicable"
+                ]
                 scope_paths = list(target_files)
                 required_write_targets = [
-                    item.path for item in completion.obligations.artifacts
+                    item.path
+                    for item in completion.obligations.artifacts
                     if item.owner_task_id == task_id and item.applicability == "required"
                 ]
-                semantic_technical_context = {key: payload[key] for key in (
-                    "run_id", "planning_contract_version", "verification_authority", "context_files",
-                    "allowed_commands", "verification_commands", "project_completion_contract",
-                    "project_completion_contract_ref", "project_completion_contract_hash",
-                    "project_interface_contract", "project_interface_contract_ref", "project_interface_contract_hash",
-                    "blueprint_portfolio_ref", "blueprint_portfolio_hash",
-                ) if key in payload}
+                semantic_technical_context = {
+                    key: payload[key]
+                    for key in (
+                        "run_id",
+                        "planning_contract_version",
+                        "verification_authority",
+                        "context_files",
+                        "allowed_commands",
+                        "verification_commands",
+                        "project_completion_contract",
+                        "project_completion_contract_ref",
+                        "project_completion_contract_hash",
+                        "project_interface_contract",
+                        "project_interface_contract_ref",
+                        "project_interface_contract_hash",
+                        "blueprint_portfolio_ref",
+                        "blueprint_portfolio_hash",
+                    )
+                    if key in payload
+                }
             contract = _contract_fields(payload)
             acceptance_criteria = list(contract["acceptance_criteria"])
             execution_checklist = list(contract["execution_checklist"])
@@ -802,10 +843,14 @@ class CEConsumer:
                 target_files=target_files,
                 acceptance_criteria=acceptance_criteria,
                 execution_checklist=execution_checklist,
-                verification_only=is_verification_only_blueprint({
-                    **semantic_technical_context, "task_id": task_id,
-                    "target_files": target_files, "required_write_targets": required_write_targets,
-                }),
+                verification_only=is_verification_only_blueprint(
+                    {
+                        **semantic_technical_context,
+                        "task_id": task_id,
+                        "target_files": target_files,
+                        "required_write_targets": required_write_targets,
+                    }
+                ),
             )
             blueprint_path = _blueprint_runtime_path(blueprint_id)
             contract_hash = str(payload.get("contract_hash") or payload.get("pm_contract_hash") or "").strip()

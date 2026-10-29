@@ -81,7 +81,11 @@ def snapshot_service(tmp_path: Path) -> SnapshotService:
 
 _SESSION_MESSAGES_TURN_1 = (
     {"sequence": 0, "role": "user", "content": "先写计划文档，蓝图，然后开工"},
-    {"sequence": 1, "role": "assistant", "content": "我会先写计划文档和蓝图，然后把 continuity 逻辑迁到 polaris/kernelone/context/session_continuity.py。"},
+    {
+        "sequence": 1,
+        "role": "assistant",
+        "content": "我会先写计划文档和蓝图，然后把 continuity 逻辑迁到 polaris/kernelone/context/session_continuity.py。",
+    },
     {"sequence": 2, "role": "user", "content": "继续修复上下文链路"},
     {"sequence": 3, "role": "assistant", "content": "开始执行。"},
     {"sequence": 4, "role": "user", "content": "补测试和治理资产"},
@@ -252,9 +256,7 @@ class TestContextOS_E2ESnapshotToPersistence:
 class TestContextOS_E2ECrossSessionRestore:
     """Test that continuity pack and ContextOS state survive across sessions."""
 
-    def test_continuity_pack_survives_session_restart(
-        self, role_session_service: RoleSessionService
-    ) -> None:
+    def test_continuity_pack_survives_session_restart(self, role_session_service: RoleSessionService) -> None:
         """Simulate session restart: persist continuity in session 1, restore in session 2."""
         # Session 1: build and persist continuity pack
         session_id = _seed_session_with_messages(role_session_service, _SESSION_MESSAGES_TURN_1)
@@ -294,9 +296,7 @@ class TestContextOS_E2ECrossSessionRestore:
         assert result.ok is True
         assert result.payload is not None
 
-    def test_continuity_pack_merges_across_turns(
-        self, role_session_service: RoleSessionService
-    ) -> None:
+    def test_continuity_pack_merges_across_turns(self, role_session_service: RoleSessionService) -> None:
         """Verify continuity pack merges facts from multiple turns."""
         # Turn 1: build and persist continuity pack
         continuity_turn_1 = _build_continuity_pack_from_messages(_SESSION_MESSAGES_TURN_1)
@@ -316,9 +316,7 @@ class TestContextOS_E2ECrossSessionRestore:
         # Verify the pack was updated (compacted_through_seq should advance)
         assert continuity_turn_2.get("compacted_through_seq", -1) >= continuity_turn_1.get("compacted_through_seq", -1)
 
-    def test_context_os_snapshot_merges_across_turns(
-        self, role_session_service: RoleSessionService
-    ) -> None:
+    def test_context_os_snapshot_merges_across_turns(self, role_session_service: RoleSessionService) -> None:
         """Verify ContextOS snapshot merges state from multiple turns."""
         # Turn 1: build and persist ContextOS snapshot
         snapshot_turn_1 = _build_context_os_snapshot(_SESSION_MESSAGES_TURN_1)
@@ -499,11 +497,13 @@ class TestContextOS_E2EContinuitySanitization:
             },
         )
 
-        pack = asyncio.run(build_session_continuity_pack(
-            messages,
-            focus="Preserve clean continuity only.",
-            recent_window_messages=2,
-        ))
+        pack = asyncio.run(
+            build_session_continuity_pack(
+                messages,
+                focus="Preserve clean continuity only.",
+                recent_window_messages=2,
+            )
+        )
 
         assert pack is not None
         # Verify no protocol tags in output
@@ -522,11 +522,13 @@ class TestContextOS_E2EContinuitySanitization:
             {"sequence": 2, "role": "user", "content": "继续修复上下文噪音并补验证。"},
         )
 
-        pack = asyncio.run(build_session_continuity_pack(
-            messages,
-            focus="Preserve actionable work items only.",
-            recent_window_messages=2,
-        ))
+        pack = asyncio.run(
+            build_session_continuity_pack(
+                messages,
+                focus="Preserve actionable work items only.",
+                recent_window_messages=2,
+            )
+        )
 
         assert pack is not None
         joined = " ".join([*pack.stable_facts, *pack.open_loops]).lower()
@@ -553,12 +555,14 @@ class TestContextOS_E2EContinuitySanitization:
             },
         )
 
-        pack = asyncio.run(build_session_continuity_pack(
-            messages,
-            existing_pack=existing_pack,
-            focus="Keep architecture facts and active work items.",
-            recent_window_messages=4,
-        ))
+        pack = asyncio.run(
+            build_session_continuity_pack(
+                messages,
+                existing_pack=existing_pack,
+                focus="Keep architecture facts and active work items.",
+                recent_window_messages=4,
+            )
+        )
 
         assert pack is not None
         assert "已有事实" in pack.stable_facts

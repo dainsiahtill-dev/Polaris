@@ -260,8 +260,7 @@ def _role_context_coverage(
         available = [item for item in rows if item.get("ok") is True]
         latest = available[-1] if available else {}
         latest_failed = bool(
-            latest
-            and (latest.get("evidence_coverage_pass") is False or latest.get("role_identity_ok") is False)
+            latest and (latest.get("evidence_coverage_pass") is False or latest.get("role_identity_ok") is False)
         )
         status = "missing" if not available else "failed" if latest_failed else "proven"
         by_role[role] = {
@@ -581,13 +580,7 @@ def build_exact_run_causal_report(
             failed_count=int(tool_lifecycle.get("failed_count") or 0),
         ),
         "failure_evidence": _link(
-            (
-                "proven"
-                if tool_failure_rows
-                else "missing"
-                if tool_lifecycle_failed
-                else "not_applicable"
-            ),
+            ("proven" if tool_failure_rows else "missing" if tool_lifecycle_failed else "not_applicable"),
             "control_plane.run_ledger",
             row_count=len(tool_failure_rows),
             failure_classes=failure_classes,

@@ -400,8 +400,7 @@ def _factory_run_pinned_context_refs(*, workspace: str, factory_run_id: str) -> 
         physical = [
             pin
             for pin in role_pins
-            if str(pin.get("snapshot_source") or "").strip()
-            == "roles.kernel.final_physical_provider_request"
+            if str(pin.get("snapshot_source") or "").strip() == "roles.kernel.final_physical_provider_request"
         ]
         for pin in physical or role_pins:
             ref = str(pin.get("context_snapshot_ref") or "").strip().lower()
@@ -561,8 +560,7 @@ def _effective_file_deficits_from_final_request(
         for line in text.splitlines():
             lowered = line.lower()
             if "failures:" not in lowered or (
-                "delivery_depth_contract_failed" not in lowered
-                and "implementation depth metrics" not in lowered
+                "delivery_depth_contract_failed" not in lowered and "implementation depth metrics" not in lowered
             ):
                 continue
             for clause in _DELIVERY_DEPTH_FAILURE_CLAUSE_PATTERN.finditer(line):

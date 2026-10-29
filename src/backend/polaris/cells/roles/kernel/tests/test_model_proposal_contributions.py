@@ -104,11 +104,13 @@ def test_direct_snapshot_prompt_views_reference_proposals(verbosity: str) -> Non
     raw = '{"candidate":"UNADMITTED_PROPOSAL_SENTINEL"}'
     user = "Preserve original user facts"
     artifact = "Accepted artifact with confirmed tests"
-    snapshot = {"transcript_log": [
-        {"role": "user", "content": user},
-        {"role": "assistant", "content": artifact},
-        {"role": "assistant", "content": raw, "metadata": model_proposal_metadata(raw)},
-    ]}
+    snapshot = {
+        "transcript_log": [
+            {"role": "user", "content": user},
+            {"role": "assistant", "content": artifact},
+            {"role": "assistant", "content": raw, "metadata": model_proposal_metadata(raw)},
+        ]
+    }
     before = repr(snapshot)
     if verbosity == "expand":
         messages = ProjectionFormatter.expand_transcript_to_messages(snapshot)
@@ -127,13 +129,27 @@ async def test_multiline_proposal_reference_uses_trusted_original_digest(tmp_pat
 
     raw = '{\n  "plan": "candidate  keeps  spaces",\n  "tests": ["before"],\n  "waiting": false\n}'
     digest = sha256(raw.encode("utf-8")).hexdigest()
-    projection = await StateFirstContextOS().project(messages=[
-        {"role": "user", "content": "Keep user requirement"},
-        {"role": "assistant", "content": raw, "metadata": model_proposal_metadata(raw)},
-    ], recent_window_messages=24)
+    projection = await StateFirstContextOS().project(
+        messages=[
+            {"role": "user", "content": "Keep user requirement"},
+            {"role": "assistant", "content": raw, "metadata": model_proposal_metadata(raw)},
+        ],
+        recent_window_messages=24,
+    )
     store = ReceiptStore(workspace=str(tmp_path))
     engine = ProjectionEngine()
-    outputs = [ProjectionFormatter.messages_from_projection(projection), engine.project(engine.build_payload(active_window=projection.active_window, receipt_store=store, head_anchor=projection.head_anchor, tail_anchor=projection.tail_anchor), store)]
+    outputs = [
+        ProjectionFormatter.messages_from_projection(projection),
+        engine.project(
+            engine.build_payload(
+                active_window=projection.active_window,
+                receipt_store=store,
+                head_anchor=projection.head_anchor,
+                tail_anchor=projection.tail_anchor,
+            ),
+            store,
+        ),
+    ]
     for messages in outputs:
         text = "\n".join(str(message["content"]) for message in messages)
         assert digest in text

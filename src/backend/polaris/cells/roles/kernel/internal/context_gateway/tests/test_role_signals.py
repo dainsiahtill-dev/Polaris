@@ -176,9 +176,7 @@ def test_blueprint_signal_for_chief_engineer_and_director_when_enabled() -> None
     assert any("【蓝图/技术架构】" in t["content"] for t in ce.turns)
     assert "blueprint_overview" in director.sources
     # 非工程执行/蓝图角色即便 flag 开也拿不到（role-bound）
-    pm = allocate_role_signals(
-        registry=reg, ctx=_role_ctx_with_assets("pm", flags=flags), receipt_store=ReceiptStore()
-    )
+    pm = allocate_role_signals(registry=reg, ctx=_role_ctx_with_assets("pm", flags=flags), receipt_store=ReceiptStore())
     assert "blueprint_overview" not in pm.sources
 
 

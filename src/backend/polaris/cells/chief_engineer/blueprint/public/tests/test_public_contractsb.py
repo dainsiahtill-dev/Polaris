@@ -6,43 +6,23 @@ import json
 from copy import deepcopy
 from pathlib import Path
 
-import polaris.cells.chief_engineer.blueprint.public as blueprint_public
 import polaris.cells.chief_engineer.blueprint.public.service as blueprint_service_module
 import pytest
 from polaris.cells.chief_engineer.blueprint.public.contracts import (
-    BuildChiefEngineerBlueprintPortfolioCommandV1,
     ChiefEngineerBlueprintErrorV1,
     ChiefEngineerPortfolioTaskV1,
     GenerateTaskBlueprintCommandV1,
     GetBlueprintStatusQueryV1,
-    HandoffDecisionV1,
-    ProjectKindAuthorityV1,
     QueryBlueprintProvenanceV1,
-    QueryProjectCompletionContractV1,
-    RegisterRiskCommandV1,
-    RegisterTechDebtCommandV1,
-    RiskRecordV1,
-    RiskSeverity,
-    RiskStatus,
-    TaskBlueprintGeneratedEventV1,
-    TaskBlueprintProvenanceSnapshotV1,
-    TaskBlueprintResultV1,
     VerificationCommandAuthorityV1,
-    _ChiefEngineerPortfolioAuthorityCarrierV1,
     _issue_chief_engineer_portfolio_authority_carrier,
     project_completion_catalog_snapshot_hash,
     project_completion_verifier_policy_snapshot_hash,
 )
 from polaris.cells.chief_engineer.blueprint.public.service import (
     BlueprintPersistence,
-    build_ce_handoff_decision,
-    build_chief_engineer_blueprint_portfolio,
     generate_task_blueprint,
     get_blueprint_status,
-    project_chief_engineer_task_blueprint,
-    query_blueprint_provenance,
-    query_project_completion_contract,
-    validate_director_handoff_from_payload,
 )
 from polaris.cells.control_plane.run_ledger.public import stable_hash
 from polaris.kernelone.quality.file_ownership_ledger import (
@@ -60,17 +40,26 @@ def test_pol77_portfolio_binds_optional_read_and_generated_contract_and_preserve
 
     base = ChiefEngineerPortfolioTaskV1(task_id="build", objective="Compile", target_files=("src/main.ts",))
     output = GeneratedOutputV1("dist/main.js", (("build", "src/main.ts"),), ("npm", "run", "build"), ".")
-    extended = ChiefEngineerPortfolioTaskV1(task_id="build", objective="Compile", target_files=("src/main.ts",),
-                                           context_files=("package.json",), generated_outputs=(output,))
+    extended = ChiefEngineerPortfolioTaskV1(
+        task_id="build",
+        objective="Compile",
+        target_files=("src/main.ts",),
+        context_files=("package.json",),
+        generated_outputs=(output,),
+    )
     assert "context_files" not in base.to_dict()
     assert "generated_outputs" not in base.to_dict()
     assert extended.to_dict()["generated_outputs"] == [output.to_dict()]
     assert stable_hash(base.to_dict()) != stable_hash(extended.to_dict())
     assert extended != base
     with pytest.raises(ValueError, match="entrypoint_targets"):
-        ChiefEngineerPortfolioTaskV1(task_id="build", objective="Compile", target_files=("src/main.ts",),
-                                     generated_outputs=(output,), entrypoint_targets=("dist/main.js",))
-
+        ChiefEngineerPortfolioTaskV1(
+            task_id="build",
+            objective="Compile",
+            target_files=("src/main.ts",),
+            generated_outputs=(output,),
+            entrypoint_targets=("dist/main.js",),
+        )
 
 
 def _command_authority(
