@@ -496,15 +496,6 @@ def _rewrite_import_type_value_conflict_content(
         end = i
         # Detect whether this is a pure import-type statement.
         pure_type = bool(re.match(r"\s*import\s+type\s*\{", block))
-        # Value names already present without type keyword in this block.
-        value_names = {
-            m.group(1)
-            for m in re.finditer(
-                r"(?<![.\w$])(?<!type\s)(?<!type\s\s)([A-Za-z_$][\w$]*)\s*(?:,|\}|as\s)",
-                block,
-            )
-            if m.group(1) not in {"type", "from", "import", "as"}
-        }
         # More precise: split specifier list.
         brace = re.search(r"\{([^}]*)\}", block, re.DOTALL)
         if not brace:
@@ -1513,10 +1504,9 @@ def _looks_like_typescript_reexport_signal(diagnostics: Sequence[RepairDiagnosti
     text = _diagnostic_text(diagnostics).lower()
     if not any(
         hint in text for hint in ("typescript", ".ts", ".tsx", "vitest", "npm test", "ts2305", "ts2459", "ts2724")
-    ):
+    ) and not any(token in text for token in (".ts(", ".tsx(", "error ts")):
         # Still accept pure tsc diagnostics that already carry path+.ts markers.
-        if not any(token in text for token in (".ts(", ".tsx(", "error ts")):
-            return False
+        return False
     return any(
         hint in text
         for hint in (

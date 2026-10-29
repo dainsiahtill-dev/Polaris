@@ -794,7 +794,7 @@ def _typescript_function_param_names_from_header(header: str) -> list[str]:
     params = _split_typescript_params(header[open_index + 1 : close_index])
     names: list[str] = []
     for param in params:
-        name = param.strip().split(":", 1)[0].strip().rstrip("?").lstrip("...")
+        name = param.strip().split(":", 1)[0].strip().rstrip("?").lstrip(".")
         if _TS_IDENTIFIER_RE.fullmatch(name):
             names.append(name)
     return names
@@ -885,10 +885,7 @@ def _insert_unknown_params_into_callable_header(header: str, *, add_count: int) 
     params = _split_typescript_params(header[open_index + 1 : close_index])
     extras = [f"_extra{index + 1}: unknown" for index in range(add_count)]
     # Insert extras before the last param when possible (common surface padding).
-    if len(params) >= 2:
-        new_params = [*params[:-1], *extras, params[-1]]
-    else:
-        new_params = [*params, *extras]
+    new_params = [*params[:-1], *extras, params[-1]] if len(params) >= 2 else [*params, *extras]
     return header[: open_index + 1] + ", ".join(new_params) + header[close_index:]
 
 

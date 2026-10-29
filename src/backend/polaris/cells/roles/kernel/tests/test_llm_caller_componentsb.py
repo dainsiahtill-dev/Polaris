@@ -79,6 +79,9 @@ from polaris.cells.roles.kernel.public.structured_output_contracts import (
     STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY,
     RoleStructuredOutputContractV1,
 )
+from polaris.cells.roles.kernel.tests._stream_b33_helpers import (
+    make_b33_propagating_prepared as _b33_propagating_prepared,
+)
 from polaris.kernelone.audit.omniscient.dedup import LLMEventDeduplicator, set_global_llm_dedup
 from polaris.kernelone.context.contracts import TurnEngineContextResult
 

@@ -35,6 +35,12 @@ from polaris.cells.runtime.task_runtime.public.contracts import (
     TaskRuntimeExecutionAttemptIdentityV1,
 )
 
+from ._execution_attempt_helpers import (
+    _project_deferred_repair_results_for_test,
+    _test_execution_attempt,
+    _test_execution_attempt_context,
+)
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -82,13 +88,6 @@ def _make_adapter(tmp_path: Any, task_runtime: Any = None) -> DirectorAdapter:
     else:
         adapter = DirectorAdapter(workspace=str(workspace), task_runtime=task_runtime)
     return adapter
-
-
-from ._execution_attempt_helpers import (
-    _project_deferred_repair_results_for_test,
-    _test_execution_attempt,
-    _test_execution_attempt_context,
-)
 
 
 def _install_test_deferred_projection(

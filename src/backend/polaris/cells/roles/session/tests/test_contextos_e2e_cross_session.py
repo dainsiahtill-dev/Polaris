@@ -157,7 +157,7 @@ def _seed_session_with_messages(
 # ---------------------------------------------------------------------------
 
 
-class TestContextOS_E2ESnapshotToPersistence:
+class TestContextOSE2ESnapshotToPersistence:
     """Test the full flow from snapshot creation to persistence."""
 
     def test_snapshot_captures_session_state(
@@ -253,7 +253,7 @@ class TestContextOS_E2ESnapshotToPersistence:
 # ---------------------------------------------------------------------------
 
 
-class TestContextOS_E2ECrossSessionRestore:
+class TestContextOSE2ECrossSessionRestore:
     """Test that continuity pack and ContextOS state survive across sessions."""
 
     def test_continuity_pack_survives_session_restart(self, role_session_service: RoleSessionService) -> None:
@@ -423,7 +423,7 @@ class TestContextOS_E2ECrossSessionRestore:
 # ---------------------------------------------------------------------------
 
 
-class TestContextOS_E2ESnapshotServiceIntegration:
+class TestContextOSE2ESnapshotServiceIntegration:
     """Test SnapshotService integration with the full ContextOS flow."""
 
     def test_snapshot_list_and_retrieve(
@@ -463,7 +463,7 @@ class TestContextOS_E2ESnapshotServiceIntegration:
         from polaris.cells.roles.session.internal import conversation
 
         class _SessionLocal:
-            def __call__(self):
+            def __call__(self) -> Any:
                 return role_session_service.db
 
         monkeypatch.setattr(conversation, "get_session_local", lambda: _SessionLocal())
@@ -483,7 +483,7 @@ class TestContextOS_E2ESnapshotServiceIntegration:
 # ---------------------------------------------------------------------------
 
 
-class TestContextOS_E2EContinuitySanitization:
+class TestContextOSE2EContinuitySanitization:
     """Test that continuity pack properly sanitizes noise and protocol markup."""
 
     def test_continuity_pack_filters_protocol_markup(self) -> None:

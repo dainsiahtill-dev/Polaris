@@ -51,9 +51,18 @@ from polaris.cells.roles.adapters.internal.director.execute_method_repair_bridge
 from polaris.cells.roles.adapters.internal.director.execution import DirectorPatchExecutor
 from polaris.cells.roles.adapters.public import service as roles_adapters_public_service
 from polaris.cells.roles.adapters.public.contracts import RunDirectorMaterializationQualityRepairScheduleCommandV1
+from polaris.cells.roles.adapters.tests._retry_text_helpers import (
+    assert_retry_text_fallback_is_non_authoritative as _assert_retry_text_fallback_is_non_authoritative,
+)
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1, RoleExecutionResultV1
 from polaris.cells.runtime.task_runtime.public.contracts import (
     TaskRuntimeExecutionAttemptIdentityV1,
+)
+
+from ._execution_attempt_helpers import (
+    _project_deferred_repair_results_for_test,
+    _test_execution_attempt,
+    _test_execution_attempt_context,
 )
 
 # ---------------------------------------------------------------------------
@@ -103,13 +112,6 @@ def _make_adapter(tmp_path: Any, task_runtime: Any = None) -> DirectorAdapter:
     else:
         adapter = DirectorAdapter(workspace=str(workspace), task_runtime=task_runtime)
     return adapter
-
-
-from ._execution_attempt_helpers import (
-    _project_deferred_repair_results_for_test,
-    _test_execution_attempt,
-    _test_execution_attempt_context,
-)
 
 
 def _install_test_deferred_projection(

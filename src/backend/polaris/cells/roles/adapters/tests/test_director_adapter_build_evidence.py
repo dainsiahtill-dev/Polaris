@@ -50,6 +50,11 @@ from polaris.kernelone.events.final_request_evidence import (
     looks_like_workspace_quality_evidence_payload,
 )
 
+from ._execution_attempt_helpers import (
+    _project_deferred_repair_results_for_test,
+    _test_execution_attempt,
+)
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -97,12 +102,6 @@ def _make_adapter(tmp_path: Any, task_runtime: Any = None) -> DirectorAdapter:
     else:
         adapter = DirectorAdapter(workspace=str(workspace), task_runtime=task_runtime)
     return adapter
-
-
-from ._execution_attempt_helpers import (
-    _project_deferred_repair_results_for_test,
-    _test_execution_attempt,
-)
 
 
 def _install_test_deferred_projection(

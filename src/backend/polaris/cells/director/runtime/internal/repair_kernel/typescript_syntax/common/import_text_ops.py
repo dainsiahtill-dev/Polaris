@@ -571,10 +571,7 @@ def _typescript_ensure_named_type_import_operation(
         if type_name in {part.strip().split(" as ")[0].strip() for part in clause.split(",")}:
             return None
         new_clause = clause.rstrip()
-        if new_clause and not new_clause.endswith(","):
-            new_clause = f"{new_clause}, "
-        else:
-            new_clause = f"{new_clause} "
+        new_clause = f"{new_clause}, " if new_clause and not new_clause.endswith(",") else f"{new_clause} "
         new_clause = f"{new_clause}{type_name}"
         replacement = f"{match.group(1)}{new_clause}{match.group(3)}"
         return RepairOperation(

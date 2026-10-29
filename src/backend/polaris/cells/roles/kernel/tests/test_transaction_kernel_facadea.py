@@ -196,56 +196,6 @@ async def test_transaction_kernel_execute_forwards_tool_choice_override_to_provi
     assert llm.await_args.args[0]["tool_choice"] == forced_choice
 
 
-async def test_transaction_kernel_executes_single_transaction_turn() -> None:
-    llm = AsyncMock(
-        return_value={
-            "content": "Final answer.",
-            "model": "test-model",
-            "usage": {"prompt_tokens": 10, "completion_tokens": 4},
-        }
-    )
-    tool_runtime = AsyncMock()
-    kernel = TransactionKernel(llm_provider=llm, tool_runtime=tool_runtime, config=TransactionConfig(domain="code"))
-
-    result = await kernel.execute(
-        turn_id="turn_tx",
-        context=[{"role": "user", "content": "say hi"}],
-        tool_definitions=[],
-    )
-
-    assert result["turn_id"] == "turn_tx"
-    assert result["kind"] == "final_answer"
-    assert result["metrics"]["llm_calls"] == 1
-    assert result["metrics"]["tool_calls"] == 0
-
-
-@pytest.mark.asyncio
-async def test_transaction_kernel_execute_forwards_tool_choice_override_to_provider_request() -> None:
-    llm = AsyncMock(
-        return_value={
-            "content": "Final answer.",
-            "model": "test-model",
-            "usage": {"prompt_tokens": 10, "completion_tokens": 4},
-        }
-    )
-    tool_runtime = AsyncMock()
-    kernel = TransactionKernel(llm_provider=llm, tool_runtime=tool_runtime, config=TransactionConfig(domain="code"))
-    forced_choice = {"type": "function", "function": {"name": "write_file"}}
-    tool_definitions = [{"type": "function", "function": {"name": "write_file"}}]
-
-    result = await kernel.execute(
-        turn_id="turn_tx",
-        context=[{"role": "user", "content": "say hi"}],
-        tool_definitions=tool_definitions,
-        tool_choice_override=forced_choice,
-    )
-
-    assert result["kind"] == "final_answer"
-    assert llm.await_args is not None
-    assert llm.await_args.args[0]["tools"] == tool_definitions
-    assert llm.await_args.args[0]["tool_choice"] == forced_choice
-
-
 def test_build_decision_messages_adds_write_verify_contract_hint() -> None:
     controller = TurnTransactionController(
         llm_provider=AsyncMock(return_value={}),

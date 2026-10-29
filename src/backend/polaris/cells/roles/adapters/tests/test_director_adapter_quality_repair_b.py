@@ -39,6 +39,11 @@ from polaris.cells.runtime.task_runtime.public.contracts import (
     TaskRuntimeExecutionAttemptIdentityV1,
 )
 
+from ._execution_attempt_helpers import (
+    _project_deferred_repair_results_for_test,
+    _test_execution_attempt,
+)
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -123,12 +128,6 @@ def test_quality_repair_includes_read_only_failing_verifier_source_context(tmp_p
     assert "tests/test_product.py around line 6 (READ-ONLY)" in message
     assert "mood_from_weather('Mercury', 10, 5)" in message
     assert "This evidence does not expand write scope" in message
-
-
-from ._execution_attempt_helpers import (
-    _project_deferred_repair_results_for_test,
-    _test_execution_attempt,
-)
 
 
 def _install_test_deferred_projection(

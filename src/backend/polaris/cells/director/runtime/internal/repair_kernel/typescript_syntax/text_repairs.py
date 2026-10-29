@@ -619,12 +619,16 @@ def build_typescript_truncated_eof_plan(
         code = str(diagnostic.code or "").lower()
         raw = str(diagnostic.raw or diagnostic.message or "").lower()
         path = _normalize_repair_path(str(diagnostic.path or ""))
-        if code in {"typescript_ts1005", "typescript_ts1003", "typescript_ts1109", "typescript_ts1128"} or (
-            "expected" in raw and path.endswith((".ts", ".tsx"))
+        if (
+            (
+                code in {"typescript_ts1005", "typescript_ts1003", "typescript_ts1109", "typescript_ts1128"}
+                or ("expected" in raw and path.endswith((".ts", ".tsx")))
+            )
+            and path
+            and path in normalized_base
         ):
-            if path and path in normalized_base:
-                candidate_paths.append(path)
-                matched.append(diagnostic)
+            candidate_paths.append(path)
+            matched.append(diagnostic)
     if not candidate_paths:
         # Content-driven scan for truncated source files.
         for path, content in normalized_base.items():
@@ -655,7 +659,6 @@ def _typescript_truncated_eof_operation(*, path: str, content: str) -> RepairOpe
     # Complete mid-signature: public consume(am  → public consume(amount: number): number { return 0; }
     last_line_start = stripped.rfind("\n") + 1
     last_line = stripped[last_line_start:]
-    closer_parts: list[str] = []
     method_match = re.match(
         r"^(?P<indent>\s*)(?:public|private|protected|static|async|export|abstract|override|\s)*"
         r"(?P<name>[A-Za-z_$][\w$]*)\s*\((?P<params>[^)]*)$",

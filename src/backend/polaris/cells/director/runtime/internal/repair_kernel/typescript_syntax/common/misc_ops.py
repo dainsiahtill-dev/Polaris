@@ -115,14 +115,18 @@ def _package_json_enable_node_test_script_operation(
         return None
     if re.search(r"\b(?:vitest|jest|mocha|node\s+--test)\b", test_script):
         return None
-    if not re.search(r"\b(?:npm\s+run\s+build|tsc\b|npm\s+run\s+verify)\b", test_script) and test_script not in {
-        "npm run build",
-        "tsc",
-        "tsc -p tsconfig.json",
-    }:
+    if (
+        not re.search(r"\b(?:npm\s+run\s+build|tsc\b|npm\s+run\s+verify)\b", test_script)
+        and test_script
+        not in {
+            "npm run build",
+            "tsc",
+            "tsc -p tsconfig.json",
+        }
         # Still rewrite pure build-aliases.
-        if "build" not in test_script.lower():
-            return None
+        and "build" not in test_script.lower()
+    ):
+        return None
     smoke = next((path for path in smoke_paths if path.endswith(".ts")), "tests/verify.test.ts")
     new_scripts = dict(scripts)
     new_scripts["test"] = f"node --test {smoke}"
@@ -135,10 +139,7 @@ def _package_json_enable_node_test_script_operation(
     new_payload["scripts"] = new_scripts
     # Ensure @types/node for node:test imports when missing.
     dev = new_payload.get("devDependencies")
-    if not isinstance(dev, Mapping):
-        dev = {}
-    else:
-        dev = dict(dev)
+    dev = {} if not isinstance(dev, Mapping) else dict(dev)
     if "@types/node" not in {str(key) for key in dev}:
         dev["@types/node"] = "^20.11.0"
         new_payload["devDependencies"] = dev
@@ -342,10 +343,7 @@ def _extend_typescript_declare_const_type_literal_operation(
     body = content[brace_open + 1 : brace_close]
     if re.search(rf"\b{re.escape(member)}\s*[?]?\s*[:(]", body):
         return None
-    if member_is_call:
-        declaration = f"\n  {member}?(..._args: unknown[]): void;"
-    else:
-        declaration = f"\n  {member}?: unknown;"
+    declaration = f"\n  {member}?(..._args: unknown[]): void;" if member_is_call else f"\n  {member}?: unknown;"
     return RepairOperation(
         kind="text_replace",
         path=path,

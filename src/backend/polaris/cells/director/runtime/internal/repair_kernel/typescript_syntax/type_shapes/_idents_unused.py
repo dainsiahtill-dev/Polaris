@@ -652,15 +652,19 @@ def _typescript_replace_incompatible_phase_object_with_public_getter(
 
     relevant = False
     for diagnostic in diagnostics:
-        if str(diagnostic.path or "") and _normalize_repair_path(str(diagnostic.path or "")) != path:
-            if path not in str(diagnostic.raw or ""):
-                continue
+        if (
+            str(diagnostic.path or "")
+            and _normalize_repair_path(str(diagnostic.path or "")) != path
+            and path not in str(diagnostic.raw or "")
+        ):
+            continue
         text = str(diagnostic.raw or diagnostic.message or "")
         code = str(diagnostic.code or "").lower()
-        if code in {"typescript_ts2322", "ts2322"} or "TS2322" in text:
-            if "FlightPhase" in text or "climb" in text.lower() or "finalPhase" in content:
-                relevant = True
-                break
+        if (code in {"typescript_ts2322", "ts2322"} or "TS2322" in text) and (
+            "FlightPhase" in text or "climb" in text.lower() or "finalPhase" in content
+        ):
+            relevant = True
+            break
     if not relevant:
         return None
     has_getter = any(
