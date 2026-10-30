@@ -77,11 +77,12 @@ class TestCodexAdapterSecureDefaults:
     def test_codex_sandbox_default_is_safe(self) -> None:
         """Codex sandbox should default to 'safe', not 'danger-full-access'."""
         import re
+        from pathlib import Path
+
+        from polaris.kernelone.process import codex_adapter
 
         # Read the codex_adapter.py source
-        codex_adapter_path = (
-            "C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/kernelone/process/codex_adapter.py"
-        )
+        codex_adapter_path = str(Path(codex_adapter.__file__))
 
         with open(codex_adapter_path, encoding="utf-8") as f:
             content = f.read()

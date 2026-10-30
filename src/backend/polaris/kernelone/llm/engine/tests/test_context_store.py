@@ -1057,9 +1057,9 @@ def test_original_snapshot_bytes_and_inline_image_survive_owner_delegation(tmp_p
     captured: list[bytes] = []
     original = ContextSnapshotAuditPinRepository.persist_snapshot_bytes
 
-    def capture(repository, content):
+    def capture(repository, content, **kwargs):
         captured.append(content)
-        return original(repository, content)
+        return original(repository, content, **kwargs)
 
     monkeypatch.setattr(ContextSnapshotAuditPinRepository, "persist_snapshot_bytes", capture)
     retention = get_retention(str(tmp_path))

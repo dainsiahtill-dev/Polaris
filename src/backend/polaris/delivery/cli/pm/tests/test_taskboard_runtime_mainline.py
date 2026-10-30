@@ -5,14 +5,58 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.delivery.cli.pm.engine.taskboard import (
     _build_taskboard_runtime,
+    _task_runtime_workspace,
     _finalize_taskboard_runtime_entry,
     _select_taskboard_ready_batch,
     _taskboard_runtime_claim_failures,
     _taskboard_runtime_transition_failures,
 )
+
+
+@pytest.fixture(autouse=True)
+def _fact_stream_workspace(tmp_path: Path) -> None:
+    """Task rows append execution events; the durable stream must exist."""
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(tmp_path),
+            maintenance_reason="taskboard_mainline_test",
+            streams=fact_stream_bootstrap_streams(),
+        )
+    )
+
+
+def _build_bootstrapped(
+    *,
+    workspace_full: str,
+    run_id: str,
+    director_tasks: list[dict[str, object]],
+    max_workers: int,
+) -> dict[str, object]:
+    """Bootstrap the per-run nested workspace stream before building."""
+    nested = _task_runtime_workspace(workspace_full=workspace_full, run_id=run_id)
+    nested.mkdir(parents=True, exist_ok=True)
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(nested),
+            maintenance_reason="taskboard_mainline_test",
+            streams=fact_stream_bootstrap_streams(),
+        )
+    )
+    return _build_taskboard_runtime(
+        workspace_full=workspace_full,
+        run_id=run_id,
+        director_tasks=director_tasks,
+        max_workers=max_workers,
+    )
 
 
 def _task(task_id: str, *, depends_on: list[str] | None = None) -> dict[str, object]:
@@ -27,7 +71,7 @@ def _task(task_id: str, *, depends_on: list[str] | None = None) -> dict[str, obj
 
 
 def test_pm_taskboard_mainline_uses_task_runtime_rows(tmp_path: Path) -> None:
-    runtime = _build_taskboard_runtime(
+    runtime = _build_bootstrapped(
         workspace_full=str(tmp_path),
         run_id="run-1",
         director_tasks=[_task("TASK-1"), _task("TASK-2", depends_on=["TASK-1"])],
@@ -71,7 +115,7 @@ def test_pm_taskboard_mainline_uses_task_runtime_rows(tmp_path: Path) -> None:
 
 
 def test_pm_taskboard_mainline_suspends_needs_continue(tmp_path: Path) -> None:
-    runtime = _build_taskboard_runtime(
+    runtime = _build_bootstrapped(
         workspace_full=str(tmp_path),
         run_id="run-continue",
         director_tasks=[_task("TASK-1")],
@@ -100,7 +144,7 @@ def test_pm_taskboard_mainline_suspends_needs_continue(tmp_path: Path) -> None:
 
 
 def test_pm_taskboard_mainline_replaces_identity_after_needs_continue(tmp_path: Path) -> None:
-    runtime = _build_taskboard_runtime(
+    runtime = _build_bootstrapped(
         workspace_full=str(tmp_path),
         run_id="run-continue-reclaim",
         director_tasks=[_task("TASK-1")],
@@ -145,7 +189,7 @@ def test_pm_taskboard_mainline_replaces_identity_after_needs_continue(tmp_path: 
 
 
 def test_pm_taskboard_mainline_settles_failed_outcome(tmp_path: Path) -> None:
-    runtime = _build_taskboard_runtime(
+    runtime = _build_bootstrapped(
         workspace_full=str(tmp_path),
         run_id="run-failed",
         director_tasks=[_task("TASK-1")],
@@ -172,7 +216,7 @@ def test_pm_taskboard_mainline_settles_failed_outcome(tmp_path: Path) -> None:
 
 
 def test_pm_taskboard_mainline_fails_closed_without_claim_identity(tmp_path: Path) -> None:
-    runtime = _build_taskboard_runtime(
+    runtime = _build_bootstrapped(
         workspace_full=str(tmp_path),
         run_id="run-missing-identity",
         director_tasks=[_task("TASK-1")],
@@ -209,7 +253,7 @@ def test_pm_taskboard_mainline_fails_closed_for_every_identity_context_mismatch(
         ("session", "task_runtime_execution_attempt_identity_session_mismatch"),
     )
     for mismatch, expected_reason in cases:
-        runtime = _build_taskboard_runtime(
+        runtime = _build_bootstrapped(
             workspace_full=str(tmp_path / mismatch),
             run_id="run-identity-mismatch",
             director_tasks=[_task("TASK-1")],
@@ -250,7 +294,7 @@ def test_pm_taskboard_mainline_records_claim_failure(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    runtime = _build_taskboard_runtime(
+    runtime = _build_bootstrapped(
         workspace_full=str(tmp_path),
         run_id="run-claim-failure",
         director_tasks=[_task("TASK-1")],
@@ -289,7 +333,7 @@ def test_pm_taskboard_mainline_records_claim_execution_event_failure(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    runtime = _build_taskboard_runtime(
+    runtime = _build_bootstrapped(
         workspace_full=str(tmp_path),
         run_id="run-claim-event-failure",
         director_tasks=[_task("TASK-1")],
@@ -337,7 +381,7 @@ def test_pm_taskboard_mainline_records_claim_execution_event_failure(
 
 
 def test_pm_taskboard_mainline_records_transition_failure(tmp_path: Path) -> None:
-    runtime = _build_taskboard_runtime(
+    runtime = _build_bootstrapped(
         workspace_full=str(tmp_path),
         run_id="run-transition-failure",
         director_tasks=[_task("TASK-1")],
@@ -386,7 +430,7 @@ def test_pm_taskboard_mainline_blocks_create_execution_event_failure(
 
     monkeypatch.setattr(TaskRuntimeService, "create_task_row", fake_create_task_row)
 
-    runtime = _build_taskboard_runtime(
+    runtime = _build_bootstrapped(
         workspace_full=str(tmp_path),
         run_id="run-create-event-failure",
         director_tasks=[_task("TASK-1")],
@@ -428,7 +472,7 @@ def test_pm_taskboard_mainline_blocks_dependency_update_execution_event_failure(
 
     monkeypatch.setattr(TaskRuntimeService, "update_task_row", fake_update_task_row)
 
-    runtime = _build_taskboard_runtime(
+    runtime = _build_bootstrapped(
         workspace_full=str(tmp_path),
         run_id="run-dependency-event-failure",
         director_tasks=[_task("TASK-1")],

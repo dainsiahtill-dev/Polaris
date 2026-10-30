@@ -93,7 +93,7 @@ class TestPhaseContext:
         assert ctx.changed_files == []
         assert ctx.verification_result == {}
         assert ctx.build_round == 0
-        assert ctx.max_build_rounds == 4
+        assert ctx.max_build_rounds == 8  # F25: cross-file completeness (#54) raised the default
         assert ctx.stall_count == 0
         assert ctx.previous_missing_targets == []
         assert ctx.previous_unresolved_imports == []
