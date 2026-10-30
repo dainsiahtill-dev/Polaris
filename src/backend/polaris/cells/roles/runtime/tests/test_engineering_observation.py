@@ -18,6 +18,7 @@ from polaris.cells.roles.runtime.public.contracts.engineering_run import (
     ToolObservation,
 )
 from polaris.cells.roles.runtime.public.engineering_service import EngineeringRunService
+from polaris.cells.roles.runtime.tests.engineering_support import isolated_workspace as isolated_workspace
 from polaris.cells.roles.runtime.tests.test_engineering_visual_service import _image
 from polaris.kernelone.fs.runtime import KernelFileSystem
 
@@ -135,8 +136,10 @@ def database_dump(service: EngineeringRunService) -> list[str]:
 
 
 @pytest.mark.parametrize("visual", [False, True])
-async def test_one_public_observation_reads_actual_inputs_once_and_is_read_only(tmp_path, monkeypatch, visual):
-    service, _scope = await seed_current_candidate(tmp_path, visual=visual)
+async def test_one_public_observation_reads_actual_inputs_once_and_is_read_only(
+    isolated_workspace, monkeypatch, visual
+):
+    service, _scope = await seed_current_candidate(isolated_workspace, visual=visual)
     captures: list[bool] = []
     reads: list[str] = []
     original_manifest = EngineeringVerification._manifest
@@ -163,8 +166,10 @@ async def test_one_public_observation_reads_actual_inputs_once_and_is_read_only(
 
 
 @pytest.mark.parametrize("missing", ["visual_observation_completed", "llm_request_observed"])
-async def test_required_visual_observation_and_physical_request_are_not_replaced_by_cached_inputs(tmp_path, missing):
-    service, _scope = await seed_current_candidate(tmp_path, visual=True)
+async def test_required_visual_observation_and_physical_request_are_not_replaced_by_cached_inputs(
+    isolated_workspace, missing
+):
+    service, _scope = await seed_current_candidate(isolated_workspace, visual=True)
     assert service.observe("observation", workspace=service.workspace)["qa_verdict"] == "approved"
     with sqlite3.connect(service.store.database_path) as connection:
         connection.execute("DELETE FROM events WHERE session_id=? AND kind=?", ("observation", missing))
@@ -175,13 +180,15 @@ async def test_required_visual_observation_and_physical_request_are_not_replaced
 @pytest.mark.parametrize("changed", ["source", "output", "dependency"])
 @pytest.mark.parametrize("query", ["observe", "snapshot", "current_snapshot", "find_request", "cold"])
 @pytest.mark.parametrize("visual", [False, True])
-async def test_separate_queries_reobserve_source_outputs_and_external_dependencies(tmp_path, changed, query, visual):
-    service, scope = await seed_current_candidate(tmp_path, visual=visual)
+async def test_separate_queries_reobserve_source_outputs_and_external_dependencies(
+    isolated_workspace, changed, query, visual
+):
+    service, scope = await seed_current_candidate(isolated_workspace, visual=visual)
     assert service.observe("observation", workspace=service.workspace)["verification"] == "passed"
     paths = {
         "source": service.workspace / "source.txt",
         "output": service.workspace / "output/result.txt",
-        "dependency": tmp_path / "dependency/library.txt",
+        "dependency": isolated_workspace / "dependency/library.txt",
     }
     paths[changed].write_text("changed current bytes", encoding="utf-8")
     before = database_dump(service)
@@ -204,8 +211,8 @@ async def test_separate_queries_reobserve_source_outputs_and_external_dependenci
     assert database_dump(service) == before
 
 
-async def test_unavailable_capture_and_current_host_revocation_cannot_preserve_pass(tmp_path, monkeypatch):
-    service, _scope = await seed_current_candidate(tmp_path)
+async def test_unavailable_capture_and_current_host_revocation_cannot_preserve_pass(isolated_workspace, monkeypatch):
+    service, _scope = await seed_current_candidate(isolated_workspace)
     before = database_dump(service)
 
     def unavailable(*_args, **_kwargs):
@@ -221,8 +228,8 @@ async def test_unavailable_capture_and_current_host_revocation_cannot_preserve_p
     assert database_dump(service) == before
 
 
-async def test_default_verifier_calls_remain_fresh_after_a_public_query(tmp_path):
-    service, scope = await seed_current_candidate(tmp_path)
+async def test_default_verifier_calls_remain_fresh_after_a_public_query(isolated_workspace):
+    service, scope = await seed_current_candidate(isolated_workspace)
     verifier = service._verification(scope, RunLimits(None, 100000, 20000), asyncio.Event())
     assert verifier.current_verification("observation") == "passed"
     original = verifier.review_binding("observation")
@@ -233,8 +240,8 @@ async def test_default_verifier_calls_remain_fresh_after_a_public_query(tmp_path
 
 
 @pytest.mark.parametrize("visual", [False, True])
-async def test_current_checks_ignore_unrelated_invalid_auxiliary_json(tmp_path, visual):
-    service, _scope = await seed_current_candidate(tmp_path, visual=visual)
+async def test_current_checks_ignore_unrelated_invalid_auxiliary_json(isolated_workspace, visual):
+    service, _scope = await seed_current_candidate(isolated_workspace, visual=visual)
     seq = service.store.append_event("observation", kind="request_prepared", role="director", payload={})
     with sqlite3.connect(service.store.database_path) as connection:
         connection.execute("UPDATE events SET payload=? WHERE seq=? AND session_id=?", ("{broken", seq, "observation"))
@@ -243,8 +250,8 @@ async def test_current_checks_ignore_unrelated_invalid_auxiliary_json(tmp_path, 
     assert row["verification"] == "passed" and row["qa_verdict"] == ("approved" if visual else "rejected")
 
 
-async def test_query_capture_is_context_local_and_released_after_exception(tmp_path):
-    service, scope = await seed_current_candidate(tmp_path)
+async def test_query_capture_is_context_local_and_released_after_exception(isolated_workspace):
+    service, scope = await seed_current_candidate(isolated_workspace)
     verifier = service._verification(scope, RunLimits(None, 100000, 20000), asyncio.Event())
     with pytest.raises(RuntimeError, match="controlled query failure"), verifier._observe_current_inputs():
         binding = verifier.review_binding("observation")
