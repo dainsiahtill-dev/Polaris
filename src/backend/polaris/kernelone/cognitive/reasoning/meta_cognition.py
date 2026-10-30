@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypedDict
 
-from polaris.kernelone.type_ops import opaque_isinstance
-
 if TYPE_CHECKING:
     from polaris.kernelone.llm.invocations import LLMInvoker
 
@@ -230,11 +228,13 @@ Respond in a structured format with clear sections."""
         assumptions: tuple[str, ...],
     ) -> MetaCognitionSnapshot:
         """Audit the reasoning chain and produce meta-cognition snapshot."""
-        # Identify knowledge gaps
+        # Assumptions are plain strings (the only caller passes a.text). The
+        # previous dict-shaped confidence branches were dead defensive code and
+        # are removed; knowledge-gap detection and confidence stay conservative.
         knowledge_gaps: list[str] = []
         for assumption in assumptions:
-            if opaque_isinstance(assumption, dict) and assumption.get("confidence", 1.0) < 0.7:
-                knowledge_gaps.append(f"Low confidence in: {assumption.get('text', 'unknown')}")
+            if not assumption.strip():
+                knowledge_gaps.append("Empty assumption")
 
         # Summarize reasoning
         summary = f"Reasoned with {len(assumptions)} assumptions"
@@ -242,13 +242,9 @@ Respond in a structured format with clear sections."""
         # Generate alternatives
         alternatives: list[str] = [f"Alternative to: {a}" for a in assumptions[:2]]
 
-        # Calculate output confidence
-        if assumptions:
-            output_conf = sum(a.get("confidence", 0.5) if isinstance(a, dict) else 0.5 for a in assumptions) / len(
-                assumptions
-            )
-        else:
-            output_conf = 0.5
+        # Confidence is a fixed conservative floor; string assumptions carry no
+        # per-item confidence signal.
+        output_conf = 0.5
 
         return MetaCognitionSnapshot(
             knowledge_boundary_confidence=output_conf,
