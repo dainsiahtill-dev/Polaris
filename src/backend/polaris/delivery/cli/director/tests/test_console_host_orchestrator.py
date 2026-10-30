@@ -219,7 +219,11 @@ class TestStreamTurnOrchestratorPath:
 
         class FakeTxController:
             async def execute_stream(
-                self, turn_id: str, context: list[dict[str, Any]], tool_definitions: list[dict[str, Any]], **_kwargs: Any
+                self,
+                turn_id: str,
+                context: list[dict[str, Any]],
+                tool_definitions: list[dict[str, Any]],
+                **_kwargs: Any,
             ) -> Any:
                 yield ContentChunkEvent(turn_id=turn_id, chunk="hello from orch")
                 yield CompletionEvent(turn_id=turn_id, status="success")
@@ -318,7 +322,11 @@ class TestStreamTurnOrchestratorPath:
 
         class FakeTxController:
             async def execute_stream(
-                self, turn_id: str, context: list[dict[str, Any]], tool_definitions: list[dict[str, Any]], **_kwargs: Any
+                self,
+                turn_id: str,
+                context: list[dict[str, Any]],
+                tool_definitions: list[dict[str, Any]],
+                **_kwargs: Any,
             ) -> Any:
                 yield ContentChunkEvent(turn_id=turn_id, chunk="log me")
                 yield CompletionEvent(turn_id=turn_id, status="success")
