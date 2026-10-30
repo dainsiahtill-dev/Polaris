@@ -1537,18 +1537,6 @@ class _Mixin02:
                     ),
                     json_schema=schema_repair_patch_schema,
                 )
-            if semantic_candidate is not None and semantic_diagnosis is not None:
-                structured_output_contract = RoleStructuredOutputContractV1(
-                    schema_name="chief_engineer_semantic_repair_patch",
-                    description=(
-                        "Typed, diagnosis-scoped patch for one exact CE semantic candidate and diagnosis; "
-                        "base_candidate_hash and diagnosis_hash are immutable CAS values."
-                    ),
-                    json_schema=build_chief_engineer_semantic_repair_patch_schema(
-                        allowed_operations=semantic_diagnosis.allowed_operations,
-                        diagnosis=semantic_diagnosis,
-                    ),
-                )
             result = cast(
                 RoleExecutionResultV1,
                 await self._call_with_factory_role_evidence_authority(
