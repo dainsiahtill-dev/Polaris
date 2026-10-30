@@ -18,24 +18,25 @@ from polaris.cells.roles.runtime.internal.engineering_tools import EngineeringTo
 from polaris.cells.roles.runtime.internal.engineering_verification import EngineeringVerification
 from polaris.cells.roles.runtime.public.contracts.engineering_run import PermissionScope, RoleRunCommand, RunLimits
 from polaris.cells.roles.runtime.public.engineering_service import EngineeringRunService
+from polaris.cells.roles.runtime.tests.engineering_support import isolated_workspace as isolated_workspace
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 
 TOOL = "synthetic_declared_tool"
 
 
 @pytest.fixture
-def fixture_tree(tmp_path: Path) -> tuple[Path, Path, tuple[Path, ...]]:
-    fs = KernelFileSystem(str(tmp_path), get_default_adapter(), read_only_paths=True)
+def fixture_tree(isolated_workspace: Path) -> tuple[Path, Path, tuple[Path, ...]]:
+    fs = KernelFileSystem(str(isolated_workspace), get_default_adapter(), read_only_paths=True)
     fs.workspace_mkdir("workspace/.polaris", parents=True, exist_ok=True)
     for label in ("first", "second"):
         fs.workspace_mkdir("toolchain/" + label + "/bin", parents=True, exist_ok=True)
         path = "toolchain/" + label + "/bin/" + TOOL
         fs.workspace_write_text_atomic(path, "#!/bin/sh\nprintf '" + label.upper() + "\\n'\n", encoding="utf-8")
-        os.chmod(tmp_path / path, 0o755)  # Executable metadata on the explicit synthetic fixture only.
+        os.chmod(isolated_workspace / path, 0o755)  # Executable metadata on the explicit synthetic fixture only.
     return (
-        tmp_path / "workspace",
-        tmp_path / "toolchain",
-        (tmp_path / "toolchain/second/bin", tmp_path / "toolchain/first/bin"),
+        isolated_workspace / "workspace",
+        isolated_workspace / "toolchain",
+        (isolated_workspace / "toolchain/second/bin", isolated_workspace / "toolchain/first/bin"),
     )
 
 

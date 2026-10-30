@@ -17,6 +17,7 @@ from polaris.cells.roles.runtime.internal.engineering_session import Engineering
 from polaris.cells.roles.runtime.internal.engineering_verification import EngineeringVerification
 from polaris.cells.roles.runtime.public.contracts.engineering_run import PermissionScope, RoleRunCommand, RunLimits
 from polaris.cells.roles.runtime.public.engineering_service import EngineeringRunService
+from polaris.cells.roles.runtime.tests.engineering_support import isolated_workspace as isolated_workspace
 from polaris.kernelone.llm.engine.contracts import AIRequest, TaskType
 
 SESSION_ID = "event-selection"
@@ -35,8 +36,8 @@ def _create(store: EngineeringSessionStore, *, session_id: str = SESSION_ID) -> 
 
 
 @pytest.fixture
-def store(tmp_path: Path) -> EngineeringSessionStore:
-    result = EngineeringSessionStore(tmp_path)
+def store(isolated_workspace: Path) -> EngineeringSessionStore:
+    result = EngineeringSessionStore(isolated_workspace)
     _create(result)
     return result
 
@@ -213,9 +214,9 @@ def test_review_binding_keeps_current_manifest_and_latest_completion_without_aux
 
 
 def test_native_capture_ignores_auxiliary_payload_but_preserves_python_turn_identity(
-    tmp_path: Path,
+    isolated_workspace: Path,
 ) -> None:
-    service = EngineeringRunService(tmp_path)
+    service = EngineeringRunService(isolated_workspace)
     _create(service.store)
     turn = service.store.append_event(SESSION_ID, kind="turn_started", role="director", payload={})
     auxiliary = service.store.append_event(SESSION_ID, kind="request_prepared", role="director", payload={})
@@ -226,7 +227,7 @@ def test_native_capture_ignores_auxiliary_payload_but_preserves_python_turn_iden
         input="goal",
         context={
             "session_id": SESSION_ID,
-            "workspace": str(tmp_path),
+            "workspace": str(isolated_workspace),
             "engine_version": "engineering_v2",
             "turn_seq": turn,
         },

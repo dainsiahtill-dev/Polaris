@@ -18,6 +18,7 @@ from polaris.cells.roles.runtime.public.contracts.engineering_run import (
     ToolObservation,
     tool_observation_payload,
 )
+from polaris.cells.roles.runtime.tests.engineering_support import isolated_workspace as isolated_workspace
 
 RTK = Path("/home/dains/.headroom/bin/rtk")
 
@@ -67,22 +68,24 @@ async def request(store, verifier, workspace, commands, *, close=True, identity=
     return parent, results
 
 
-async def test_real_selected_checks_merge_reselect_and_survive_windowed_cold_snapshot(tmp_path):
+async def test_real_selected_checks_merge_reselect_and_survive_windowed_cold_snapshot(isolated_workspace):
     first = command('assert 2 + 3 == 5; print("addition")')
     second = command('assert 2 * 3 == 6; print("multiply")')
     third = command('assert 5 - 3 == 2; print("subtract")')
-    store, verifier = setup(tmp_path, (first, first))
-    assert store.load_run("selection", workspace=tmp_path).get("verification_commands") == [first, first]
-    _parent, checks = await request(store, verifier, tmp_path, [first, second, second])
+    store, verifier = setup(isolated_workspace, (first, first))
+    assert store.load_run("selection", workspace=isolated_workspace).get("verification_commands") == [first, first]
+    _parent, checks = await request(store, verifier, isolated_workspace, [first, second, second])
     assert [c.exit_code for c in checks] == [0, 0, 0], checks
-    row = store.load_run("selection", workspace=tmp_path)
+    row = store.load_run("selection", workspace=isolated_workspace)
     assert row["required_checks"] == [first, first]
     assert row["verification_commands"] == [first, first, second]
     assert verifier.current_completed_result("selection")["verification"] == "passed"
-    await request(store, verifier, tmp_path, [third], identity="reselect")
+    await request(store, verifier, isolated_workspace, [third], identity="reselect")
     for _ in range(210):
         store.append_event("selection", kind="note", role="director", payload={})
-    cold = EngineeringSessionStore(tmp_path).load_snapshot("selection", workspace=tmp_path, event_limit=1)
+    cold = EngineeringSessionStore(isolated_workspace).load_snapshot(
+        "selection", workspace=isolated_workspace, event_limit=1
+    )
     assert cold["run"]["verification_commands"] == [first, first, third]
     assert cold["run"]["required_checks"] == [first, first]
     assert len(cold["events"]) == 1
@@ -95,54 +98,57 @@ async def test_real_selected_checks_merge_reselect_and_survive_windowed_cold_sna
 
 
 @pytest.mark.parametrize("invalid", [[], [""], ["\x00"], [7]])
-async def test_invalid_selection_cannot_replace_actual_plan(tmp_path, invalid):
-    store, verifier = setup(tmp_path)
-    assert store.load_run("selection", workspace=tmp_path).get("verification_commands") == []
+async def test_invalid_selection_cannot_replace_actual_plan(isolated_workspace, invalid):
+    store, verifier = setup(isolated_workspace)
+    assert store.load_run("selection", workspace=isolated_workspace).get("verification_commands") == []
     valid = command("assert 1 + 1 == 2")
-    await request(store, verifier, tmp_path, [valid])
-    before = store.load_run("selection", workspace=tmp_path)
+    await request(store, verifier, isolated_workspace, [valid])
+    before = store.load_run("selection", workspace=isolated_workspace)
     starts = [e for e in store.load_events("selection") if e["kind"] == "verification_started"]
     parent = dispatch(store, invalid, "invalid")
     with pytest.raises(ValueError):
         await verifier.run_verification(
             tuple(invalid), session_id="selection", workspace_revision=0, requested_by=parent
         )
-    after = store.load_run("selection", workspace=tmp_path)
+    after = store.load_run("selection", workspace=isolated_workspace)
     assert after["verification_commands"] == before["verification_commands"] == [valid]
     assert after["checks"] == before["checks"]
     assert [e for e in store.load_events("selection") if e["kind"] == "verification_started"] == starts
 
 
-async def test_actual_failed_completion_is_current_until_source_changes(tmp_path):
-    store, verifier = setup(tmp_path)
-    assert store.load_run("selection", workspace=tmp_path).get("verification_commands") == []
-    await request(store, verifier, tmp_path, [command("raise SystemExit(7)")])
+async def test_actual_failed_completion_is_current_until_source_changes(isolated_workspace):
+    store, verifier = setup(isolated_workspace)
+    assert store.load_run("selection", workspace=isolated_workspace).get("verification_commands") == []
+    await request(store, verifier, isolated_workspace, [command("raise SystemExit(7)")])
     completion = verifier.current_completed_result("selection")
     assert completion["verification"] == "failed" and completion["checks"][0]["exit_code"] == 7
-    (tmp_path / "changed.py").write_text("VALUE=2\n", encoding="utf-8")
+    (isolated_workspace / "changed.py").write_text("VALUE=2\n", encoding="utf-8")
     assert verifier.current_completed_result("selection") is None
 
 
-async def test_complete_parent_recovery_is_exact_atomic_idempotent_and_does_not_execute(tmp_path):
+async def test_complete_parent_recovery_is_exact_atomic_idempotent_and_does_not_execute(isolated_workspace):
     from polaris.cells.roles.runtime.internal import engineering_verification as module
 
-    store, verifier = setup(tmp_path)
-    assert store.load_run("selection", workspace=tmp_path).get("verification_commands") == []
-    parent, checks = await request(store, verifier, tmp_path, [command('print("once")')], close=False)
+    store, verifier = setup(isolated_workspace)
+    assert store.load_run("selection", workspace=isolated_workspace).get("verification_commands") == []
+    parent, checks = await request(store, verifier, isolated_workspace, [command('print("once")')], close=False)
     payload = verifier.current_completed_result("selection")
     assert payload["input_binding"]["requested_by"] == list(parent)
-    assert payload["verification_commands"] == store.load_run("selection", workspace=tmp_path)["verification_commands"]
+    assert (
+        payload["verification_commands"]
+        == store.load_run("selection", workspace=isolated_workspace)["verification_commands"]
+    )
     observation = module.verification_observation(parent[1], payload, 20_000)
     assert observation.ok and not observation.interrupted and observation.tool == "verify_project"
     store.update_run("selection", status="completed")
-    assert store.load_run("selection", workspace=tmp_path)["project_outcome"] != "accepted"
+    assert store.load_run("selection", workspace=isolated_workspace)["project_outcome"] != "accepted"
     before_children = [
         e
         for e in store.load_events("selection")
         if e["kind"] == "tool_started" and e["payload"]["tool"] == "execute_command"
     ]
-    cold = EngineeringSessionStore(tmp_path)
-    with cold.acquire_workspace(tmp_path):
+    cold = EngineeringSessionStore(isolated_workspace)
+    with cold.acquire_workspace(isolated_workspace):
         cold.reconcile_verification_calls("selection", max_output_bytes=20_000)
         cold.reconcile_verification_calls("selection", max_output_bytes=20_000)
     assert cold.pending_tool_calls("selection") == []
@@ -154,27 +160,27 @@ async def test_complete_parent_recovery_is_exact_atomic_idempotent_and_does_not_
     assert before_children == after_children and len(checks) == 1
     replies = [m for m in cold.load_message_history("selection") if m.get("tool_call_id") == parent[1]]
     assert len(replies) == 1 and json.loads(replies[0]["content"]) == tool_observation_payload(observation)
-    assert cold.load_run("selection", workspace=tmp_path)["project_outcome"] == "accepted"
+    assert cold.load_run("selection", workspace=isolated_workspace)["project_outcome"] == "accepted"
 
 
-async def test_observed_parent_missing_message_repaired_without_duplicate_observation(tmp_path):
+async def test_observed_parent_missing_message_repaired_without_duplicate_observation(isolated_workspace):
     from polaris.cells.roles.runtime.internal.engineering_verification import verification_observation
 
-    store, verifier = setup(tmp_path)
-    assert store.load_run("selection", workspace=tmp_path).get("verification_commands") == []
-    parent, _checks = await request(store, verifier, tmp_path, [command("assert 3 == 3")], close=False)
+    store, verifier = setup(isolated_workspace)
+    assert store.load_run("selection", workspace=isolated_workspace).get("verification_commands") == []
+    parent, _checks = await request(store, verifier, isolated_workspace, [command("assert 3 == 3")], close=False)
     observation = verification_observation(parent[1], verifier.current_completed_result("selection"), 20_000)
     store.record_tool_observation("selection", turn_seq=parent[0], observation=observation, role="director")
     before = [e for e in store.load_events("selection") if e["kind"] == "tool_observed"]
-    with store.acquire_workspace(tmp_path):
+    with store.acquire_workspace(isolated_workspace):
         store.reconcile_verification_calls("selection", max_output_bytes=20_000)
     assert [e for e in store.load_events("selection") if e["kind"] == "tool_observed"] == before
     assert len([m for m in store.load_message_history("selection") if m.get("tool_call_id") == parent[1]]) == 1
 
 
-async def test_missing_completion_keeps_known_commands_and_parent_unknown(tmp_path, monkeypatch):
-    store, verifier = setup(tmp_path)
-    assert store.load_run("selection", workspace=tmp_path).get("verification_commands") == []
+async def test_missing_completion_keeps_known_commands_and_parent_unknown(isolated_workspace, monkeypatch):
+    store, verifier = setup(isolated_workspace)
+    assert store.load_run("selection", workspace=isolated_workspace).get("verification_commands") == []
     parent = dispatch(store, [command('print("actual command")')])
 
     def commit_failure(*args, **kwargs):
@@ -186,18 +192,18 @@ async def test_missing_completion_keeps_known_commands_and_parent_unknown(tmp_pa
             (command('print("actual command")'),), session_id="selection", workspace_revision=0, requested_by=parent
         )
     before = store.load_events("selection")
-    cold = EngineeringSessionStore(tmp_path)
-    with cold.acquire_workspace(tmp_path):
+    cold = EngineeringSessionStore(isolated_workspace)
+    with cold.acquire_workspace(isolated_workspace):
         cold.reconcile_verification_calls("selection", max_output_bytes=20_000)
     assert cold.load_events("selection") == before
     assert [p["call_id"] for p in cold.pending_tool_calls("selection")] == [parent[1]]
     assert verifier.current_completed_result("selection") is None
 
 
-async def test_unknown_child_or_wrong_parent_cannot_be_reconciled(tmp_path):
-    store, verifier = setup(tmp_path)
-    assert store.load_run("selection", workspace=tmp_path).get("verification_commands") == []
-    parent, _checks = await request(store, verifier, tmp_path, [command('print("completed")')], close=False)
+async def test_unknown_child_or_wrong_parent_cannot_be_reconciled(isolated_workspace):
+    store, verifier = setup(isolated_workspace)
+    assert store.load_run("selection", workspace=isolated_workspace).get("verification_commands") == []
+    parent, _checks = await request(store, verifier, isolated_workspace, [command('print("completed")')], close=False)
     payload = verifier.current_completed_result("selection")
     attempt = payload["input_binding"]["attempt_seq"]
     store.record_tool_dispatch(
@@ -210,7 +216,7 @@ async def test_unknown_child_or_wrong_parent_cannot_be_reconciled(tmp_path):
     )
     other_parent = dispatch(store, [command('print("completed")')], "different-parent")
     before = store.load_events("selection")
-    with store.acquire_workspace(tmp_path):
+    with store.acquire_workspace(isolated_workspace):
         store.reconcile_verification_calls("selection", max_output_bytes=20_000)
     assert store.load_events("selection") == before
     assert {p["call_id"] for p in store.pending_tool_calls("selection")} == {
@@ -220,32 +226,34 @@ async def test_unknown_child_or_wrong_parent_cannot_be_reconciled(tmp_path):
     }
 
 
-async def test_recovery_of_stale_completion_cannot_accept_new_source(tmp_path):
-    store, verifier = setup(tmp_path)
-    assert store.load_run("selection", workspace=tmp_path).get("verification_commands") == []
-    await request(store, verifier, tmp_path, [command("assert 8 == 8")], close=False)
-    (tmp_path / "source.py").write_text("changed=1\n", encoding="utf-8")
-    with store.acquire_workspace(tmp_path):
+async def test_recovery_of_stale_completion_cannot_accept_new_source(isolated_workspace):
+    store, verifier = setup(isolated_workspace)
+    assert store.load_run("selection", workspace=isolated_workspace).get("verification_commands") == []
+    await request(store, verifier, isolated_workspace, [command("assert 8 == 8")], close=False)
+    (isolated_workspace / "source.py").write_text("changed=1\n", encoding="utf-8")
+    with store.acquire_workspace(isolated_workspace):
         store.reconcile_verification_calls("selection", max_output_bytes=20_000)
     assert not store.pending_tool_calls("selection")
     assert verifier.current_completed_result("selection") is None
     assert verifier.current_verification("selection") == "unknown"
 
 
-async def test_selection_start_atomically_invalidates_previous_checks_and_binds_exact_attempt(tmp_path, monkeypatch):
-    store, verifier = setup(tmp_path)
-    assert store.load_run("selection", workspace=tmp_path).get("verification_commands") == []
-    await request(store, verifier, tmp_path, [command("assert 4 == 4")])
+async def test_selection_start_atomically_invalidates_previous_checks_and_binds_exact_attempt(
+    isolated_workspace, monkeypatch
+):
+    store, verifier = setup(isolated_workspace)
+    assert store.load_run("selection", workspace=isolated_workspace).get("verification_commands") == []
+    await request(store, verifier, isolated_workspace, [command("assert 4 == 4")])
     original = verifier.tools.execute
     observed = []
 
     async def inspect_start(*args, **kwargs):
-        row = store.load_run("selection", workspace=tmp_path)
+        row = store.load_run("selection", workspace=isolated_workspace)
         observed.append((row["verification"], row["checks"]))
         return await original(*args, **kwargs)
 
     monkeypatch.setattr(verifier.tools, "execute", inspect_start)
-    await request(store, verifier, tmp_path, [command("assert 6 == 6")], identity="second")
+    await request(store, verifier, isolated_workspace, [command("assert 6 == 6")], identity="second")
     assert observed == [("not_run", [])]
     payload = verifier.current_completed_result("selection")
     wrong_binding = {**payload["input_binding"], "attempt_seq": payload["input_binding"]["attempt_seq"] + 1000}
@@ -262,10 +270,10 @@ async def test_selection_start_atomically_invalidates_previous_checks_and_binds_
     assert verifier.current_completed_result("selection") is None
 
 
-async def test_same_unclosed_parent_cannot_start_a_second_physical_attempt(tmp_path):
-    store, verifier = setup(tmp_path)
+async def test_same_unclosed_parent_cannot_start_a_second_physical_attempt(isolated_workspace):
+    store, verifier = setup(isolated_workspace)
     selected = [command('print("exactly once")')]
-    parent, _checks = await request(store, verifier, tmp_path, selected, close=False)
+    parent, _checks = await request(store, verifier, isolated_workspace, selected, close=False)
     with pytest.raises(ValueError, match=r"already.*attempt"):
         await verifier.run_verification(
             tuple(selected), session_id="selection", workspace_revision=0, requested_by=parent
@@ -278,25 +286,28 @@ async def test_same_unclosed_parent_cannot_start_a_second_physical_attempt(tmp_p
     assert len(children) == 1
 
 
-async def test_recovery_response_and_message_roll_back_together(tmp_path):
-    store, verifier = setup(tmp_path)
-    parent, _checks = await request(store, verifier, tmp_path, [command("assert 10 == 10")], close=False)
+async def test_recovery_response_and_message_roll_back_together(isolated_workspace):
+    store, verifier = setup(isolated_workspace)
+    parent, _checks = await request(store, verifier, isolated_workspace, [command("assert 10 == 10")], close=False)
     with sqlite3.connect(store.database_path) as connection:
         connection.execute("""CREATE TRIGGER reject_recovered_message BEFORE INSERT ON events
             WHEN NEW.kind='message' BEGIN SELECT RAISE(ABORT, 'injected message failure'); END""")
-    with pytest.raises(sqlite3.IntegrityError, match="injected message failure"), store.acquire_workspace(tmp_path):
+    with (
+        pytest.raises(sqlite3.IntegrityError, match="injected message failure"),
+        store.acquire_workspace(isolated_workspace),
+    ):
         store.reconcile_verification_calls("selection", max_output_bytes=20_000)
     assert [p["call_id"] for p in store.pending_tool_calls("selection")] == [parent[1]]
     assert not store.load_message_history("selection")
     with sqlite3.connect(store.database_path) as connection:
         connection.execute("DROP TRIGGER reject_recovered_message")
-    with store.acquire_workspace(tmp_path):
+    with store.acquire_workspace(isolated_workspace):
         store.reconcile_verification_calls("selection", max_output_bytes=20_000)
     assert not store.pending_tool_calls("selection")
 
 
-async def test_real_command_without_observation_cannot_close_unknown_parent(tmp_path, monkeypatch):
-    store, verifier = setup(tmp_path)
+async def test_real_command_without_observation_cannot_close_unknown_parent(isolated_workspace, monkeypatch):
+    store, verifier = setup(isolated_workspace)
     selected = [command('print("actual effect before observation")')]
     parent = dispatch(store, selected)
     original = store.record_tool_observation
@@ -309,19 +320,19 @@ async def test_real_command_without_observation_cannot_close_unknown_parent(tmp_
     monkeypatch.setattr(store, "record_tool_observation", fail_child_observation)
     await verifier.run_verification(tuple(selected), session_id="selection", workspace_revision=0, requested_by=parent)
     before = store.load_events("selection")
-    cold = EngineeringSessionStore(tmp_path)
-    with cold.acquire_workspace(tmp_path):
+    cold = EngineeringSessionStore(isolated_workspace)
+    with cold.acquire_workspace(isolated_workspace):
         cold.reconcile_verification_calls("selection", max_output_bytes=20_000)
     assert cold.load_events("selection") == before
     assert len(cold.pending_tool_calls("selection")) == 2
-    assert cold.load_run("selection", workspace=tmp_path)["verification"] == "unknown"
+    assert cold.load_run("selection", workspace=isolated_workspace)["verification"] == "unknown"
     assert verifier.current_completed_result("selection") is None
 
 
 @pytest.mark.parametrize("old_verdict", ["approved", "rejected"])
-async def test_new_selection_immediately_invalidates_previous_qa_verdict(tmp_path, monkeypatch, old_verdict):
-    store, verifier = setup(tmp_path, require_qa=True)
-    await request(store, verifier, tmp_path, [command("assert 12 == 12")])
+async def test_new_selection_immediately_invalidates_previous_qa_verdict(isolated_workspace, monkeypatch, old_verdict):
+    store, verifier = setup(isolated_workspace, require_qa=True)
+    await request(store, verifier, isolated_workspace, [command("assert 12 == 12")])
     # A durable host QA fixture isolates projection invalidation, not real QA execution.
     store.append_event(
         "selection",
@@ -330,19 +341,19 @@ async def test_new_selection_immediately_invalidates_previous_qa_verdict(tmp_pat
         payload={"verdict": old_verdict, "input_binding": verifier.review_binding("selection")},
     )
     store.update_run("selection", status="completed")
-    assert store.load_run("selection", workspace=tmp_path)["qa_verdict"] == old_verdict
+    assert store.load_run("selection", workspace=isolated_workspace)["qa_verdict"] == old_verdict
     observed = []
     original = verifier.tools.execute
 
     async def inspect_start(*args, **kwargs):
         event = next(e for e in reversed(store.load_events("selection")) if e["kind"] == "verification_started")
-        row = store.load_run("selection", workspace=tmp_path)
+        row = store.load_run("selection", workspace=isolated_workspace)
         observed.append((event["payload"], row))
         return await original(*args, **kwargs)
 
     monkeypatch.setattr(verifier.tools, "execute", inspect_start)
-    await request(store, verifier, tmp_path, [command("assert 13 == 13")], identity="fresh-selection")
+    await request(store, verifier, isolated_workspace, [command("assert 13 == 13")], identity="fresh-selection")
     for projection in observed[0]:
         assert projection["qa_verdict"] == "unknown" and projection["project_outcome"] == "unknown"
         assert projection["acceptance_basis"] is None and projection["checks"] == []
-    assert store.load_run("selection", workspace=tmp_path)["qa_verdict"] == "unknown"
+    assert store.load_run("selection", workspace=isolated_workspace)["qa_verdict"] == "unknown"

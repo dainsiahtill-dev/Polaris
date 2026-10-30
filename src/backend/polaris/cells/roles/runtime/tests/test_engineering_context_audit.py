@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from polaris.cells.roles.runtime.tests.engineering_support import (
     ScriptedProvider,
+    isolated_workspace as isolated_workspace,
     scripted_provider as scripted_provider,
 )
 from polaris.delivery.http.v2._shared import require_auth
@@ -99,11 +100,15 @@ def _reader(workspace: Path) -> TestClient:
 @pytest.mark.parametrize("protocol", ["openai", "anthropic"])
 @pytest.mark.parametrize("role", ["pm", "chief_engineer", "director", "qa"])
 async def test_role_native_wire_ref_history_and_two_context_readers(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scripted_provider: ScriptedProvider, protocol: str, role: str
+    isolated_workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    scripted_provider: ScriptedProvider,
+    protocol: str,
+    role: str,
 ) -> None:
     # The fixture changes configuration only; real provider/bootstrap ports,
     # native conversion, HTTP transport, capture and context files remain real.
-    scripted_provider.client(protocol, tmp_path, monkeypatch)
+    scripted_provider.client(protocol, isolated_workspace, monkeypatch)
     packet = (
         {"content": [{"type": "text", "text": "real native reply"}], "usage": {"input_tokens": 11, "output_tokens": 2}}
         if protocol == "anthropic"
@@ -115,7 +120,7 @@ async def test_role_native_wire_ref_history_and_two_context_readers(
     scripted_provider.enqueue_json(packet)
     observations: list[dict[str, Any]] = []
     executor = AIExecutor(
-        workspace=str(tmp_path),
+        workspace=str(isolated_workspace),
         native_request_observer=lambda _request, observation: observations.append(dict(observation)),
     )
     _configure(executor, scripted_provider.base_url, protocol, monkeypatch)
@@ -129,7 +134,7 @@ async def test_role_native_wire_ref_history_and_two_context_readers(
     assert [item["phase"] for item in observations] == ["prepared", "terminal"]
     assert observations[-1]["usage_status"] == "reported"
     assert observations[-1]["physical_send_count"] is None
-    runtime = Path(resolve_storage_roots(str(tmp_path)).runtime_root)
+    runtime = Path(resolve_storage_roots(str(isolated_workspace)).runtime_root)
     raw = (runtime / "contexts" / ref[:2] / ref).read_text(encoding="utf-8")
     assert hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24] == ref
     assert "synthetic-only-never-real-secret" not in raw
@@ -137,9 +142,9 @@ async def test_role_native_wire_ref_history_and_two_context_readers(
     assert not (runtime / "engineering" / "sessions.sqlite3").exists(), (
         "pure native discussion created an engineering row owner"
     )
-    with _reader(tmp_path) as client:
-        context = client.get(f"/v2/context/{ref}", params={"workspace": str(tmp_path)})
-        final = client.get(f"/v2/context/{ref}/final-request", params={"workspace": str(tmp_path)})
+    with _reader(isolated_workspace) as client:
+        context = client.get(f"/v2/context/{ref}", params={"workspace": str(isolated_workspace)})
+        final = client.get(f"/v2/context/{ref}/final-request", params={"workspace": str(isolated_workspace)})
         assert context.status_code == final.status_code == 200
         result = final.json()
         assert result["role"] == role
@@ -157,7 +162,7 @@ async def test_role_native_wire_ref_history_and_two_context_readers(
         assert result["messages"] == context.json()["messages"] == expected_messages
         assert "previous-read" in json.dumps(result["messages"])
         missing = client.get(
-            f"/v2/context/{ref}/final-request", params={"workspace": str(tmp_path / "other-workspace")}
+            f"/v2/context/{ref}/final-request", params={"workspace": str(isolated_workspace / "other-workspace")}
         )
         assert missing.status_code == 404
 
@@ -210,12 +215,15 @@ def retry_provider(request: pytest.FixtureRequest) -> Iterator[tuple[str, list[d
 
 @pytest.mark.parametrize("retry_provider,dispatches", [("disconnect", 2), ("redirect", 1)], indirect=["retry_provider"])
 async def test_dispatch_count_never_claims_hidden_redirect_http_sends(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, retry_provider: tuple[str, list[dict[str, Any]]], dispatches: int
+    isolated_workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    retry_provider: tuple[str, list[dict[str, Any]]],
+    dispatches: int,
 ) -> None:
     base_url, received = retry_provider
     observations: list[dict[str, Any]] = []
     executor = AIExecutor(
-        workspace=str(tmp_path),
+        workspace=str(isolated_workspace),
         native_request_observer=lambda _request, observation: observations.append(dict(observation)),
     )
     _configure(executor, base_url, "openai", monkeypatch)
@@ -237,15 +245,15 @@ async def test_dispatch_count_never_claims_hidden_redirect_http_sends(
 
 
 async def test_observer_error_does_not_retry_actual_native_http(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scripted_provider: ScriptedProvider
+    isolated_workspace: Path, monkeypatch: pytest.MonkeyPatch, scripted_provider: ScriptedProvider
 ) -> None:
-    scripted_provider.client("openai", tmp_path, monkeypatch)
+    scripted_provider.client("openai", isolated_workspace, monkeypatch)
     scripted_provider.enqueue_json({"choices": [{"message": {"content": "provider succeeded"}}]})
 
     def fail_observer(_request: AIRequest, _observation: Mapping[str, Any]) -> None:
         raise OSError("synthetic observation database unavailable")
 
-    executor = AIExecutor(workspace=str(tmp_path), native_request_observer=fail_observer)
+    executor = AIExecutor(workspace=str(isolated_workspace), native_request_observer=fail_observer)
     _configure(executor, scripted_provider.base_url, "openai", monkeypatch)
     response = await executor.invoke(_request())
     assert response.ok, response.error
@@ -344,7 +352,7 @@ async def _record_native_usage_run(
     ],
 )
 async def test_actual_cache_usage_survives_cold_engineering_and_context_readers(
-    tmp_path: Path,
+    isolated_workspace: Path,
     monkeypatch: pytest.MonkeyPatch,
     scripted_provider: ScriptedProvider,
     raw_usage: dict[str, int],
@@ -355,7 +363,9 @@ async def test_actual_cache_usage_survives_cold_engineering_and_context_readers(
 ) -> None:
     from polaris.cells.roles.runtime.public.engineering_service import EngineeringRunService
 
-    session_id, response, sealed = await _record_native_usage_run(tmp_path, monkeypatch, scripted_provider, raw_usage)
+    session_id, response, sealed = await _record_native_usage_run(
+        isolated_workspace, monkeypatch, scripted_provider, raw_usage
+    )
     assert response.usage.prompt_tokens == prompt_tokens
     assert response.usage.completion_tokens == completion_tokens
     assert response.usage.total_tokens == total_tokens
@@ -363,7 +373,7 @@ async def test_actual_cache_usage_survives_cold_engineering_and_context_readers(
         assert response.usage.cached_tokens == cached_tokens
 
     # A new service reads SQLite, without any access to the producer's callback.
-    cold = EngineeringRunService(tmp_path).snapshot(session_id, workspace=tmp_path)
+    cold = EngineeringRunService(isolated_workspace).snapshot(session_id, workspace=isolated_workspace)
     events = [event["payload"] for event in cold["events"] if event["kind"] == "llm_request_observed"]
     assert [event["phase"] for event in events] == ["prepared", "terminal"]
     terminal = events[-1]
@@ -381,9 +391,9 @@ async def test_actual_cache_usage_survives_cold_engineering_and_context_readers(
     assert cold["project_outcome"] != "accepted"
 
     ref = terminal["context_snapshot_ref"]
-    with _reader(tmp_path) as client:
-        context = client.get(f"/v2/context/{ref}", params={"workspace": str(tmp_path)})
-        final = client.get(f"/v2/context/{ref}/final-request", params={"workspace": str(tmp_path)})
+    with _reader(isolated_workspace) as client:
+        context = client.get(f"/v2/context/{ref}", params={"workspace": str(isolated_workspace)})
+        final = client.get(f"/v2/context/{ref}/final-request", params={"workspace": str(isolated_workspace)})
         assert context.status_code == final.status_code == 200
         result = final.json()
         captured = result["provider_request"]["usage_observation"]
