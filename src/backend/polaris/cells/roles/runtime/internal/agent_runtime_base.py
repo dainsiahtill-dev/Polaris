@@ -517,7 +517,7 @@ class Toolbox:
             "spec": resolved_spec.to_dict(),
         }
 
-    def call(self, name: str, **kwargs) -> Any:
+    def call(self: Any, name: str, **kwargs: Any) -> Any:
         """Call a registered tool after schema validation."""
         tool_name = str(name or "").strip().lower()
         if tool_name not in self._tools:
@@ -1005,7 +1005,7 @@ class RoleAgent(ABC):
                 },
             )
 
-    def _emit(self, event: str, *args, **kwargs) -> None:
+    def _emit(self: Any, event: str, *args: Any, **kwargs: Any) -> None:
         """Emit an event to callbacks."""
         for callback in self._callbacks.get(event, []):
             try:

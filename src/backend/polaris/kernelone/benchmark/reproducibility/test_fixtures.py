@@ -26,8 +26,8 @@ class TestSeedFixtures:
     """Tests for seed-related fixtures."""
 
     def test_reproducible_seed_fixture_sets_seed(
-        self,
-        reproducible_seed_fixture,
+        self: Any,
+        reproducible_seed_fixture: Any,
     ) -> None:
         """Verify fixture sets global seed."""
         value = random.random()
@@ -35,8 +35,8 @@ class TestSeedFixtures:
         assert isinstance(value, float)
 
     def test_reproducible_seed_fixture_restores_state(
-        self,
-        reproducible_seed_fixture,
+        self: Any,
+        reproducible_seed_fixture: Any,
     ) -> None:
         """Verify state is restored after test."""
         # Use seed within test
@@ -90,8 +90,8 @@ class TestMockProviderFixtures:
     """Tests for mock provider fixtures."""
 
     def test_mock_provider_fixture_provides_provider(
-        self,
-        mock_provider_fixture,
+        self: Any,
+        mock_provider_fixture: Any,
     ) -> None:
         """Verify fixture provides working mock provider."""
         response = mock_provider_fixture.get_next_response()
@@ -99,8 +99,8 @@ class TestMockProviderFixtures:
         assert "usage" in response
 
     def test_mock_provider_deterministic(
-        self,
-        mock_provider_fixture,
+        self: Any,
+        mock_provider_fixture: Any,
     ) -> None:
         """Verify fixture provides deterministic provider."""
         # Reset to ensure clean state
@@ -218,9 +218,9 @@ class TestEndToEndReproducibility:
         assert result1["random"] == result2["random"]
 
     def test_mock_provider_respects_seed(
-        self,
-        reproducible_seed_fixture,
-        mock_provider_fixture,
+        self: Any,
+        reproducible_seed_fixture: Any,
+        mock_provider_fixture: Any,
     ) -> None:
         """Verify mock provider is deterministic within seeded context."""
         mock_provider_fixture.reset()

@@ -23,7 +23,7 @@ except ImportError:
     FastAPI = object  # type: ignore[misc,assignment]
     HTTPException = Exception
 
-    def Query(*a, **k) -> None:  # noqa: N802
+    def Query(*a: Any, **k: Any) -> None:  # noqa: N802
         return None
 
 

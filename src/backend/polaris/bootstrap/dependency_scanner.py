@@ -9,6 +9,7 @@ import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 
 @dataclass
@@ -163,7 +164,7 @@ class DependencyScanner:
 
         return self.result
 
-    def print_report(self):
+    def print_report(self: Any) -> Any:
         """打印扫描报告"""
         print("=" * 80)
         print("跨Cell导入违规扫描报告")
@@ -194,7 +195,7 @@ class DependencyScanner:
                 print(f"    {v.import_line[:80]}")
 
 
-def main():
+def main() -> Any:
     """主入口"""
     scanner = DependencyScanner()
     scanner.scan()

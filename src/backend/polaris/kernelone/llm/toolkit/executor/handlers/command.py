@@ -106,7 +106,7 @@ def _execute_command_base(
     }
 
 
-def _handle_execute_command(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_execute_command(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle execute_command tool call.
 
     Args:

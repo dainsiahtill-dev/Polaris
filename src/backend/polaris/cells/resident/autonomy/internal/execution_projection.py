@@ -367,7 +367,7 @@ class ExecutionProjectionService:
     负责构建和管理 GoalExecutionView 派生视图。
     """
 
-    def __init__(self, storage=None) -> None:
+    def __init__(self: Any, storage: Any = None) -> None:
         self._storage = storage
         # 内存缓存（短期）
         self._cache: dict[str, GoalExecutionView] = {}
@@ -412,7 +412,7 @@ class ExecutionProjectionService:
 _execution_projection_service: ExecutionProjectionService | None = None
 
 
-def get_execution_projection_service(storage=None) -> ExecutionProjectionService:
+def get_execution_projection_service(storage: Any = None) -> ExecutionProjectionService:
     """获取全局 ExecutionProjectionService 实例"""
     global _execution_projection_service
     if _execution_projection_service is None:

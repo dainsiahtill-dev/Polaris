@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 from polaris.kernelone.storage.layout import resolve_runtime_path as resolve_logical_runtime_path
 
@@ -107,7 +107,7 @@ def resolve_runtime_path(
 
 
 def resolve_preferred_logical_prefix(
-    kernel_fs,
+    kernel_fs: Any,
     *,
     runtime_prefix: str,
     workspace_fallback_prefix: str,

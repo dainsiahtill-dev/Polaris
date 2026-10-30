@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 
-def _bootstrap_backend_import_path():
+def _bootstrap_backend_import_path() -> Any:
     """Lazy import of polaris modules after path bootstrap."""
     if __package__:
         pass

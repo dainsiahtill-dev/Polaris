@@ -44,14 +44,14 @@ from .triage import build_triage_bundle
 from .verify import verify_chain, verify_file_integrity
 
 
-def run_audit_command(*args, **kwargs) -> Any:
+def run_audit_command(*args: Any, **kwargs: Any) -> Any:
     """Lazy import to avoid package-level circular dependency."""
     from .service import run_audit_command as _impl
 
     return _impl(*args, **kwargs)
 
 
-def to_script_projection(*args, **kwargs) -> Any:
+def to_script_projection(*args: Any, **kwargs: Any) -> Any:
     """Lazy import to avoid package-level circular dependency."""
     from .service import to_script_projection as _impl
 

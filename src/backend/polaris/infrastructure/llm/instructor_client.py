@@ -287,7 +287,7 @@ Previous attempt failed. Make sure to output ONLY the JSON object, wrapped in ``
                 return response.choices[0].message.content or ""
             else:
                 # Sync OpenAI client - run in thread pool
-                def _call():
+                def _call() -> Any:
                     response = self.base_client.chat.completions.create(
                         model=model or "gpt-4",
                         messages=messages,
@@ -312,7 +312,7 @@ Previous attempt failed. Make sure to output ONLY the JSON object, wrapped in ``
                 return response.content[0].text if response.content else ""
             else:
                 # Sync Anthropic client - run in thread pool
-                def _call():
+                def _call() -> Any:
                     response = self.base_client.messages.create(
                         model=model or "claude-3-sonnet",
                         messages=messages,

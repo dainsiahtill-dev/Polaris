@@ -3,7 +3,7 @@
 Defines the structured output format for code review and quality assessment.
 """
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -50,7 +50,7 @@ class QAReportOutput(BaseToolEnabledOutput):
     blockers: list[str] = Field(default_factory=list, description="List of blocking issues (for CONDITIONAL/FAIL)")
     recommendations: list[str] = Field(default_factory=list, description="General improvement recommendations")
 
-    def model_post_init(self, __context) -> None:
+    def model_post_init(self: Any, __context: Any) -> None:
         """Validate verdict consistency with findings."""
         critical_count = sum(1 for f in self.findings if f.severity == "critical")
 

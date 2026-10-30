@@ -126,7 +126,7 @@ class WorkflowRoleAdapter:
         return result
 
     async def execute_role_with_tools(
-        self, role: str, message: str, task_id: str | None = None, max_tool_rounds: int = 5, **kwargs
+        self: Any, role: str, message: str, task_id: str | None = None, max_tool_rounds: int = 5, **kwargs: Any
     ) -> WorkflowRoleResult:
         """Execute role with multi-turn tool handling.
 
@@ -294,7 +294,7 @@ class WorkflowRoleResult:
 
 # 便捷函数
 async def execute_workflow_role(
-    role: str, message: str, workspace: str = "", task_id: str | None = None, **kwargs
+    role: str, message: str, workspace: str = "", task_id: str | None = None, **kwargs: Any
 ) -> WorkflowRoleResult:
     """便捷函数：执行工作流角色
 

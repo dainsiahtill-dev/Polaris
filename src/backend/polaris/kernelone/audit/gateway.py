@@ -54,7 +54,7 @@ class AuditGateway:
     _instances_lock = threading.Lock()
     _initialized: bool = False
 
-    def __new__(cls, runtime_root: Path, *args, **kwargs) -> AuditGateway:
+    def __new__(cls: Any, runtime_root: Path, *args: Any, **kwargs: Any) -> AuditGateway:
         key = str(Path(runtime_root).resolve())
         with cls._instances_lock:
             instance = cls._instances.get(key)

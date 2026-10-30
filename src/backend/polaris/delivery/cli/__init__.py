@@ -7,7 +7,7 @@ preload the module and trigger a runpy warning.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 __all__ = ["create_parser", "main"]
 
 
-def create_parser():
+def create_parser() -> Any:
     from .__main__ import create_parser as _create_parser
 
     return _create_parser()

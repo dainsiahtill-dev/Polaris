@@ -24,14 +24,14 @@ class ValidationError(KernelOneError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         code: str = "VALIDATION_ERROR",
         field: str = "",
         value: Any = None,
         constraint: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         kwargs.setdefault("retryable", False)
         super().__init__(message, code=code, **kwargs)
@@ -51,12 +51,12 @@ class PathTraversalError(ValidationError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         path: str = "",
         allowed_root: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -81,11 +81,11 @@ class WorkflowContractError(ValidationError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         errors: list[str] | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -102,12 +102,12 @@ class ReservedKeyViolationError(ValidationError):
     """Reserved key Violation in custom context keys."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         key: str = "",
         reserved_keys: list[str] | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -153,12 +153,12 @@ class PathSecurityError(ValidationError):
     """Path security violation."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         path: str = "",
         violation_type: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,

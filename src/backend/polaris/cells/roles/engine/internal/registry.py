@@ -37,7 +37,7 @@ class EngineRegistry:
         self._instances: dict[EngineStrategy, BaseEngine] = {}
         self._engine_defaults: dict[EngineStrategy, dict[str, Any]] = {}
 
-    def register(self, engine_class: type[BaseEngine], **kwargs) -> None:
+    def register(self: Any, engine_class: type[BaseEngine], **kwargs: Any) -> None:
         """注册引擎类
 
         Args:
@@ -100,7 +100,7 @@ class EngineRegistry:
 
         return None
 
-    def get_or_create(self, strategy: EngineStrategy, **kwargs) -> BaseEngine:
+    def get_or_create(self: Any, strategy: EngineStrategy, **kwargs: Any) -> BaseEngine:
         """获取或创建引擎实例
 
         Args:
@@ -174,7 +174,7 @@ def get_engine_registry() -> EngineRegistry:
     return _global_registry
 
 
-def register_engine(engine_class: type[BaseEngine], **kwargs) -> None:
+def register_engine(engine_class: type[BaseEngine], **kwargs: Any) -> None:
     """注册引擎到全局注册表
 
     Args:

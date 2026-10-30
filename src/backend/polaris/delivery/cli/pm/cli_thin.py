@@ -21,9 +21,10 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 
-def _bootstrap_backend_import_path():
+def _bootstrap_backend_import_path() -> Any:
     """Lazy import of polaris modules after path bootstrap."""
     if __package__:
         # Already in a package, imports should work

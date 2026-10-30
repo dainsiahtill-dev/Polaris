@@ -37,7 +37,7 @@ def register_handlers() -> dict[str, Any]:
     }
 
 
-def _handle_repo_tree(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_repo_tree(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle repo_tree tool call.
 
     List directory tree within the workspace.
@@ -67,7 +67,7 @@ def _handle_repo_tree(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
     )
 
 
-def _handle_repo_rg(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_repo_rg(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle repo_rg tool call.
 
     Search for pattern matches using ripgrep.
@@ -105,7 +105,7 @@ def _handle_repo_rg(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
     )
 
 
-def _handle_repo_read_around(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_repo_read_around(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle repo_read_around tool call.
 
     Read a slice centered around a target line with configurable radius.
@@ -142,7 +142,7 @@ def _handle_repo_read_around(self: AgentAccelToolExecutor, **kwargs) -> dict[str
     return {"ok": False, "error": "Missing required parameters: line or start/end"}
 
 
-def _handle_repo_read_slice(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_repo_read_slice(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle repo_read_slice tool call.
 
     Read a precise line range [start, end] from a file.
@@ -173,7 +173,7 @@ def _handle_repo_read_slice(self: AgentAccelToolExecutor, **kwargs) -> dict[str,
     )
 
 
-def _handle_repo_read_head(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_repo_read_head(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle repo_read_head tool call.
 
     Read the first N lines from a file (semantic: head -n).
@@ -231,7 +231,7 @@ def _handle_repo_read_head(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
     return cast("dict[str, Any]", (result))
 
 
-def _handle_repo_read_tail(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_repo_read_tail(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle repo_read_tail tool call.
 
     Read the last N lines from a file (semantic: tail -n).
@@ -295,7 +295,7 @@ def _handle_repo_read_tail(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
     }
 
 
-def _handle_repo_diff(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_repo_diff(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle repo_diff tool call.
 
     Show uncommitted changes using git diff.
@@ -335,7 +335,7 @@ def _handle_repo_diff(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
         return {"ok": False, "error": f"git diff failed: {e}"}
 
 
-def _handle_repo_map(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_repo_map(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle repo_map tool call.
 
     Build a code map showing file skeletons with top-level definitions.
@@ -661,7 +661,7 @@ def _get_symbol_patterns(file_ext: str) -> dict[str, str]:
     return patterns.get(file_ext.lower(), {})
 
 
-def _handle_repo_symbols_index(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_repo_symbols_index(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle repo_symbols_index tool call.
 
     Index and list all top-level symbols (classes, functions) across files using tree-sitter.
@@ -999,7 +999,7 @@ def _find_all_symbols_ts(content: str, language: str, max_results: int = 500) ->
     return results
 
 
-def _handle_repo_apply_diff(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_repo_apply_diff(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle repo_apply_diff tool call.
 
     Apply a unified diff to the repository.
@@ -1231,7 +1231,7 @@ def _handle_repo_apply_diff(self: AgentAccelToolExecutor, **kwargs) -> dict[str,
     }
 
 
-def _handle_apply_patch(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_apply_patch(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle apply_patch formatted patch text through the unified write gate."""
     from polaris.kernelone.editing.patch_engine import extract_apply_patch_operations
     from polaris.kernelone.llm.toolkit.executor.handlers.filesystem import (

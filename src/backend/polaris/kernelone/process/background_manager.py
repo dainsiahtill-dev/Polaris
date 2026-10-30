@@ -403,7 +403,7 @@ class BackgroundManagerV2:
     def __enter__(self) -> BackgroundManagerV2:
         return self
 
-    def __exit__(self, exc_type, exc, exc_tb) -> None:
+    def __exit__(self: Any, exc_type: Any, exc: Any, exc_tb: Any) -> None:
         del exc_type, exc, exc_tb
         self.close(cancel_running=True)
 

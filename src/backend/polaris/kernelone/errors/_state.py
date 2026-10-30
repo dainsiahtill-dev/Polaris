@@ -22,13 +22,13 @@ class StateError(KernelOneError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         code: str = "STATE_ERROR",
         current_state: str = "",
         target_state: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         kwargs.setdefault("retryable", False)
         super().__init__(message, code=code, **kwargs)
@@ -44,13 +44,13 @@ class InvalidStateTransitionError(StateError):
     """Invalid state transition attempted."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         current_state: str = "",
         target_state: str = "",
         allowed_transitions: list[str] | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -68,11 +68,11 @@ class InvalidTaskStateTransitionError(StateError):
     """Invalid task state transition."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         task_id: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -87,11 +87,11 @@ class WorkerStateError(StateError):
     """Worker state error."""
 
     def __init__(
-        self,
+        self: Any,
         message: str = "Invalid worker state transition",
         *,
         worker_id: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -106,11 +106,11 @@ class TaskStateError(StateError):
     """Task state error."""
 
     def __init__(
-        self,
+        self: Any,
         message: str = "Invalid task state transition",
         *,
         task_id: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -125,13 +125,13 @@ class InvalidToolStateTransitionError(StateError):
     """Invalid tool state transition."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         tool_name: str = "",
         current_status: Any = None,
         target_status: Any = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,

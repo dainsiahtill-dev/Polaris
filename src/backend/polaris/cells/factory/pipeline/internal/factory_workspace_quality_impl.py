@@ -820,7 +820,7 @@ async def _stop_workspace_quality_repair_heartbeat(
 
 
 async def _settle_pending_workspace_quality_repair_attempt(
-    executor,
+    executor: Any,
     pending: Mapping[str, Any] | None,
     *,
     accepted: bool,
@@ -948,7 +948,7 @@ class _WorkspaceRepairContinuation:
     nonprogress: int = 0
     stop_reason: str = ""
 
-    def rounds(self):
+    def rounds(self: Any) -> Any:
         explicit = self.context.get("workspace_quality_repair_max_rounds")
         limit = max(1, int(explicit)) if explicit is not None else None
         if limit is None and self.executor._factory_deadline_remaining_seconds(self.context) is None:
@@ -1288,7 +1288,7 @@ def _workspace_quality_hold_llm_for_plannable_deterministic(
 
 
 def _workspace_quality_repair_errors(
-    executor, results: list[dict[str, Any]], *, run: FactoryRun | None = None
+    executor: Any, results: list[dict[str, Any]], *, run: FactoryRun | None = None
 ) -> list[str]:
     """Project failures plus source discovery; no-run is standalone diagnosis.
 
@@ -1714,7 +1714,7 @@ def _workspace_quality_repair_path_overlaps(normalized_targets: set[str], candid
 
 
 def _claim_workspace_quality_repair_attempt(
-    executor,
+    executor: Any,
     *,
     run: FactoryRun,
     repair_attempt: int,
@@ -2054,7 +2054,7 @@ def _claim_workspace_quality_repair_attempt(
 
 
 def _apply_workspace_quality_repairs(
-    executor,
+    executor: Any,
     *,
     run_id: str,
     artifact_quality_errors: list[str],
@@ -2172,7 +2172,7 @@ def _apply_workspace_quality_repairs(
 
 
 async def _apply_workspace_quality_deterministic_repairs(
-    executor,
+    executor: Any,
     *,
     run: FactoryRun,
     artifact_quality_errors: list[str],
@@ -2604,7 +2604,7 @@ def _workspace_quality_direct_test_exception_targets(
 
 
 def _workspace_quality_direct_compiler_target_files(
-    executor,
+    executor: Any,
     *,
     artifact_quality_errors: list[str],
 ) -> list[str]:
@@ -2654,7 +2654,7 @@ def _workspace_quality_direct_compiler_target_files(
 
 
 def _workspace_quality_causal_repair_target_files(
-    executor,
+    executor: Any,
     *,
     artifact_quality_errors: list[str],
 ) -> list[str]:
@@ -2996,7 +2996,7 @@ def _workspace_quality_has_behavioral_runtime_failure(
 
 
 async def _apply_workspace_quality_llm_repairs(
-    executor,
+    executor: Any,
     *,
     run: FactoryRun,
     context: dict[str, Any],
@@ -3611,7 +3611,7 @@ async def _apply_workspace_quality_llm_repairs(
     return [dict(item) for item in results], normalized_summary
 
 
-async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict[str, Any]) -> tuple[bool, str]:
+async def _run_workspace_quality_checks(executor: Any, run: FactoryRun, context: dict[str, Any]) -> tuple[bool, str]:
     sessions: list[NativeValidationSession] = []
     active_pending: list[Mapping[str, Any]] = []
     physical_drain_unproven = False
@@ -3671,15 +3671,15 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
 
 
 async def _run_workspace_quality_checks_in_session(
-    executor,
+    executor: Any,
     run: FactoryRun,
     context: dict[str, Any],
     sessions: list[NativeValidationSession],
     active_pending: list[Mapping[str, Any]],
 ) -> tuple[bool, str]:
     async def settle_pending_attempt(
-        executor_arg, pending, *, accepted: bool, reason: str, verifier_resolved: bool = True
-    ):
+        executor_arg: Any, pending: Any, *, accepted: bool, reason: str, verifier_resolved: bool = True
+    ) -> Any:
         if executor_arg is not executor:
             raise ValueError("verification settlement owner changed")
         result = await _settle_pending_workspace_quality_repair_attempt(

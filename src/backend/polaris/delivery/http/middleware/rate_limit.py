@@ -254,7 +254,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             "store": self._store.snapshot(),
         }
 
-    async def dispatch(self, request: Request, call_next) -> Response:
+    async def dispatch(self: Any, request: Request, call_next: Any) -> Response:
         """Process request with rate limiting."""
         if not self._enabled:
             return cast("Response", (await call_next(request)))

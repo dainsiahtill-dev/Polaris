@@ -6,6 +6,8 @@ Public symbols are re-exported from the package ``__init__``.
 
 from __future__ import annotations
 
+from typing import Any
+
 from polaris.kernelone.errors._base import KernelOneError
 
 
@@ -16,12 +18,12 @@ class ChaosError(KernelOneError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         code: str = "CHAOS_ERROR",
         chaos_type: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(message, code=code, **kwargs)
         if chaos_type:
@@ -32,11 +34,11 @@ class ChaosInjectionError(ChaosError):
     """Chaos injection failed."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         injection_type: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -50,11 +52,11 @@ class ChaosSkippedError(ChaosError):
     """Chaos injection was skipped."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         reason: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -69,12 +71,12 @@ class RateLimitExceededError(ChaosError):
     """Chaos rate limit exceeded."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         limit: int = 0,
         current: int = 0,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -94,9 +96,9 @@ class NetworkChaosError(ChaosError):
     """Network chaos error."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -110,9 +112,9 @@ class DeadlockDetectedError(ChaosError):
     """Deadlock detected."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         kwargs.setdefault("retryable", False)
         super().__init__(
@@ -127,12 +129,12 @@ class LockTimeoutError(ChaosError):
     """Lock acquisition timeout."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         lock_name: str = "",
         timeout_seconds: float = 0,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -150,11 +152,11 @@ class ChaosCircuitBreakerError(ChaosError):
     """Chaos circuit breaker error."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         circuit_name: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -175,9 +177,9 @@ class RetryableError(KernelOneError):
     """Error that can be safely retried."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         kwargs["retryable"] = True
         super().__init__(message, code="RETRYABLE_ERROR", **kwargs)
@@ -187,9 +189,9 @@ class NonRetryableError(KernelOneError):
     """Error that should not be retried."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         kwargs["retryable"] = False
         super().__init__(message, code="NON_RETRYABLE_ERROR", **kwargs)
@@ -199,11 +201,11 @@ class ShadowReplayError(KernelOneError):
     """Shadow replay error."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         replay_id: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,

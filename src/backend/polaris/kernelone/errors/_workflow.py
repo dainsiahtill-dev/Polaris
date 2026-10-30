@@ -6,6 +6,8 @@ Public symbols are re-exported from the package ``__init__``.
 
 from __future__ import annotations
 
+from typing import Any
+
 from polaris.kernelone.errors._base import KernelOneError
 
 
@@ -13,12 +15,12 @@ class WorkflowRuntimeError(KernelOneError):
     """Workflow runtime error."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         workflow_id: str = "",
         code: str = "WORKFLOW_RUNTIME_ERROR",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(message, code=code, **kwargs)
         if workflow_id:
@@ -29,9 +31,9 @@ class WorkflowUnavailableError(WorkflowRuntimeError):
     """Workflow unavailable error."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         kwargs.setdefault("retryable", True)
         super().__init__(
@@ -45,11 +47,11 @@ class ProcessRunnerError(WorkflowRuntimeError):
     """Process runner error."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         process_id: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -64,9 +66,9 @@ class LauncherError(WorkflowRuntimeError):
     """Launcher error."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -79,11 +81,11 @@ class OrchestrationError(WorkflowRuntimeError):
     """Orchestration error."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         orchestration_type: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -98,11 +100,11 @@ class VisionServiceError(KernelOneError):
     """Vision service error."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         code: str = "VISION_SERVICE_ERROR",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(message, code=code, **kwargs)
 
@@ -111,9 +113,9 @@ class VisionNotAvailableError(VisionServiceError):
     """Vision not available error."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -126,9 +128,9 @@ class InferenceEngineNotConfiguredError(VisionServiceError):
     """Inference engine not configured error."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,

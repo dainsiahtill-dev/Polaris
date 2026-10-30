@@ -3,7 +3,7 @@
 Defines the structured output format for code execution and patch generation.
 """
 
-from typing import Literal
+from typing import Any, Literal
 
 from polaris.kernelone.security.dangerous_patterns import (
     is_dangerous_command,
@@ -88,7 +88,7 @@ class DirectorOutput(BaseModel):
             seen_files.add(key)
         return v
 
-    def model_post_init(self, __context) -> None:
+    def model_post_init(self: Any, __context: Any) -> None:
         """Validate mode consistency."""
         if self.mode == "patch" and not self.patches:
             raise ValueError("Mode 'patch' requires at least one patch")

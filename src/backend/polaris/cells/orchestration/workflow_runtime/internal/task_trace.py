@@ -36,7 +36,7 @@ class TaskTraceBuilder:
         self._seq = 0
 
     def build(
-        self,
+        self: Any,
         phase: str,
         step_kind: str,
         step_title: str,
@@ -44,7 +44,7 @@ class TaskTraceBuilder:
         status: str,
         attempt: int = 0,
         visibility: str = "summary",
-        **refs,
+        **refs: Any,
     ) -> TaskTraceEvent:
         """构建任务追踪事件."""
         self._seq += 1

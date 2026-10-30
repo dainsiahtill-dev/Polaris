@@ -8,6 +8,8 @@ UTF-8 encoding verified: All text uses UTF-8
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from polaris.cells.roles.kernel.internal.testing import (
     FakeContextAssembler,
@@ -418,7 +420,7 @@ class TestFakeContextAssembler:
         assembler = FakeContextAssembler()
 
         # Handler for specific request pattern
-        def is_special_request(req):
+        def is_special_request(req: Any) -> Any:
             return hasattr(req, "special") and req.special
 
         assembler.add_request_handler(

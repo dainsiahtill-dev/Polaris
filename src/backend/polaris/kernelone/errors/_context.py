@@ -6,6 +6,8 @@ Public symbols are re-exported from the package ``__init__``.
 
 from __future__ import annotations
 
+from typing import Any
+
 from polaris.kernelone.errors._base import KernelOneError
 
 
@@ -13,11 +15,11 @@ class ContextError(KernelOneError):
     """Context-related errors."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         code: str = "CONTEXT_ERROR",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(message, code=code, **kwargs)
 
@@ -26,12 +28,12 @@ class ContextOverflowError(ContextError):
     """Context overflow error."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         max_tokens: int = 0,
         current_tokens: int = 0,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -48,11 +50,11 @@ class ContextCompilationError(ContextError):
     """Context compilation error."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         compilation_step: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -67,12 +69,12 @@ class TurnDecisionError(KernelOneError):
     """Turn decision error."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         code: str = "TURN_DECISION_ERROR",
         turn_id: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(message, code=code, **kwargs)
         if turn_id:
@@ -83,11 +85,11 @@ class TurnDecisionDecodeError(TurnDecisionError):
     """Turn decision decode error."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         raw_response: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,

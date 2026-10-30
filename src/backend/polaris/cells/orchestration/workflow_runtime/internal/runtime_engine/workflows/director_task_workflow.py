@@ -174,14 +174,14 @@ class DirectorTaskWorkflow(WorkflowQueryState):
         self.task_id: str = ""
 
     async def _broadcast_task_trace(
-        self,
+        self: Any,
         phase: str,
         step_kind: str,
         step_title: str,
         step_detail: str,
         status: str,
         attempt: int = 0,
-        **refs,
+        **refs: Any,
     ) -> None:
         """Broadcast task trace event to frontend."""
         try:

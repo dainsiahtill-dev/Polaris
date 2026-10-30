@@ -221,7 +221,7 @@ class MetricsMiddleware(BaseHTTPMiddleware):
         path = re.sub(r"/\d+", "/{id}", path)
         return path
 
-    async def dispatch(self, request: Request, call_next) -> Response:
+    async def dispatch(self: Any, request: Request, call_next: Any) -> Response:
         """Process request with metrics collection."""
         if not self._enabled:
             return cast("Response", (await call_next(request)))

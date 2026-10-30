@@ -113,7 +113,7 @@ def _run_cli_streaming(
     stdout_lines: list[str] = []
     stderr_lines: list[str] = []
 
-    def read_stream(stream, lines_list, callback) -> None:
+    def read_stream(stream: Any, lines_list: Any, callback: Any) -> None:
         for line in iter(stream.readline, ""):
             if not line:
                 break

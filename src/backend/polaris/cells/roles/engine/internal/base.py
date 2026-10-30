@@ -424,7 +424,7 @@ def create_engine_budget(
     max_tool_calls_total: int | None = None,
     max_no_progress_steps: int | None = None,
     max_wall_time_seconds: int | None = None,
-    **kwargs,
+    **kwargs: Any,
 ) -> EngineBudget:
     """创建预算配置的便捷函数"""
     config = {

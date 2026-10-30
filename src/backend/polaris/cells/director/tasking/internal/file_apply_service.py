@@ -86,7 +86,7 @@ def _read_workspace_agents_policy_text(workspace: str, rel_path: str) -> str:
     return "\n".join(texts)
 
 
-def _workspace_fs(workspace: str):
+def _workspace_fs(workspace: str) -> Any:
     from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 
     return KernelFileSystem(str(Path(workspace).resolve()), get_default_adapter())

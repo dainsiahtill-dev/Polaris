@@ -297,7 +297,7 @@ def register_handlers() -> dict[str, Any]:
     }
 
 
-def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_write_file(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle write_file tool call.
 
     Args:
@@ -548,7 +548,7 @@ def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]
     return cast("dict[str, Any]", (_attach_director_policy_evidence(result, policy_result.get("director_policy"))))
 
 
-def _handle_read_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_read_file(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle read_file with budget-aware downgrade strategy.
 
     Args:
@@ -710,7 +710,7 @@ def _handle_read_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
     return result
 
 
-def _handle_search_replace(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_search_replace(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle search_replace tool call.
 
     Args:
@@ -827,7 +827,7 @@ def _handle_search_replace(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
     )
 
 
-def _handle_edit_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_edit_file(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle edit_file tool call (line range or text replace mode).
 
     Args:
@@ -883,7 +883,7 @@ def _handle_edit_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
     return {"ok": False, "error": "Must specify either line range (start_line/end_line) or search/replace"}
 
 
-def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle edit_blocks tool call (SEARCH/REPLACE block format).
 
     Implements two-phase commit (validation + execution) for atomic multi-file edits.
@@ -1673,7 +1673,7 @@ def _edit_file_replace_mode(
     return cast("dict[str, Any]", (_attach_director_policy_evidence(result, policy_result.get("director_policy"))))
 
 
-def _handle_append_to_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_append_to_file(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle append_to_file tool call.
 
     Args:

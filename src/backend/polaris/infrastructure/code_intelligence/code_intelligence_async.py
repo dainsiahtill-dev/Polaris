@@ -79,7 +79,7 @@ class MultiLevelCache:
             """)
             conn.commit()
 
-    def _connect(self):
+    def _connect(self: Any) -> Any:
         return self._kernel_db.sqlite(
             str(self._sqlite_path),
             timeout_seconds=5.0,
@@ -92,7 +92,7 @@ class MultiLevelCache:
             ensure_parent=True,
         )
 
-    def _get_key(self, prefix: str, *args) -> str:
+    def _get_key(self: Any, prefix: str, *args: Any) -> str:
         """生成缓存键."""
         content = json.dumps(args, sort_keys=True, default=str)
         return f"{prefix}:{hashlib.sha256(content.encode()).hexdigest()[:16]}"
@@ -207,7 +207,7 @@ class AsyncIndexManager:
     _initialized: bool = False
     _workspace_key: str
 
-    def __new__(cls, workspace: str | Path, *args, **kwargs) -> AsyncIndexManager:
+    def __new__(cls: Any, workspace: str | Path, *args: Any, **kwargs: Any) -> AsyncIndexManager:
         """工作区隔离的单例模式 - 每个 workspace 独立一个管理器实例.
 
         NOTE: This method creates asyncio.Lock objects inside threading.Lock
@@ -339,7 +339,7 @@ class AsyncIndexManager:
             self._index_status["building"] = True
             self._index_status["error"] = None
 
-        def _build():
+        def _build() -> Any:
             try:
                 return build_or_update_indexes(
                     project_dir=self.workspace,
@@ -467,7 +467,7 @@ class AsyncCodeIntelligenceService:
         await self.ensure_index(background=False)
 
         # 编译上下文
-        def _compile():
+        def _compile() -> Any:
             return compile_context_pack(
                 project_dir=self.workspace,
                 config=self.config,
@@ -491,7 +491,7 @@ class AsyncCodeIntelligenceService:
     ) -> dict[str, Any]:
         """运行增量验证（异步）."""
 
-        def _verify():
+        def _verify() -> Any:
             return run_verify(
                 project_dir=self.workspace,
                 config=self.config,

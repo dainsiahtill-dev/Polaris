@@ -245,7 +245,7 @@ class ChiefEngineerToolIntegration:
         """上下文管理器入口."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(self: Any, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """上下文管理器出口，确保资源释放."""
         self.close()
 
@@ -299,8 +299,8 @@ class ChiefEngineerToolIntegration:
         )
 
     async def generate_with_tools(
-        self,
-        llm_client,
+        self: Any,
+        llm_client: Any,
         prompt: str,
         max_iterations: int = 3,
     ) -> str:
@@ -483,7 +483,7 @@ class DirectorToolIntegration:
         """上下文管理器入口."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(self: Any, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """上下文管理器出口，确保资源释放."""
         self.close()
 
@@ -613,7 +613,7 @@ class PMToolIntegration:
         """上下文管理器入口."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(self: Any, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """上下文管理器出口，确保资源释放."""
         self.close()
 
@@ -705,7 +705,7 @@ class ArchitectToolIntegration:
         """上下文管理器入口."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(self: Any, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """上下文管理器出口，确保资源释放."""
         self.close()
 
@@ -797,7 +797,7 @@ class QAToolIntegration:
         """上下文管理器入口."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(self: Any, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """上下文管理器出口，确保资源释放."""
         self.close()
 
@@ -913,7 +913,7 @@ class ScoutToolIntegration:
         """上下文管理器入口."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(self: Any, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """上下文管理器出口，确保资源释放."""
         self.close()
 
@@ -948,8 +948,8 @@ class ToolEnabledLLMClient:
     """
 
     def __init__(
-        self,
-        base_client,
+        self: Any,
+        base_client: Any,
         workspace: str,
         role: str = "chiefengineer",
         max_tool_iterations: int = 3,
@@ -965,7 +965,7 @@ class ToolEnabledLLMClient:
         else:
             self.integration = DirectorToolIntegration(workspace)
 
-    async def chat(self, messages: list[dict[str, str]], **kwargs) -> dict[str, Any]:
+    async def chat(self: Any, messages: list[dict[str, str]], **kwargs: Any) -> dict[str, Any]:
         """支持工具调用的聊天."""
         iteration = 0
 
@@ -992,7 +992,7 @@ class ToolEnabledLLMClient:
         final_response = await self._call_base_client(messages, **kwargs)
         return final_response
 
-    async def _call_base_client(self, messages: list[dict[str, str]], **kwargs) -> dict[str, Any]:
+    async def _call_base_client(self: Any, messages: list[dict[str, str]], **kwargs: Any) -> dict[str, Any]:
         """调用基础客户端.
 
         正确处理同步和异步的客户端方法。

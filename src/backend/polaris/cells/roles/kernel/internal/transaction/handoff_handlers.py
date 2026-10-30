@@ -54,7 +54,7 @@ def _current_workflow_owner_receipts() -> _OwnerWorkflowReceipts | None:
 
 
 @contextmanager
-def _workflow_owner_receipt_scope(decision: TurnDecision, context: dict[str, Any], ledger: TurnLedger):
+def _workflow_owner_receipt_scope(decision: TurnDecision, context: dict[str, Any], ledger: TurnLedger) -> Any:
     failure = _initial_batch_failure(decision, context, ledger)
     if failure:
         raise RuntimeError(failure)

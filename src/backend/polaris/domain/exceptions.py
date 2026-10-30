@@ -90,12 +90,12 @@ class ValidationError(DomainException):
     status_code = 422
 
     def __init__(
-        self,
+        self: Any,
         message: str = "Validation failed",
         *,
         field: str | None = None,
         value: Any | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         details = kwargs.pop("details", {})
         if field:
@@ -112,12 +112,12 @@ class NotFoundError(DomainException):
     status_code = 404
 
     def __init__(
-        self,
+        self: Any,
         resource_type: str,
         resource_id: str,
         *,
         message: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         msg = message or f"{resource_type} '{resource_id}' not found"
         details = {"resource_type": resource_type, "resource_id": resource_id}
@@ -132,11 +132,11 @@ class ConflictError(DomainException):
     status_code = 409
 
     def __init__(
-        self,
+        self: Any,
         message: str = "Resource conflict",
         *,
         resource_type: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         details = {}
         if resource_type:
@@ -152,12 +152,12 @@ class PermissionDeniedError(DomainException):
     status_code = 403
 
     def __init__(
-        self,
+        self: Any,
         message: str = "Permission denied",
         *,
         action: str | None = None,
         resource: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         details = {}
         if action:
@@ -182,11 +182,11 @@ class RateLimitError(DomainException):
     status_code = 429
 
     def __init__(
-        self,
+        self: Any,
         message: str = "Rate limit exceeded",
         *,
         retry_after: int | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         details = {}
         if retry_after:
@@ -214,12 +214,12 @@ class StateError(DomainException):
     status_code = 409
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         current_state: str | None = None,
         required_state: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         details = {}
         if current_state:
@@ -237,12 +237,12 @@ class ProcessError(DomainException):
     status_code = 500
 
     def __init__(
-        self,
+        self: Any,
         message: str = "Process operation failed",
         *,
         process_name: str | None = None,
         exit_code: int | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         details: dict[str, Any] = {}
         if process_name:
@@ -260,10 +260,10 @@ class ProcessAlreadyRunningError(StateError):
     status_code = 409
 
     def __init__(
-        self,
+        self: Any,
         process_name: str,
         pid: int | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         details: dict[str, Any] = {"process": process_name}
         if pid:
@@ -282,7 +282,7 @@ class ProcessNotRunningError(StateError):
     code = "PROCESS_NOT_RUNNING"
     status_code = 409
 
-    def __init__(self, process_name: str, **kwargs) -> None:
+    def __init__(self: Any, process_name: str, **kwargs: Any) -> None:
         super().__init__(
             f"Process '{process_name}' is not running",
             details={"process": process_name},
@@ -308,12 +308,12 @@ class StorageError(InfrastructureError):
     code = "STORAGE_ERROR"
 
     def __init__(
-        self,
+        self: Any,
         message: str = "Storage operation failed",
         *,
         path: str | None = None,
         operation: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         details = {}
         if path:
@@ -330,11 +330,11 @@ class NetworkError(InfrastructureError):
     code = "NETWORK_ERROR"
 
     def __init__(
-        self,
+        self: Any,
         message: str = "Network operation failed",
         *,
         url: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         details = {}
         if url:
@@ -349,12 +349,12 @@ class ExternalServiceError(InfrastructureError):
     code = "EXTERNAL_SERVICE_ERROR"
 
     def __init__(
-        self,
+        self: Any,
         service: str,
         message: str | None = None,
         *,
         status_code: int | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         msg = message or f"External service '{service}' error"
         details: dict[str, Any] = {"service": service}
@@ -371,11 +371,11 @@ class ServiceUnavailableError(InfrastructureError):
     status_code = 503
 
     def __init__(
-        self,
+        self: Any,
         service: str,
         *,
         message: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         msg = message or f"Service '{service}' is unavailable"
         super().__init__(msg, details={"service": service}, **kwargs)
@@ -388,11 +388,11 @@ class ConfigurationError(InfrastructureError):
     status_code = 500
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         setting: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         details = {}
         if setting:
@@ -408,12 +408,12 @@ class TimeoutError(InfrastructureError):
     status_code = 504
 
     def __init__(
-        self,
+        self: Any,
         message: str = "Operation timed out",
         *,
         timeout_seconds: float | None = None,
         operation: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         details: dict[str, Any] = {}
         if timeout_seconds is not None:
@@ -433,12 +433,12 @@ class LLMError(_LLMErrorCanonical):  # type: ignore[misc] # mypy sees _LLMErrorC
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str = "LLM operation failed",
         *,
         provider: str | None = None,
         model: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         details: dict[str, Any] = {}
         if provider:

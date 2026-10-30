@@ -131,7 +131,7 @@ class WorkflowRoleNode(ABC):
 
 
 # 便捷函数：快速执行工作流角色
-async def run_workflow_role(role: str, message: str, workspace: str = "", **kwargs) -> WorkflowRoleResult:
+async def run_workflow_role(role: str, message: str, workspace: str = "", **kwargs: Any) -> WorkflowRoleResult:
     """便捷函数：快速执行工作流角色
 
     Args:

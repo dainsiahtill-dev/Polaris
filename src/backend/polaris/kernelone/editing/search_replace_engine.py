@@ -336,7 +336,7 @@ def _try_strategy_with_preproc(
     search_text: str,
     replace_text: str,
     original_text: str,
-    strategy,
+    strategy: Any,
     strip_blank: bool,
     relative_indent: bool,
     reverse_lines: bool,

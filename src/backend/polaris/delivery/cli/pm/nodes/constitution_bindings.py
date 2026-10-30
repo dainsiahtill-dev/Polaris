@@ -116,7 +116,7 @@ def constitutional_execute(method: Callable[..., Any]) -> Callable[..., Any]:
     """装饰器 - 为 execute 方法添加宪法检查。"""
 
     @functools.wraps(method)
-    def wrapper(self: Any, context: RoleContext, *args, **kwargs) -> RoleResult:
+    def wrapper(self: Any, context: RoleContext, *args: Any, **kwargs: Any) -> RoleResult:
         # 检查是否启用了宪法
         if not getattr(self, "_constitution_enabled", False):
             return method(self, context, *args, **kwargs)
@@ -160,7 +160,7 @@ class ConstitutionalCoordinator:
         self._enforcer = ConstitutionEnforcer()
         self._strict = strict
 
-    def run_iteration(self, *args, **kwargs) -> Any:
+    def run_iteration(self: Any, *args: Any, **kwargs: Any) -> Any:
         """运行迭代，带宪法检查。"""
         # 获取当前要执行的角色
         state = getattr(self._coordinator, "state", None)
@@ -219,7 +219,7 @@ def patch_role_node(base_node_class: type[BaseRoleNode]) -> type[BaseRoleNode]:
     class ConstitutionalNode(base_node_class, ConstitutionalRoleNodeMixin):
         """宪法增强的角色节点。"""
 
-        def __init__(self, *args, **kwargs) -> None:
+        def __init__(self: Any, *args: Any, **kwargs: Any) -> None:
             super().__init__(*args, **kwargs)
             self._constitution_enabled = False
             self._constitution_guard = None
@@ -343,7 +343,9 @@ def enable_constitutional_bindings(strict: bool = True) -> dict[str, Any]:
                         original_execute = node_class.execute
 
                         @functools.wraps(original_execute)
-                        def wrapped_execute(self, context, orig=original_execute, role=role_name):
+                        def wrapped_execute(
+                            self: Any, context: Any, orig: Any = original_execute, role: Any = role_name
+                        ) -> Any:
                             if getattr(self, "_constitution_enabled", False):
                                 guard = getattr(self, "_constitution_guard", None)
                                 role_enum = _ROLE_MAPPING.get(role)

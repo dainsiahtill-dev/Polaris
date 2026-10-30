@@ -85,7 +85,7 @@ INPUT_DEFAULT_HEIGHT = 4
 class Header(Static):
     """静态头部组件 - 显示应用名称、状态、Token 统计"""
 
-    def __init__(self, app_state: AppState, **kwargs) -> None:
+    def __init__(self: Any, app_state: AppState, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.app_state = app_state
         self._time_format = "%H:%M:%S"
@@ -168,7 +168,7 @@ class Header(Static):
 class ResizableInput(Vertical):
     """可调整高度的输入区域组件"""
 
-    def __init__(self, on_submit: Callable[[str], None], **kwargs) -> None:
+    def __init__(self: Any, on_submit: Callable[[str], None], **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.on_submit = on_submit
         self._is_dragging = False
@@ -285,7 +285,7 @@ class MessageWidget(Container):
     使用自定义折叠实现，不继承 Collapsible 以避免行为冲突。
     """
 
-    def __init__(self, message: MessageItem, **kwargs) -> None:
+    def __init__(self: Any, message: MessageItem, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.message = message
 
@@ -357,7 +357,7 @@ class MessageWidget(Container):
 
         return Container(*widgets, classes="message-content-wrapper")
 
-    def _render_code_block(self, block) -> Container:
+    def _render_code_block(self: Any, block: Any) -> Container:
         """渲染代码块 - 修复 Rich Syntax 对象传递"""
         from io import StringIO
 
@@ -386,7 +386,7 @@ class MessageWidget(Container):
             classes="code-block",
         )
 
-    def on_click(self, event) -> None:
+    def on_click(self: Any, event: Any) -> None:
         """点击标题栏时切换折叠状态"""
         # 检查点击的是否是标题栏
         if hasattr(event, "control") and event.control:
@@ -407,7 +407,7 @@ class MessageWidget(Container):
 class ConversationArea(ScrollableContainer):
     """对话历史区域 - 带可折叠消息"""
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self: Any, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.messages: list[MessageWidget] = []
 
@@ -461,7 +461,7 @@ class ConversationArea(ScrollableContainer):
 class Sidebar(ScrollableContainer):
     """扩展上下文侧边栏"""
 
-    def __init__(self, context: ConversationContext, **kwargs) -> None:
+    def __init__(self: Any, context: ConversationContext, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.context = context
 
@@ -508,7 +508,7 @@ class Sidebar(ScrollableContainer):
 class ToolCallWidget(Container):
     """工具调用显示组件"""
 
-    def __init__(self, tool_info: ToolCallInfo, **kwargs) -> None:
+    def __init__(self: Any, tool_info: ToolCallInfo, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.tool_info = tool_info
 

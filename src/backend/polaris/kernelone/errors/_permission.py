@@ -6,6 +6,8 @@ Public symbols are re-exported from the package ``__init__``.
 
 from __future__ import annotations
 
+from typing import Any
+
 from polaris.kernelone.errors._base import KernelOneError
 
 
@@ -13,11 +15,11 @@ class TestingInfrastructureError(KernelOneError):
     """Testing infrastructure error."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         infrastructure_component: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -32,12 +34,12 @@ class PermissionError(KernelOneError):
     """Permission-related errors."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         code: str = "PERMISSION_ERROR",
         permission_name: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         kwargs.setdefault("retryable", False)
         super().__init__(message, code=code, **kwargs)
@@ -49,11 +51,11 @@ class PermissionServiceError(PermissionError):
     """Permission service error."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         service_name: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,

@@ -159,12 +159,12 @@ class ToolParseError(_get_llm_error()):  # type: ignore[misc]
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         tool_name: str = "",
         parse_context: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(message, retryable=False, **kwargs)
         self.tool_name = tool_name
@@ -187,12 +187,12 @@ class ResponseParseError(_get_llm_error()):  # type: ignore[misc]
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         response_preview: str = "",
         expected_format: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(message, retryable=False, **kwargs)
         self.response_preview = response_preview
@@ -210,11 +210,11 @@ class JSONParseError(ResponseParseError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         json_error: json.JSONDecodeError | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -248,12 +248,12 @@ class RateLimitError(_get_rate_limit_error()):  # type: ignore[misc]
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str = "Rate limit exceeded",
         *,
         retry_after: float | None = None,
         limit_type: str = "requests",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(message, retry_after=retry_after, limit_type=limit_type, retryable=True, **kwargs)
         self.retry_after = retry_after
@@ -270,11 +270,11 @@ class AuthenticationError(_get_authentication_error()):  # type: ignore[misc]
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str = "",
         *,
         provider: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         full_message = message or f"Authentication failed for provider: {provider}"
         super().__init__(full_message, provider=provider, retryable=False, **kwargs)
@@ -296,12 +296,12 @@ class LLMTimeoutError(_get_timeout_error()):  # type: ignore[misc]
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str = "",
         *,
         timeout_seconds: float | None = None,
         operation: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         full_message = message or (
             f"Operation timed out after {timeout_seconds}s" if timeout_seconds else "Operation timed out"
@@ -328,13 +328,13 @@ class ToolExecutionError(_get_tool_execution_error()):  # type: ignore[misc]
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         tool_name: str = "",
         exit_code: int | None = None,
         retryable: bool = True,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         # ToolExecutionError is retryable by default
         super().__init__(message, tool_name=tool_name, exit_code=exit_code, retryable=retryable, **kwargs)
@@ -354,7 +354,7 @@ class BudgetExceededError(_get_budget_exceeded_error()):  # type: ignore[misc]
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         tool: str = "read_file",
@@ -362,7 +362,7 @@ class BudgetExceededError(_get_budget_exceeded_error()):  # type: ignore[misc]
         line_count: int = 0,
         limit: int = 2000,
         suggestion: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         # BudgetExceededError is always retryable
         kwargs.setdefault("retryable", True)
@@ -403,11 +403,11 @@ class ConfigurationError(_get_configuration_error()):  # type: ignore[misc]
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         field: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(message, field=field, retryable=False, **kwargs)
         self.field = field
@@ -420,12 +420,12 @@ class ConfigMigrationError(_get_config_migration_error(), ConfigurationError):  
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         from_version: str = "",
         to_version: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         # Note: retryable=False is set by ConfigurationError via setdefault
         super().__init__(message, **kwargs)
@@ -444,12 +444,12 @@ class ConfigValidationError(_get_config_validation_error(), ConfigurationError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         field: str = "",
         validation_errors: list[str] | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(message, field=field, retryable=False, **kwargs)
         self.validation_errors = validation_errors or []
@@ -478,12 +478,12 @@ class ProviderError(_get_llm_error()):  # type: ignore[misc]
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         provider: str = "",
         provider_code: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(message, **kwargs)
         self.provider = provider
@@ -501,11 +501,11 @@ class NetworkError(_get_network_error()):  # type: ignore[misc]
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str = "Network connectivity error",
         *,
         url: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(message, url=url, retryable=True, **kwargs)
 

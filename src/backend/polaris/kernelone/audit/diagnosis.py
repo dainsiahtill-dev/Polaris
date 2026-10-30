@@ -22,6 +22,7 @@ from __future__ import annotations
 import re
 import traceback as tb_module
 from dataclasses import dataclass, field
+from typing import Any
 
 __all__ = [
     "DiagnosisResult",
@@ -238,7 +239,7 @@ def diagnose_error(
     )
 
 
-def diagnose_from_exception(exc: BaseException, **kwargs) -> DiagnosisResult:
+def diagnose_from_exception(exc: BaseException, **kwargs: Any) -> DiagnosisResult:
     """从异常对象诊断错误"""
     return diagnose_error(
         error_message=str(exc),

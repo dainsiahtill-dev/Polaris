@@ -12,6 +12,7 @@ import logging
 import os
 import time
 from pathlib import Path
+from typing import Any
 
 from fastapi import HTTPException, Request
 from polaris.bootstrap.config import Settings, get_settings
@@ -159,7 +160,7 @@ def require_auth(request: Request) -> None:
     request.state.user_role = UserRole.VIEWER
 
 
-def require_permission(permission: str):
+def require_permission(permission: str) -> Any:
     """Factory for permission-checking dependency.
 
     Reads permission from the server-bound SimpleAuthContext (set by require_auth).

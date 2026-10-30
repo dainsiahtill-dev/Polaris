@@ -420,7 +420,7 @@ def emit_llm_event(
     role: str,
     run_id: str,
     publish_realtime: bool = True,
-    **kwargs,
+    **kwargs: Any,
 ) -> None:
     """Emit one roles-kernel LLM audit event.
 

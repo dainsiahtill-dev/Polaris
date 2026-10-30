@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -84,8 +85,8 @@ class ArchiveHook:
         return [key for key, task in self._pending_tasks.items() if not task.done()]
 
     def _create_task_with_tracking(
-        self,
-        coro,
+        self: Any,
+        coro: Any,
         task_key: str,
     ) -> asyncio.Task[None]:
         """Create an async task with tracking and automatic cleanup.

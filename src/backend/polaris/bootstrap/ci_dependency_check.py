@@ -9,6 +9,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 @dataclass
@@ -97,7 +98,7 @@ class DependencyChecker:
 
         return self.violations
 
-    def print_report(self):
+    def print_report(self: Any) -> Any:
         """打印检查报告"""
         print("=" * 80)
         print("跨Cell导入违规检查报告")
@@ -123,7 +124,7 @@ class DependencyChecker:
                 print(f"    {v.import_line[:80]}")
 
 
-def main():
+def main() -> Any:
     """主入口"""
     import argparse
 

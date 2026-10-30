@@ -31,7 +31,7 @@ def _build_client(workspace: str) -> TestClient:
     return TestClient(app)
 
 
-def test_v1_chat_completions_returns_plan_only_aggregate_response(tmp_path) -> None:
+def test_v1_chat_completions_returns_plan_only_aggregate_response(tmp_path: Any) -> None:
     client = _build_client(str(tmp_path))
 
     response = client.post(
@@ -72,11 +72,11 @@ def test_v1_chat_completions_returns_plan_only_aggregate_response(tmp_path) -> N
     assert "polaris.kernelone.akashic.semantic_memory.AkashicSemanticMemory" in content["required_capability_refs"]
 
 
-def test_v1_chat_completions_passes_single_turn_command_to_service(monkeypatch, tmp_path) -> None:
+def test_v1_chat_completions_passes_single_turn_command_to_service(monkeypatch: Any, tmp_path: Any) -> None:
     client = _build_client(str(tmp_path))
     captured: dict[str, Any] = {}
 
-    async def fake_aggregate_chat_completions(command):
+    async def fake_aggregate_chat_completions(command: Any) -> Any:
         captured["command"] = command
         return AggregateChatCompletionsResultV1(
             id="aggcmpl-test",
@@ -122,11 +122,11 @@ def test_v1_chat_completions_passes_single_turn_command_to_service(monkeypatch, 
     assert command.metadata["aggregate_execution_role"] == "chief_engineer"
 
 
-def test_v1_chat_completions_passes_lobe_chain_command_to_service(monkeypatch, tmp_path) -> None:
+def test_v1_chat_completions_passes_lobe_chain_command_to_service(monkeypatch: Any, tmp_path: Any) -> None:
     client = _build_client(str(tmp_path))
     captured: dict[str, Any] = {}
 
-    async def fake_aggregate_chat_completions(command):
+    async def fake_aggregate_chat_completions(command: Any) -> Any:
         captured["command"] = command
         return AggregateChatCompletionsResultV1(
             id="aggcmpl-chain-test",
@@ -173,11 +173,11 @@ def test_v1_chat_completions_passes_lobe_chain_command_to_service(monkeypatch, t
     assert response.json()["execution_results"][0]["role"] == "architect"
 
 
-def test_v1_chat_completions_normalizes_failure_evidence_rows(monkeypatch, tmp_path) -> None:
+def test_v1_chat_completions_normalizes_failure_evidence_rows(monkeypatch: Any, tmp_path: Any) -> None:
     client = _build_client(str(tmp_path))
     captured: dict[str, Any] = {}
 
-    async def fake_aggregate_chat_completions(command):
+    async def fake_aggregate_chat_completions(command: Any) -> Any:
         captured["command"] = command
         return AggregateChatCompletionsResultV1(
             id="aggcmpl-evidence-test",
@@ -222,11 +222,13 @@ def test_v1_chat_completions_normalizes_failure_evidence_rows(monkeypatch, tmp_p
     assert command.failure_evidence["evidence_refs"] == ("provider_response:abc",)
 
 
-def test_v1_chat_completions_lobe_chain_materializes_runtime_evidence_via_service(monkeypatch, tmp_path) -> None:
+def test_v1_chat_completions_lobe_chain_materializes_runtime_evidence_via_service(
+    monkeypatch: Any, tmp_path: Any
+) -> None:
     client = _build_client(str(tmp_path))
     captured: list[Any] = []
 
-    async def fake_stream_chat_turn(command):
+    async def fake_stream_chat_turn(command: Any) -> Any:
         captured.append(command)
         yield {
             "type": "fingerprint",
@@ -283,7 +285,7 @@ def test_v1_chat_completions_lobe_chain_materializes_runtime_evidence_via_servic
     assert knowledge_file.exists()
 
 
-def test_v1_chat_completions_rejects_unknown_execution_mode(tmp_path) -> None:
+def test_v1_chat_completions_rejects_unknown_execution_mode(tmp_path: Any) -> None:
     client = _build_client(str(tmp_path))
 
     response = client.post(
@@ -302,14 +304,14 @@ def test_v1_chat_completions_rejects_unknown_execution_mode(tmp_path) -> None:
 
 
 def test_v1_chat_completions_mapping_shaped_failure_evidence_passes_through_without_reclassification(
-    monkeypatch, tmp_path
+    monkeypatch: Any, tmp_path: Any
 ) -> None:
     """WS6: mapping-shaped failure evidence must flow through Run Ledger public helper
     without the router performing local dict merge or reclassification."""
     client = _build_client(str(tmp_path))
     captured: dict[str, Any] = {}
 
-    async def fake_aggregate_chat_completions(command):
+    async def fake_aggregate_chat_completions(command: Any) -> Any:
         captured["command"] = command
         return AggregateChatCompletionsResultV1(
             id="aggcmpl-mapping-test",
@@ -350,14 +352,14 @@ def test_v1_chat_completions_mapping_shaped_failure_evidence_passes_through_with
 
 
 def test_v1_chat_completions_failure_evidence_v1_structured_rows_flow_through_run_ledger_projection(
-    monkeypatch, tmp_path
+    monkeypatch: Any, tmp_path: Any
 ) -> None:
     """WS6: FailureEvidenceV1-shaped rows must be projected into items/failure_classes/evidence_refs
     entirely through the Run Ledger public helper, with zero local reclassification in the router."""
     client = _build_client(str(tmp_path))
     captured: dict[str, Any] = {}
 
-    async def fake_aggregate_chat_completions(command):
+    async def fake_aggregate_chat_completions(command: Any) -> Any:
         captured["command"] = command
         return AggregateChatCompletionsResultV1(
             id="aggcmpl-v1-rows-test",

@@ -441,7 +441,7 @@ class FactoryStore:
             content=content,
         )
 
-    async def save_run(self, run) -> str:
+    async def save_run(self: Any, run: Any) -> str:
         """Save run to disk atomically"""
         run_dir = self.get_run_dir(run.id)
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -645,7 +645,7 @@ class FactoryStore:
         with open(file_path, encoding="utf-8") as f:
             return f.read()
 
-    async def checkpoint(self, run) -> str:
+    async def checkpoint(self: Any, run: Any) -> str:
         """Create a checkpoint"""
         logical_ref = self.checkpoint_ref(run)
         content = self._encode_snapshot(run.to_dict())

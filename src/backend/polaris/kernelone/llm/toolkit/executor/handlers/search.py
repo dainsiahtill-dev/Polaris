@@ -43,7 +43,7 @@ logger = __import__("logging").getLogger(__name__)
 
 
 # Unified handler for all search tools
-def _handle_unified_search(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_unified_search(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle search_code / grep / ripgrep tool calls with unified logic.
 
     Args:

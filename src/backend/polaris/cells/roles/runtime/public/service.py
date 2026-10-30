@@ -408,7 +408,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def get_role_system_prompt(*args, **kwargs) -> Any:
+def get_role_system_prompt(*args: Any, **kwargs: Any) -> Any:
     """Lazy proxy to avoid control-plane import cycles at module import time."""
     from polaris.cells.llm.control_plane.public.service import (
         get_role_system_prompt as _get_role_system_prompt,

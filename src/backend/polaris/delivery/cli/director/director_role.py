@@ -9,12 +9,13 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 # Bootstrap path if running as script
 _backend_root: Path | None = None
 
 
-def _bootstrap_backend_import_path():
+def _bootstrap_backend_import_path() -> Any:
     """Lazy import of polaris modules after path bootstrap."""
     global _backend_root
 

@@ -56,7 +56,7 @@ class InterviewAskPayload(BaseModel):
 
     @field_validator("session_id", mode="before")
     @classmethod
-    def normalize_session_id(cls, v) -> Any:
+    def normalize_session_id(cls: Any, v: Any) -> Any:
         """将空字符串或None统一处理为None"""
         if v == "" or v is None:
             return None
@@ -64,7 +64,7 @@ class InterviewAskPayload(BaseModel):
 
     @field_validator("context", mode="before")
     @classmethod
-    def normalize_context(cls, v) -> Any:
+    def normalize_context(cls: Any, v: Any) -> Any:
         """确保context是列表或None"""
         if v is None or v == []:
             return None
@@ -72,7 +72,7 @@ class InterviewAskPayload(BaseModel):
 
     @field_validator("criteria", mode="before")
     @classmethod
-    def normalize_criteria(cls, v) -> Any:
+    def normalize_criteria(cls: Any, v: Any) -> Any:
         """确保criteria是字符串列表或None"""
         if v is None or v == []:
             return None

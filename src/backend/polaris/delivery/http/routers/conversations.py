@@ -54,7 +54,7 @@ class ConversationUpdate(BaseModel):
 
 
 # 依赖注入数据库会话
-async def get_db_session():
+async def get_db_session() -> Any:
     """获取数据库会话"""
     from ..models.conversation import get_db
 

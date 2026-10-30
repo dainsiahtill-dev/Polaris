@@ -67,7 +67,7 @@ class ProviderAdapter:
             metadata=self._build_metadata(result),
         )
 
-    async def generate_stream(self, request: AIRequest):
+    async def generate_stream(self: Any, request: AIRequest) -> Any:
         """Generate a streamed LLM response."""
         from polaris.kernelone.llm.toolkit.contracts import StreamChunk, StreamEventType
 

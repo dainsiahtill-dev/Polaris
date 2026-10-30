@@ -67,7 +67,9 @@ class ChiefEngineerLLMClient:
             workspace=Path(workspace) if workspace else Path.cwd(),
         )
 
-    async def invoke_with_tools(self, prompt: str, system_prompt: str | None = None, **kwargs) -> dict[str, Any]:
+    async def invoke_with_tools(
+        self: Any, prompt: str, system_prompt: str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         """调用 LLM，支持工具调用.
 
         Args:
@@ -158,11 +160,11 @@ class ChiefEngineerLLMClient:
             "max_iterations_reached": True,
         }
 
-    def _invoke_plain(self, prompt: str, system_prompt: str | None = None, **kwargs) -> dict[str, Any]:
+    def _invoke_plain(self: Any, prompt: str, system_prompt: str | None = None, **kwargs: Any) -> dict[str, Any]:
         """Fail closed: this frozen compatibility module must not invoke LLMs."""
         raise RuntimeError("chief_engineer_llm_tools is frozen; use RoleRuntimeService.execute_role_session instead")
 
-    def _invoke_messages(self, messages: list[dict[str, str]], **kwargs) -> dict[str, Any]:
+    def _invoke_messages(self: Any, messages: list[dict[str, str]], **kwargs: Any) -> dict[str, Any]:
         """使用消息列表调用 LLM."""
         # 将消息列表转换为提示文本
         prompt_parts = []

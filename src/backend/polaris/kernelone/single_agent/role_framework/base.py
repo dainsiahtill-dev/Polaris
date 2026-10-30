@@ -124,7 +124,7 @@ class RoleBase(ABC):
         pass
 
     @abstractmethod
-    def initialize(self, **kwargs) -> dict[str, Any]:
+    def initialize(self: Any, **kwargs: Any) -> dict[str, Any]:
         """初始化角色
 
         Returns:

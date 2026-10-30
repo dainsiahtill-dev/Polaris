@@ -23,29 +23,29 @@ from polaris.cells.events.fact_stream.public import (  # noqa: F401
 )
 
 
-def _pkg_lookup(name: str):
+def _pkg_lookup(name: str) -> Any:
     """Resolve name from the package module (supports test monkeypatching)."""
 
     return getattr(_sys.modules[__package__], name)
 
 
-def query_fact_events(*args, **kwargs):
+def query_fact_events(*args: Any, **kwargs: Any) -> Any:
     return _pkg_lookup("query_fact_events")(*args, **kwargs)
 
 
-def read_guarded_fact_snapshot(*args, **kwargs):
+def read_guarded_fact_snapshot(*args: Any, **kwargs: Any) -> Any:
     return _pkg_lookup("read_guarded_fact_snapshot")(*args, **kwargs)
 
 
-def append_if_guarded_snapshot(*args, **kwargs):
+def append_if_guarded_snapshot(*args: Any, **kwargs: Any) -> Any:
     return _pkg_lookup("append_if_guarded_snapshot")(*args, **kwargs)
 
 
-def append_fact_event(*args, **kwargs):
+def append_fact_event(*args: Any, **kwargs: Any) -> Any:
     return _pkg_lookup("append_fact_event")(*args, **kwargs)
 
 
-def enroll_fact_stream_streams(*args, **kwargs):
+def enroll_fact_stream_streams(*args: Any, **kwargs: Any) -> Any:
     return _pkg_lookup("enroll_fact_stream_streams")(*args, **kwargs)
 
 
@@ -69,8 +69,8 @@ exec(compile(_SOURCE, str(_SOURCE_PATH), "exec"), _NS)
 # so class-method calls honor the package-level monkeypatch.
 
 
-def _make_pkg_lookup_wrapper(name: str):
-    def _wrapper(*args, **kwargs):
+def _make_pkg_lookup_wrapper(name: str) -> Any:
+    def _wrapper(*args: Any, **kwargs: Any) -> Any:
         return _pkg_lookup(name)(*args, **kwargs)
 
     _wrapper.__name__ = name

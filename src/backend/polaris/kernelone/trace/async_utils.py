@@ -339,10 +339,10 @@ def patch_asyncio_create_task() -> None:
     original_create_task = asyncio.create_task
 
     def patched_create_task(
-        coro,
+        coro: Any,
         *,
-        name=None,
-        context=None,
+        name: Any = None,
+        context: Any = None,
     ) -> Any:
         # Python 3.11+ asyncio.create_task支持context参数
         # 但我们仍然需要复制我们的自定义上下文

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from polaris.delivery.http.routers import cognitive_runtime
@@ -17,7 +19,7 @@ from polaris.domain.cognitive_runtime import (
 
 
 class _FakeService:
-    def resolve_context(self, command):
+    def resolve_context(self: Any, command: Any) -> Any:
         return type(
             "Result",
             (),
@@ -35,7 +37,7 @@ class _FakeService:
             },
         )()
 
-    def lease_edit_scope(self, command):
+    def lease_edit_scope(self: Any, command: Any) -> Any:
         return type(
             "Result",
             (),
@@ -52,7 +54,7 @@ class _FakeService:
             },
         )()
 
-    def validate_change_set(self, command):
+    def validate_change_set(self: Any, command: Any) -> Any:
         return type(
             "Result",
             (),
@@ -66,7 +68,7 @@ class _FakeService:
             },
         )()
 
-    def record_runtime_receipt(self, command):
+    def record_runtime_receipt(self: Any, command: Any) -> Any:
         return type(
             "Result",
             (),
@@ -84,7 +86,7 @@ class _FakeService:
             },
         )()
 
-    def get_runtime_receipt(self, query):
+    def get_runtime_receipt(self: Any, query: Any) -> Any:
         return type(
             "Result",
             (),
@@ -100,7 +102,7 @@ class _FakeService:
             },
         )()
 
-    def export_handoff_pack(self, command):
+    def export_handoff_pack(self: Any, command: Any) -> Any:
         return type(
             "Result",
             (),
@@ -115,7 +117,7 @@ class _FakeService:
             },
         )()
 
-    def map_diff_to_cells(self, command):
+    def map_diff_to_cells(self: Any, command: Any) -> Any:
         return type(
             "Result",
             (),
@@ -134,7 +136,7 @@ class _FakeService:
             },
         )()
 
-    def request_projection_compile(self, command):
+    def request_projection_compile(self: Any, command: Any) -> Any:
         return type(
             "Result",
             (),
@@ -153,7 +155,7 @@ class _FakeService:
             },
         )()
 
-    def promote_or_reject(self, command):
+    def promote_or_reject(self: Any, command: Any) -> Any:
         return type(
             "Result",
             (),
@@ -172,7 +174,7 @@ class _FakeService:
             },
         )()
 
-    def record_rollback_ledger(self, command):
+    def record_rollback_ledger(self: Any, command: Any) -> Any:
         return type(
             "Result",
             (),
@@ -191,7 +193,7 @@ class _FakeService:
             },
         )()
 
-    def get_handoff_pack(self, query):
+    def get_handoff_pack(self: Any, query: Any) -> Any:
         return type(
             "Result",
             (),
@@ -206,7 +208,7 @@ class _FakeService:
             },
         )()
 
-    def rehydrate_handoff_pack(self, command):
+    def rehydrate_handoff_pack(self: Any, command: Any) -> Any:
         return type(
             "Result",
             (),

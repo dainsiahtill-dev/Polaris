@@ -77,19 +77,19 @@ class WorkspaceIntegrityService:
     delegates to internal modules when needed.
     """
 
-    def validate_workspace(self, command) -> str:
+    def validate_workspace(self: Any, command: Any) -> str:
         from polaris.cells.workspace.integrity.internal.fs_utils import validate_workspace
 
         return cast("str", (validate_workspace(command.path, self_upgrade_mode=command.self_upgrade_mode)))
 
-    def ensure_docs_ready(self, command) -> None:
+    def ensure_docs_ready(self: Any, command: Any) -> None:
         from polaris.cells.workspace.integrity.internal.workspace_service import (
             ensure_docs_ready_or_raise,
         )
 
         ensure_docs_ready_or_raise(command.workspace)
 
-    def generate_docs_templates(self, command) -> Any:
+    def generate_docs_templates(self: Any, command: Any) -> Any:
         from polaris.cells.workspace.integrity.internal.workspace_service import (
             build_docs_templates,
             detect_project_profile,
@@ -126,17 +126,17 @@ def create_workspace_integrity_service() -> WorkspaceIntegrityService:
     return WorkspaceIntegrityService()
 
 
-def validate_workspace_command(command) -> str:
+def validate_workspace_command(command: Any) -> str:
     """Convenience wrapper: create instance on-demand, avoid module-level singleton."""
     return create_workspace_integrity_service().validate_workspace(command)
 
 
-def ensure_docs_ready_command(command) -> None:
+def ensure_docs_ready_command(command: Any) -> None:
     """Convenience wrapper: create instance on-demand, avoid module-level singleton."""
     create_workspace_integrity_service().ensure_docs_ready(command)
 
 
-def generate_docs_templates_command(command) -> Any:
+def generate_docs_templates_command(command: Any) -> Any:
     """Convenience wrapper: create instance on-demand, avoid module-level singleton."""
     return create_workspace_integrity_service().generate_docs_templates(command)
 
@@ -154,7 +154,7 @@ def __getattr__(name: str) -> Any:
             # Fallback mixin when code-intelligence stack is unavailable.
 
             class DirectorCodeIntelMixin:  # type: ignore[no-redef]
-                def __init__(self, *_args, **_kwargs) -> None:
+                def __init__(self: Any, *_args: Any, **_kwargs: Any) -> None:
                     pass
 
         globals()["DirectorCodeIntelMixin"] = DirectorCodeIntelMixin

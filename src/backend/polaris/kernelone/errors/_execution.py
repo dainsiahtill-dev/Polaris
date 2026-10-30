@@ -6,6 +6,8 @@ Public symbols are re-exported from the package ``__init__``.
 
 from __future__ import annotations
 
+from typing import Any
+
 from polaris.kernelone.errors._base import KernelOneError
 
 
@@ -21,13 +23,13 @@ class ExecutionError(KernelOneError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         code: str = "EXECUTION_ERROR",
         operation: str = "",
         tool_name: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(message, code=code, **kwargs)
         self.operation = operation
@@ -49,13 +51,13 @@ class ToolExecutionError(ExecutionError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         tool_name: str = "",
         exit_code: int | None = None,
         retryable: bool = True,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -76,12 +78,12 @@ class ShellDisallowedError(ExecutionError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str = "shell=True is not allowed in KernelOne",
         *,
         command: str = "",
         reason: str = "shell_execution_policy_violation",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         kwargs.setdefault("retryable", False)
         super().__init__(
@@ -107,14 +109,14 @@ class BudgetExceededError(ExecutionError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         limit: int = 2000,
         requested: int = 0,
         current: int = 0,
         suggestion: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         kwargs.setdefault("retryable", True)
         super().__init__(
@@ -142,13 +144,13 @@ class ToolAuthorizationError(ExecutionError):
     """Tool authorization failed."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         tool_name: str = "",
         role: str = "",
         reason: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         kwargs.setdefault("retryable", False)
         super().__init__(
@@ -177,11 +179,11 @@ class CodeGenerationError(ExecutionError):
     """Code generation error."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         code: str = "CODE_GENERATION_ERROR",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -195,11 +197,11 @@ class CodeGenerationPolicyViolationError(CodeGenerationError):
     """Code generation policy violation error."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         policy_rule: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         kwargs.setdefault("retryable", False)
         super().__init__(

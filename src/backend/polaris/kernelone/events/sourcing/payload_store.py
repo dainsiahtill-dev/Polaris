@@ -101,7 +101,7 @@ class DurablePayloadStore:
         self.identity = resolve_workspace_runtime_identity(_text(workspace, "workspace"), read_only=read_only)
         self._read_only = read_only
 
-    def _acquire(self, ref: PayloadReferenceV1, *, read_only: bool):
+    def _acquire(self: Any, ref: PayloadReferenceV1, *, read_only: bool) -> Any:
         if type(ref) is not PayloadReferenceV1 or ref.storage_identity_token != self.identity.token:
             raise PayloadStoreError(
                 "payload reference belongs to a different storage identity", code="payload_storage_identity_mismatch"

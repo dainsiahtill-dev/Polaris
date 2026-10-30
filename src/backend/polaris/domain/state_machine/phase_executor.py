@@ -62,7 +62,7 @@ class PhaseExecutor:
             policy=self.policy.to_dict(),
         )
 
-    def _get_role_config(self):
+    def _get_role_config(self: Any) -> Any:
         """Get role configuration."""
         from ..entities.capability import get_role_config
 

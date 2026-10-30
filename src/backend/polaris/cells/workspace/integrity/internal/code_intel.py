@@ -33,7 +33,7 @@ class DirectorCodeIntelMixin:
                 verify_result = self.verify_task_changes(changed_files)
     """
 
-    def __init__(self, workspace: str | Path, *args, **kwargs) -> None:
+    def __init__(self: Any, workspace: str | Path, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._code_intel = CodeIntelligenceService(workspace)
         self._workspace = Path(workspace).resolve()

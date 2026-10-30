@@ -38,7 +38,7 @@ def _require_session_memory_context(self: AgentAccelToolExecutor) -> tuple[str, 
     return session_id, provider
 
 
-def _handle_search_memory(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_search_memory(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle search_memory tool call.
 
     Args:
@@ -76,7 +76,7 @@ def _handle_search_memory(self: AgentAccelToolExecutor, **kwargs) -> dict[str, A
     }
 
 
-def _handle_read_artifact(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_read_artifact(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle read_artifact tool call.
 
     Args:
@@ -113,7 +113,7 @@ def _handle_read_artifact(self: AgentAccelToolExecutor, **kwargs) -> dict[str, A
     return {"ok": True, **payload}
 
 
-def _handle_read_episode(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_read_episode(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle read_episode tool call.
 
     Args:
@@ -141,7 +141,7 @@ def _handle_read_episode(self: AgentAccelToolExecutor, **kwargs) -> dict[str, An
     return {"ok": True, **payload}
 
 
-def _handle_get_state(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_get_state(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle get_state tool call.
 
     Args:
@@ -172,7 +172,7 @@ def _handle_get_state(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
     }
 
 
-def _handle_update_session_state(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_update_session_state(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle update_session_state tool call."""
     session_id, provider = _require_session_memory_context(self)
     if session_id is None or provider is None:

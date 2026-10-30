@@ -6,6 +6,8 @@ Public symbols are re-exported from the package ``__init__``.
 
 from __future__ import annotations
 
+from typing import Any
+
 from polaris.kernelone.errors._base import KernelOneError
 
 
@@ -20,12 +22,12 @@ class CellError(KernelOneError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         code: str = "CELL_ERROR",
         cell_name: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(message, code=code, **kwargs)
         self.cell_name = cell_name
@@ -43,12 +45,12 @@ class AuditError(KernelOneError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         code: str = "AUDIT_ERROR",
         audit_id: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(message, code=code, **kwargs)
         if audit_id:
@@ -59,11 +61,11 @@ class KernelAuditWriteError(AuditError):
     """Kernel audit write failed."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         event_id: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -78,13 +80,13 @@ class AuditFieldError(AuditError):
     """Audit field type error."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         field_path: str = "",
         expected_type: str = "",
         actual_type: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -110,13 +112,13 @@ class EventError(KernelOneError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         code: str = "EVENT_ERROR",
         event_name: str = "",
         event_id: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(message, code=code, **kwargs)
         if event_name:
@@ -129,14 +131,14 @@ class EventPublishError(EventError):
     """Event publishing failed."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         event_name: str = "",
         failed_side: str = "",
         left_error: Exception | None = None,
         right_error: Exception | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -160,11 +162,11 @@ class EventSourcingError(EventError):
     """Event sourcing error."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         stream: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,

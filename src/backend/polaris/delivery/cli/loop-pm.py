@@ -9,6 +9,7 @@ This file delegates to the canonical implementation in
 
 import sys
 from pathlib import Path
+from typing import Any
 
 # Import canonical PM package modules.
 import polaris.delivery.cli.pm.agents as _pm_agents_module
@@ -116,29 +117,29 @@ get_anthropomorphic_context = _pm_backend_module.get_anthropomorphic_context
 get_anthropomorphic_context_v2 = _pm_backend_module.get_anthropomorphic_context_v2
 
 
-def build_pm_prompt(*args, **kwargs):
+def build_pm_prompt(*args: Any, **kwargs: Any) -> Any:
     _pm_backend_module.get_anthropomorphic_context = get_anthropomorphic_context
     _pm_backend_module.get_anthropomorphic_context_v2 = get_anthropomorphic_context_v2
     _pm_backend_module._use_context_engine_v2 = _use_context_engine_v2
     return _pm_backend_module.build_pm_prompt(*args, **kwargs)
 
 
-def resolve_agents_approval_mode(args):
+def resolve_agents_approval_mode(args: Any) -> Any:
     _pm_agents_module._is_interactive_session = _is_interactive_session
     return _pm_agents_module.resolve_agents_approval_mode(args)
 
 
-def wait_for_agents_confirmation(*args, **kwargs):
+def wait_for_agents_confirmation(*args: Any, **kwargs: Any) -> Any:
     _pm_agents_module._is_interactive_session = _is_interactive_session
     _pm_agents_module.maybe_generate_agents_draft = maybe_generate_agents_draft
     return _pm_agents_module.wait_for_agents_confirmation(*args, **kwargs)
 
 
-def _invoke_pm_backend(*args, **kwargs):
+def _invoke_pm_backend(*args: Any, **kwargs: Any) -> Any:
     return invoke_pm_backend(*args, **kwargs)
 
 
-def run_once(args, iteration=1):
+def run_once(args: Any, iteration: Any = 1) -> Any:
     # Keep wrapper-level monkeypatch behavior for tests that patch this module.
     prev_backend_invoke = _pm_backend_module.invoke_pm_backend
     prev_engine_invoke = _pm_orchestration_engine_module.invoke_pm_backend

@@ -291,7 +291,7 @@ def broadcast_file_written(
     content_size: int,
     task_id: str = "",
     patch: str = "",
-    message_bus=None,
+    message_bus: Any = None,
     worker_id: str = "standalone",
     event_log_workspace: str | None = None,
 ) -> bool:
@@ -368,7 +368,7 @@ def write_file_with_broadcast(
     workspace: str,
     file_path: str,
     content: str,
-    message_bus=None,
+    message_bus: Any = None,
     worker_id: str = "standalone",
     task_id: str = "",
 ) -> dict[str, Any]:
@@ -435,7 +435,7 @@ def append_file_with_broadcast(
     workspace: str,
     file_path: str,
     content: str,
-    message_bus=None,
+    message_bus: Any = None,
     worker_id: str = "standalone",
     task_id: str = "",
 ) -> dict[str, Any]:
@@ -499,7 +499,7 @@ def replace_in_file_with_broadcast(
     old_text: str,
     new_text: str,
     count: int = -1,
-    message_bus=None,
+    message_bus: Any = None,
     worker_id: str = "standalone",
     task_id: str = "",
 ) -> dict[str, Any]:
@@ -570,7 +570,7 @@ def apply_patch_with_broadcast(
     workspace: str,
     target_file: str,
     patch: str,
-    message_bus=None,
+    message_bus: Any = None,
     worker_id: str = "standalone",
     task_id: str = "",
 ) -> dict[str, Any]:

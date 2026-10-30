@@ -535,7 +535,7 @@ class PMAgent(RoleAgent):
             },
         )
 
-    def _tool_create_task(self, **kwargs) -> dict[str, Any]:
+    def _tool_create_task(self: Any, **kwargs: Any) -> dict[str, Any]:
         """Create a new task."""
         import uuid
 
@@ -768,7 +768,7 @@ class PMAgent(RoleAgent):
             "count": len(self._decisions),
         }
 
-    def _tool_taskboard_create(self, **kwargs) -> dict[str, Any]:
+    def _tool_taskboard_create(self: Any, **kwargs: Any) -> dict[str, Any]:
         """Create task in long-term TaskBoard."""
         priority_map = {
             "low": TBPriority.LOW,
@@ -840,7 +840,7 @@ class PMAgent(RoleAgent):
         stats: dict[str, Any] = get_observable_stats()
         return {"ok": True, "stats": stats}
 
-    def _tool_request_approval(self, **kwargs) -> dict[str, Any]:
+    def _tool_request_approval(self: Any, **kwargs: Any) -> dict[str, Any]:
         """Request approval via Protocol FSM."""
         approval_type = kwargs.get("approval_type", "plan_approval")
         content = kwargs.get("content", {})

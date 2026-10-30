@@ -73,7 +73,7 @@ def _whole_wait_seconds(deadline: float) -> int:
 
 
 def _record_director_binding_skip(
-    executor,
+    executor: Any,
     *,
     provider_id: str,
     model: str,
@@ -105,7 +105,7 @@ def _record_director_binding_skip(
     executor._last_director_binding_skips = skips
 
 
-def _director_readiness_skip_reasons(executor, context: dict[str, Any] | None = None) -> dict[str, str]:
+def _director_readiness_skip_reasons(executor: Any, context: dict[str, Any] | None = None) -> dict[str, str]:
     if context is None:
         context = {}
     try:
@@ -143,7 +143,7 @@ def _director_readiness_skip_reasons(executor, context: dict[str, Any] | None = 
     return reasons
 
 
-def _resolve_director_binding_fanout(executor, context: dict[str, Any] | None = None) -> list[dict[str, str]]:
+def _resolve_director_binding_fanout(executor: Any, context: dict[str, Any] | None = None) -> list[dict[str, str]]:
     executor._last_director_binding_skips = []
     try:
         from polaris.kernelone.llm.runtime_config import get_role_binding_slots, is_role_binding_healthy
@@ -253,7 +253,7 @@ def _resolve_director_binding_fanout(executor, context: dict[str, Any] | None = 
 
 
 async def _execute_director_binding_fanout(
-    executor,
+    executor: Any,
     *,
     service: Any,
     workspace: str,
@@ -745,7 +745,7 @@ def _canonical_director_preflight_failure(
     }
 
 
-async def _execute_director_dispatch(executor, run: FactoryRun, context: dict[str, Any]) -> StageResult:
+async def _execute_director_dispatch(executor: Any, run: FactoryRun, context: dict[str, Any]) -> StageResult:
     logger.info("Executing Director dispatch for run %s", run.id)
     abort_checker = executor._resolve_abort_checker(context)
     authority_port = executor._factory_role_evidence_cutoff_port(context)

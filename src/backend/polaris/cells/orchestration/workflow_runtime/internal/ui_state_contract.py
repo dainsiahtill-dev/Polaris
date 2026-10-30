@@ -218,7 +218,7 @@ class UIStateConverter:
     """
 
     @staticmethod
-    def from_orchestration_snapshot(snapshot) -> UIOrchestrationState:
+    def from_orchestration_snapshot(snapshot: Any) -> UIOrchestrationState:
         """从编排快照转换"""
         from polaris.cells.orchestration.workflow_runtime.internal.runtime_contracts import RunStatus, TaskPhase
 

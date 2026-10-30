@@ -6,6 +6,8 @@ Public symbols are re-exported from the package ``__init__``.
 
 from __future__ import annotations
 
+from typing import Any
+
 from polaris.kernelone.errors._base import KernelOneError
 
 
@@ -20,13 +22,13 @@ class CommunicationError(KernelOneError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         code: str = "COMMUNICATION_ERROR",
         endpoint: str = "",
         protocol: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         kwargs.setdefault("retryable", True)
         super().__init__(message, code=code, **kwargs)
@@ -48,11 +50,11 @@ class NetworkError(CommunicationError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         url: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -71,11 +73,11 @@ class WebSocketSendError(CommunicationError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         session_id: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -99,12 +101,12 @@ class TimeoutError(CommunicationError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         timeout_seconds: float | None = None,
         operation: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -130,12 +132,12 @@ class RateLimitError(CommunicationError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         retry_after: float | None = None,
         limit_type: str = "requests",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(message, code="RATE_LIMIT_ERROR", **kwargs)
         self.retry_after = retry_after
@@ -156,12 +158,12 @@ class CircuitBreakerOpenError(CommunicationError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str = "Circuit breaker is open",
         *,
         circuit_name: str | None = None,
         retry_after: float | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         # Build detailed message if circuit_name is provided
         if message == "Circuit breaker is open" and circuit_name:
@@ -187,11 +189,11 @@ class AuthenticationError(CommunicationError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         provider: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         kwargs.setdefault("retryable", False)
         super().__init__(

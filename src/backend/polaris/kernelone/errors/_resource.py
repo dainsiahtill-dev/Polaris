@@ -6,6 +6,8 @@ Public symbols are re-exported from the package ``__init__``.
 
 from __future__ import annotations
 
+from typing import Any
+
 from polaris.kernelone.errors._base import KernelOneError
 
 
@@ -20,13 +22,13 @@ class ResourceError(KernelOneError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         code: str = "RESOURCE_ERROR",
         resource_type: str = "",
         resource_id: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(message, code=code, **kwargs)
         self.resource_type = resource_type
@@ -46,11 +48,11 @@ class FileNotFoundError(ResourceError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         file_path: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         kwargs.setdefault("retryable", False)
         super().__init__(
@@ -70,11 +72,11 @@ class StateNotFoundError(ResourceError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         state_key: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -92,11 +94,11 @@ class EvidenceNotFoundError(ResourceError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         evidence_id: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -118,13 +120,13 @@ class DatabaseError(ResourceError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         code: str = "DATABASE_ERROR",
         database_name: str = "",
         operation: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -143,11 +145,11 @@ class DatabasePathError(DatabaseError):
     """Database path resolution failed."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         path: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -163,11 +165,11 @@ class DatabasePolicyError(DatabaseError):
     """Database path violates storage policy."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         policy: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -183,9 +185,9 @@ class DatabaseConnectionError(DatabaseError):
     """Database connection failed."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         kwargs.setdefault("retryable", True)
         super().__init__(
@@ -200,11 +202,11 @@ class DatabaseDriverNotAvailableError(DatabaseError):
     """Database driver is missing."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         driver_name: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         kwargs.setdefault("retryable", False)
         super().__init__(
@@ -221,11 +223,11 @@ class RoleDataStoreError(ResourceError):
     """Role data store error."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         role_id: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,

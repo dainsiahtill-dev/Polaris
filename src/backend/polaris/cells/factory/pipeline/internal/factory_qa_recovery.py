@@ -207,7 +207,7 @@ async def repair_qa_role_findings(
             "source": "independent_qa_observation",
         }
 
-        async def collect(_session=session, _context=repair_context) -> MaterializationDiagnostics:
+        async def collect(_session: Any = session, _context: Any = repair_context) -> MaterializationDiagnostics:
             results = []
             for command in commands:
                 abort = await executor._quality_gate_abort_reason(executor._resolve_abort_checker(_context))
@@ -237,11 +237,11 @@ async def repair_qa_role_findings(
             *,
             errors: list[str],
             attempt: int,
-            _owner=owner_executor,
-            _context=repair_context,
-            _ordinal=ordinal,
-            _targets=target_files,
-            _task_id=task_id,
+            _owner: Any = owner_executor,
+            _context: Any = repair_context,
+            _ordinal: Any = ordinal,
+            _targets: Any = target_files,
+            _task_id: Any = task_id,
         ) -> Any:
             effects, summary = await _owner._apply_workspace_quality_llm_repairs(
                 run=run,

@@ -88,7 +88,9 @@ def _can_update_role_readiness(
     return bool(tested_model and model_identity_equal(active_model, tested_model))
 
 
-async def run_interactive_interview_question(settings, role, provider_id, model, question, **kwargs):
+async def run_interactive_interview_question(
+    settings: Any, role: Any, provider_id: Any, model: Any, question: Any, **kwargs: Any
+) -> Any:
     """Generate an interview answer through the evaluation service."""
     workspace = active_workspace_value(settings)
 
@@ -120,7 +122,9 @@ async def run_interactive_interview_question(settings, role, provider_id, model,
     }
 
 
-def save_interactive_interview_report(settings, role, provider_id, model, report, **kwargs):
+def save_interactive_interview_report(
+    settings: Any, role: Any, provider_id: Any, model: Any, report: Any, **kwargs: Any
+) -> Any:
     """Save an interview report through the evaluation service."""
     workspace = active_workspace_value(settings)
     update_role_readiness = _can_update_role_readiness(
@@ -142,7 +146,7 @@ def save_interactive_interview_report(settings, role, provider_id, model, report
 
 
 async def run_interactive_interview_streaming(
-    settings, role, provider_id, model, question, output_queue, **kwargs
+    settings: Any, role: Any, provider_id: Any, model: Any, question: Any, output_queue: Any, **kwargs: Any
 ) -> None:
     """Stream interview answer chunks through the evaluation service."""
     workspace = active_workspace_value(settings)

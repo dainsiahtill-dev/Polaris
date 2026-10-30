@@ -54,7 +54,7 @@ class IncrementalSemanticAnalyzer:
         self._config: dict[str, Any] | None = None
         self._init_db()
 
-    def _connect(self):
+    def _connect(self: Any) -> Any:
         return self._kernel_db.sqlite(
             str(self._db_path),
             timeout_seconds=10.0,

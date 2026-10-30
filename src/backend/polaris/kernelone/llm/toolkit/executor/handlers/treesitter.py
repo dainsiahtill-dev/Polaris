@@ -205,7 +205,7 @@ class TreeSitterSymbolHandler:
                 return 0.4
             return 0.0
 
-        def search_node(node) -> None:
+        def search_node(node: Any) -> None:
             if node.type in target_types:
                 name = self._extract_node_name(content, node)
                 if name and score_name(name) > 0:
@@ -241,7 +241,7 @@ class TreeSitterSymbolHandler:
             )
         return ("class_declaration", "class_definition", "function_declaration", "function_definition")
 
-    def _extract_node_name(self, content: str, node) -> str:
+    def _extract_node_name(self: Any, content: str, node: Any) -> str:
         """Extract the name identifier from an AST node."""
         for field in ("name", "property", "identifier"):
             child = node.child_by_field_name(field)

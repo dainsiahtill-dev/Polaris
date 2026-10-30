@@ -171,7 +171,7 @@ def _resolve_pm_module_path(module_path: str) -> str:
     return module_path
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """Lazy import of symbols to avoid circular imports."""
     global state_manager, requirements_tracker, document_manager
     global task_orchestrator, execution_tracker, pm_integration
@@ -245,7 +245,7 @@ def __getattr__(name: str):
     raise AttributeError(f"module 'pm' has no attribute '{name}'")
 
 
-def __dir__():
+def __dir__() -> Any:
     """Return list of available attributes."""
     return sorted(
         {

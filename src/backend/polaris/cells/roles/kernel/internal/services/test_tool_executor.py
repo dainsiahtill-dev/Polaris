@@ -12,6 +12,7 @@ Test coverage:
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -35,7 +36,7 @@ from polaris.kernelone.errors import ErrorCategory
 
 
 @pytest.fixture
-def mock_profile():
+def mock_profile() -> Any:
     """Create a mock RoleProfile for testing."""
     profile = MagicMock()
     profile.role_id = "test_role"
@@ -45,7 +46,7 @@ def mock_profile():
 
 
 @pytest.fixture
-def director_profile():
+def director_profile() -> Any:
     """Create a mock Director RoleProfile for testing."""
     profile = MagicMock()
     profile.role_id = "director"
@@ -55,14 +56,14 @@ def director_profile():
 
 
 @pytest.fixture
-def mock_backend():
+def mock_backend() -> Any:
     """Create a mock ToolExecutionBackend."""
     backend = AsyncMock(spec=ToolExecutionBackend)
     return backend
 
 
 @pytest.fixture
-def executor(mock_backend):
+def executor(mock_backend: Any) -> Any:
     """Create a ToolExecutor with mock backend."""
     return ToolExecutor(
         workspace=".",
@@ -81,7 +82,7 @@ class TestExecuteSingleNormal:
     """Tests for normal execute_single behavior."""
 
     @pytest.mark.asyncio
-    async def test_execute_single_success(self, executor, mock_backend, mock_profile) -> None:
+    async def test_execute_single_success(self: Any, executor: Any, mock_backend: Any, mock_profile: Any) -> None:
         """Test successful tool execution."""
         # Arrange
         mock_backend.execute.return_value = {
@@ -106,7 +107,7 @@ class TestExecuteSingleNormal:
         )
 
     @pytest.mark.asyncio
-    async def test_execute_single_failure(self, executor, mock_backend, mock_profile) -> None:
+    async def test_execute_single_failure(self: Any, executor: Any, mock_backend: Any, mock_profile: Any) -> None:
         """Test failed tool execution."""
         # Arrange
         mock_backend.execute.return_value = {
@@ -126,10 +127,10 @@ class TestExecuteSingleNormal:
 
     @pytest.mark.asyncio
     async def test_execute_single_preserves_structured_retryable_flag(
-        self,
-        executor,
-        mock_backend,
-        mock_profile,
+        self: Any,
+        executor: Any,
+        mock_backend: Any,
+        mock_profile: Any,
     ) -> None:
         """Tool handlers can mark teaching errors retryable without keyword hacks."""
         mock_backend.execute.return_value = {
@@ -147,7 +148,7 @@ class TestExecuteSingleNormal:
         assert result.retryable is True
 
     @pytest.mark.asyncio
-    async def test_execute_single_with_call_id(self, executor, mock_backend, mock_profile) -> None:
+    async def test_execute_single_with_call_id(self: Any, executor: Any, mock_backend: Any, mock_profile: Any) -> None:
         """Test that call_id is preserved in result."""
         # Arrange
         mock_backend.execute.return_value = {"success": True, "result": "data"}
@@ -160,7 +161,9 @@ class TestExecuteSingleNormal:
         assert result.call_id == "call-123"
 
     @pytest.mark.asyncio
-    async def test_execute_single_non_dict_result(self, executor, mock_backend, mock_profile) -> None:
+    async def test_execute_single_non_dict_result(
+        self: Any, executor: Any, mock_backend: Any, mock_profile: Any
+    ) -> None:
         """Test handling of non-dict result from backend."""
         # Arrange
         mock_backend.execute.return_value = "raw string result"
@@ -183,7 +186,7 @@ class TestExecuteSingleTimeout:
     """Tests for timeout handling."""
 
     @pytest.mark.asyncio
-    async def test_execute_single_timeout(self, executor, mock_backend, mock_profile) -> None:
+    async def test_execute_single_timeout(self: Any, executor: Any, mock_backend: Any, mock_profile: Any) -> None:
         """Test timeout handling."""
         # Arrange
         mock_backend.execute.side_effect = asyncio.TimeoutError()
@@ -199,7 +202,7 @@ class TestExecuteSingleTimeout:
         assert "timed out" in result.error.lower()
 
     @pytest.mark.asyncio
-    async def test_director_longer_timeout(self, mock_backend) -> None:
+    async def test_director_longer_timeout(self: Any, mock_backend: Any) -> None:
         """Test that director role gets longer timeout."""
         # Arrange
         executor = ToolExecutor(workspace=".", backend=mock_backend)
@@ -210,7 +213,7 @@ class TestExecuteSingleTimeout:
         # Mock to track timeout value
         timeout_captured = []
 
-        async def capture_wait_for(coro, timeout):
+        async def capture_wait_for(coro: Any, timeout: Any) -> Any:
             timeout_captured.append(timeout)
             return await coro
 
@@ -225,7 +228,7 @@ class TestExecuteSingleTimeout:
         assert timeout_captured[0] == TIMEOUT_DIRECTOR_SECONDS
 
     @pytest.mark.asyncio
-    async def test_custom_timeout_from_profile(self, mock_backend) -> None:
+    async def test_custom_timeout_from_profile(self: Any, mock_backend: Any) -> None:
         """Test custom timeout from profile configuration."""
         # Arrange
         executor = ToolExecutor(workspace=".", backend=mock_backend)
@@ -236,7 +239,7 @@ class TestExecuteSingleTimeout:
 
         timeout_captured = []
 
-        async def capture_wait_for(coro, timeout):
+        async def capture_wait_for(coro: Any, timeout: Any) -> Any:
             timeout_captured.append(timeout)
             return await coro
 
@@ -260,7 +263,7 @@ class TestErrorClassification:
     """Tests for error classification and retryable flags."""
 
     @pytest.mark.asyncio
-    async def test_rate_limit_error(self, executor, mock_backend, mock_profile) -> None:
+    async def test_rate_limit_error(self: Any, executor: Any, mock_backend: Any, mock_profile: Any) -> None:
         """Test rate limit error classification."""
         # Arrange
         mock_backend.execute.side_effect = Exception("Rate limit exceeded: 429")
@@ -275,7 +278,7 @@ class TestErrorClassification:
         assert result.retryable is True
 
     @pytest.mark.asyncio
-    async def test_network_error(self, executor, mock_backend, mock_profile) -> None:
+    async def test_network_error(self: Any, executor: Any, mock_backend: Any, mock_profile: Any) -> None:
         """Test network error classification."""
         # Arrange
         mock_backend.execute.side_effect = Exception("Network connection refused")
@@ -289,7 +292,7 @@ class TestErrorClassification:
         assert result.retryable is True
 
     @pytest.mark.asyncio
-    async def test_authorization_error(self, executor, mock_backend, mock_profile) -> None:
+    async def test_authorization_error(self: Any, executor: Any, mock_backend: Any, mock_profile: Any) -> None:
         """Test authorization error classification."""
         # Arrange
         mock_backend.execute.side_effect = Exception("Unauthorized: 403")
@@ -303,7 +306,7 @@ class TestErrorClassification:
         assert result.retryable is False
 
     @pytest.mark.asyncio
-    async def test_validation_error(self, executor, mock_backend, mock_profile) -> None:
+    async def test_validation_error(self: Any, executor: Any, mock_backend: Any, mock_profile: Any) -> None:
         """Test validation error classification."""
         # Arrange
         mock_backend.execute.side_effect = Exception("Validation failed: missing required field")
@@ -317,7 +320,7 @@ class TestErrorClassification:
         assert result.retryable is False
 
     @pytest.mark.asyncio
-    async def test_not_found_error(self, executor, mock_backend, mock_profile) -> None:
+    async def test_not_found_error(self: Any, executor: Any, mock_backend: Any, mock_profile: Any) -> None:
         """Test not found error classification."""
         # Arrange
         mock_backend.execute.side_effect = Exception("File not found: 404")
@@ -340,7 +343,7 @@ class TestExecuteBatch:
     """Tests for batch execution."""
 
     @pytest.mark.asyncio
-    async def test_execute_batch_success(self, executor, mock_backend, mock_profile) -> None:
+    async def test_execute_batch_success(self: Any, executor: Any, mock_backend: Any, mock_profile: Any) -> None:
         """Test successful batch execution."""
         # Arrange
         mock_backend.execute.side_effect = [
@@ -365,7 +368,7 @@ class TestExecuteBatch:
         assert results[2].result == "content3"
 
     @pytest.mark.asyncio
-    async def test_execute_batch_empty(self, executor, mock_profile) -> None:
+    async def test_execute_batch_empty(self: Any, executor: Any, mock_profile: Any) -> None:
         """Test batch execution with empty list."""
         # Act
         results = await executor.execute_batch([], mock_profile)
@@ -374,7 +377,9 @@ class TestExecuteBatch:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_execute_batch_partial_failure(self, executor, mock_backend, mock_profile) -> None:
+    async def test_execute_batch_partial_failure(
+        self: Any, executor: Any, mock_backend: Any, mock_profile: Any
+    ) -> None:
         """Test batch execution with partial failures."""
         # Arrange
         mock_backend.execute.side_effect = [
@@ -398,12 +403,14 @@ class TestExecuteBatch:
         assert results[2].success is True
 
     @pytest.mark.asyncio
-    async def test_execute_batch_preserves_order(self, executor, mock_backend, mock_profile) -> None:
+    async def test_execute_batch_preserves_order(
+        self: Any, executor: Any, mock_backend: Any, mock_profile: Any
+    ) -> None:
         """Test that batch execution preserves call order."""
         # Arrange
         execution_order = []
 
-        async def track_execution(tool_name, args, **kwargs):
+        async def track_execution(tool_name: Any, args: Any, **kwargs: Any) -> Any:
             execution_order.append(tool_name)
             return {"success": True, "result": tool_name}
 
@@ -431,7 +438,7 @@ class TestExecuteWithFallback:
     """Tests for execute_with_fallback retry mechanism."""
 
     @pytest.mark.asyncio
-    async def test_success_no_retry(self, executor, mock_backend, mock_profile) -> None:
+    async def test_success_no_retry(self: Any, executor: Any, mock_backend: Any, mock_profile: Any) -> None:
         """Test that successful execution doesn't retry."""
         # Arrange
         mock_backend.execute.return_value = {"success": True, "result": "data"}
@@ -445,7 +452,7 @@ class TestExecuteWithFallback:
         assert mock_backend.execute.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_retry_on_retryable_error(self, executor, mock_backend, mock_profile) -> None:
+    async def test_retry_on_retryable_error(self: Any, executor: Any, mock_backend: Any, mock_profile: Any) -> None:
         """Test retry on retryable error."""
         # Arrange
         mock_backend.execute.side_effect = [
@@ -462,7 +469,9 @@ class TestExecuteWithFallback:
         assert mock_backend.execute.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_no_retry_on_non_retryable_error(self, executor, mock_backend, mock_profile) -> None:
+    async def test_no_retry_on_non_retryable_error(
+        self: Any, executor: Any, mock_backend: Any, mock_profile: Any
+    ) -> None:
         """Test no retry on non-retryable error."""
         # Arrange
         mock_backend.execute.side_effect = Exception("Permission denied: 403")
@@ -476,7 +485,7 @@ class TestExecuteWithFallback:
         assert mock_backend.execute.call_count == 1  # No retry
 
     @pytest.mark.asyncio
-    async def test_max_retries_exceeded(self, executor, mock_backend, mock_profile) -> None:
+    async def test_max_retries_exceeded(self: Any, executor: Any, mock_backend: Any, mock_profile: Any) -> None:
         """Test behavior when max retries exceeded."""
         # Arrange
         mock_backend.execute.side_effect = Exception("Network timeout")
@@ -500,7 +509,7 @@ class TestEdgeCases:
     """Tests for edge cases."""
 
     @pytest.mark.asyncio
-    async def test_empty_tool_name(self, executor, mock_profile) -> None:
+    async def test_empty_tool_name(self: Any, executor: Any, mock_profile: Any) -> None:
         """Test handling of empty tool name."""
         # Arrange
         call = ToolCall(tool="", args={})
@@ -514,7 +523,9 @@ class TestEdgeCases:
         assert result.error_category == ErrorCategory.VALIDATION
 
     @pytest.mark.asyncio
-    async def test_none_args_defaults_to_empty_dict(self, executor, mock_backend, mock_profile) -> None:
+    async def test_none_args_defaults_to_empty_dict(
+        self: Any, executor: Any, mock_backend: Any, mock_profile: Any
+    ) -> None:
         """Test that None args defaults to empty dict."""
         # Arrange
         mock_backend.execute.return_value = {"success": True}
@@ -528,7 +539,7 @@ class TestEdgeCases:
         assert call_args[0][1] == {}  # Second positional arg should be empty dict
 
     @pytest.mark.asyncio
-    async def test_execution_time_tracking(self, executor, mock_backend, mock_profile) -> None:
+    async def test_execution_time_tracking(self: Any, executor: Any, mock_backend: Any, mock_profile: Any) -> None:
         """Test that execution time is tracked."""
         # Arrange
         mock_backend.execute.return_value = {"success": True}
@@ -541,7 +552,7 @@ class TestEdgeCases:
         assert result.execution_time_ms >= 0
 
     @pytest.mark.asyncio
-    async def test_tool_result_to_dict(self, executor, mock_backend, mock_profile) -> None:
+    async def test_tool_result_to_dict(self: Any, executor: Any, mock_backend: Any, mock_profile: Any) -> None:
         """Test ToolResult.to_dict method."""
         # Arrange
         mock_backend.execute.return_value = {"success": True, "result": "data"}
@@ -635,7 +646,7 @@ class TestFactoryFunctions:
         assert isinstance(executor, ToolExecutor)
         assert executor._workspace == "/test"
 
-    def test_create_tool_executor_with_backend(self, mock_backend) -> None:
+    def test_create_tool_executor_with_backend(self: Any, mock_backend: Any) -> None:
         """Test create_tool_executor with backend."""
         executor = create_tool_executor(workspace=".", backend=mock_backend)
         assert executor._backend is mock_backend

@@ -69,7 +69,7 @@ class TurnPhaseRenderer:
             for line in lines:
                 yield line
 
-    def _render_event(self, event) -> list[str]:
+    def _render_event(self: Any, event: Any) -> list[str]:
         """渲染单个事件"""
         if isinstance(event, TurnPhaseEvent):
             return self._render_phase_event(event)

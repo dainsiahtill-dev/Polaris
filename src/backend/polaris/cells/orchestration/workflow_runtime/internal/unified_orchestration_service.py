@@ -911,11 +911,11 @@ class UnifiedOrchestrationService(OrchestrationService):
         )
 
     async def _update_task_status_with_changes(
-        self,
+        self: Any,
         run_id: str,
         task_id: str,
         status: RunStatus,
-        file_changes,
+        file_changes: Any,
         error_message: str | None = None,
         result_evidence: dict[str, Any] | None = None,
     ) -> None:

@@ -33,11 +33,11 @@ class ContextOSInvariantViolationError(ValidationError):
     """Raised when a persisted Context OS payload violates ownership invariants."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         code: str = "CONTEXT_OS_INVARIANT_VIOLATION",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,

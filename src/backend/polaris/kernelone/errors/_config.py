@@ -6,6 +6,8 @@ Public symbols are re-exported from the package ``__init__``.
 
 from __future__ import annotations
 
+from typing import Any
+
 from polaris.kernelone.errors._base import KernelOneError
 
 
@@ -21,13 +23,13 @@ class ConfigurationError(KernelOneError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         code: str = "CONFIG_ERROR",
         field: str = "",
         config_path: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         kwargs.setdefault("retryable", False)
         super().__init__(message, code=code, **kwargs)
@@ -46,11 +48,11 @@ class ConfigLoadError(ConfigurationError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         config_path: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,
@@ -70,11 +72,11 @@ class ConfigValidationError(ConfigurationError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         validation_errors: list[str] | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(message, code="CONFIG_VALIDATION_ERROR", **kwargs)
         self.validation_errors = validation_errors or []
@@ -89,12 +91,12 @@ class ConfigMigrationError(ConfigurationError):
     """
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         from_version: str = "",
         to_version: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(message, code="CONFIG_MIGRATION_ERROR", **kwargs)
         if from_version:
@@ -107,12 +109,12 @@ class BootstrapError(ConfigurationError):
     """Bootstrap initialization failed."""
 
     def __init__(
-        self,
+        self: Any,
         message: str,
         *,
         phase: str = "",
         stage: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             message,

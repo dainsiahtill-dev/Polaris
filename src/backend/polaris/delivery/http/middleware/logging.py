@@ -161,7 +161,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         return entry
 
-    async def dispatch(self, request: Request, call_next) -> Any:
+    async def dispatch(self: Any, request: Request, call_next: Any) -> Any:
         """Process request with logging."""
         if not self._log_requests:
             return await call_next(request)

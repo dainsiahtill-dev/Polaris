@@ -10,6 +10,7 @@ import signal
 import time
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import Any
 
 from polaris.kernelone.errors import TimeoutError as _CanonicalTimeoutError
 from tree_sitter_language_pack import get_parser
@@ -39,7 +40,7 @@ class TimeoutError(_CanonicalTimeoutError):
     pass
 
 
-def _timeout_handler(signum: int, frame) -> None:
+def _timeout_handler(signum: int, frame: Any) -> None:
     """Signal handler for timeout."""
     raise TimeoutError("Tree-sitter availability check timed out", operation="tree-sitter availability check")
 

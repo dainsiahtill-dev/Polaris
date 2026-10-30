@@ -282,7 +282,7 @@ if __name__ == "__main__":
         def is_initialized(self) -> bool:
             return True
 
-        def initialize(self, **kwargs) -> dict[str, Any]:
+        def initialize(self: Any, **kwargs: Any) -> dict[str, Any]:
             return {"success": True}
 
     cli = RoleCLI(ExampleRole, prog="example", description="Example role CLI")

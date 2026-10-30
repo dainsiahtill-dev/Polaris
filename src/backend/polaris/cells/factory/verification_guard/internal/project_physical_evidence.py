@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from posixpath import join as join_posix_path, normpath
 from threading import Lock
+from typing import Any
 
 from polaris.cells.factory.verification_guard.internal.project_completion_authority import (
     observe_project_completion_owner,
@@ -91,7 +92,7 @@ def _active_verifier_for_entrypoint(
 
 def _command_authority(
     contract: ProjectCompletionContractObservationV1, verifier: ProjectVerificationObligationObservationV1
-):
+) -> Any:
     authority_hash = verifier.command_authority_hash
     candidates = tuple(
         item

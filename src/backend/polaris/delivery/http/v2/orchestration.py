@@ -249,7 +249,7 @@ async def list_runs(
 # ============================================================================
 
 
-def _convert_snapshot_to_response(snapshot) -> OrchestrationSnapshotResponse:
+def _convert_snapshot_to_response(snapshot: Any) -> OrchestrationSnapshotResponse:
     """转换快照为响应模型"""
     tasks = {}
     for task_id, task in snapshot.tasks.items():

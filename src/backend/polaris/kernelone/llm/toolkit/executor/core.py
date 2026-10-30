@@ -330,13 +330,13 @@ class AgentAccelToolExecutor:
     async def __aenter__(self) -> AgentAccelToolExecutor:
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(self: Any, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         await self.close()
 
     def __enter__(self) -> AgentAccelToolExecutor:
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(self: Any, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         self.close_sync()
 
     def _validate_arguments(self, tool_name: str, arguments: dict[str, Any]) -> str | None:
@@ -645,7 +645,7 @@ class AgentAccelToolExecutor:
     # Tree-sitter handlers (complex, kept in core for now)
     # ========================================================================
 
-    def _handle_treesitter_find_symbol(self, **kwargs) -> dict[str, Any]:
+    def _handle_treesitter_find_symbol(self: Any, **kwargs: Any) -> dict[str, Any]:
         """Find symbol definitions using tree-sitter AST analysis with fuzzy match."""
         return cast("dict[str, Any]", (self._treesitter_handler.find_symbol(**kwargs)))
 

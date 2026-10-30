@@ -221,7 +221,7 @@ def _do_requests_post(
     headers: dict[str, str],
     payload: dict[str, Any],
     timeout: HttpTimeout,
-):
+) -> Any:
     """Thread-safe requests.post call (for ThreadPoolExecutor wrapping)."""
     timeout_value: HttpTimeout | None = timeout
     if isinstance(timeout, (int, float)) and timeout <= 0:
@@ -239,7 +239,7 @@ def _raw_blocking_http_post(
     headers: dict[str, str],
     payload: dict[str, Any],
     timeout: HttpTimeout,
-):
+) -> Any:
     """Call requests.post without Factory governance; callers must fence it.
 
     When called from an async context (running event loop), the HTTP request
@@ -278,7 +278,7 @@ def _blocking_http_post(
     headers: dict[str, str],
     payload: dict[str, Any],
     timeout: HttpTimeout,
-):
+) -> Any:
     """Dispatch one direct sync HTTP attempt through a bound Factory gate."""
 
     bound_port = get_physical_provider_dispatch_port()
@@ -317,7 +317,7 @@ def _do_requests_get(
     url: str,
     headers: dict[str, str],
     timeout: HttpTimeout,
-):
+) -> Any:
     """Thread-safe requests.get call (for ThreadPoolExecutor wrapping)."""
     timeout_value: HttpTimeout | None = timeout
     if isinstance(timeout, (int, float)) and timeout <= 0:
@@ -329,7 +329,7 @@ def _blocking_http_get(
     url: str,
     headers: dict[str, str],
     timeout: HttpTimeout,
-):
+) -> Any:
     """Call requests.get safely, offloading to a thread when an event loop is running.
 
     This prevents sync requests.get() from freezing the asyncio event loop when

@@ -22,7 +22,7 @@ def register_handlers() -> dict[str, Any]:
     }
 
 
-def _handle_glob(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_glob(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle glob tool call.
 
     Args:
@@ -137,7 +137,7 @@ def _resolve_glob_pattern(pattern: str, recursive: bool) -> str:
     return pattern
 
 
-def _handle_list_directory(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_list_directory(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle list_directory tool call.
 
     Args:
@@ -263,7 +263,7 @@ def _handle_list_directory(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
     return result
 
 
-def _handle_file_exists(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
+def _handle_file_exists(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
     """Handle file_exists tool call.
 
     Args:

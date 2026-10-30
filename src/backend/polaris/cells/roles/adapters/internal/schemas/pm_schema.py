@@ -3,7 +3,7 @@
 Defines the structured output format for project management task planning.
 """
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -101,7 +101,7 @@ class TaskListOutput(BaseToolEnabledOutput):
 
     @field_validator("analysis", mode="after")
     @classmethod
-    def check_analysis_consistency(cls, v: TaskAnalysis, info) -> TaskAnalysis:
+    def check_analysis_consistency(cls: Any, v: TaskAnalysis, info: Any) -> TaskAnalysis:
         """Ensure analysis is consistent with tasks when complete."""
         data = info.data
         tasks = data.get("tasks", [])

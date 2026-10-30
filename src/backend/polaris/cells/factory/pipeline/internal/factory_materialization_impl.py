@@ -1946,7 +1946,7 @@ async def _continue_materialization_verifier_repair(
             if authority_binding is None:
                 authority_binding = authority_port.mint_authority_binding("director")
 
-            async def repair_operation(_errors=tuple(errors), _round=round_number):
+            async def repair_operation(_errors: Any = tuple(errors), _round: Any = round_number) -> Any:
                 if repair_candidate is not None:
                     return await repair_candidate(errors=list(_errors), attempt=_round + 1)
                 return await _apply_workspace_quality_llm_repairs(

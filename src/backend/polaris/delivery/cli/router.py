@@ -30,7 +30,7 @@ import os
 import sys
 import typing
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from polaris.kernelone.storage import resolve_runtime_path
 
@@ -272,7 +272,7 @@ def _route_session(args: argparse.Namespace) -> int:
         return 1
 
 
-def _session_list(service, args: argparse.Namespace) -> int:
+def _session_list(service: Any, args: argparse.Namespace) -> int:
     """List recorded sessions using the existing read-only owner."""
     limit = max(1, int(getattr(args, "limit", 20) or 20))
     state = str(getattr(args, "state", "") or "").strip() or None
@@ -282,7 +282,7 @@ def _session_list(service, args: argparse.Namespace) -> int:
     return 0
 
 
-def _session_show(service, args: argparse.Namespace) -> int:
+def _session_show(service: Any, args: argparse.Namespace) -> int:
     """Show one workspace-bound historical record without reactivating it."""
     session_id = str(getattr(args, "session_id", "") or "").strip()
     if not session_id:
@@ -298,14 +298,14 @@ def _session_show(service, args: argparse.Namespace) -> int:
     return 0
 
 
-def _session_switch(host, args: argparse.Namespace) -> int:
+def _session_switch(host: Any, args: argparse.Namespace) -> int:
     """Retired mutation; historical inspection remains available."""
     from polaris.delivery.cli.engineering import reject_legacy_execution
 
     return cast("int", (reject_legacy_execution()))
 
 
-def _session_clear(host, args: argparse.Namespace) -> int:
+def _session_clear(host: Any, args: argparse.Namespace) -> int:
     """Retired mutation; historical inspection remains available."""
     from polaris.delivery.cli.engineering import reject_legacy_execution
 
