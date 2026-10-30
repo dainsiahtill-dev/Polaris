@@ -14,7 +14,16 @@ import logging
 from typing import TYPE_CHECKING
 
 # Re-export canonical function from kernelone.storage.paths
-from polaris.kernelone.storage.paths import resolve_preferred_logical_prefix  # noqa: F401
+from polaris.kernelone.storage.paths import resolve_preferred_logical_prefix
+
+__all__ = (
+    "TYPE_CHECKING",
+    "annotations",
+    "logger",
+    "logging",
+    "resolve_preferred_logical_prefix",
+    "resolve_preferred_sqlite_path",
+)
 
 if TYPE_CHECKING:
     from polaris.kernelone.db import KernelDatabase

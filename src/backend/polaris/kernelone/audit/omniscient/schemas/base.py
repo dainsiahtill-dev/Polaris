@@ -25,6 +25,25 @@ from polaris.kernelone.audit.omniscient.bus import AuditPriority
 from polaris.kernelone.type_ops import opaque_isinstance
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+__all__ = (
+    "Any",
+    "AuditEvent",
+    "AuditPriority",
+    "AuditPriorityStr",
+    "BaseModel",
+    "ConfigDict",
+    "Enum",
+    "EventDomain",
+    "Field",
+    "Self",
+    "annotations",
+    "datetime",
+    "field_validator",
+    "opaque_isinstance",
+    "timezone",
+    "uuid",
+)
+
 
 class EventDomain(str, Enum):
     """Event domain classification for the omniscient audit system.

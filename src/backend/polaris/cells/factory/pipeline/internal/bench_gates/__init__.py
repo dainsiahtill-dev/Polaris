@@ -227,7 +227,10 @@ from ._gates import (
     resolve_expected_llm_bindings,
 )
 
-__all__ = [
+__all__ = (
+    "CANONICAL_BENCH_PROJECTION_SOURCE",
+    "LEGACY_BENCH_ARTIFACT_SOURCE",
+    "_norm_text",
     "aggregate_goal_audit",
     "apply_factory_bench_failure_taxonomy",
     "build_llm_route_audit",
@@ -235,7 +238,7 @@ __all__ = [
     "classify_factory_bench_failure",
     "collect_llm_events",
     "resolve_expected_llm_bindings",
-]
+)
 
 # Propagate monkeypatch.setattr(package, name, value) into submodules so tests
 # that patch package-level helpers (e.g. _run_command) still affect call sites

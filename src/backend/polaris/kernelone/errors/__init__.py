@@ -164,35 +164,28 @@ from polaris.kernelone.errors._workflow import (
 # Preserve module-level logger identity (name == polaris.kernelone.errors).
 logger = logging.getLogger(__name__)
 
-__all__ = [
-    # Audit
+__all__ = (
     "AuditError",
     "AuditFieldError",
     "AuthenticationError",
     "BackendBootstrapError",
-    # Bootstrap
     "BootstrapError",
     "BudgetExceededError",
-    # Cell
     "CellError",
     "ChaosCircuitBreakerError",
-    # Chaos
     "ChaosError",
     "ChaosInjectionError",
     "ChaosSkippedError",
     "CircuitBreakerOpenError",
     "CodeGenerationError",
     "CodeGenerationPolicyViolationError",
-    # Communication
     "CommunicationError",
     "ConfigLoadError",
     "ConfigMigrationError",
     "ConfigValidationError",
-    # Configuration
     "ConfigurationError",
     "ConstitutionViolationError",
     "ContextCompilationError",
-    # Context
     "ContextError",
     "ContextOverflowError",
     "DatabaseConnectionError",
@@ -201,14 +194,11 @@ __all__ = [
     "DatabasePathError",
     "DatabasePolicyError",
     "DeadlockDetectedError",
-    # Root
     "ErrorCategory",
-    # Event
     "EventError",
     "EventPublishError",
     "EventSourcingError",
     "EvidenceNotFoundError",
-    # Execution
     "ExecutionError",
     "FileNotFoundError",
     "InferenceEngineNotConfiguredError",
@@ -217,6 +207,7 @@ __all__ = [
     "InvalidToolStateTransitionError",
     "KernelAuditWriteError",
     "KernelOneError",
+    "LLMError",
     "LauncherError",
     "LockTimeoutError",
     "NetworkChaosError",
@@ -225,43 +216,34 @@ __all__ = [
     "OrchestrationError",
     "PathSecurityError",
     "PathTraversalError",
-    # Permission
     "PermissionError",
     "PermissionServiceError",
     "ProcessRunnerError",
     "RateLimitError",
     "RateLimitExceededError",
     "ReservedKeyViolationError",
-    # Resource
     "ResourceError",
-    # Retry/Resilience
     "RetryableError",
     "RoleDataStoreError",
-    # Shadow Replay
     "ShadowReplayError",
     "ShellDisallowedError",
-    # State
     "StateError",
     "StateNotFoundError",
     "TaskStateError",
-    # Testing
     "TestingInfrastructureError",
     "TimeoutError",
     "ToolAuthorizationError",
-    "ToolError",  # Legacy compatibility
+    "ToolError",
     "ToolExecutionError",
     "TurnDecisionDecodeError",
-    # Turn Decision
     "TurnDecisionError",
-    # Validation
     "ValidationError",
     "VisionNotAvailableError",
-    # Vision Service
     "VisionServiceError",
     "WebSocketSendError",
     "WorkerStateError",
     "WorkflowContractError",
-    # Workflow Runtime
     "WorkflowRuntimeError",
     "WorkflowUnavailableError",
-]
+    "classify_error",
+)

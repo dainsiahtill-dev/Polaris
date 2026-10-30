@@ -153,6 +153,34 @@ from ._language import (
     run_cpp_post_repairs_as_tool_results,
 )
 
+__all__ = (
+    "Any",
+    "Callable",
+    "ConvergenceVerifier",
+    "DirectorRepairPostExecutionStepV1",
+    "Mapping",
+    "Path",
+    "QueryDirectorRepairAdvisoryValidationV1",
+    "QueryDirectorRepairStrategyCatalogV1",
+    "RepairAdvisoryV1",
+    "RuntimeAdvisorNotes",
+    "StepRunner",
+    "TaskRuntimeExecutionAttemptIdentityV1",
+    "_runtime_executable_source_tools",
+    "annotations",
+    "contextlib",
+    "project_repair_kernel_summary",
+    "query_director_repair_post_execution_schedule",
+    "query_director_repair_strategy_catalog",
+    "re",
+    "run_cpp_post_repairs_as_tool_results",
+    "run_director_post_execution_repair_schedule_result",
+    "run_post_execution_language_repairs",
+    "run_runtime_repair_with_director_tools",
+    "tomllib",
+    "validate_director_repair_advisory",
+)
+
 _POST_EXECUTION_REPAIR_RUNNERS: dict[str, StepRunner] = {
     "go.module_import": lambda adapter, workspace, task_id: _run_go_post_repairs(adapter, task_id=task_id),
     "rust.dependency_resolution": lambda adapter, workspace, task_id: _run_rust_dependency_repair(

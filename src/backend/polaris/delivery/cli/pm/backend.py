@@ -749,11 +749,14 @@ def build_pm_prompt(
     )
 
 
-__all__ = [
+__all__ = (
     "_extract_json_from_llm_output",
     "_resolve_role_runtime_llm_config",
+    "_use_context_engine_v2",
     "build_pm_prompt",
     "ensure_pm_backend_available",
+    "get_anthropomorphic_context",
+    "get_anthropomorphic_context_v2",
     "invoke_pm_backend",
     "resolve_pm_backend_kind",
-]
+)

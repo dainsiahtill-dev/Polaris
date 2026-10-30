@@ -289,7 +289,7 @@ from ._lifecycle import (
     update_resident_identity,
 )
 
-__all__ = [
+__all__ = (
     "ApproveResidentGoalCommandV1",
     "BuildResidentAgiRepairAdvisoryOverlayCommandV1",
     "CapabilityGraph",
@@ -299,6 +299,7 @@ __all__ = [
     "DecisionTraceRecorder",
     "EvidenceBundle",
     "EvidenceBundleService",
+    "ExecuteResidentAgiTacticalActionCommandV1",
     "ExecutionProjectionService",
     "ExtractResidentSkillsCommandV1",
     "FileChange",
@@ -310,6 +311,7 @@ __all__ = [
     "QueryResidentAgiEvidenceInterfacesV1",
     "QueryResidentAgiHandoffsV1",
     "QueryResidentAgiRepairAdvisoryOverlayV1",
+    "QueryResidentAgiTacticalChatV1",
     "QueryResidentCapabilitiesV1",
     "QueryResidentStatusV1",
     "RecordResidentDecisionCommandV1",
@@ -349,6 +351,7 @@ __all__ = [
     "UpdateResidentIdentityCommandV1",
     "approve_resident_goal",
     "archive_resident_goal",
+    "build_resident_agi_audit_pack",
     "build_resident_agi_authority_matrix",
     "build_resident_agi_capability_access_registry",
     "build_resident_agi_capability_surface",
@@ -359,9 +362,13 @@ __all__ = [
     "build_resident_agi_repair_advisory_overlay",
     "create_evidence_bundle_service",
     "create_resident_goal",
+    "create_role_adapter",
+    "execute_resident_agi_tactical_action",
     "extract_resident_skills",
+    "get_anthropomorphic_context_v2",
     "get_evidence_service",
     "get_execution_projection_service",
+    "get_log_jetstream_publisher",
     "get_resident_service",
     "materialize_resident_goal",
     "observe_resident_goal_attempt",
@@ -370,6 +377,8 @@ __all__ = [
     "query_resident_agi_evidence_interfaces",
     "query_resident_agi_handoffs",
     "query_resident_agi_repair_advisory_overlay",
+    "query_resident_agi_tactical_action_catalog",
+    "query_resident_agi_tactical_chat",
     "query_resident_capabilities",
     "query_resident_goal_execution",
     "query_resident_status",
@@ -379,6 +388,7 @@ __all__ = [
     "reject_resident_goal",
     "reset_resident_services",
     "resident_agi_capability_surface_payload",
+    "resolve_storage_roots",
     "run_resident_agi_decision_turn",
     "run_resident_cycle",
     "run_resident_experiments",
@@ -392,4 +402,4 @@ __all__ = [
     "stop_resident",
     "update_resident_agi_participation",
     "update_resident_identity",
-]
+)

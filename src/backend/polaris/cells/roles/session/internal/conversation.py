@@ -42,6 +42,51 @@ from sqlalchemy import (
 from sqlalchemy.orm import Session, declarative_base, relationship, sessionmaker
 from sqlalchemy.pool import NullPool, StaticPool
 
+__all__ = (
+    "Any",
+    "AttachmentMode",
+    "Base",
+    "Column",
+    "Conversation",
+    "ConversationMessage",
+    "DateTime",
+    "Engine",
+    "ForeignKey",
+    "Index",
+    "Integer",
+    "KernelDatabase",
+    "NullPool",
+    "Path",
+    "RoleHostKind",
+    "Session",
+    "SessionState",
+    "SessionType",
+    "SqlAlchemyAdapter",
+    "StaticPool",
+    "String",
+    "Text",
+    "_utc_now",
+    "annotations",
+    "cast",
+    "declarative_base",
+    "event",
+    "get_db",
+    "get_engine",
+    "get_session_local",
+    "init_db",
+    "json",
+    "os",
+    "quote",
+    "relationship",
+    "resolve_preferred_sqlite_path",
+    "resolve_storage_roots_read_only",
+    "sanitize_conversation_message_payload",
+    "sessionmaker",
+    "sha256",
+    "threading",
+    "uuid",
+)
+
 # SQLAlchemy's declarative_base() returns a dynamically created class
 # that is valid as a base class for ORM models.
 Base: Any = declarative_base()

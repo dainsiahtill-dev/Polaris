@@ -129,9 +129,10 @@ from ._scope_lease import (
 # Preserve original module logger identity surface (public dir() includes ``logger``).
 logger = logging.getLogger(__name__)
 
-__all__ = [
+__all__ = (
     "DirectorExecutionConsumer",
     "InterfaceContractAmendmentRequiredError",
     "InterfaceContractRepairRequiredError",
+    "ScopeConflictDetector",
     "UnrecoverableExecutionError",
-]
+)

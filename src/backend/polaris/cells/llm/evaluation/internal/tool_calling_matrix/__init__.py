@@ -124,9 +124,21 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from polaris.bootstrap.config import Settings
 
-__all__ = [
+__all__ = (
+    "WORKSPACES_ROOT",
+    "RoleSessionMatrixExecutor",
     "ToolCallingMatrixCase",
+    "_collect_stream_observation",
+    "_compose_case_prompt",
+    "_event_value",
+    "_judge_case",
+    "_mapping_dict",
+    "_non_empty",
+    "_normalize_case_ids",
+    "_resolve_executor",
+    "_sanitize_json",
     "load_builtin_tool_calling_matrix_cases",
     "load_tool_calling_matrix_case",
+    "materialize_case_workspace",
     "run_tool_calling_matrix_suite",
-]
+)

@@ -622,7 +622,7 @@ def build_taskboard_sync_payload(tasks: Any) -> list[dict[str, Any]]:
     return payload
 
 
-__all__ = [
+__all__ = (
     "_migrate_tasks_in_place",
     "_validate_ticket_fields",
     "apply_task_status_updates",
@@ -636,6 +636,7 @@ __all__ = [
     "extract_defect_ticket",
     "list_task_dependencies",
     "merge_director_tasks",
+    "normalize_assigned_to",
     "normalize_director_result_status",
     "normalize_engine_config",
     "normalize_pm_payload",
@@ -643,4 +644,4 @@ __all__ = [
     "normalize_tasks",
     "persist_pm_payloads",
     "split_director_tasks",
-]
+)

@@ -374,9 +374,10 @@ def wait_for_agents_confirmation(
     return True
 
 
-__all__ = [
+__all__ = (
+    "_is_interactive_session",
     "maybe_generate_agents_draft",
     "resolve_agents_approval_mode",
     "resolve_agents_approval_timeout",
     "wait_for_agents_confirmation",
-]
+)

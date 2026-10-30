@@ -254,7 +254,8 @@ _ = (_blueprints, _diagnostics, _governance, _release_readiness)
 # intentionally NOT hidden because the router test-suite monkeypatches several
 # of them via dotted string paths; losslessness requires they remain accessible
 # as package attributes (handled by the explicit re-exports above).
-__all__ = [
+__all__ = (
+    "BlueprintPersistence",
     "ChiefEngineerBlueprintDeleteResponse",
     "ChiefEngineerBlueprintDetailResponse",
     "ChiefEngineerBlueprintListResponse",
@@ -281,11 +282,15 @@ __all__ = [
     "ChiefEngineerUpdateRiskStatusRequest",
     "ChiefEngineerUpdateTechDebtStatusRequest",
     "ChiefEngineerUpdateTechRadarRingRequest",
+    "build_llm_status",
     "bulk_generate_chief_engineer_blueprints",
     "check_chief_engineer_stack_policy",
     "clear_chief_engineer_cache",
     "delete_chief_engineer_blueprint",
+    "ensure_required_roles_ready",
     "generate_chief_engineer_blueprint",
+    "generate_task_blueprint",
+    "get_blueprint_status",
     "get_chief_engineer_blueprint",
     "get_chief_engineer_blueprint_status",
     "get_chief_engineer_cache_stats",
@@ -294,6 +299,8 @@ __all__ = [
     "get_chief_engineer_llm_events",
     "get_chief_engineer_release_readiness",
     "get_chief_engineer_token_budget_stats",
+    "get_global_emitter",
+    "get_global_token_budget",
     "list_chief_engineer_adrs",
     "list_chief_engineer_blueprints",
     "list_chief_engineer_post_mortems",
@@ -305,10 +312,11 @@ __all__ = [
     "register_chief_engineer_risk",
     "register_chief_engineer_tech_debt",
     "register_chief_engineer_tech_radar",
+    "resolve_logical_path",
     "router",
     "update_chief_engineer_adr_status",
     "update_chief_engineer_post_mortem_status",
     "update_chief_engineer_risk_status",
     "update_chief_engineer_tech_debt_status",
     "update_chief_engineer_tech_radar_ring",
-]
+)

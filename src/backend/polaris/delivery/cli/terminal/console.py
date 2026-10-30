@@ -1441,7 +1441,8 @@ def run_director_console(
     )
 
 
-__all__ = [
+__all__ = (
+    "SUPER_ROLE",
     "PolarisRoleConsole",
     "_acknowledge_super_claims",
     "_claim_super_tasks_from_market",
@@ -1453,4 +1454,4 @@ __all__ = [
     "_trigger_slm_warmup",
     "run_director_console",
     "run_role_console",
-]
+)

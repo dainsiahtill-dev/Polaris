@@ -20,6 +20,31 @@ from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 
 from .factory_run_models import FactoryRun
 
+__all__ = (
+    "NODE_PREPARATION_COMMAND",
+    "Any",
+    "FactoryRun",
+    "KernelFileSystem",
+    "Mapping",
+    "NodeDependencyReadiness",
+    "Path",
+    "ProjectCompletionContractV1",
+    "PurePosixPath",
+    "QueryProjectCompletionContractV1",
+    "annotations",
+    "authenticated_preparation_contract",
+    "dataclass",
+    "get_default_adapter",
+    "hashlib",
+    "json",
+    "node_dependency_readiness",
+    "os",
+    "preparation_protects_lock",
+    "preparation_source_hashes",
+    "query_project_completion_contract",
+    "re",
+)
+
 _SECTIONS = ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies")
 _PACKAGE_NAME = re.compile(r"(?:@[a-zA-Z0-9_.-]+/)?[a-zA-Z0-9_.-]+\Z")
 NODE_PREPARATION_COMMAND = ("npm", "install", "--ignore-scripts", "--no-audit", "--no-fund")

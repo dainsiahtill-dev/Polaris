@@ -125,7 +125,7 @@ from .tool_lifecycle import (
     tool_dispatch_dropped_guard_applies,
 )
 
-__all__ = [
+__all__ = (
     "FACTORY_SETTLEMENT_BARRIER_SCHEMA_V1",
     "MANAGED_PROCESS_LIFECYCLE_EVENT_TYPE",
     "MANAGED_PROCESS_LIFECYCLE_SCHEMA_V1",
@@ -168,15 +168,18 @@ __all__ = [
     "build_run_ledger_projection",
     "build_run_provenance_bundle",
     "build_tool_batch_lifecycle_receipt",
+    "build_tool_batch_lifecycle_receipt_from_sources",
     "build_tool_call_lifecycle_receipt",
     "build_tool_call_lifecycle_run_ledger_event",
     "build_tool_dispatch_dropped_anomaly_from_lifecycle_receipt",
+    "build_tool_dispatch_dropped_anomaly_from_sources",
     "build_tool_dispatch_dropped_anomaly_projection",
     "build_tool_dispatch_dropped_lifecycle_from_anomaly_flags",
     "build_tool_dispatch_dropped_lifecycle_from_observed_calls",
     "build_tool_lifecycle_requirement_run_ledger_event",
     "build_verified_existing_artifact_lifecycle_receipt",
     "derive_managed_process_evidence_presence",
+    "effect_receipts_from_batch_receipts",
     "empty_tool_lifecycle_summary",
     "evaluate_task_boundary_verdict",
     "failure_evidence_from_lifecycle_receipt",
@@ -231,4 +234,4 @@ __all__ = [
     "tool_call_lifecycle_receipts_from_metadata",
     "tool_dispatch_dropped_error_message",
     "tool_dispatch_dropped_guard_applies",
-]
+)

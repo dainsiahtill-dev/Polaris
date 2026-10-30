@@ -183,10 +183,11 @@ def _reexport_implementation_surface() -> None:
 
 _reexport_implementation_surface()
 
-__all__ = [
+__all__ = (
     "ArtifactQualityDeferredCheck",
     "ArtifactQualityEvidence",
     "ArtifactQualityIssue",
+    "_compress_node_syntax_error",
     "artifact_quality_issue_key",
     "artifact_quality_issue_raw",
     "artifact_quality_issue_structural_key",
@@ -195,4 +196,4 @@ __all__ = [
     "check_source_file_syntax",
     "scan_workspace_artifact_quality",
     "scan_workspace_artifact_quality_evidence",
-]
+)

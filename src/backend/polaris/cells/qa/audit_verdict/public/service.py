@@ -758,7 +758,7 @@ def parse_traceback_frames(command: ParseTracebackFramesCommandV1) -> ParseTrace
     )
 
 
-__all__ = [
+__all__ = (
     "AuditResult",
     "FailureSignalV1",
     "ParseTracebackFramesCommandV1",
@@ -767,6 +767,7 @@ __all__ = [
     "QAConfig",
     "QAConsumer",
     "QAService",
+    "QaAuditEvidenceV1",
     "QualityService",
     "ReviewGate",
     "RunVisualQaAuditCommandV1",
@@ -781,7 +782,7 @@ __all__ = [
     "parse_traceback_frames",
     "run_qa_audit",
     "run_visual_qa_audit",
-]
+)
 
 
 def claim_qa_task(command: ClaimQaTaskCommandV1) -> TaskWorkItemResultV1:

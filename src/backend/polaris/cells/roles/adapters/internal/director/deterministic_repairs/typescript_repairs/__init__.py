@@ -171,3 +171,16 @@ from ._parsers import (
     _parse_typescript_unknown_value_errors,
     _strip_typescript_error_module_ref,
 )
+
+__all__ = (
+    "Any",
+    "Path",
+    "_iter_typescript_files",
+    "_relative_import_specifier_for_actual_path",
+    "_resolve_case_variant_relative_path",
+    "_typescript_module_runtime_exports_symbol",
+    "_typescript_relative_import_without_suffix",
+    "annotations",
+    "os",
+    "re",
+)

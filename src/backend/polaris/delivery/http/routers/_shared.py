@@ -22,6 +22,35 @@ from polaris.kernelone.storage.io_paths import build_cache_root
 from polaris.kernelone.type_ops import opaque_not_isinstance
 from starlette.responses import JSONResponse
 
+__all__ = (
+    "Any",
+    "AppState",
+    "HTTPException",
+    "JSONResponse",
+    "Mapping",
+    "Request",
+    "StructuredHTTPException",
+    "active_workspace_value",
+    "build_cache_root",
+    "ensure_required_roles_ready",
+    "get_state",
+    "internal_bench_surface_enabled",
+    "llm_config",
+    "load_llm_test_index",
+    "load_llm_test_index_candidates",
+    "model_identity_equal",
+    "opaque_not_isinstance",
+    "os",
+    "readiness_freshness_issue",
+    "require_auth",
+    "require_internal_bench_surface",
+    "require_role",
+    "required_ready_roles",
+    "role_runtime_support_issue",
+    "run_connectivity_suite_sync",
+    "structured_error_response",
+)
+
 require_auth = _canonical_require_auth
 require_role = _require_role
 

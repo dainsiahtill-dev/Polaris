@@ -280,7 +280,7 @@ from ._task_blueprint import (
 # re-exported through public/__init__.py from there — they are intentionally
 # NOT listed here. service.__all__ exposes only service functions and the
 # re-exported agent/consumer classes, uniformly across all ledgers.
-__all__ = [
+__all__ = (
     "CEConsumer",
     "ChiefEngineerAgent",
     "assert_handoff_ready",
@@ -297,6 +297,7 @@ __all__ = [
     "classify_chief_engineer_pm_entrypoint_kind",
     "compose_chief_engineer_semantic_repair",
     "create_rollback_guard",
+    "derive_project_kind_authority_from_catalog_snapshot",
     "evaluate_ce_handoff_decision_for_blueprint",
     "evaluate_handoff_decision",
     "evaluate_handoff_decision_for_blueprint",
@@ -319,6 +320,7 @@ __all__ = [
     "project_chief_engineer_semantic_repair_provider_context",
     "project_chief_engineer_task_blueprint",
     "query_blueprint_provenance",
+    "query_project_completion_contract",
     "register_adr",
     "register_post_mortem",
     "register_risk",
@@ -336,4 +338,4 @@ __all__ = [
     "update_tech_debt_status",
     "update_tech_radar_ring",
     "validate_director_handoff_from_payload",
-]
+)

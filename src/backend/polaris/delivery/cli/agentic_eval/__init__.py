@@ -138,10 +138,12 @@ from ._routing import (
 # single-file module exported only these two names; the remaining symbols
 # stay importable as attributes (matching the original namespace) but are
 # not part of the curated ``*`` surface.
-__all__ = [
+__all__ = (
+    "_expand_level_range_to_case_ids",
     "build_agentic_eval_audit_package",
     "run_agentic_eval_command",
-]
+    "run_probe",
+)
 
 if TYPE_CHECKING:
     import argparse as argparse

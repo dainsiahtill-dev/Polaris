@@ -230,10 +230,16 @@ _wire_cross_module_namespace()
 # intentionally NOT hidden because the provider modules and test-suite import
 # many of them directly from this package; losslessness requires they remain
 # accessible as package attributes (handled by the explicit re-exports above).
-__all__ = [
+__all__ = (
     "CircuitBreaker",
     "CircuitOpenError",
     "HttpTimeout",
+    "_blocking_http_get",
+    "_blocking_http_post",
+    "_blocking_sleep",
+    "_close_and_create_session",
+    "_parse_retry_after_seconds",
+    "_raw_blocking_http_post",
     "build_chat_messages_payload",
     "close_stream_sessions",
     "close_stream_sessions_sync",
@@ -246,4 +252,4 @@ __all__ = [
     "iter_data_line_payloads",
     "list_models_from_api",
     "shrink_max_tokens_for_context_overflow",
-]
+)

@@ -26,10 +26,11 @@ from .cli import RoleCLI
 from .fastapi import RoleFastAPI
 
 __version__ = "1.0.0"
-__all__ = [
+__all__ = (
     "RoleBase",
     "RoleCLI",
     "RoleCapability",
     "RoleFastAPI",
+    "RoleInfo",
     "RoleState",
-]
+)

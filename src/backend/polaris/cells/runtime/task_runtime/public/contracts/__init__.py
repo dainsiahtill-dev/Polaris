@@ -168,7 +168,7 @@ DIRECTED_EFFECT_PARENT_READINESS_PROJECTION_SCHEMA_V1: Final[str] = (
 if TYPE_CHECKING:
     from ..service import TaskRuntimeExecutionAttemptAuthorityV1
 
-__all__ = [
+__all__ = (
     "DIRECTED_EFFECT_CLAIM_GRANT_SCHEMA_V1",
     "DIRECTED_EFFECT_INVENTORY_INTENT_SCHEMA_V1",
     "DIRECTED_EFFECT_INVENTORY_MEMBER_SCHEMA_V1",
@@ -225,6 +225,8 @@ __all__ = [
     "DirectedEffectParentRegistryProjectionV1",
     "DirectedEffectParentRegistryResultV1",
     "DirectedEffectReceiptOutcomeV1",
+    "DirectedEffectRecoverySweepItemV1",
+    "DirectedEffectRecoverySweepResultV1",
     "DirectedEffectStreamEnrollmentCodeV1",
     "DirectedEffectStreamEnrollmentResultV1",
     "EnrollDirectedEffectOperationStreamCommandV1",
@@ -250,6 +252,7 @@ __all__ = [
     "PrepareOwnerReworkExecutionCommandV1",
     "PrepareSameTaskLocalReworkCommandV1",
     "QuerySameTaskLocalReworkAuthorizationV1",
+    "ReconcileAmbiguousDirectedEffectsCommandV1",
     "ReopenRuntimeTaskCommandV1",
     "RuntimeTaskFactoryRunBindingCodeV1",
     "RuntimeTaskFactoryRunBindingResultV1",
@@ -281,4 +284,4 @@ __all__ = [
     "TaskRuntimeExecutionFactV1",
     "UpdateRuntimeTaskCommandV1",
     "ValidateTaskRuntimeExecutionAttemptQueryV1",
-]
+)

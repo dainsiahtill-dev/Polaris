@@ -15,6 +15,20 @@ from polaris.kernelone.utils.time_utils import utc_now_iso as _utc_now_iso
 
 from .patterns import _CODE_PATH_RE, _LOW_SIGNAL_PATTERNS
 
+__all__ = (
+    "Any",
+    "_estimate_tokens",
+    "_utc_now_iso",
+    "annotations",
+    "contextlib",
+    "get_metadata_value",
+    "hashlib",
+    "json",
+    "logging",
+    "normalize_quoted_text",
+    "re",
+)
+
 
 def _normalize_text(value: Any) -> str:
     """Fold prose whitespace without rewriting quoted data or removing tags."""

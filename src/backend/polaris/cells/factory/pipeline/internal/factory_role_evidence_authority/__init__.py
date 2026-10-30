@@ -144,13 +144,15 @@ from ._source import (
     _StoredFragment,
 )
 
-__all__ = [
+__all__ = (
     "FACTORY_ROLE_EVIDENCE_CUTOFF_BODY_SCHEMA",
     "FACTORY_ROLE_EVIDENCE_CUTOFF_EVENT_SCHEMA",
     "FACTORY_ROLE_EVIDENCE_CUTOFF_EVENT_TYPE",
     "FACTORY_ROLE_EVIDENCE_CUTOFF_FRAGMENT_EVENT_TYPE",
     "FACTORY_ROLE_EVIDENCE_CUTOFF_FRAGMENT_SCHEMA",
+    "FACTORY_ROLE_EVIDENCE_CUTOFF_PORT_CONTEXT_KEY",
     "FACTORY_ROLE_EVIDENCE_SOURCE_CUT_SCHEMA",
+    "_MAX_SOURCE_ITEMS_PER_SLOT",
     "FactoryRoleEvidenceAuthorityError",
     "FactoryRoleEvidenceAuthorityPort",
     "FactoryRoleEvidenceCutoffBodyV1",
@@ -165,4 +167,4 @@ __all__ = [
     "UnavailableFactoryRoleEvidenceSourceAuthority",
     "factory_role_evidence_authority_stream",
     "query_factory_role_evidence_replay_snapshot",
-]
+)

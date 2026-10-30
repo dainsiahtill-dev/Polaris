@@ -17,6 +17,27 @@ from typing import Any
 
 from polaris.kernelone.cognitive.design_quality import DesignQualityDials, MotionPresetKey
 
+__all__ = (
+    "ANIMATION_MUTUAL_EXCLUSION",
+    "EASE_IN_OUT_CUBIC",
+    "EASE_OUT_EXPO",
+    "EASE_OUT_QUART",
+    "SPRING_GENTLE",
+    "SPRING_HOVER",
+    "SPRING_PREMIUM",
+    "STAGGER_CASCADE_MS",
+    "STAGGER_RAPID_MS",
+    "Any",
+    "DesignQualityDials",
+    "EasingType",
+    "Enum",
+    "MotionPresetKey",
+    "MotionPresetLibrary",
+    "MotionToken",
+    "annotations",
+    "dataclass",
+)
+
 # ---------------------------------------------------------------------------
 # 核心预设常量
 # ---------------------------------------------------------------------------

@@ -263,4 +263,8 @@ def get_handoff_pack(
     )
 
 
-__all__ = ["_service_dependency", "router"]
+__all__ = (
+    "_service_dependency",
+    "require_auth",
+    "router",
+)

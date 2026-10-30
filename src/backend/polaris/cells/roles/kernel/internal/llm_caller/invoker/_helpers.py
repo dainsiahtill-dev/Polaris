@@ -41,7 +41,37 @@ from ..helpers import (
 from ..request_preparer import LLMRequestPreparer
 from ..response_types import PreparedLLMRequest
 from ..stream_handler import (
-    normalize_stream_chunk,  # noqa: F401
+    normalize_stream_chunk,
+)
+
+__all__ = (
+    "TYPE_CHECKING",
+    "AIExecutor",
+    "Any",
+    "FactoryRoleSemanticRequestIdentityV1",
+    "FactorySemanticDispatchPropagationPort",
+    "LLMRequestPreparer",
+    "PreparedLLMRequest",
+    "annotations",
+    "build_final_provider_request_snapshot",
+    "build_final_request_context_audit_for_request",
+    "canonicalize_tool_name",
+    "cast",
+    "context_snapshot_matches_frozen_attempt",
+    "create_structured_client",
+    "dataclass",
+    "deepcopy",
+    "enforce_factory_aware_final_request_evidence_coverage",
+    "extract_native_tool_calls",
+    "final_request_snapshot_evidence",
+    "get_factory_role_evidence_authority_binding",
+    "json",
+    "logger",
+    "logging",
+    "native_tool_call_name",
+    "normalize_stream_chunk",
+    "uuid",
+    "validated_final_context_evidence",
 )
 
 if TYPE_CHECKING:
@@ -724,7 +754,7 @@ def _get_cognitive_runtime_receipt_deps() -> tuple[Any, Any]:
 # Import-time side effect preserved (exact former message):
 # Instructor integration
 try:
-    from polaris.infrastructure.llm.instructor_client import create_structured_client  # noqa: F401
+    from polaris.infrastructure.llm.instructor_client import create_structured_client
 
     INSTRUCTOR_AVAILABLE = True
 except ImportError:

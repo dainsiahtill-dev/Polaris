@@ -97,8 +97,7 @@ from polaris.cells.roles.kernel.internal.transaction.write_authority import (
 from polaris.cells.roles.kernel.public.contracts import ToolGatewayPort
 from polaris.kernelone.llm.engine.token_estimator import TokenEstimator
 
-__all__ = [
-    # Constitution
+__all__ = (
     "CONSTITUTION",
     "DEFAULT_SIGNAL_PROVIDERS",
     "AllocationResult",
@@ -122,6 +121,7 @@ __all__ = [
     "LLMEventType",
     "LLMResponse",
     "MemorySnippet",
+    "MetricsCollector",
     "OutputParser",
     "PromptBuilder",
     "PromptContext",
@@ -170,7 +170,7 @@ __all__ = [
     "reset_role_action_registry_for_test",
     "set_global_llm_cache",
     "subscribe_speculation_events",
-]
+)
 
 
 def get_kernel_metrics_collector() -> MetricsCollector:

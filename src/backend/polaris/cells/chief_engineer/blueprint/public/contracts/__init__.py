@@ -172,7 +172,9 @@ from polaris.cells.chief_engineer.blueprint.public.contracts._semantic_repair im
     chief_engineer_semantic_repair_task_set_hash,
 )
 
-__all__ = [
+__all__ = (
+    "_PROJECT_COMPLETION_CONTRACT_ID_PREFIX",
+    "_PROJECT_COMPLETION_CONTRACT_SCHEMA_V1",
     "ADREventV1",
     "ADRRecordV1",
     "ADRStatus",
@@ -252,8 +254,17 @@ __all__ = [
     "VerificationCommandAuthorityV1",
     "VerificationModalityV1",
     "VerificationObligationV1",
+    "_ChiefEngineerPortfolioAuthorityCarrierV1",
+    "_canonical_project_completion_contract_seed",
+    "_canonicalize_completion_id_tuple",
+    "_portfolio_authority_receipt_hash",
+    "_project_completion_contract_hash",
+    "_project_completion_contract_id",
+    "_strict_provenance_target_paths",
+    "_verify_chief_engineer_portfolio_authority_carrier",
     "chief_engineer_semantic_repair_task_set_hash",
+    "project_completion_catalog_snapshot_hash",
     "project_completion_verifier_policy_snapshot_hash",
     "shared_behavior_contract_hash",
     "shared_behavior_contract_seed",
-]
+)

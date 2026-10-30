@@ -99,11 +99,12 @@ from polaris.delivery.http.schemas.context import (
     SweepRequest,
 )
 
-__all__ = [
+__all__ = (
     "AgentsApplyPayload",
     "AgentsApplyResponse",
     "AgentsFeedbackPayload",
     "AgentsFeedbackResponse",
+    "AllLLMEventsResponse",
     "AuditCleanupParams",
     "AuditCleanupResponse",
     "AuditEventResponse",
@@ -189,4 +190,4 @@ __all__ = [
     "SweepRequest",
     "VisionAnalyzeResponse",
     "VisionStatusResponse",
-]
+)
