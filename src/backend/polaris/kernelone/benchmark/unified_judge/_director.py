@@ -8,15 +8,19 @@ helper and the domain-layer safe-scope validator defined in ``_base``.
 
 # Cross-module free name ``_extract_json_dict`` is injected by package __init__
 # (_wire_cross_module_namespace). Static F821 is expected and lossless.
-# ruff: noqa: F821
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from polaris.domain.verification.business_validators import (
     validate_director_safe_scope as _validate_director_safe_scope_domain,
 )
 
 from ..unified_models import ObservedBenchmarkRun
+
+if TYPE_CHECKING:
+    from ._base import _extract_json_dict
 
 __all__ = [
     "DirectorFeatureBranchValidator",

@@ -9,13 +9,26 @@ delegation. They share the reconnaissance helpers and JSON helper defined in
 
 # Cross-module free names are injected by package __init__
 # (_wire_cross_module_namespace). Static F821 is expected and lossless.
-# ruff: noqa: F821
 
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 
 from ..unified_models import ObservedBenchmarkRun
+
+if TYPE_CHECKING:
+    # These shared validators/constants are injected into this module's globals
+    # by ``unified_judge.__init__._wire_cross_module_namespace``; declare them
+    # for the type checker without changing the runtime lookup.
+    from ._base import (
+        _SCOUT_READ_FILE_TOOLS,
+        _SCOUT_RECON_TOOLS,
+        _SCOUT_RELATIONAL_MARKERS,
+        _extract_json_dict,
+        _scout_has_recon_tool_call,
+        _scout_localizes_anchor,
+    )
 
 __all__ = [
     "ScoutCodebaseMapValidator",

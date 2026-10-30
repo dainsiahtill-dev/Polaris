@@ -12,13 +12,12 @@ Sibling validator submodules resolve free names (e.g. ``_extract_json_dict``,
 # Cross-module free name ``VALIDATOR_SPECS`` (owned by ``_registry``) is
 # injected by package __init__ (_wire_cross_module_namespace). Static F821 is
 # expected and lossless.
-# ruff: noqa: F821
 
 from __future__ import annotations
 
 import json
 import re
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 from polaris.domain.verification.business_validators import (
     validate_director_safe_scope as _validate_director_safe_scope_domain,
@@ -33,6 +32,13 @@ from ..unified_models import (
     UnifiedBenchmarkCase,
     UnifiedJudgeVerdict,
 )
+
+if TYPE_CHECKING:
+    # ``VALIDATOR_SPECS`` is defined in ``_registry`` (which imports from this
+    # module), so a runtime import here would be circular. It reaches this
+    # module via ``unified_judge.__init__._wire_cross_module_namespace``; a
+    # TYPE_CHECKING import resolves the name for the type checker only.
+    from ._registry import VALIDATOR_SPECS
 
 __all__ = [
     "PROMPT_LEAKAGE_MARKERS",

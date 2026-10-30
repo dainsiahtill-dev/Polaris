@@ -26,13 +26,19 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from polaris.cells.factory.pipeline.public import FactoryRunService
 from polaris.cells.factory.pipeline.public.types import FactoryStartRequest
 from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.quality import task_identifier_token_aliases
 from polaris.kernelone.storage import resolve_logical_path
+
+if TYPE_CHECKING:
+    # ``resolve_runtime_path`` reaches this module via the package namespace
+    # injection in ``stage_ops/__init__._wire_cross_module_namespace``; declare
+    # it for the type checker without changing the runtime lookup.
+    from polaris.kernelone.storage import resolve_runtime_path
 
 logger = logging.getLogger("polaris.delivery.http.routers.factory")
 

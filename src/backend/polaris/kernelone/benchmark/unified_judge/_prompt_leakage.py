@@ -7,13 +7,16 @@ metadata-driven TDD regression / distraction / goal-persistence checks.
 
 # Cross-module free names are injected by package __init__
 # (_wire_cross_module_namespace). Static F821 is expected and lossless.
-# ruff: noqa: F821
 
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 
 from ..unified_models import ObservedBenchmarkRun
+
+if TYPE_CHECKING:
+    from ._base import PROMPT_LEAKAGE_MARKERS
 
 __all__ = [
     "DistractionCheckValidator",

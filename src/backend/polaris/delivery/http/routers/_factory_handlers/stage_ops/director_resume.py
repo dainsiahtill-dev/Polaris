@@ -1,4 +1,4 @@
-# ruff: noqa: E402, F403, F405
+# ruff: noqa: E402, F403
 """Factory stage-ops helpers — director-resume evidence hydration.
 
 Extracted verbatim from the former single-file ``stage_ops`` module during the
@@ -25,7 +25,7 @@ from typing import Any
 
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.delivery.http.routers._shared import StructuredHTTPException
-from polaris.kernelone.storage import resolve_runtime_path, resolve_storage_roots
+from polaris.kernelone.storage import resolve_logical_path, resolve_runtime_path, resolve_storage_roots
 
 logger = logging.getLogger("polaris.delivery.http.routers.factory")
 
