@@ -65,7 +65,6 @@ from polaris.cells.roles.kernel.public.structured_output_contracts import (
     RoleStructuredOutputContractV1,
 )
 from polaris.cells.roles.runtime.public.contracts import (
-    ExecuteRoleTaskCommandV1,
     RoleExecutionResultV1,
 )
 from polaris.cells.runtime.task_runtime.public import (
@@ -173,6 +172,12 @@ _CPP_DIAGNOSTIC_KIND_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("invalid use of 'this'", "invalid use of this", "invalid use of ‘this’"),
     ),
 )
+
+
+async def _raise_legacy_ce_role_execution() -> RoleExecutionResultV1:
+    """Fail-closed fence: the frozen factory engine must never resurrect
+    the retired RoleRuntimeService write entry (CLAUDE.md mainline 8)."""
+    raise RuntimeError("legacy_engine_retired: frozen factory chief-engineer role execution; old records are read-only")
 
 
 def _compiler_error_code_from_match(match: re.Match[str]) -> str:
@@ -1544,65 +1549,12 @@ class _Mixin02:
                         diagnosis=semantic_diagnosis,
                     ),
                 )
-            command = ExecuteRoleTaskCommandV1(
-                role="chief_engineer",
-                task_id=repair_task_id,
-                workspace=str(self.workspace),
-                objective=repair_objective,
-                run_id=run.id,
-                # Diversify the bounded repair transport after an incomplete
-                # streamed forced-tool payload. Schema and CE authority stay strict.
-                stream=False,
-                context=repair_context,
-                timeout_seconds=repair_timeout_seconds,
-                execution_attempt=execution_attempt,
-                structured_output_contract=structured_output_contract,
-                metadata={
-                    "pm_task_contract": dict(repair_context["pm_task_contract"]),
-                    "pm_task_contracts": list(repair_context["pm_task_contracts"]),
-                    "target_files": list(repair_context["target_files"]),
-                    "scope_paths": list(repair_context["scope_paths"]),
-                    "source": "factory_stage_executor.chief_engineer_schema_repair",
-                    "schema_repair_of_task_id": f"CE-PORTFOLIO-{run.id}",
-                    "chief_engineer_repair_round": repair_round,
-                    "chief_engineer_semantic_repair": semantic_patch,
-                    "chief_engineer_schema_repair_base_candidate_hash": (
-                        hashlib.sha256(prior_output.encode("utf-8")).hexdigest()
-                        if schema_repair_base_candidate is not None
-                        else ""
-                    ),
-                    "chief_engineer_schema_repair_paths": [list(path) for path in schema_repair_paths],
-                    "chief_engineer_semantic_repair_base_candidate_hash": (
-                        semantic_candidate.candidate_hash if semantic_candidate is not None else ""
-                    ),
-                    "chief_engineer_semantic_repair_diagnosis_hash": (
-                        semantic_diagnosis.diagnosis_hash if semantic_diagnosis is not None else ""
-                    ),
-                    "inherited_prompt_profile_identity": dict(repair_profile_identity),
-                    "cognitive_runtime_mode": "off",
-                    "cognitive_runtime_enabled": False,
-                    "cognitive_runtime_required": False,
-                    "llm_call_timeout_seconds": repair_timeout_seconds,
-                    "validate_output": True,
-                    "max_retries": _CHIEF_ENGINEER_REPAIR_TRANSPORT_MAX_RETRIES,
-                    "chief_engineer_repair_transport_retry_budget": (_CHIEF_ENGINEER_REPAIR_TRANSPORT_MAX_RETRIES),
-                    "chief_engineer_semantic_patch_transport_retry_budget": (
-                        _CHIEF_ENGINEER_SEMANTIC_PATCH_TRANSPORT_MAX_RETRIES if semantic_patch else 0
-                    ),
-                    "temperature": 0.0,
-                    "llm_max_tokens": repair_output_tokens,
-                    "reasoning_budget_tokens": _CHIEF_ENGINEER_SCHEMA_REPAIR_REASONING_BUDGET_TOKENS,
-                    "response_format_mode": "json",
-                    "chief_engineer_json_contract_required": True,
-                    "chief_engineer_portfolio_required": not semantic_patch,
-                },
-            )
             result = cast(
                 RoleExecutionResultV1,
                 await self._call_with_factory_role_evidence_authority(
                     authority_port,
                     "chief_engineer",
-                    lambda: pkg().RoleRuntimeService().execute_role_task(command),
+                    lambda: _raise_legacy_ce_role_execution(),
                     authority_binding=authority_binding,
                 ),
             )
@@ -2006,39 +1958,6 @@ class _Mixin02:
                             budget=ce_lease_budget,
                         )
                     )
-                    command = ExecuteRoleTaskCommandV1(
-                        role="chief_engineer",
-                        task_id=portfolio_task_id,
-                        workspace=str(self.workspace),
-                        objective=objective,
-                        run_id=run.id,
-                        stream=True,
-                        context=portfolio_context,
-                        timeout_seconds=ce_timeout_seconds,
-                        execution_attempt=ce_execution_attempt,
-                        structured_output_contract=self._chief_engineer_structured_output_contract(
-                            tuple(task.task_id for task in portfolio_tasks)
-                        ),
-                        metadata={
-                            "pm_task_contract": dict(portfolio_context["pm_task_contract"]),
-                            "pm_task_contracts": list(portfolio_context["pm_task_contracts"]),
-                            "target_files": list(portfolio_context["target_files"]),
-                            "scope_paths": list(portfolio_context["scope_paths"]),
-                            "source": "factory_stage_executor.chief_engineer_portfolio_review",
-                            "cognitive_runtime_mode": "off",
-                            "cognitive_runtime_enabled": False,
-                            "cognitive_runtime_required": False,
-                            "llm_call_timeout_seconds": ce_timeout_seconds,
-                            "validate_output": True,
-                            "max_retries": 0,
-                            "temperature": 0.2,
-                            "reasoning_budget_tokens": _CHIEF_ENGINEER_PORTFOLIO_REASONING_BUDGET_TOKENS,
-                            "response_format_mode": "json",
-                            "chief_engineer_json_contract_required": True,
-                            "chief_engineer_portfolio_required": True,
-                            "project_completion_authority": dict(portfolio_context["project_completion_authority"]),
-                        },
-                    )
                     llm_call_count = 1
                     authority_binding = authority_port.mint_authority_binding("chief_engineer")
                     ce_result = cast(
@@ -2046,7 +1965,7 @@ class _Mixin02:
                         await self._call_with_factory_role_evidence_authority(
                             authority_port,
                             "chief_engineer",
-                            lambda: pkg().RoleRuntimeService().execute_role_task(command),
+                            lambda: _raise_legacy_ce_role_execution(),
                             authority_binding=authority_binding,
                         ),
                     )
