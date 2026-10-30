@@ -182,36 +182,59 @@ def test_current_reader_does_not_adopt_cached_history(tmp_path: Path) -> None:
     assert tree(workspace) == ()
 
 
-@pytest.mark.parametrize("history_kind", ["explicit", "cache", "ramdisk", "system", "bare"])
-def test_historical_namespace_remains_readable_without_initialization(
+@pytest.mark.parametrize("history_kind", ["explicit", "cache", "ramdisk", "system"])
+def test_historical_namespace_is_not_adopted_without_initialization(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, history_kind: str
 ) -> None:
+    """A reader never promotes an external/retired runtime root to the active namespace.
+
+    External settings stay history-only candidates: with no canonical project
+    root on disk, absence is reported as ``None`` rather than resolving a
+    foreign namespace or initializing storage.
+    """
     workspace = tmp_path / "project"
     workspace.mkdir()
     external = tmp_path / "archive"
-    if history_kind == "bare":
-        historical = workspace / "runtime"
+    # The audit's physical ancestor already contains `.polaris`; the
+    # historical base format therefore does not insert it a second time.
+    historical = external / "projects" / layout.workspace_key(str(workspace)) / "runtime"
+    if history_kind == "system":
+        monkeypatch.setattr(layout, "default_kernelone_cache_base", lambda: str(external))
     else:
-        # The audit's physical ancestor already contains `.polaris`; the
-        # historical base format therefore does not insert it a second time.
-        historical = external / "projects" / layout.workspace_key(str(workspace)) / "runtime"
-        if history_kind == "system":
-            monkeypatch.setattr(layout, "default_kernelone_cache_base", lambda: str(external))
-        else:
-            setting = {"explicit": "RUNTIME_ROOT", "cache": "RUNTIME_CACHE_ROOT", "ramdisk": "RAMDISK_ROOT"}[
-                history_kind
-            ]
-            monkeypatch.setenv(f"KERNELONE_{setting}", str(external))
-            if history_kind == "ramdisk":
-                monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "1")
+        setting = {"explicit": "RUNTIME_ROOT", "cache": "RUNTIME_CACHE_ROOT", "ramdisk": "RAMDISK_ROOT"}[history_kind]
+        monkeypatch.setenv(f"KERNELONE_{setting}", str(external))
+        if history_kind == "ramdisk":
+            monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "1")
     historical.mkdir(parents=True)
     (historical / "evidence.txt").write_text("历史证据", encoding="utf-8")
+    before = tree(tmp_path)
+    cache_before = dict(layout._storage_roots_cache)
+
+    roots = layout.resolve_existing_storage_roots_read_only(str(workspace))
+
+    assert roots is None
+    assert tree(tmp_path) == before
+    assert layout._storage_roots_cache == cache_before
+    assert not (workspace / ".polaris").exists()
+
+
+def test_bare_local_runtime_root_stays_read_only_discovery_candidate(tmp_path: Path) -> None:
+    """The retired bare ``<workspace>/runtime`` root remains a read-only candidate.
+
+    It is discovered without initialization but is never rebound to the
+    canonical metadata tree, so historical evidence stays readable in place.
+    """
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    bare = workspace / "runtime"
+    bare.mkdir()
+    (bare / "evidence.txt").write_text("历史证据", encoding="utf-8")
     before = tree(tmp_path)
 
     roots = layout.resolve_existing_storage_roots_read_only(str(workspace))
 
     assert roots is not None
-    assert Path(roots.runtime_root) == historical
+    assert Path(roots.runtime_root) == bare
     assert (Path(roots.runtime_root) / "evidence.txt").read_text(encoding="utf-8") == "历史证据"
     assert tree(tmp_path) == before
     assert not (workspace / ".polaris").exists()
