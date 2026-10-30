@@ -232,8 +232,16 @@ async def test_dispatch_count_never_claims_hidden_redirect_http_sends(
     assert len(received) == 2
     terminal = [item for item in observations if item["phase"] == "terminal"]
     assert len(terminal) == dispatches
+    # Each retry rebuilds the capture port, so provider_request_id is unique per
+    # dispatch and proves the hidden retry actually re-sent on the wire.
     assert len({item["provider_request_id"] for item in terminal}) == dispatches
-    assert terminal[-1]["dispatch_attempt_count"] == dispatches
+    # dispatch_attempt_count is scoped to a single capture port (see
+    # dispatch_count_scope="capture_port"): each port reports its own send count
+    # (always 1 here). The platform must not claim a cross-retry physical count
+    # it cannot verify, so physical_send_count stays unknown.
+    assert all(item["dispatch_count_scope"] == "capture_port" for item in terminal)
+    assert all(item["dispatch_attempt_number"] == 1 for item in terminal)
+    assert all(item["dispatch_attempt_count"] == 1 for item in terminal)
     assert all(
         item["physical_send_count"] is None and item["physical_send_count_status"] == "unknown" for item in observations
     )
