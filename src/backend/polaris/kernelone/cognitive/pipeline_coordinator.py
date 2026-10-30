@@ -45,6 +45,7 @@ from polaris.kernelone.events.typed import (
     ValueAlignmentEvent,
     emit_event,
 )
+from polaris.kernelone.type_ops import opaque_isinstance
 
 if TYPE_CHECKING:
     from polaris.kernelone.cognitive.reasoning.meta_cognition import ReflectionOutput
@@ -213,7 +214,7 @@ class CognitivePipelineCoordinator:
             blockers: list[str] = []
             try:
                 raw_blockers = reasoning_chain.blockers
-                if isinstance(raw_blockers, (list, tuple)):
+                if opaque_isinstance(raw_blockers, (list, tuple)):
                     blockers = [str(b) for b in raw_blockers]
                 elif raw_blockers:
                     blockers = []
@@ -281,7 +282,7 @@ class CognitivePipelineCoordinator:
         insights: list[str] = []
         try:
             raw = meta_cognition.reasoning_chain_summary
-            if isinstance(raw, str):
+            if opaque_isinstance(raw, str):
                 insights = [raw]
             elif raw:
                 try:

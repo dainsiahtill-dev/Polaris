@@ -22,6 +22,7 @@ from polaris.cells.runtime.task_market.public.contracts import (
     TaskMarketError,
     TaskWorkItemResultV1,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from ._outbox import _stable_outbox_id
 from .consumer_loop import ConsumerLoopManager
@@ -220,7 +221,7 @@ class ServiceBaseMixin:
     @classmethod
     def _payload_flag(cls, *payloads: dict[str, Any], keys: tuple[str, ...]) -> bool:
         for payload in payloads:
-            if not isinstance(payload, dict):
+            if opaque_not_isinstance(payload, dict):
                 continue
             for key in keys:
                 if key not in payload:
@@ -241,7 +242,7 @@ class ServiceBaseMixin:
     @staticmethod
     def _task_market_session_id(item: TaskWorkItemRecord) -> str:
         for payload in (item.payload, item.metadata):
-            if not isinstance(payload, dict):
+            if opaque_not_isinstance(payload, dict):
                 continue
             for key in ("task_market_session_id", "role_session_id", "session_id"):
                 token = str(payload.get(key) or "").strip()

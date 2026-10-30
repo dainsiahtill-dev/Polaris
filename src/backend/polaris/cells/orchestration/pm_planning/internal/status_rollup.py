@@ -79,6 +79,8 @@ from dataclasses import dataclass
 from math import isfinite
 from typing import Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 from .dependency_validator import Schedule
 
 __all__ = ["PmStatusRollup", "compute_status_rollup", "render_status_markdown"]
@@ -133,7 +135,7 @@ def _is_positive_finite(value: float | None) -> bool:
     """
     if value is None or isinstance(value, bool):
         return False
-    if not isinstance(value, (int, float)):
+    if opaque_not_isinstance(value, (int, float)):
         return False
     return isfinite(value) and value > 0.0
 

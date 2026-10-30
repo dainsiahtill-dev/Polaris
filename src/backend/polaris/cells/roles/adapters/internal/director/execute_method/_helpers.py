@@ -29,6 +29,7 @@ from polaris.kernelone.quality.artifact_quality._scan_javascript import (
     _javascript_named_exports,
 )
 from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from ..contract_verify import resolve_contract_step_verify_command
 from ..dependency_artifact_evidence import (
@@ -216,7 +217,7 @@ def _diag_write_results_summary(tool_results: list[dict[str, Any]]) -> list[tupl
     """
     summary: list[tuple[str, int]] = []
     for item in tool_results:
-        if not isinstance(item, dict):
+        if opaque_not_isinstance(item, dict):
             continue
         name = str(item.get("tool_name") or item.get("tool") or "").strip().lower()
         if name not in _DIAG_WRITE_TOOL_NAMES:
@@ -244,7 +245,7 @@ def _deterministic_repair_source_tools_from_tool_results(tool_results: list[dict
     source_tools: list[str] = []
     seen: set[str] = set()
     for item in tool_results:
-        if not isinstance(item, dict):
+        if opaque_not_isinstance(item, dict):
             continue
         for source in (item, item.get("result"), item.get("payload")):
             if not isinstance(source, dict):
@@ -1076,7 +1077,7 @@ def _build_no_write_materialization_retry_message(
     observed_tools: list[str] = []
     seen_tools: set[str] = set()
     for result in tool_results:
-        if not isinstance(result, dict):
+        if opaque_not_isinstance(result, dict):
             continue
         tool_name = str(result.get("tool_name") or result.get("tool") or "").strip()
         if tool_name and tool_name not in seen_tools:

@@ -24,6 +24,7 @@ from polaris.kernelone.traceability.internal.safety import (
     safe_link,
     safe_register_node,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 from polaris.kernelone.utils import _now
 
 logger = logging.getLogger(__name__)
@@ -142,7 +143,7 @@ class LocalShangshulingPort(ShangshulingPort):
 
         synced = 0
         for task in tasks:
-            if not isinstance(task, dict):
+            if opaque_not_isinstance(task, dict):
                 continue
             task_id = _task_identity(task)
             if not task_id:

@@ -5,6 +5,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 from ..utils import normalize_path_str as _normalize_path
 
 _TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.$]{1,127}")
@@ -52,7 +54,7 @@ def _build_symbol_to_files(symbols_by_file: dict[str, list[dict[str, Any]]]) -> 
         if not file_path:
             continue
         for row in rows:
-            if not isinstance(row, dict):
+            if opaque_not_isinstance(row, dict):
                 continue
             for token in _symbol_tokens(row):
                 symbol_to_files[token.lower()].add(file_path)
@@ -119,7 +121,7 @@ def build_semantic_relation_graph(
         if not source:
             continue
         for row in rows:
-            if not isinstance(row, dict):
+            if opaque_not_isinstance(row, dict):
                 continue
             for target in _iter_row_candidates(row, symbol_to_files=symbol_to_files, module_to_files=module_to_files):
                 if target and target != source:
@@ -130,7 +132,7 @@ def build_semantic_relation_graph(
         if not source:
             continue
         for row in rows:
-            if not isinstance(row, dict):
+            if opaque_not_isinstance(row, dict):
                 continue
             for target in _iter_row_candidates(row, symbol_to_files=symbol_to_files, module_to_files=module_to_files):
                 if target and target != source:
@@ -141,7 +143,7 @@ def build_semantic_relation_graph(
         if not source:
             continue
         for row in rows:
-            if not isinstance(row, dict):
+            if opaque_not_isinstance(row, dict):
                 continue
             relation_targets = row.get("relation_targets", [])
             if not isinstance(relation_targets, list):

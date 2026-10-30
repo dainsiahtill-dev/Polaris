@@ -41,6 +41,7 @@ from polaris.kernelone.quality.artifact_quality import (
     ArtifactQualityEvidence,
     scan_workspace_artifact_quality_evidence,
 )
+from polaris.kernelone.type_ops import opaque_isinstance
 
 
 def _stable_json(value: Any) -> str:
@@ -108,7 +109,7 @@ def _artifact_quality_dict(value: ArtifactQualityEvidence | dict[str, Any] | Non
         return {}
     if isinstance(value, ArtifactQualityEvidence):
         return value.to_dict()
-    if isinstance(value, dict):
+    if opaque_isinstance(value, dict):
         return dict(value)
     return {}
 

@@ -40,6 +40,7 @@ from polaris.kernelone.quality import (
     scope_authority_decision_summary,
 )
 from polaris.kernelone.quality.interface_ledger import WorkspaceTextReadSnapshot
+from polaris.kernelone.type_ops import opaque_isinstance, opaque_not_isinstance
 
 from .. import execute_method as _em
 from ..artifact_quality_diagnostics import (
@@ -2547,7 +2548,7 @@ def _coerce_artifact_quality_issue_path(issue_payload: Mapping[str, Any]) -> str
     back to the regex path.
     """
 
-    if not isinstance(issue_payload, Mapping):
+    if opaque_not_isinstance(issue_payload, Mapping):
         return ""
     raw_path = str(issue_payload.get("path") or "").strip().replace("\\", "/")
     if raw_path:
@@ -2582,7 +2583,7 @@ def _coerce_artifact_quality_issue_module(issue_payload: Mapping[str, Any]) -> s
     path.
     """
 
-    if not isinstance(issue_payload, Mapping):
+    if opaque_not_isinstance(issue_payload, Mapping):
         return ""
     metadata = issue_payload.get("metadata")
     if isinstance(metadata, Mapping):

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from polaris.kernelone.fs.text_ops import open_text_log_append
+from polaris.kernelone.type_ops import opaque_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,7 @@ class ProcessLaunchRequest:
             object.__setattr__(self, "workspace", self.workspace.resolve())
 
         # Ensure command is a list
-        if isinstance(self.command, str):
+        if opaque_isinstance(self.command, str):
             import shlex
 
             object.__setattr__(self, "command", shlex.split(self.command))

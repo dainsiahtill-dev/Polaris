@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 from polaris.delivery.cli.pm.nodes.base import BaseRoleNode
 from polaris.delivery.cli.pm.nodes.protocols import RoleContext, RoleResult
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 
 class DirectorNode(BaseRoleNode):
@@ -262,14 +263,14 @@ class DirectorNode(BaseRoleNode):
         tasks: list[dict[str, Any]],
         ready_tasks: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        if not isinstance(tasks, list) or not isinstance(ready_tasks, list):
+        if opaque_not_isinstance(tasks, list) or opaque_not_isinstance(ready_tasks, list):
             return []
         if not ready_tasks:
             return []
 
         ready_source_task_ids = set()
         for item in ready_tasks:
-            if not isinstance(item, dict):
+            if opaque_not_isinstance(item, dict):
                 continue
             source_task_id = str(item.get("id") or "").strip()
             if source_task_id:
@@ -280,7 +281,7 @@ class DirectorNode(BaseRoleNode):
 
         selected: list[dict[str, Any]] = []
         for task in tasks:
-            if not isinstance(task, dict):
+            if opaque_not_isinstance(task, dict):
                 continue
             task_id = str(task.get("id") or "").strip()
             if task_id and task_id in ready_source_task_ids:

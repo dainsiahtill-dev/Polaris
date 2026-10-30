@@ -29,6 +29,7 @@ from polaris.kernelone.llm.exceptions import ConfigMigrationError
 from polaris.kernelone.llm.runtime_config import MASKED_SECRET
 from polaris.kernelone.storage import resolve_global_path
 from polaris.kernelone.storage.io_paths import build_cache_root
+from polaris.kernelone.type_ops import opaque_not_isinstance
 from polaris.kernelone.utils.time_utils import utc_now_iso
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
@@ -1100,7 +1101,7 @@ def validate_llm_config(config: dict[str, Any]) -> tuple[bool, list[str], list[s
     errors: list[str] = []
     warnings: list[str] = []
 
-    if not isinstance(config, dict):
+    if opaque_not_isinstance(config, dict):
         errors.append("Config must be a dictionary")
         return False, errors, warnings
 

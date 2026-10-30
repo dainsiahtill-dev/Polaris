@@ -36,6 +36,7 @@ from polaris.cells.roles.kernel.internal.services.contracts import (
     # 数据类
     Usage,
 )
+from polaris.kernelone.type_ops import opaque_isinstance
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Sequence
@@ -342,7 +343,7 @@ class TestLLMInvokerProtocol:
     def test_mock_implements_protocol(self) -> None:
         """测试Mock实现符合Protocol"""
         invoker = MockLLMInvoker()
-        assert isinstance(invoker, LLMInvokerProtocol)
+        assert opaque_isinstance(invoker, LLMInvokerProtocol)
 
     @pytest.mark.asyncio
     async def test_invoke_method(self) -> None:

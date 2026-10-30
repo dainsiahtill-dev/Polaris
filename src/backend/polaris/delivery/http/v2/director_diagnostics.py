@@ -35,6 +35,7 @@ from polaris.delivery.http.v2.director_models import (
     DirectorDiagnosticsWorkerSection,
 )
 from polaris.domain.entities import TaskPriority
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 if TYPE_CHECKING:
     from polaris.cells.director.execution.public.service import DirectorService
@@ -303,7 +304,7 @@ def _build_llm_diagnostics(settings: Any) -> DirectorDiagnosticsLLMSection:
             error=str(exc),
         )
 
-    if not isinstance(payload, dict):
+    if opaque_not_isinstance(payload, dict):
         return DirectorDiagnosticsLLMSection(
             ok=False,
             state="error",

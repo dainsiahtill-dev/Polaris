@@ -39,6 +39,7 @@ from polaris.kernelone.storage.io_paths import (
 from polaris.kernelone.telemetry.debug_stream import emit_debug_event
 from polaris.kernelone.telemetry.metrics import METRIC_CONTEXT_LATENCY_P95, record_metric
 from polaris.kernelone.telemetry.trace import new_trace_id, set_trace_id
+from polaris.kernelone.type_ops import opaque_isinstance
 
 from .compression_engine import CompressionEngine
 from .context_override_processor import ContextOverrideProcessor
@@ -342,11 +343,11 @@ class RoleContextGateway:
         # Convert request.history to list[dict] for project()
         proj_input: list[dict[str, Any]] = []
         for item in request.history or []:
-            if isinstance(item, dict):
+            if opaque_isinstance(item, dict):
                 proj_input.append(item)
             elif isinstance(item, (list, tuple)) and len(item) >= 2:
                 history_item: dict[str, Any] = {"role": item[0], "content": item[1]}
-                if len(item) >= 3 and isinstance(item[2], dict):
+                if len(item) >= 3 and opaque_isinstance(item[2], dict):
                     history_item["metadata"] = dict(item[2])
                 proj_input.append(history_item)
 
@@ -903,13 +904,13 @@ class RoleContextGateway:
 
         # Extract from history
         for item in request.history or []:
-            if isinstance(item, dict):
+            if opaque_isinstance(item, dict):
                 owner = item.get("state_owner") or item.get("owner")
                 if owner:
                     state_owners.append(str(owner))
             elif isinstance(item, (list, tuple)) and len(item) >= 2:
                 # Check metadata in 3-element tuples
-                if len(item) >= 3 and isinstance(item[2], dict):
+                if len(item) >= 3 and opaque_isinstance(item[2], dict):
                     owner = item[2].get("state_owner") or item[2].get("owner")
                     if owner:
                         state_owners.append(str(owner))

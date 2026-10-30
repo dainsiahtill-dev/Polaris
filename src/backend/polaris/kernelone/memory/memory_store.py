@@ -17,6 +17,7 @@ from polaris.kernelone.db import KernelDatabase
 from polaris.kernelone.fs.jsonl.locking import file_lock
 from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.llm.embedding import get_default_embedding_port
+from polaris.kernelone.type_ops import opaque_not_isinstance
 from pydantic import ValidationError
 
 from .refs import has_memory_refs
@@ -546,7 +547,7 @@ class MemoryStore:
 
             # 3. Importance (Normalized 0-1)
             imp_val = mem.importance
-            if not isinstance(imp_val, (int, float)):
+            if opaque_not_isinstance(imp_val, (int, float)):
                 imp_val = 5
             importance = min(max(imp_val, 1), 10) / 10.0
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypedDict
 
+from polaris.kernelone.type_ops import opaque_isinstance
+
 if TYPE_CHECKING:
     from polaris.kernelone.llm.invocations import LLMInvoker
 
@@ -231,7 +233,7 @@ Respond in a structured format with clear sections."""
         # Identify knowledge gaps
         knowledge_gaps: list[str] = []
         for assumption in assumptions:
-            if isinstance(assumption, dict) and assumption.get("confidence", 1.0) < 0.7:
+            if opaque_isinstance(assumption, dict) and assumption.get("confidence", 1.0) < 0.7:
                 knowledge_gaps.append(f"Low confidence in: {assumption.get('text', 'unknown')}")
 
         # Summarize reasoning

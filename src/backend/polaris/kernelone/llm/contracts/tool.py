@@ -19,6 +19,8 @@ import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
@@ -93,7 +95,7 @@ class ToolCall:
         if isinstance(args_str, str):
             try:
                 arguments = json.loads(args_str)
-                if not isinstance(arguments, dict):
+                if opaque_not_isinstance(arguments, dict):
                     arguments = {}
                     parse_error = "arguments must be a JSON object"
             except json.JSONDecodeError as e:

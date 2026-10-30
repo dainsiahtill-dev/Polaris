@@ -16,6 +16,7 @@ from polaris.cells.control_plane.run_ledger.public.failure_evidence import (
     normalize_failure_class,
 )
 from polaris.kernelone.tools.tool_kinds import is_write_tool_name
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 
 def _stable_json(value: Any) -> str:
@@ -649,7 +650,7 @@ def _lifecycle_outcome_projection_from_events(
 
     latest_by_task: dict[str, dict[str, Any]] = {}
     for raw_event in events:
-        if not isinstance(raw_event, Mapping):
+        if opaque_not_isinstance(raw_event, Mapping):
             continue
         event = dict(raw_event)
         task_key, task_id, run_id, turn_id, identity_source = _lifecycle_task_identity(event)

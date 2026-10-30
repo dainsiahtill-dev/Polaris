@@ -14,6 +14,7 @@ from typing import Any
 from polaris.delivery.cli.pm.utils import normalize_path_list, normalize_str_list
 from polaris.kernelone.process.command_executor import CommandExecutionService
 from polaris.kernelone.shared.path_utils import normalize_path
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 _ALLOWED_QA_MODES = {"off", "shadow", "blocking"}
 _DEFAULT_QA_MODE = "blocking"
@@ -143,7 +144,7 @@ def _looks_like_verify_command(command: str) -> bool:
 
 
 def _acceptance_text_items(task: dict[str, Any]) -> list[str]:
-    if not isinstance(task, dict):
+    if opaque_not_isinstance(task, dict):
         return []
     return normalize_str_list(task.get("acceptance_criteria") or task.get("acceptance"))
 

@@ -22,6 +22,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     project_tool_lifecycle_summary,
     summarize_tool_lifecycle_events,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 
 def _clean_string(value: Any) -> str:
@@ -1142,7 +1143,7 @@ def _latest_task_boundary_epochs(events: list[dict[str, Any]]) -> dict[str, dict
 
     latest_by_task: dict[str, dict[str, Any]] = {}
     for event in events:
-        if not isinstance(event, dict):
+        if opaque_not_isinstance(event, dict):
             continue
         boundary_raw = event.get("task_boundary_verdict")
         if event.get("event_type") != "task_boundary_verdict" and not isinstance(boundary_raw, dict):
@@ -1489,7 +1490,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     latest_task_boundaries = _latest_task_boundary_epochs(events)
     required_modalities_by_obligation = _required_modalities_by_gate_obligation(events)
     for event_index, event in enumerate(events):
-        if not isinstance(event, dict):
+        if opaque_not_isinstance(event, dict):
             continue
         event_type = event.get("event_type")
         if event_type == "tool_call_lifecycle":

@@ -35,6 +35,7 @@ from polaris.cells.storage.layout.public import (
     ResolveExistingRuntimeRootReadOnlyQueryV1,
     resolve_existing_runtime_root_read_only,
 )
+from polaris.kernelone.type_ops import opaque_isinstance
 
 from ..internal.bench_gates import build_real_run_gate
 from ..internal.factory_run_admission import FactoryWorkspaceRunAdmission
@@ -419,7 +420,7 @@ async def get_factory_chain_projection(
             },
         )
 
-    if isinstance(run.status, FactoryRunStatus):
+    if opaque_isinstance(run.status, FactoryRunStatus):
         status_value = run.status.value
     elif type(run.status) is str:
         status_value = run.status.strip()

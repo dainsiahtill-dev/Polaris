@@ -23,6 +23,7 @@ from polaris.domain.director.context_constants import (
     MAX_SIMILAR,
     MAX_TREE_CHARS,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 if TYPE_CHECKING:
     from polaris.cells.director.tasking.public import ExecutionMode
@@ -216,7 +217,7 @@ def _read_file_safe(
 
 def _extract_text(tool_result: dict[str, Any]) -> str:
     """Pull plain text from a tool result dict (handles content list or stdout str)."""
-    if not isinstance(tool_result, dict):
+    if opaque_not_isinstance(tool_result, dict):
         return ""
     # Structured content list (repo_read_* format)
     content = tool_result.get("content")

@@ -35,6 +35,7 @@ from polaris.kernelone.security.dangerous_patterns import (
     is_dangerous_command,
     is_path_traversal,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -331,7 +332,7 @@ class OutputParser:
             return
         if allowed and not (_tool_name_match_keys(name) & allowed):
             return
-        if not isinstance(arguments, dict):
+        if opaque_not_isinstance(arguments, dict):
             return
         signature = (
             name,

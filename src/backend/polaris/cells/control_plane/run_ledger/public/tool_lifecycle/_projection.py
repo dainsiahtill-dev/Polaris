@@ -34,6 +34,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle._receipts impo
     native_tool_call_facts_from_lifecycle_receipt,
     normalize_tool_call_lifecycle_receipt,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 
 @dataclass(frozen=True)
@@ -125,7 +126,7 @@ def project_tool_lifecycle_requirement(
 
     obligations: dict[str, dict[str, Any]] = {}
     for raw_event in requirement_events:
-        if not isinstance(raw_event, Mapping):
+        if opaque_not_isinstance(raw_event, Mapping):
             continue
         requirement_raw = raw_event.get("tool_lifecycle_requirement")
         requirement = _mapping(requirement_raw) if requirement_raw is not None else _mapping(raw_event)
@@ -143,7 +144,7 @@ def project_tool_lifecycle_requirement(
             "evidence_refs": _string_list(requirement.get("evidence_refs")),
         }
     for raw_event in lifecycle_events:
-        if not isinstance(raw_event, Mapping):
+        if opaque_not_isinstance(raw_event, Mapping):
             continue
         task_key, task_id, run_id, turn_id, identity_source = _lifecycle_task_identity(raw_event)
         obligations.setdefault(
@@ -263,7 +264,7 @@ def summarize_tool_lifecycle_events(
     failure_evidence: list[dict[str, Any]] = []
     projected_events: list[dict[str, Any]] = []
     for raw_event in events:
-        if not isinstance(raw_event, Mapping):
+        if opaque_not_isinstance(raw_event, Mapping):
             continue
         event = dict(raw_event)
         projected_events.append(event)

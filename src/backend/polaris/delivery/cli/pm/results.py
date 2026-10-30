@@ -15,6 +15,7 @@ from polaris.delivery.cli.director_result_matcher import (
 from polaris.delivery.cli.pm.utils import compact_text, read_json_file
 from polaris.domain.director.lifecycle import read as read_director_lifecycle
 from polaris.kernelone.shared.path_utils import normalize_path_list
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 DIRECTOR_LIFECYCLE_FILE = "DIRECTOR_LIFECYCLE.json"
 
@@ -139,7 +140,7 @@ def read_director_lifecycle_for_run(run_dir: str) -> dict[str, Any]:
     """Read director lifecycle for a run."""
     path = director_lifecycle_path(run_dir)
     payload = read_director_lifecycle(path)
-    if not isinstance(payload, dict):
+    if opaque_not_isinstance(payload, dict):
         return {}
     payload.setdefault("path", path)
     return payload

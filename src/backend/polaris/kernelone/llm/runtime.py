@@ -10,6 +10,7 @@ from typing import Any
 
 from polaris.kernelone.constants import DEFAULT_OPERATION_TIMEOUT_SECONDS
 from polaris.kernelone.llm.runtime_config import _ROLE_BINDING_MODE_ENV_KEYS, MASKED_SECRET
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from .provider_contract import KernelLLMRuntimeAdapter, RuntimeProviderInvokeResult
 
@@ -332,7 +333,7 @@ def invoke_role_runtime_provider(
             error=f"provider_config_resolution_failed:{exc}",
         )
 
-    if strict_binding and not isinstance(provider_cfg, dict):
+    if strict_binding and opaque_not_isinstance(provider_cfg, dict):
         return RuntimeProviderInvokeResult(
             attempted=False,
             ok=False,

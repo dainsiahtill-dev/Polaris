@@ -13,6 +13,7 @@ from polaris.kernelone.fs.registry import get_default_adapter
 from polaris.kernelone.llm.embedding import get_default_embedding_port
 from polaris.kernelone.storage import resolve_workspace_persistent_path
 from polaris.kernelone.telemetry.metrics import MetricsRecorder, Timer
+from polaris.kernelone.type_ops import opaque_not_isinstance
 from polaris.kernelone.utils.time_utils import utc_now_str
 
 from .public.contracts import CellDescriptorV1, SearchCellsQueryV1, SearchCellsResultV1
@@ -117,7 +118,7 @@ def resolve_context_catalog_index_state_path(workspace: str | Path) -> Path:
 
 def validate_descriptor_cache_payload(payload: dict[str, Any]) -> list[str]:
     errors: list[str] = []
-    if not isinstance(payload, dict):
+    if opaque_not_isinstance(payload, dict):
         return ["descriptor cache root must be an object"]
 
     for field in _ROOT_REQUIRED_FIELDS:

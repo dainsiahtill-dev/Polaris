@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 _DEFAULT_DIRECTOR_MAX_PARALLELISM = 3
 
 
@@ -519,7 +521,7 @@ def build_task_dependency_schedule(
     task_rows: dict[str, Mapping[str, Any]] = {}
     duplicate_task_ids: list[str] = []
     for index, task in enumerate(tasks, start=1):
-        if not isinstance(task, Mapping):
+        if opaque_not_isinstance(task, Mapping):
             _append_blocker(
                 blockers,
                 blocker_set,

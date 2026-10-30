@@ -9,6 +9,8 @@ import json
 import logging
 from typing import Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 from .response_types import NormalizedStreamEvent
 
 logger = logging.getLogger(__name__)
@@ -232,7 +234,7 @@ def _normalize_stream_tool_call_payload(payload: dict[str, Any]) -> tuple[str, d
     Returns:
         Tuple of (tool_name, tool_args, call_id)
     """
-    if not isinstance(payload, dict):
+    if opaque_not_isinstance(payload, dict):
         return "", {}, ""
 
     tool_name = str(payload.get("tool") or payload.get("name") or payload.get("tool_name") or "").strip()

@@ -26,6 +26,7 @@ from polaris.cells.runtime.execution_broker.public import (
     record_project_artifact,
 )
 from polaris.kernelone.audit.task_write_guidance import render_task_write_guidance
+from polaris.kernelone.type_ops import opaque_isinstance, opaque_not_isinstance
 
 from ...base import BaseRoleAdapter
 from ...director_execution_backend import (
@@ -161,7 +162,7 @@ class DirectorAdapter(BaseRoleAdapter):
                 ctx_metadata["director_strategy"] = selected_strategy
 
         result = await execute_director_task(self, task_id, input_data, context)
-        if not isinstance(result, dict):
+        if opaque_not_isinstance(result, dict):
             return result
         return self._with_task_runtime_transition_failure_evidence(result)
 
@@ -710,7 +711,7 @@ class DirectorAdapter(BaseRoleAdapter):
     ) -> None:
         """Promote claimed TaskBoard contract fields into RoleRuntime metadata."""
 
-        if not isinstance(task, dict) or not isinstance(context, dict):
+        if opaque_not_isinstance(task, dict) or opaque_not_isinstance(context, dict):
             return
         sources = _task_contract_sources(task)
         contract_payload = _promoted_task_contract_payload(sources)
@@ -970,7 +971,7 @@ class DirectorAdapter(BaseRoleAdapter):
                 self._invoke_role_dialogue(message, context=context_payload),
                 timeout=watchdog_timeout,
             )
-            if isinstance(response, dict):
+            if opaque_isinstance(response, dict):
                 return response
             return {
                 "content": "",

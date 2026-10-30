@@ -21,6 +21,7 @@ from polaris.kernelone.llm.budget_policy import (
     resolve_context_output_budget_tokens as _foundation_context_output_budget_tokens,
     resolve_output_budget_tokens,
 )
+from polaris.kernelone.type_ops import opaque_isinstance, opaque_not_isinstance
 
 from .request_facts import request_fact_source
 from .tool_helpers import (
@@ -388,7 +389,7 @@ def messages_to_input(
 
         # Handle structured content (from PromptChunkAssembler._apply_cache_control)
         # Format: [{"type": "text", "text": "...", "cache_control": {...}}]
-        if isinstance(content, list) and len(content) > 0:
+        if opaque_isinstance(content, list) and len(content) > 0:
             text_parts = []
             for item in content:
                 if isinstance(item, dict):
@@ -404,7 +405,7 @@ def messages_to_input(
                 else:
                     text_parts.append(str(item))
             content = "\n".join(text_parts)
-        elif not isinstance(content, str):
+        elif opaque_not_isinstance(content, str):
             content = str(content)
 
         if format_type == "native":

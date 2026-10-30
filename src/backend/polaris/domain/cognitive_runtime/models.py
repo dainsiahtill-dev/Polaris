@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 
 def _copy_mapping(payload: dict[str, Any] | None) -> dict[str, Any]:
     return dict(payload or {})
@@ -13,7 +15,7 @@ def _copy_mapping_tuple(
 ) -> tuple[dict[str, Any], ...]:
     normalized: list[dict[str, Any]] = []
     for value in values or ():
-        if not isinstance(value, dict):
+        if opaque_not_isinstance(value, dict):
             continue
         normalized.append(dict(value))
     return tuple(normalized)

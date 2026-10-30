@@ -31,6 +31,7 @@ from polaris.kernelone.telemetry.debug_stream import (
     debug_stream_session,
     emit_debug_event,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -772,7 +773,7 @@ class RoleConsoleHost:
     def _build_runtime_history(messages: list[dict[str, Any]]) -> tuple[tuple[str, str], ...]:
         history: list[tuple[str, str]] = []
         for item in messages:
-            if not isinstance(item, Mapping):
+            if opaque_not_isinstance(item, Mapping):
                 continue
             role = str(item.get("role") or "").strip()
             content = str(item.get("content") or item.get("message") or "").strip()
@@ -822,7 +823,7 @@ class RoleConsoleHost:
         while len(updated) >= 2:
             tail = updated[-1]
             prev = updated[-2]
-            if not isinstance(tail, Mapping) or not isinstance(prev, Mapping):
+            if opaque_not_isinstance(tail, Mapping) or opaque_not_isinstance(prev, Mapping):
                 break
             tail_role = str(tail.get("role") or "").strip().lower()
             prev_role = str(prev.get("role") or "").strip().lower()
@@ -840,7 +841,7 @@ class RoleConsoleHost:
                 return updated, False
         max_sequence = -1
         for index, item in enumerate(updated):
-            if not isinstance(item, Mapping):
+            if opaque_not_isinstance(item, Mapping):
                 continue
             raw_sequence = item.get("sequence")
             try:

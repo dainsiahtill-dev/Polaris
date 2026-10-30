@@ -32,6 +32,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 if TYPE_CHECKING:
     from polaris.kernelone.constants import RoleId
 
@@ -365,7 +367,7 @@ class UnifiedBenchmarkCase:
         object.__setattr__(self, "workspace_fixture", str(self.workspace_fixture or "").strip())
         object.__setattr__(self, "expected_evidence_path", _tuple_of_strings(self.expected_evidence_path))
         object.__setattr__(self, "expected_answer_shape", str(self.expected_answer_shape or "answer").strip())
-        if not isinstance(self.budget_conditions, BudgetConditions):
+        if opaque_not_isinstance(self.budget_conditions, BudgetConditions):
             bd = self.budget_conditions if isinstance(self.budget_conditions, Mapping) else {}
             object.__setattr__(self, "budget_conditions", BudgetConditions.from_dict(bd))
         object.__setattr__(self, "canonical_profile", str(self.canonical_profile or "canonical_balanced").strip())
@@ -373,7 +375,7 @@ class UnifiedBenchmarkCase:
         object.__setattr__(self, "context", dict(self.context or {}))
         object.__setattr__(self, "metadata", dict(self.metadata or {}))
         object.__setattr__(self, "tags", _tuple_of_strings(self.tags))
-        if not isinstance(self.judge, JudgeConfig):
+        if opaque_not_isinstance(self.judge, JudgeConfig):
             jc = self.judge if isinstance(self.judge, Mapping) else {}
             object.__setattr__(self, "judge", JudgeConfig.from_dict(jc))
         else:

@@ -10,6 +10,7 @@ from typing import Any
 
 from polaris.domain.entities import TaskEvidence
 from polaris.domain.language import detect_language as _detect_language
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 _MAX_EVIDENCE_CONTENT_CHARS = 1000
 
@@ -23,7 +24,7 @@ def build_file_evidence(files_created: list[dict[str, Any]]) -> list[TaskEvidenc
     """Build evidence items for created or modified files."""
     evidence_list: list[TaskEvidence] = []
     for file_info in files_created:
-        if not isinstance(file_info, dict):
+        if opaque_not_isinstance(file_info, dict):
             continue
         path = str(file_info.get("path") or "").strip()
         content = str(file_info.get("content") or "")

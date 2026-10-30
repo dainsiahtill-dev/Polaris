@@ -53,6 +53,7 @@ from polaris.kernelone.llm.toolkit.tool_normalization import (
     normalize_tool_arguments_from_snapshot,
 )
 from polaris.kernelone.tools.tool_kinds import DEPRECATED_WRITE_TOOLS
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 # Preserve historical logger identity (former single-module __name__).
 logger = logging.getLogger(__package__ or __name__)
@@ -950,7 +951,7 @@ def annotate_autofilled_write_receipts(
     if not evidence_by_call_id:
         return
     for receipt in receipts:
-        if not isinstance(receipt, dict):
+        if opaque_not_isinstance(receipt, dict):
             continue
         for results_key in ("results", "raw_results"):
             result_items = receipt.get(results_key)

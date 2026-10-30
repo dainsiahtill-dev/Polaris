@@ -12,6 +12,7 @@ from typing import Any
 
 from polaris.kernelone.events.message_bus import Message, MessageBus, MessageType
 from polaris.kernelone.events.topics import TOPIC_RUNTIME_STREAM
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from .stream_archiver import StreamArchiverError, create_stream_archiver
 
@@ -52,7 +53,7 @@ class ArchiveSink:
 
     async def _handle_message(self, message: Message) -> None:
         payload = message.payload
-        if not isinstance(payload, dict):
+        if opaque_not_isinstance(payload, dict):
             return
         if payload.get("topic") != TOPIC_RUNTIME_STREAM:
             return

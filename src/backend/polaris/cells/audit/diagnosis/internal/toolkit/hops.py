@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from typing import TypeAlias
 
 from polaris.kernelone.fs.text_ops import write_text_atomic
+from polaris.kernelone.type_ops import opaque_not_isinstance
 from polaris.kernelone.utils.time_utils import utc_now_iso
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,7 @@ def _safe_int(value: Any, default: int = 0) -> int:
 
 
 def _is_failed_observation(event: EventDict) -> bool:
-    if not isinstance(event, dict):
+    if opaque_not_isinstance(event, dict):
         return False
     if str(event.get("kind") or "") != "observation":
         return False

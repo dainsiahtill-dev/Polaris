@@ -17,6 +17,7 @@ from polaris.cells.runtime.task_runtime.internal.task_board import (
     _TaskBoardMutationGuard,
 )
 from polaris.kernelone.storage import resolve_runtime_path
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from ..execution_session import (
     TaskExecutionSession,
@@ -2170,7 +2171,7 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
         if external_token:
             matches: list[dict[str, Any]] = []
             for row in rows:
-                if not isinstance(row, dict):
+                if opaque_not_isinstance(row, dict):
                     continue
                 raw_metadata = row.get("metadata")
                 metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
@@ -2182,7 +2183,7 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
         normalized = self.normalize_task_id(task_id)
         if normalized is not None:
             for row in rows:
-                if not isinstance(row, dict):
+                if opaque_not_isinstance(row, dict):
                     continue
                 if self.normalize_task_id(row.get("id")) == normalized:
                     return dict(row)

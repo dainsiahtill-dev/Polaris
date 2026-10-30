@@ -13,6 +13,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any, AsyncContextManager, TypeVar
 
 from polaris.kernelone.events.final_request_evidence import ContextSnapshotReferenceOwnerV1, redact_provider_transport
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from .contracts import AIRequest, ModelSpec, _deep_freeze_provider_value
 from .internal.context_hash import validate_context_hash
@@ -404,7 +405,7 @@ class NativeRequestCapturePort:
                 values = serialize() if callable(serialize) else {}
             except (RuntimeError, TypeError, ValueError):
                 values = {}
-        if not isinstance(values, dict):
+        if opaque_not_isinstance(values, dict):
             values = {}
         token_keys = (
             "prompt_tokens",

@@ -72,6 +72,7 @@ from polaris.kernelone.context.prompt_safety import (
 from polaris.kernelone.llm.engine.model_catalog import ModelCatalog
 from polaris.kernelone.llm.runtime_config import get_role_model
 from polaris.kernelone.llm.toolkit.parsers import format_tool_result
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 
 class ToolLoopCircuitBreakerError(Exception):
@@ -610,7 +611,7 @@ class ToolLoopController:
 
         # Write tool results (may be empty, but we already wrote user message above)
         for item in tool_results:
-            if not isinstance(item, dict):
+            if opaque_not_isinstance(item, dict):
                 continue
             tool_name = str(item.get("tool") or "tool").strip() or "tool"
             self._history.append(
@@ -635,7 +636,7 @@ class ToolLoopController:
             tool_result: The result dict from tool execution.
             tool_args: The original arguments passed to the tool call (for loop detection).
         """
-        if not isinstance(tool_result, dict):
+        if opaque_not_isinstance(tool_result, dict):
             return
         tool_name = str(tool_result.get("tool") or "tool").strip() or "tool"
 
@@ -938,7 +939,7 @@ class ToolLoopController:
 
     def _seed_tool_results(self, tool_results: list[dict[str, Any]] | None) -> None:
         for item in list(tool_results or []):
-            if not isinstance(item, dict):
+            if opaque_not_isinstance(item, dict):
                 continue
             tool_name = str(item.get("tool") or "tool").strip() or "tool"
             self._history.append(

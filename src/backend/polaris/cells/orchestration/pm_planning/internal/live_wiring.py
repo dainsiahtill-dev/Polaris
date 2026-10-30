@@ -28,6 +28,8 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 from .dependency_validator import DependencyCycleError, compute_schedule
 from .raid_register import RaidRegister
 from .wsjf import score_tasks_wsjf
@@ -111,7 +113,7 @@ def reorder_tasks_by_wsjf(
     """
     # Argument-shape guard runs BEFORE any env read: a malformed input degrades to
     # a no-op for both gate states.
-    if not isinstance(tasks, list):
+    if opaque_not_isinstance(tasks, list):
         return tasks
 
     # Gate-off fast path: return the SAME object (not list(tasks)/tasks[:]). This

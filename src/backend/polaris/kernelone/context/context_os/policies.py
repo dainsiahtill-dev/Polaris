@@ -12,6 +12,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 
 def _safe_int(value: Any, default: int = 0) -> int:
     try:
@@ -449,7 +451,7 @@ class StateFirstContextOSPolicy:
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> StateFirstContextOSPolicy:
         """Create policy from dictionary (inverse of to_dict)."""
-        if not isinstance(payload, dict):
+        if opaque_not_isinstance(payload, dict):
             return cls()
 
         context_window_data = payload.get("context_window", {})

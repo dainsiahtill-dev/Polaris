@@ -38,6 +38,7 @@ from polaris.kernelone.llm.budget_policy import (
     forced_write_output_token_ceiling,
 )
 from polaris.kernelone.tools.tool_kinds import ACTIVE_WRITE_TOOLS, DEPRECATED_WRITE_TOOLS
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -878,7 +879,7 @@ def extract_structured_required_tool_names(
     known_tool_map = {name.lower(): name for name in known_tool_names if str(name or "").strip()}
     required: list[str] = []
     for message in messages:
-        if not isinstance(message, dict):
+        if opaque_not_isinstance(message, dict):
             continue
         metadata = message.get("metadata")
         if not isinstance(metadata, dict):
@@ -895,7 +896,7 @@ def extract_text_required_tool_names(
     known_tool_map = {name.lower(): name for name in known_tool_names if str(name or "").strip()}
     required: list[str] = []
     for message in messages:
-        if not isinstance(message, dict):
+        if opaque_not_isinstance(message, dict):
             continue
         _append_required_tools_from_text(required, message.get("content"), known_tool_names, known_tool_map)
     return required
@@ -1356,7 +1357,7 @@ def pin_write_tool_file_param_to_targets(
     }
     pinned: list[dict[str, Any]] = []
     for definition in tool_definitions:
-        if not isinstance(definition, dict):
+        if opaque_not_isinstance(definition, dict):
             pinned.append(definition)
             continue
         function_payload = definition.get("function")
@@ -1611,7 +1612,7 @@ def extract_native_tool_calls(
         Tuple of (tool_calls list, provider hint string)
     """
     _ = response_text
-    if not isinstance(raw_payload, dict):
+    if opaque_not_isinstance(raw_payload, dict):
         return [], "auto"
 
     provider_hint = resolve_tool_call_provider(provider_id=provider_id, model=model)

@@ -23,6 +23,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol, TypedDict
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 
 class ProviderRequest(TypedDict, total=False):
     """Unified Provider request structure.
@@ -94,7 +96,7 @@ class AdapterProviderContract:
         """
         errors: list[str] = []
 
-        if not isinstance(request, dict):
+        if opaque_not_isinstance(request, dict):
             return False, ["request must be a dict"]
 
         # config is required

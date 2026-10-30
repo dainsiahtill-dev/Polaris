@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +163,7 @@ class SchemaValidator:
         """Validate vocabulary list."""
         errors: list[str] = []
 
-        if not isinstance(vocabulary, list):
+        if opaque_not_isinstance(vocabulary, list):
             return ["Vocabulary must be a list"]
 
         if len(vocabulary) < 3:
@@ -189,7 +190,7 @@ class SchemaValidator:
         """Validate identity definition."""
         errors: list[str] = []
 
-        if not isinstance(identity, str):
+        if opaque_not_isinstance(identity, str):
             return ["Identity must be a string"]
 
         if len(identity) < 20:
@@ -201,7 +202,7 @@ class SchemaValidator:
         """Validate expertise list."""
         errors: list[str] = []
 
-        if not isinstance(expertise, list):
+        if opaque_not_isinstance(expertise, list):
             return ["Expertise must be a list"]
 
         if len(expertise) < 3:

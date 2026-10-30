@@ -16,6 +16,7 @@ from polaris.kernelone.llm.providers import (
 )
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage
 from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from .http_utils import join_url, normalize_base_url, validate_base_url_for_ssrf
 from .provider_helpers import _blocking_http_post
@@ -445,7 +446,7 @@ class GeminiAPIProvider(BaseProvider):
     @staticmethod
     def _extract_output(data: dict[str, Any]) -> str:
         """Extract output from Gemini API response"""
-        if not isinstance(data, dict):
+        if opaque_not_isinstance(data, dict):
             return ""
 
         # Gemini API response format

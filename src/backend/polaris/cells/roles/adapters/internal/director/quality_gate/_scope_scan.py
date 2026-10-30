@@ -32,6 +32,7 @@ from polaris.kernelone.quality import (
     partition_paths_by_declared_scope,
     scope_authority_decision_summary,
 )
+from polaris.kernelone.type_ops import opaque_isinstance, opaque_not_isinstance
 
 from .. import execute_method as _em
 from ..artifact_quality_diagnostics import (
@@ -90,7 +91,7 @@ def _quality_repair_cache_root(task: dict[str, Any], context: dict[str, Any]) ->
     """Resolve the cache root used by CE/runtime ledgers from local task context."""
     candidates: list[Any] = []
     for source in (context, task):
-        if not isinstance(source, dict):
+        if opaque_not_isinstance(source, dict):
             continue
         candidates.extend(
             [
@@ -552,7 +553,7 @@ def _is_rust_missing_binary_quality_error(
         return True
     raw = text.strip()
     for issue in issue_payloads:
-        if not isinstance(issue, dict):
+        if opaque_not_isinstance(issue, dict):
             continue
         code = str(issue.get("code") or "").strip()
         if code != "rust_missing_binary_entrypoint":

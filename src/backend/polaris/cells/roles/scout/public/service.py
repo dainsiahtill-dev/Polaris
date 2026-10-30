@@ -60,6 +60,7 @@ from polaris.cells.roles.scout.internal.ports import DistillerPort, ReadToolPort
 from polaris.cells.roles.scout.internal.ranker import rank
 from polaris.cells.roles.scout.internal.retrieval import retrieve
 from polaris.cells.roles.scout.public.contracts import ScoutFinding, ScoutProbeTargetV1, ScoutReportV1
+from polaris.kernelone.type_ops import opaque_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -446,7 +447,7 @@ def _freeze_token(token: Mapping[str, Any]) -> Mapping[str, Any]:
     """Snapshot token mappings and sequences without sharing caller containers."""
     if isinstance(token, Mapping):
         return _FrozenTokenMapping({str(key): _freeze_token_value(value) for key, value in token.items()})
-    if isinstance(token, (list, tuple)):
+    if opaque_isinstance(token, (list, tuple)):
         return tuple(_freeze_token_value(item) for item in token)
     if isinstance(token, (set, frozenset)):
         return frozenset(token)

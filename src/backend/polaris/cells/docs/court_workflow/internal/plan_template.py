@@ -4,6 +4,8 @@ import logging
 import os
 from typing import Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -21,7 +23,7 @@ def _kernel_fs(workspace: str) -> KernelFileSystem:
 
 def _needs_literal_newline_normalization(text: str) -> bool:
     """检查文本是否需要字面量换行规范化。"""
-    if not isinstance(text, str):
+    if opaque_not_isinstance(text, str):
         return False
     escaped_count = text.count("\\n")
     has_real_newline = "\n" in text
@@ -38,7 +40,7 @@ def _normalize_literal_newlines(text: str) -> str:
 
 
 def _is_legacy_game_plan_template(text: str) -> bool:
-    if not isinstance(text, str):
+    if opaque_not_isinstance(text, str):
         return False
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if not lines:

@@ -13,6 +13,8 @@ from dataclasses import InitVar, dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, runtime_checkable
 
+from polaris.kernelone.type_ops import opaque_isinstance, opaque_not_isinstance
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
@@ -191,7 +193,7 @@ class VerifyCompletionCommandV1:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
-        if not isinstance(self.claim, VerificationClaim):
+        if opaque_not_isinstance(self.claim, VerificationClaim):
             msg = "claim must be a VerificationClaim instance"
             raise TypeError(msg)
         object.__setattr__(

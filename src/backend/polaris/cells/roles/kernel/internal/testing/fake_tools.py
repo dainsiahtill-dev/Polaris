@@ -24,6 +24,7 @@ from polaris.cells.roles.kernel.internal.testing.exceptions import (
     FakeToolExecutionError,
     FakeToolNotFoundError,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 # Import unified interface from KernelOne (P0-010 fix)
 
@@ -272,7 +273,7 @@ class FakeToolExecutor:
         try:
             result = registration.handler(dict(args))
             # Ensure result is a dict
-            if not isinstance(result, dict):
+            if opaque_not_isinstance(result, dict):
                 result = {"success": True, "result": result}
         except (RuntimeError, ValueError) as e:
             raise FakeToolExecutionError(tool_name, e) from e

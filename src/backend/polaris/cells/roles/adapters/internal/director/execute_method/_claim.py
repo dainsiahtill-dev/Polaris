@@ -47,6 +47,7 @@ from polaris.kernelone.quality import (
     scan_workspace_artifact_quality_evidence as scan_workspace_artifact_quality_evidence,
 )
 from polaris.kernelone.quality.interface_ledger import WorkspaceReadSnapshot
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from ..helpers import (
     _DEFAULT_TASK_LEASE_TTL_SECONDS,
@@ -1098,7 +1099,7 @@ def _execution_attempt_identity_from_context(
     still receives the live authority and must revalidate that attempt.
     """
 
-    if not isinstance(context, dict):
+    if opaque_not_isinstance(context, dict):
         return None
     cached = context.get("task_runtime_execution_attempt")
     if type(cached) is TaskRuntimeExecutionAttemptIdentityV1:
@@ -1122,7 +1123,7 @@ def _project_deferred_followup_receipts_as_tool_results(
 
     projected: list[dict[str, Any]] = []
     for receipt in followup_receipts:
-        if not isinstance(receipt, Mapping):
+        if opaque_not_isinstance(receipt, Mapping):
             continue
         raw_items = receipt.get("raw_results") or receipt.get("results") or ()
         if not isinstance(raw_items, Sequence) or isinstance(raw_items, (str, bytes)):

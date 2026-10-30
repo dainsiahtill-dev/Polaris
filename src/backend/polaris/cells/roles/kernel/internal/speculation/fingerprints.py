@@ -6,6 +6,8 @@ import os
 import subprocess
 from typing import Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 _FINGERPRINT_DEFAULT_ARGUMENTS: dict[str, dict[str, frozenset[Any]]] = {
     "read_file": {
         "max_bytes": frozenset({200000, 200001}),
@@ -56,7 +58,7 @@ def normalize_args(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
     刻意**不**对字符串值做首尾去空白：那是 false-same 碰撞方向，会导致
     wrong-adoption。详见 `_normalize_value` docstring。
     """
-    if not isinstance(args, dict):
+    if opaque_not_isinstance(args, dict):
         return {}
     normalized_tool_name = str(tool_name or "").strip().lower()
     normalized_args = dict(args)

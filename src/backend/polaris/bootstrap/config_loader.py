@@ -15,6 +15,7 @@ from typing import Any
 
 from polaris.bootstrap.config_alias_audit import record_config_alias_migration
 from polaris.domain.models.config_snapshot import ConfigSnapshot
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -317,7 +318,7 @@ class ConfigLoader:
         except (ImportError, OSError, RuntimeError, ValueError) as exc:
             logger.warning("Global settings load failed: %s", exc)
             return {}
-        if not isinstance(payload, dict):
+        if opaque_not_isinstance(payload, dict):
             return {}
         return self._canonicalize_flat_config(self._flatten_dict(payload))
 

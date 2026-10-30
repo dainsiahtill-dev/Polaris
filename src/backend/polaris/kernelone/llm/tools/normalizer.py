@@ -12,6 +12,7 @@ from polaris.kernelone.llm.toolkit.tool_normalization import (
     normalize_tool_arguments as normalize_tool_arguments_canonical,
     normalize_tool_name as normalize_tool_name_canonical,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -32,7 +33,7 @@ def normalize_tool_arguments(value: Any, tool_name: str = "") -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
     normalized = normalize_tool_arguments_canonical(tool_name, value)
-    if not isinstance(normalized, dict):
+    if opaque_not_isinstance(normalized, dict):
         return {}
     output: dict[str, Any] = {}
     for key, raw in normalized.items():

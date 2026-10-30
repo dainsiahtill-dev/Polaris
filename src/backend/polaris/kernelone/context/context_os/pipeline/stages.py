@@ -52,6 +52,7 @@ from polaris.kernelone.context.context_os.patterns import (
 from polaris.kernelone.context.context_os.policies import StateFirstContextOSPolicy
 from polaris.kernelone.context.contributions import is_model_proposal, prompt_contribution_content
 from polaris.kernelone.telemetry.debug_stream import emit_debug_event
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from .contracts import (
     ArtifactSelectorOutput,
@@ -170,7 +171,7 @@ class TranscriptMerger:
         # First pass: emit tool_call events before main message loop
         pending_tool_calls: list[tuple[int, dict[str, Any], str]] = []
         for _fallback, raw in enumerate(messages or ()):
-            if not isinstance(raw, dict):
+            if opaque_not_isinstance(raw, dict):
                 continue
             metadata: dict[str, Any] = dict(raw.get("metadata") or {})
             tool_calls = metadata.get("tool_calls")
@@ -239,7 +240,7 @@ class TranscriptMerger:
 
         # Second pass: process all messages
         for _fallback, raw in enumerate(messages or ()):
-            if not isinstance(raw, dict):
+            if opaque_not_isinstance(raw, dict):
                 continue
             role = str(raw.get("role") or "").strip().lower()
             content = _normalize_text(raw.get("content") or raw.get("message") or "")

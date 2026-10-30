@@ -13,6 +13,8 @@ from __future__ import annotations
 import shlex
 from typing import TYPE_CHECKING, Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -201,7 +203,7 @@ class SchemaDrivenNormalizer:
         处理 contracts.py 中声明的所有 arg_aliases 映射。
         路径类参数自动规范化，非路径类参数直接映射。
         """
-        if not isinstance(tool_args, dict):
+        if opaque_not_isinstance(tool_args, dict):
             return {}
 
         normalized = dict(tool_args)

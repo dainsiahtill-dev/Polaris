@@ -29,6 +29,7 @@ from polaris.delivery.ws.endpoints.helpers import (
 )
 from polaris.delivery.ws.endpoints.stream import send_json_safe
 from polaris.infrastructure.messaging.nats.ws_consumer_manager import JetStreamConsumerManager
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -301,7 +302,7 @@ async def handle_v2_message(
             pm_status,
             director_status,
         )
-        if not isinstance(payload, dict):
+        if opaque_not_isinstance(payload, dict):
             payload = {"type": "status"}
         payload.setdefault("type", "status")
         payload["protocol"] = "runtime.v2"
@@ -376,7 +377,7 @@ async def build_status_payload(
         pm_status,
         director_status,
     )
-    if not isinstance(payload, dict):
+    if opaque_not_isinstance(payload, dict):
         payload = {"type": "status"}
     payload.setdefault("type", "status")
     return filter_status_payload_by_roles(payload, roles)

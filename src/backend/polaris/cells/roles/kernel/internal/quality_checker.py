@@ -20,6 +20,7 @@ from polaris.kernelone.security.dangerous_patterns import (
     is_dangerous_command,
     is_path_traversal,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 if TYPE_CHECKING:
     from polaris.cells.roles.profile.public.service import RoleProfile
@@ -454,7 +455,7 @@ class QualityChecker:
         authoritative. Risk assessment remains required and fail-closed.
         """
 
-        if not isinstance(candidate, dict):
+        if opaque_not_isinstance(candidate, dict):
             return None
         if "construction_plan" in candidate:
             payload: dict[str, Any] = candidate

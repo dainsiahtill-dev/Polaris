@@ -10,6 +10,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 from .helpers import _DOMAIN_STOPWORDS, _MIN_FILES_PATTERN, _MIN_LINES_PATTERN
 
 logger = logging.getLogger(__name__)
@@ -183,7 +185,7 @@ def summarize_tool_results(tool_results: list[dict[str, Any]]) -> str:
 
     summary: list[dict[str, Any]] = []
     for item in tool_results[:4]:
-        if not isinstance(item, dict):
+        if opaque_not_isinstance(item, dict):
             continue
         tool_name = str(item.get("tool") or "")
         success = bool(item.get("success", False))

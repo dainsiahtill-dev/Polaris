@@ -101,6 +101,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnDecisionKind,
     TurnId,
 )
+from polaris.kernelone.type_ops import opaque_isinstance, opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +183,7 @@ def _with_retry_batch_identity(
         rebound_batch = {**dict(tool_batch), "batch_id": batch_id}
     else:
         return decision
-    if isinstance(decision, TurnDecision):
+    if opaque_isinstance(decision, TurnDecision):
         return decision.model_copy(update={"tool_batch": rebound_batch})
     return cast("TurnDecision", {**dict(decision), "tool_batch": rebound_batch})
 
@@ -378,7 +379,7 @@ class RetryOrchestrator:
         # models fall back to writing SEARCH text from memory (hallucination).
         if self.emit_event is not None:
             for receipt_dict in receipts_as_dicts:
-                if not isinstance(receipt_dict, Mapping):
+                if opaque_not_isinstance(receipt_dict, Mapping):
                     continue
                 for result_item in list(receipt_dict.get("results", []) or []):
                     if not isinstance(result_item, Mapping):
@@ -858,7 +859,7 @@ class RetryOrchestrator:
 
             raw_native_names: list[str] = []
             for native_call in retry_response.native_tool_calls:
-                if not isinstance(native_call, Mapping):
+                if opaque_not_isinstance(native_call, Mapping):
                     continue
                 native_name = native_tool_call_name(native_call)
                 if native_name:

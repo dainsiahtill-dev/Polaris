@@ -11,6 +11,8 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
@@ -245,7 +247,7 @@ def _validate_schema_structure(
     """
     errors: list[str] = []
 
-    if not isinstance(schema, dict):
+    if opaque_not_isinstance(schema, dict):
         errors.append(f"[{tool_name}] schema must be a dict")
         return errors
 

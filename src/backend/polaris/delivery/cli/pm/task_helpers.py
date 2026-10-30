@@ -6,6 +6,7 @@ from typing import Any
 from polaris.delivery.cli.pm.config import SUPPORTED_ASSIGNEES
 from polaris.delivery.cli.pm.utils import _normalize_scope_list, normalize_path_list, normalize_str_list
 from polaris.kernelone.shared.path_utils import normalize_path
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 
 def normalize_priority(value: Any, fallback: int) -> int:
@@ -182,7 +183,7 @@ def _auto_assign_role(task: dict[str, Any]) -> str:
 
 def extract_defect_ticket(task: dict[str, Any]) -> dict[str, Any]:
     """Extract defect ticket from task."""
-    if not isinstance(task, dict):
+    if opaque_not_isinstance(task, dict):
         return {}
     required = task.get("required_evidence")
     if isinstance(required, dict):

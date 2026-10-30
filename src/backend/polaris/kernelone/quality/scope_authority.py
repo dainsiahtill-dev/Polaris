@@ -13,6 +13,7 @@ from polaris.kernelone.quality.file_ownership_ledger import (
     owner_task_identifier_token_aliases,
     task_identifier_token_aliases,
 )
+from polaris.kernelone.type_ops import opaque_isinstance, opaque_not_isinstance
 
 _SCHEMA_VERSION = "scope-authority-decision/1"
 
@@ -379,7 +380,7 @@ def build_owner_handoff_index(
     matched_owner_handoff_keys: set[tuple[str, tuple[str, ...]]] = set()
     matched_owner_handoff_by_task_key: dict[str, dict[str, Any]] = {}
     for record in task_records:
-        if not isinstance(record, Mapping):
+        if opaque_not_isinstance(record, Mapping):
             continue
         owner_handoff_request = matching_owner_handoff_request(record, owner_handoff_requests)
         if not owner_handoff_request:
@@ -583,7 +584,7 @@ def _handoff_requests_from_scope_payload(payload: Mapping[str, Any], key: str) -
 
     empty_sequence_seen = False
     for candidate in candidates:
-        if not isinstance(candidate, (list, tuple)) or isinstance(candidate, (str, bytes, bytearray)):
+        if opaque_not_isinstance(candidate, (list, tuple)) or opaque_isinstance(candidate, (str, bytes, bytearray)):
             continue
         requests, had_mapping_row = _dedupe_mapping_rows(candidate)
         if requests:

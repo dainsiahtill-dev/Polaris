@@ -33,6 +33,7 @@ from polaris.cells.roles.kernel.internal.transaction.tool_sequence_templates imp
     extract_expected_read_count,
 )
 from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_name
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 _SESSION_PATCH_BLOCK_RE = re.compile(r"<SESSION_PATCH>\s*(.*?)\s*</SESSION_PATCH>", flags=re.DOTALL)
 _SUPER_READONLY_STAGE_MARKERS: tuple[str, ...] = (
@@ -157,7 +158,7 @@ def extract_platform_tool_contract(context: list[dict[str, Any]]) -> dict[str, A
     """Extract the platform tool contract from context metadata."""
     contract: dict[str, Any] = {}
     for message in context:
-        if not isinstance(message, Mapping):
+        if opaque_not_isinstance(message, Mapping):
             continue
         metadata = _mapping(message.get("metadata"))
         for raw_candidate in (
@@ -296,7 +297,7 @@ def platform_tool_contract_disables_phase_manager(context: list[dict[str, Any]])
 
 def _context_has_actual_sibling_exports(context: list[dict[str, Any]]) -> bool:
     for message in context:
-        if not isinstance(message, Mapping):
+        if opaque_not_isinstance(message, Mapping):
             continue
         metadata = _mapping(message.get("metadata"))
         for candidate in (message.get("actual_sibling_exports"), metadata.get("actual_sibling_exports")):
@@ -405,7 +406,7 @@ def extract_continuation_prompt_metadata(content: str) -> dict[str, Any]:
 def extract_latest_user_message(context: list[dict[str, Any]]) -> str:
     """从 conversation context 中提取最新的用户消息。"""
     for message in reversed(context):
-        if not isinstance(message, Mapping):
+        if opaque_not_isinstance(message, Mapping):
             continue
         role = str(message.get("role") or "").strip().lower()
         if role != "user":
@@ -432,7 +433,7 @@ def extract_allowed_tool_names_from_definitions(tool_definitions: list[dict[str,
     """从 tool definitions 中提取所有允许的工具名。"""
     allowed: set[str] = set()
     for raw_item in tool_definitions:
-        if not isinstance(raw_item, Mapping):
+        if opaque_not_isinstance(raw_item, Mapping):
             continue
         tool_name = extract_tool_name_from_definition(raw_item)
         if tool_name:

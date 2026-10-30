@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from polaris.infrastructure.llm.tools import create_kernel_tool_runtime
 from polaris.kernelone.llm.contracts import ToolCall, ToolPolicy, ToolRoundRequest
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -95,7 +96,7 @@ class RoleToolRoundOrchestrator:
     def _normalize_preparsed_calls(items: Sequence[dict[str, Any]]) -> list[ToolCall]:
         normalized: list[ToolCall] = []
         for index, item in enumerate(items):
-            if not isinstance(item, dict):
+            if opaque_not_isinstance(item, dict):
                 continue
             name = str(item.get("tool") or item.get("name") or "").strip().lower()
             arguments = item.get("args")

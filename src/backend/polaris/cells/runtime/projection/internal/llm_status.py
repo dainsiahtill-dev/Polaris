@@ -18,6 +18,7 @@ from polaris.cells.runtime.projection.internal.io_helpers import build_cache_roo
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.llm.model_identity import model_identity_equal
 from polaris.kernelone.storage import resolve_runtime_path
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -287,7 +288,7 @@ def _dedupe_index_candidates(candidates: list[dict[str, Any]]) -> list[dict[str,
     deduped: list[dict[str, Any]] = []
     seen: set[int] = set()
     for index in candidates:
-        if not isinstance(index, dict):
+        if opaque_not_isinstance(index, dict):
             continue
         identity = id(index)
         if identity in seen:

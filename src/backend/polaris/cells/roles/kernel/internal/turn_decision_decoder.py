@@ -38,6 +38,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
 from polaris.kernelone.llm.toolkit.tool_normalization import (
     normalize_tool_arguments_from_snapshot,
 )
+from polaris.kernelone.type_ops import opaque_isinstance, opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -315,7 +316,7 @@ class TurnDecisionDecoder:
     @staticmethod
     def _native_tool_call_envelopes(response: RawLLMResponse) -> list[dict[str, Any]]:
         usage = getattr(response, "usage", None)
-        if not isinstance(usage, Mapping) and isinstance(response, Mapping):
+        if opaque_not_isinstance(usage, Mapping) and opaque_isinstance(response, Mapping):
             usage = response.get("usage")
         usage_map = usage if isinstance(usage, Mapping) else None
         return native_tool_call_envelopes_from_response(response, usage_map)

@@ -10,6 +10,7 @@ from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.storage.io_paths import resolve_run_dir
 from polaris.kernelone.tool_execution.constants import MAX_EVENT_CONTENT_LINES
 from polaris.kernelone.tool_execution.utils import safe_int, sanitize_tool_name
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 
 def persist_tool_raw_output(
@@ -70,7 +71,7 @@ def build_refs(state: Any, phase: str) -> dict[str, Any]:
 def compact_tool_output(tool: str, output: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     """Compact tool output for event emission."""
     truncation: dict[str, Any] = {"truncated": False}
-    if not isinstance(output, dict):
+    if opaque_not_isinstance(output, dict):
         return {"raw": str(output)}, truncation
     compact = dict(output)
     if "content" in compact and isinstance(compact["content"], list):
@@ -149,7 +150,7 @@ def analyze_slice_content(content: list[dict[str, Any]]) -> dict[str, bool]:
     has_def = False
     has_end = False
     for item in content:
-        if not isinstance(item, dict):
+        if opaque_not_isinstance(item, dict):
             continue
         line = str(item.get("t") or "")
         lowered = line.lower()
@@ -173,7 +174,7 @@ def suggest_radius(truncated: bool, analysis: dict[str, bool], current_radius: i
 
 def count_tool_output_lines(output: dict[str, Any]) -> int:
     """Count lines in tool output."""
-    if not isinstance(output, dict):
+    if opaque_not_isinstance(output, dict):
         return 0
     if output.get("cache_hit") is True:
         return 0

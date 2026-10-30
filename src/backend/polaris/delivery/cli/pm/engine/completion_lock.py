@@ -19,6 +19,7 @@ from polaris.delivery.cli.pm.engine.helpers import (
 from polaris.delivery.cli.pm.utils import normalize_path_list, read_json_file
 from polaris.kernelone.fs.text_ops import write_json_atomic
 from polaris.kernelone.storage.io_paths import resolve_artifact_path
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -133,7 +134,7 @@ def _apply_task_stability_filters(
         completion_state["touch_counts"] = touch_counts
 
     for task in tasks:
-        if not isinstance(task, dict):
+        if opaque_not_isinstance(task, dict):
             continue
         fingerprint = str(task.get("fingerprint") or "").strip()
         key = _task_identity_key(task)
@@ -205,7 +206,7 @@ def _update_completion_lock_state(
     records: Sequence[dict[str, Any]],
 ) -> None:
     """Update completion lock state from task records."""
-    if not isinstance(state, dict):
+    if opaque_not_isinstance(state, dict):
         return
     fingerprints = state.get("fingerprints")
     keys = state.get("keys")
@@ -221,7 +222,7 @@ def _update_completion_lock_state(
         state["touch_counts"] = touch_counts
 
     for record in records:
-        if not isinstance(record, dict):
+        if opaque_not_isinstance(record, dict):
             continue
         if str(record.get("pm_status") or "").strip().lower() != "done":
             continue

@@ -35,6 +35,7 @@ from polaris.cells.roles.kernel.internal.speculative_executor import (
     SpeculativeExecutor,
 )
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRuntime
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -322,7 +323,7 @@ class StreamShadowEngine:
         """Consume and clear the cross-turn speculation for a session."""
         token = str(session_id or "").strip()
         cached = self._cross_turn_cache.pop(token, {})
-        if not isinstance(cached, dict):
+        if opaque_not_isinstance(cached, dict):
             return {}
         return dict(cached)
 
@@ -354,7 +355,7 @@ class StreamShadowEngine:
         """Consume and clear the speculated patch for the given intent."""
         token = str(intent or "").strip()
         cached = self._speculated_patch_cache.pop(token, {})
-        if not isinstance(cached, dict):
+        if opaque_not_isinstance(cached, dict):
             return {}
         return dict(cached)
 

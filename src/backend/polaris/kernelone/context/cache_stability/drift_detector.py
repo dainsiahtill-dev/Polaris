@@ -35,6 +35,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 __all__ = [
     "DriftSummary",
     "PrefixDriftObserver",
@@ -142,7 +144,7 @@ def extract_prefix(
     counted = 0
     if messages:
         for message in messages:
-            if not isinstance(message, Mapping):
+            if opaque_not_isinstance(message, Mapping):
                 # Malformed entry ends the contiguous system prefix.
                 break
             role = str(message.get("role") or "").strip().lower()

@@ -32,6 +32,7 @@ from polaris.cells.runtime.task_market.public.contracts import (
     FailTaskStageCommandV1,
 )
 from polaris.cells.runtime.task_market.public.service import get_task_market_service
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 _VALID_ROUTE_STAGES = frozenset({"pending_design", "pending_exec", "pending_qa", "waiting_human"})
@@ -107,7 +108,7 @@ def _sanitize_qa_context_for_prompt(text: str) -> str:
 
 
 def _extract_qa_prompt_context(payload: dict[str, Any]) -> str:
-    if not isinstance(payload, dict):
+    if opaque_not_isinstance(payload, dict):
         return ""
 
     candidates: list[str] = []

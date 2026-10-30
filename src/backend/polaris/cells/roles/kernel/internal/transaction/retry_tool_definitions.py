@@ -22,6 +22,7 @@ from polaris.cells.roles.kernel.internal.transaction.task_contract_builder impor
     extract_allowed_tool_names_from_definitions,
     extract_tool_name_from_definition,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 
 def build_retry_tool_definitions_for_mutation(
@@ -62,7 +63,7 @@ def build_retry_tool_definitions_for_mutation(
     has_write = False
     selected_tool_names: set[str] = set()
     for raw_item in tool_definitions:
-        if not isinstance(raw_item, Mapping):
+        if opaque_not_isinstance(raw_item, Mapping):
             continue
         item = dict(raw_item)
         tool_name = extract_tool_name_from_definition(item)
@@ -75,7 +76,7 @@ def build_retry_tool_definitions_for_mutation(
             selected_tool_names.add(tool_name)
     if has_write:
         for raw_item in tool_definitions:
-            if not isinstance(raw_item, Mapping):
+            if opaque_not_isinstance(raw_item, Mapping):
                 continue
             item = dict(raw_item)
             tool_name = extract_tool_name_from_definition(item)
@@ -85,7 +86,7 @@ def build_retry_tool_definitions_for_mutation(
                 narrowed.append(item)
                 selected_tool_names.add(tool_name)
         for raw_item in tool_definitions:
-            if not isinstance(raw_item, Mapping):
+            if opaque_not_isinstance(raw_item, Mapping):
                 continue
             item = dict(raw_item)
             tool_name = extract_tool_name_from_definition(item)
@@ -421,7 +422,7 @@ def build_forced_write_only_retry_tool_definitions(
     narrowed: list[dict[str, Any]] = []
     has_write_file_definition = False
     for raw_item in tool_definitions:
-        if not isinstance(raw_item, Mapping):
+        if opaque_not_isinstance(raw_item, Mapping):
             continue
         item = dict(raw_item)
         tool_name = extract_tool_name_from_definition(item)
@@ -471,7 +472,7 @@ def _build_scoped_write_file_tool_definition(tool_definitions: list[dict[str, An
     schema = resolve_registry_tool_schema("write_file")
     targets: list[str] = []
     for raw_definition in tool_definitions:
-        if not isinstance(raw_definition, Mapping):
+        if opaque_not_isinstance(raw_definition, Mapping):
             continue
         candidate = _extract_file_schema_from_tool_definition(raw_definition)
         if not candidate:

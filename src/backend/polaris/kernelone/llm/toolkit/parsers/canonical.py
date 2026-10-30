@@ -40,8 +40,10 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, cast
 
-# Import canonical ToolCall from contracts (P0-001 unified)
 from polaris.kernelone.llm.contracts.tool import ToolCall
+
+# Import canonical ToolCall from contracts (P0-001 unified)
+from polaris.kernelone.type_ops import opaque_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -636,7 +638,7 @@ class CanonicalToolCallParser:
         if not args_str:
             return {}, None
 
-        if isinstance(args_str, dict):
+        if opaque_isinstance(args_str, dict):
             return args_str, None
 
         try:

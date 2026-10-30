@@ -27,6 +27,7 @@ from polaris.kernelone.events.final_request_evidence import (
     canonical_role_final_request_hash,
     role_final_request_policy,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 FACTORY_ROLE_EVIDENCE_BINDING_SCHEMA = "polaris.factory_role_evidence_binding.v1"
 _HASH_64_LENGTH = 64
@@ -173,7 +174,7 @@ class FactoryRoleEvidenceBindingV1:
             return "signed_factory_binding_ref_missing"
         if not _is_hash_64(self.signed_factory_binding_hash):
             return "signed_factory_binding_hash_invalid"
-        if not isinstance(self.cutoff_acknowledged, bool):
+        if opaque_not_isinstance(self.cutoff_acknowledged, bool):
             return "cutoff_acknowledged_type_invalid"
         if not self.cutoff_acknowledged:
             return "cutoff_not_acknowledged"
@@ -202,7 +203,7 @@ class FactoryRoleEvidenceBindingV1:
         if self.source_head_vector_hash != expected_vector_hash:
             return "source_head_vector_hash_mismatch"
         facts = self.policy_facts
-        if not isinstance(facts, RoleFinalRequestPolicyFactsV1):
+        if opaque_not_isinstance(facts, RoleFinalRequestPolicyFactsV1):
             return "policy_facts_type_mismatch"
         if facts.role != self.role:
             return "policy_facts_role_mismatch"

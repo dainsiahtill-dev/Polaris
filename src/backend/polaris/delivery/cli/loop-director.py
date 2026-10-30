@@ -46,6 +46,7 @@ from polaris.cells.director.execution.public.service import (
 # Polaris domain entities
 from polaris.domain.entities import TaskPriority, TaskStatus
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM, DEFAULT_OPERATION_TIMEOUT_SECONDS
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ def map_pm_priority_to_director(priority: Any) -> TaskPriority:
 
 def _format_construction_plan_for_description(construction_plan: dict[str, Any]) -> str:
     """Render concise ChiefEngineer construction plan text for Director."""
-    if not isinstance(construction_plan, dict):
+    if opaque_not_isinstance(construction_plan, dict):
         return ""
 
     file_plans_raw = construction_plan.get("file_plans")

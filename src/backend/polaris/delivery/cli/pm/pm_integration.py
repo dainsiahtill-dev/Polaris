@@ -25,6 +25,7 @@ from polaris.delivery.cli.pm.task_orchestrator import (
     TaskVerification,
     get_task_orchestrator,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 
 class PM:
@@ -133,14 +134,14 @@ class PM:
         Returns:
             Number of tasks synced
         """
-        if not isinstance(source_tasks, list):
+        if opaque_not_isinstance(source_tasks, list):
             return 0
 
         synced = 0
         source_index = self._build_source_task_index()
 
         for task_data in source_tasks:
-            if not isinstance(task_data, dict):
+            if opaque_not_isinstance(task_data, dict):
                 continue
 
             source_task_id = str(task_data.get("id") or "").strip()

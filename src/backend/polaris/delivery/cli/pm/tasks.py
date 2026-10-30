@@ -39,6 +39,7 @@ from polaris.delivery.cli.pm.utils import (
     normalize_path_list,
     normalize_str_list,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 from polaris.kernelone.utils.time_utils import utc_now_str
 
 _ACCEPTANCE_ANCHOR_RE = re.compile(
@@ -444,7 +445,7 @@ def normalize_pm_payload(raw_payload: dict[str, Any], iteration: int, timestamp:
 
 def _migrate_tasks_in_place(payload: dict[str, Any]) -> None:
     """Migrate tasks in place for backward compatibility."""
-    if not isinstance(payload, dict):
+    if opaque_not_isinstance(payload, dict):
         return
     tasks = payload.get("tasks")
     if not isinstance(tasks, list):
@@ -472,14 +473,14 @@ def apply_task_status_updates(
     failure_info: dict[str, dict[str, str]] | None = None,
 ) -> None:
     """Update task statuses in-place."""
-    if not isinstance(tasks, list) or not isinstance(status_updates, dict):
+    if opaque_not_isinstance(tasks, list) or opaque_not_isinstance(status_updates, dict):
         return
     updates = {str(k).strip(): normalize_task_status(v) for k, v in status_updates.items() if str(k).strip()}
     if not updates:
         return
     failure_info = failure_info or {}
     for task in tasks:
-        if not isinstance(task, dict):
+        if opaque_not_isinstance(task, dict):
             continue
         task_id = str(task.get("id") or "").strip()
         if not task_id or task_id not in updates:

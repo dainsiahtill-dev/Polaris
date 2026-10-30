@@ -25,6 +25,7 @@ from polaris.kernelone.planning import (
     PlanValidationResult,
     StructuralPlanValidator,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from ._protocol import _PMAdapterMixinBase
 from .language_contracts import directive_requires_typescript_package_contract
@@ -665,7 +666,7 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
                 projection.update(payload)
 
         for source in (input_data, input_metadata, context, context_metadata):
-            if not isinstance(source, dict):
+            if opaque_not_isinstance(source, dict):
                 continue
             mapping = (
                 ("projection_scenario", "scenario_id"),
@@ -730,7 +731,7 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
         normalized_contracts: list[dict[str, Any]] = []
 
         for index, contract in enumerate(contracts):
-            if not isinstance(contract, dict):
+            if opaque_not_isinstance(contract, dict):
                 continue
             enriched = dict(contract)
             _raw_enr_meta = enriched.get("metadata")

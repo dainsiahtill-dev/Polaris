@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from .factory_ce_evidence import llm_event_error_text
 from .factory_deadline_policy import FactoryDeadlineAdmissionV1
@@ -41,7 +42,7 @@ def build_per_binding_route_events(per_binding: list[dict[str, Any]]) -> list[di
     now_iso = datetime.now(timezone.utc).isoformat()
     events: list[dict[str, Any]] = []
     for entry in per_binding:
-        if not isinstance(entry, dict):
+        if opaque_not_isinstance(entry, dict):
             continue
         provider_id = str(entry.get("provider_id") or "").strip()
         model = str(entry.get("model") or "").strip()
@@ -95,7 +96,7 @@ def build_fail_closed_director_route_events(
         return []
     observed_providers: set[str] = set()
     for event in per_binding_route_events or []:
-        if not isinstance(event, dict):
+        if opaque_not_isinstance(event, dict):
             continue
         provider = _norm_text(event.get("provider_id") or event.get("provider"))
         model = _norm_text(event.get("model"))
@@ -110,7 +111,7 @@ def build_fail_closed_director_route_events(
         if provider and model:
             observed_providers.add(f"{provider}|{model}")
     for signal in stage_signals:
-        if not isinstance(signal, dict):
+        if opaque_not_isinstance(signal, dict):
             continue
         detail = str(signal.get("detail") or "")
         for binding in configured:
@@ -162,7 +163,7 @@ def reclassify_binding_coverage_signals(
         return
     observed_loose: set[str] = set()
     for event in per_binding_route_events:
-        if not isinstance(event, dict):
+        if opaque_not_isinstance(event, dict):
             continue
         provider = _norm_text(event.get("provider_id") or event.get("provider"))
         model = _norm_text(event.get("model"))
@@ -184,7 +185,7 @@ def reclassify_binding_coverage_signals(
     if not has_timeout:
         return
     for i, signal in enumerate(stage_signals):
-        if not isinstance(signal, dict):
+        if opaque_not_isinstance(signal, dict):
             continue
         if signal.get("code") != "director.binding_coverage_incomplete":
             continue
@@ -248,7 +249,7 @@ def director_provider_health_failure_signal_from_events(
     events: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
     for event in reversed(events):
-        if not isinstance(event, dict):
+        if opaque_not_isinstance(event, dict):
             continue
         if str(event.get("role") or "").strip().lower() != "director":
             continue
@@ -347,7 +348,7 @@ def validate_director_binding_coverage(
             )
             seen_keys.add(key)
         for ev in additional_events:
-            if not isinstance(ev, dict):
+            if opaque_not_isinstance(ev, dict):
                 continue
             key = (
                 str(ev.get("event") or ""),

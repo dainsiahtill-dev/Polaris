@@ -14,6 +14,7 @@ from polaris.kernelone.events.final_request_evidence import (
     looks_like_ce_blueprint_payload,
     looks_like_pm_contract_payload,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from ._payload import (
     _copy_mapping_payload,
@@ -212,7 +213,7 @@ def _set_structured_task_contract_slot(payload: dict[str, Any], key: str, value:
 
 def _first_contract_value(sources: list[dict[str, Any]], key: str) -> Any:
     for source in sources:
-        if not isinstance(source, dict):
+        if opaque_not_isinstance(source, dict):
             continue
         value = source.get(key)
         if key == "generated_outputs" and value is not None:

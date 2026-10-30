@@ -6,6 +6,7 @@ from typing import Any
 
 from polaris.delivery.cli.pm.task_helpers import _auto_assign_role, normalize_assigned_to
 from polaris.delivery.cli.pm.utils import _is_docs_path, normalize_path_list
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 
 def split_director_tasks(
@@ -17,7 +18,7 @@ def split_director_tasks(
     non_director_tasks: list[dict[str, Any]] = []
 
     for task in tasks or []:
-        if not isinstance(task, dict):
+        if opaque_not_isinstance(task, dict):
             continue
 
         task_copy = dict(task)
@@ -76,7 +77,7 @@ def merge_director_tasks(
     seen: set[str] = set()
 
     for task in [*(generated_tasks or []), *(existing_tasks or [])]:
-        if not isinstance(task, dict):
+        if opaque_not_isinstance(task, dict):
             continue
         task_id = str(task.get("id") or "").strip()
         dedupe_key = (

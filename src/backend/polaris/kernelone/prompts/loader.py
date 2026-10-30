@@ -4,6 +4,8 @@ import re
 from functools import lru_cache
 from typing import Any, cast
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 PROFILE_ENV = "KERNELONE_PROMPT_PROFILE"
 DEFAULT_PROFILE = "zhenguan_governance"
 
@@ -18,7 +20,7 @@ def normalize_escaped_multiline(text: str) -> tuple[str, bool]:
     Returns:
         Tuple[规范化后的文本, 是否进行了规范化]
     """
-    if not isinstance(text, str):
+    if opaque_not_isinstance(text, str):
         return text, False
 
     # 检查是否包含字面量 \n

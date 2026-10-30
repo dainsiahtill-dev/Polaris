@@ -13,6 +13,7 @@ from polaris.kernelone.audit.contracts import KernelAuditEvent, KernelAuditEvent
 from polaris.kernelone.audit.registry import get_audit_store
 from polaris.kernelone.events.message_bus import Message, MessageBus, MessageType
 from polaris.kernelone.events.topics import TOPIC_RUNTIME_AUDIT
+from polaris.kernelone.type_ops import opaque_not_isinstance
 from polaris.kernelone.utils.time_utils import utc_now
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,7 @@ def _resolve_audit_event_type(event_type: str) -> KernelAuditEventType:
 async def _audit_hash_sink_handler(message: Message) -> None:
     """Async handler for MessageBus subscribe."""
     payload = message.payload
-    if not isinstance(payload, dict):
+    if opaque_not_isinstance(payload, dict):
         return
     if payload.get("topic") != TOPIC_RUNTIME_AUDIT:
         return

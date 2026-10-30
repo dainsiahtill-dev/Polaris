@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from polaris.kernelone.storage import resolve_global_path
+from polaris.kernelone.type_ops import opaque_isinstance
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -643,7 +644,7 @@ class RuntimeConfigManager:
             entry = self._provider_entry(provider_id)
         except (RuntimeError, ValueError, OSError):
             return ""
-        if isinstance(entry, dict):
+        if opaque_isinstance(entry, dict):
             return str(entry.get("model") or "").strip()
         return ""
 

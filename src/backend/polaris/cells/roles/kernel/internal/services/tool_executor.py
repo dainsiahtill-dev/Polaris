@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from polaris.kernelone.constants import DIRECTOR_TIMEOUT_SECONDS
 from polaris.kernelone.errors import ErrorCategory as _CanonicalErrorCategory
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 if TYPE_CHECKING:
     from polaris.cells.roles.profile.public.service import RoleProfile
@@ -72,7 +73,7 @@ class ToolCall:
         else:
             object.__setattr__(self, "tool", normalized_tool)
         # 确保 args 是字典
-        if not isinstance(self.args, dict):
+        if opaque_not_isinstance(self.args, dict):
             object.__setattr__(self, "args", {})
 
 

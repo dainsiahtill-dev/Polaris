@@ -31,6 +31,7 @@ from polaris.cells.runtime.task_runtime.public import (
     TaskRuntimeExecutionAttemptAuthorityV1,
     TaskRuntimeExecutionAttemptIdentityV1,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +150,7 @@ def _capability_scope_from_tool_results(
     paths: list[str] = []
     seen: set[str] = set()
     for item in tool_results:
-        if not isinstance(item, Mapping):
+        if opaque_not_isinstance(item, Mapping):
             continue
         result = item.get("result")
         if not isinstance(result, Mapping):

@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from re import Pattern
 from typing import TYPE_CHECKING, Any, Final
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 from .config import CHINESE_TAG_PREFIXES, OPEN_TAG_PREFIXES
 
 if TYPE_CHECKING:
@@ -325,7 +327,7 @@ class ReasoningStripper:
         Returns:
             A new dict with reasoning content stripped from 'content'.
         """
-        if not isinstance(entry, dict):
+        if opaque_not_isinstance(entry, dict):
             return entry
 
         result = dict(entry)

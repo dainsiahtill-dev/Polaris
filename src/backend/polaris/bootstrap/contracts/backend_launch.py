@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -78,7 +80,7 @@ class BackendLaunchRequest:
             normalized_workspace = Path(raw_ws)
         object.__setattr__(self, "workspace", normalized_workspace)
 
-        if self.ramdisk_root is not None and not isinstance(self.ramdisk_root, Path):
+        if self.ramdisk_root is not None and opaque_not_isinstance(self.ramdisk_root, Path):
             object.__setattr__(self, "ramdisk_root", Path(self.ramdisk_root))
 
         if self.self_upgrade_mode is not None:

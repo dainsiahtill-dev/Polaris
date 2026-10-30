@@ -12,6 +12,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
 from polaris.kernelone.utils.time_utils import utc_now_iso as _utc_now_iso
 
 from .compaction import RoleContextIdentity, build_continuity_summary_text
@@ -196,7 +197,7 @@ def _iter_normalized_messages(
 ) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for index, item in enumerate(messages or ()):
-        if not isinstance(item, Mapping):
+        if opaque_not_isinstance(item, Mapping):
             continue
         role = str(item.get("role") or "").strip().lower()
         content = _normalize_text(item.get("content") or item.get("message") or "")
@@ -256,7 +257,7 @@ def messages_to_history_pairs(
 ) -> tuple[tuple[str, str], ...]:
     history: list[tuple[str, str]] = []
     for item in messages or ():
-        if not isinstance(item, Mapping):
+        if opaque_not_isinstance(item, Mapping):
             continue
         role = str(item.get("role") or "").strip()
         content = _normalize_text(item.get("content") or item.get("message") or "")
@@ -862,7 +863,7 @@ class SessionContinuityEngine:
     ) -> tuple[str, ...]:
         candidates: list[tuple[int, int, str]] = []
         for index, item in enumerate(messages):
-            if not isinstance(item, Mapping):
+            if opaque_not_isinstance(item, Mapping):
                 continue
             role = str(item.get("role") or "").strip().lower()
             content = _normalize_text(item.get("content") or "")
@@ -886,7 +887,7 @@ class SessionContinuityEngine:
     ) -> tuple[str, ...]:
         results: list[str] = []
         for item in reversed(list(messages)):
-            if not isinstance(item, Mapping):
+            if opaque_not_isinstance(item, Mapping):
                 continue
             role = str(item.get("role") or "").strip().lower()
             content = _normalize_text(item.get("content") or "")

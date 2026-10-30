@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 _MATERIALIZE_DELIVERY_MODE_VALUES = frozenset({"materialize", "materialize_changes"})
 _MATERIALIZE_DELIVERY_MODE_MARKERS = frozenset({"[mode:materialize]", "[mode:materialize_changes]"})
 _DELIVERY_MODE_MARKER_BY_VALUE = {
@@ -128,7 +130,7 @@ def _ensure_platform_tool_contract_metadata(
 
 def _latest_user_content_preview(messages: list[dict[str, Any]]) -> str:
     for message in reversed(messages):
-        if not isinstance(message, dict):
+        if opaque_not_isinstance(message, dict):
             continue
         if str(message.get("role") or "").strip().lower() != "user":
             continue

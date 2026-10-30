@@ -26,6 +26,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any, cast
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -476,7 +478,7 @@ class SeqProgressDetector:
 
     def _check_artifact_progress(self, tool_result: dict[str, Any]) -> bool:
         """Type-A: 检查是否有文件变更"""
-        if not isinstance(tool_result, dict):
+        if opaque_not_isinstance(tool_result, dict):
             return False
 
         # 检查写入类工具结果

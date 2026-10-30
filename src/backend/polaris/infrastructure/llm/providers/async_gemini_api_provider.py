@@ -30,6 +30,7 @@ from polaris.kernelone.llm.types import (
     Usage,
 )
 from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from .async_base_provider import AsyncBaseProvider
 from .async_http_client import AsyncProviderHttpClient
@@ -336,7 +337,7 @@ class AsyncGeminiAPIProvider(AsyncBaseProvider):
 
     @staticmethod
     def _extract_output(data: dict[str, Any]) -> str:
-        if not isinstance(data, dict):
+        if opaque_not_isinstance(data, dict):
             return ""
         candidates = data.get("candidates", [])
         if isinstance(candidates, list) and candidates:

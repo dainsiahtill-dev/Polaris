@@ -11,6 +11,7 @@ import os
 from typing import Any, cast
 
 from polaris.kernelone.storage.io_paths import resolve_artifact_path
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 _ARCHITECT_DOCS_PIPELINE_REL = "runtime/contracts/architect.docs.pipeline.json"
 
@@ -151,7 +152,7 @@ def annotate_tasks_with_docs_stage(
     }
 
     for task in tasks:
-        if not isinstance(task, dict):
+        if opaque_not_isinstance(task, dict):
             continue
         if "metadata" not in task:
             task["metadata"] = {}

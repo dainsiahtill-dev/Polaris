@@ -33,6 +33,8 @@ from typing import (
     runtime_checkable,
 )
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 __all__ = [
     # Noop implementations
     "CellPmInvokePort",
@@ -1054,7 +1056,7 @@ def _migrate_tasks_in_place(payload: dict[str, Any]) -> None:
 
     Mirrors ``polaris.delivery.cli.pm.tasks._migrate_tasks_in_place``.
     """
-    if not isinstance(payload, dict):
+    if opaque_not_isinstance(payload, dict):
         return
     tasks = payload.get("tasks")
     if not isinstance(tasks, list):

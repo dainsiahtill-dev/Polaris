@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.type_ops import opaque_isinstance
+
 # Current cassette format version
 CASSETTE_VERSION = "2.0"
 
@@ -331,7 +333,7 @@ class Cassette:
     _sanitizer: Any = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
-        if isinstance(self.cassette_dir, str):
+        if opaque_isinstance(self.cassette_dir, str):
             self.cassette_dir = Path(self.cassette_dir)
         self.cassette_dir.mkdir(parents=True, exist_ok=True)
 

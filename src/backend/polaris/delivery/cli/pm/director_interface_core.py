@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from polaris.kernelone.shared.path_utils import normalize_path_list
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 
 @dataclass
@@ -31,9 +32,9 @@ class DirectorTask:
     def __post_init__(self) -> None:
         self.target_files = normalize_path_list(self.target_files or [])
         self.scope_paths = normalize_path_list(self.scope_paths or [])
-        if not isinstance(self.acceptance_criteria, list):
+        if opaque_not_isinstance(self.acceptance_criteria, list):
             self.acceptance_criteria = []
-        if not isinstance(self.constraints, list):
+        if opaque_not_isinstance(self.constraints, list):
             self.constraints = []
 
 

@@ -24,6 +24,7 @@ from polaris.kernelone.context.receipt_store import ReceiptStore
 from polaris.kernelone.context.truth_log_service import TruthLogService
 from polaris.kernelone.context.working_state_manager import WorkingStateManager
 from polaris.kernelone.errors import StateNotFoundError, ValidationError
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from ..bounded_cache import BoundedCache, LRUBoundedCache
 from ..classifier import DialogActClassifier
@@ -562,7 +563,7 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
 
     def _validate_project_input(self, messages: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> None:
         policy = self.policy.input_validation
-        if not isinstance(messages, (list, tuple)):
+        if opaque_not_isinstance(messages, (list, tuple)):
             error = ValidationError(
                 "messages must be a list or tuple",
                 field="messages",

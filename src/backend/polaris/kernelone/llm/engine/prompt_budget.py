@@ -19,6 +19,8 @@ import logging
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, cast
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 from .contracts import CompressionResult, ModelSpec, TokenBudgetDecision
 from .token_estimator import TokenEstimator
 
@@ -661,7 +663,7 @@ def compress_chat_messages_to_budget(
     normalized: list[dict[str, Any]] = []
     has_native_history = False
     for item in chat_messages:
-        if not isinstance(item, dict):
+        if opaque_not_isinstance(item, dict):
             continue
         role = str(item.get("role") or "").strip().lower() or "user"
         content = item.get("content")

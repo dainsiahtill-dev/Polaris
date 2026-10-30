@@ -12,6 +12,8 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 if TYPE_CHECKING:
     from polaris.kernelone.context.contracts import ContextSource
 
@@ -379,7 +381,7 @@ def _int_payload(value: Any) -> int:
 
 def compact_context_os_audit(audit: Mapping[str, Any]) -> dict[str, Any]:
     """Return a metadata-safe audit summary without prompt text."""
-    if not isinstance(audit, Mapping):
+    if opaque_not_isinstance(audit, Mapping):
         return {}
     return {
         "ok": bool(audit.get("ok")),

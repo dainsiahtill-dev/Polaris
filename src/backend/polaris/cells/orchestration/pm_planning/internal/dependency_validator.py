@@ -14,6 +14,8 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 # Effort-size vocabulary used only as a fallback when a task carries a t-shirt size
 # instead of a numeric estimate. Generic, project-agnostic (§8): no domain meaning.
 _SIZE_CLASS_WEIGHTS: dict[str, float] = {
@@ -71,7 +73,7 @@ def validate_dependency_dag(tasks: list[dict[str, Any]]) -> None:
     in_degree: dict[str, int] = dict.fromkeys(known_ids, 0)
 
     for task in tasks:
-        if not isinstance(task, dict):
+        if opaque_not_isinstance(task, dict):
             continue
         task_id = _normalize_task_id(task.get("id"))
         if not task_id or task_id not in adjacency:
@@ -206,7 +208,7 @@ def compute_schedule(tasks: list[dict[str, Any]]) -> Schedule:
 
     task_by_id: dict[str, dict[str, Any]] = {}
     for task in tasks:
-        if not isinstance(task, dict):
+        if opaque_not_isinstance(task, dict):
             continue
         task_id = _normalize_task_id(task.get("id"))
         if task_id and task_id not in task_by_id:

@@ -4,6 +4,8 @@ import json
 import re
 from dataclasses import dataclass
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 # Pre-compiled patterns for performance
 _DANGEROUS_SHELL_CHARS = re.compile(r"[;&|`$\n\r\t()<>\\!#\"\'*?\[\]|~]")
 _COMMAND_SUBSTITUTION = re.compile(r"\$\([^)]*\)|`[^`]+`|\$\{[^}]+\}|\$[a-zA-Z_][a-zA-Z0-9_]*")
@@ -46,7 +48,7 @@ class InputSanitizer:
         Returns:
             Sanitized string safe for shell commands
         """
-        if not isinstance(user_input, str):
+        if opaque_not_isinstance(user_input, str):
             return str(user_input)
 
         # Early return for empty input
@@ -102,7 +104,7 @@ class InputSanitizer:
         Returns:
             Sanitized filename safe for filesystem operations
         """
-        if not isinstance(user_input, str):
+        if opaque_not_isinstance(user_input, str):
             return str(user_input)
 
         # Remove or replace dangerous characters
@@ -140,7 +142,7 @@ class InputSanitizer:
         Returns:
             True if valid JSON, False otherwise
         """
-        if not isinstance(user_input, str):
+        if opaque_not_isinstance(user_input, str):
             return False
         try:
             json.loads(user_input)

@@ -37,6 +37,7 @@ from polaris.cells.roles.kernel.internal.transaction.task_contract_builder impor
     validate_required_tool_surface,
 )
 from polaris.kernelone.context.prompt_safety import format_tool_failure_summary, parse_tool_failure_summary
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 
 def _is_materialization_quality_repair(text: str) -> bool:
@@ -140,7 +141,7 @@ def _sanitize_materialize_positive_task_contract_line(
 
 def _infer_role_id_from_context(context: list[dict[str, Any]]) -> str:
     for message in context:
-        if not isinstance(message, dict):
+        if opaque_not_isinstance(message, dict):
             continue
         metadata = message.get("metadata")
         if isinstance(metadata, dict):

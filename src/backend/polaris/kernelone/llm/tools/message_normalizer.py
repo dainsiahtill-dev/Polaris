@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Final
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 # Valid role values
 _VALID_ROLES: Final[frozenset[str]] = frozenset(
     {
@@ -165,7 +167,7 @@ class MessageNormalizer:
         """Ensure messages are valid dicts."""
         result: list[dict[str, Any]] = []
         for _i, msg in enumerate(messages):
-            if not isinstance(msg, dict):
+            if opaque_not_isinstance(msg, dict):
                 msg = {"role": "user", "content": str(msg)}
             result.append(dict(msg))
         return result
@@ -353,7 +355,7 @@ def validate_message_structure(msg: dict[str, Any]) -> tuple[bool, str | None]:
     Returns:
         Tuple of (is_valid, error_message).
     """
-    if not isinstance(msg, dict):
+    if opaque_not_isinstance(msg, dict):
         return False, "message must be a dict"
 
     role = str(msg.get("role", "")).lower().strip()

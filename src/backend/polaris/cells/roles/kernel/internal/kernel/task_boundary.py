@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 _DOWNSTREAM_ARTIFACT_PATH_KEYS = (
     "downstream_pending_artifacts",
     "downstream_pending_target_files",
@@ -345,7 +347,7 @@ def verifier_policy_from_tool_results(tool_results: list[dict[str, Any]]) -> dic
     completed: list[str] = []
     failed: list[str] = []
     for item in tool_results:
-        if not isinstance(item, dict):
+        if opaque_not_isinstance(item, dict):
             continue
         tool = str(item.get("tool") or item.get("tool_name") or "").strip()
         if tool not in {"execute_command", "run_command"}:

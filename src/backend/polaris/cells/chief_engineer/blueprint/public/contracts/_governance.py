@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 from polaris.cells.chief_engineer.blueprint.public.contracts._enums import (
@@ -27,6 +28,15 @@ from polaris.cells.chief_engineer.blueprint.public.contracts._helpers import (
 # ---------------------------------------------------------------------------
 # Risk Register contracts (Tier-1)
 # ---------------------------------------------------------------------------
+
+
+def _is_enum_member(value: object, expected: type[Enum]) -> bool:
+    """Runtime isinstance that defeats mypy narrowing.
+
+    Dataclass fields carry enum annotations but constructors legitimately
+    accept raw strings; the coercion guards must stay reachable at runtime.
+    """
+    return isinstance(value, expected)
 
 
 @dataclass(frozen=True)
@@ -67,9 +77,9 @@ class RiskRecordV1:
         object.__setattr__(self, "owner", _require_non_empty("owner", self.owner))
         object.__setattr__(self, "mitigation", str(self.mitigation or "").strip())
         object.__setattr__(self, "detected_at", _require_non_empty("detected_at", self.detected_at))
-        if not isinstance(self.severity, RiskSeverity):
+        if not _is_enum_member(self.severity, RiskSeverity):
             object.__setattr__(self, "severity", RiskSeverity(str(self.severity).strip().lower()))
-        if not isinstance(self.status, RiskStatus):
+        if not _is_enum_member(self.status, RiskStatus):
             object.__setattr__(self, "status", RiskStatus(str(self.status).strip().lower()))
         object.__setattr__(self, "links", tuple(str(v) for v in self.links))
         object.__setattr__(
@@ -113,7 +123,7 @@ class RegisterRiskCommandV1:
         object.__setattr__(self, "owner", _require_non_empty("owner", self.owner))
         object.__setattr__(self, "mitigation", str(self.mitigation or "").strip())
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
-        if not isinstance(self.severity, RiskSeverity):
+        if not _is_enum_member(self.severity, RiskSeverity):
             object.__setattr__(self, "severity", RiskSeverity(str(self.severity).strip().lower()))
         object.__setattr__(self, "links", tuple(str(v) for v in self.links))
 
@@ -131,9 +141,9 @@ class ListRisksQueryV1:
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
         if self.task_id is not None:
             object.__setattr__(self, "task_id", str(self.task_id).strip() or None)
-        if self.severity is not None and not isinstance(self.severity, RiskSeverity):
+        if self.severity is not None and not _is_enum_member(self.severity, RiskSeverity):
             object.__setattr__(self, "severity", RiskSeverity(str(self.severity).strip().lower()))
-        if self.status is not None and not isinstance(self.status, RiskStatus):
+        if self.status is not None and not _is_enum_member(self.status, RiskStatus):
             object.__setattr__(self, "status", RiskStatus(str(self.status).strip().lower()))
 
 
@@ -150,7 +160,7 @@ class UpdateRiskStatusCommandV1:
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
         object.__setattr__(self, "risk_id", _require_non_empty("risk_id", self.risk_id))
         object.__setattr__(self, "note", str(self.note or "").strip())
-        if not isinstance(self.status, RiskStatus):
+        if not _is_enum_member(self.status, RiskStatus):
             object.__setattr__(self, "status", RiskStatus(str(self.status).strip().lower()))
 
 
@@ -204,9 +214,9 @@ class TechDebtRecordV1:
         object.__setattr__(self, "owner", _require_non_empty("owner", self.owner))
         object.__setattr__(self, "evidence", tuple(str(v) for v in self.evidence))
         object.__setattr__(self, "registered_at", _require_non_empty("registered_at", self.registered_at))
-        if not isinstance(self.severity, TechDebtSeverity):
+        if not _is_enum_member(self.severity, TechDebtSeverity):
             object.__setattr__(self, "severity", TechDebtSeverity(str(self.severity).strip().lower()))
-        if not isinstance(self.status, TechDebtStatus):
+        if not _is_enum_member(self.status, TechDebtStatus):
             object.__setattr__(self, "status", TechDebtStatus(str(self.status).strip().lower()))
         object.__setattr__(
             self,
@@ -248,7 +258,7 @@ class RegisterTechDebtCommandV1:
         object.__setattr__(self, "owner", _require_non_empty("owner", self.owner))
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
         object.__setattr__(self, "evidence", tuple(str(v) for v in self.evidence))
-        if not isinstance(self.severity, TechDebtSeverity):
+        if not _is_enum_member(self.severity, TechDebtSeverity):
             object.__setattr__(self, "severity", TechDebtSeverity(str(self.severity).strip().lower()))
 
 
@@ -263,9 +273,9 @@ class ListTechDebtQueryV1:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
-        if self.severity is not None and not isinstance(self.severity, TechDebtSeverity):
+        if self.severity is not None and not _is_enum_member(self.severity, TechDebtSeverity):
             object.__setattr__(self, "severity", TechDebtSeverity(str(self.severity).strip().lower()))
-        if self.status is not None and not isinstance(self.status, TechDebtStatus):
+        if self.status is not None and not _is_enum_member(self.status, TechDebtStatus):
             object.__setattr__(self, "status", TechDebtStatus(str(self.status).strip().lower()))
         if self.surface is not None:
             object.__setattr__(self, "surface", str(self.surface).strip() or None)
@@ -284,7 +294,7 @@ class UpdateTechDebtStatusCommandV1:
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
         object.__setattr__(self, "debt_id", _require_non_empty("debt_id", self.debt_id))
         object.__setattr__(self, "note", str(self.note or "").strip())
-        if not isinstance(self.status, TechDebtStatus):
+        if not _is_enum_member(self.status, TechDebtStatus):
             object.__setattr__(self, "status", TechDebtStatus(str(self.status).strip().lower()))
 
 
@@ -451,7 +461,7 @@ class ADRRecordV1:
         object.__setattr__(self, "consequences", str(self.consequences or "").strip())
         object.__setattr__(self, "owner", _require_non_empty("owner", self.owner))
         object.__setattr__(self, "decided_at", _require_non_empty("decided_at", self.decided_at))
-        if not isinstance(self.status, ADRStatus):
+        if not _is_enum_member(self.status, ADRStatus):
             object.__setattr__(self, "status", ADRStatus(str(self.status).strip().lower()))
         object.__setattr__(self, "alternatives", tuple(str(v) for v in self.alternatives))
         object.__setattr__(self, "related_task_ids", tuple(str(v) for v in self.related_task_ids))
@@ -513,7 +523,7 @@ class ListADRsQueryV1:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
-        if self.status is not None and not isinstance(self.status, ADRStatus):
+        if self.status is not None and not _is_enum_member(self.status, ADRStatus):
             object.__setattr__(self, "status", ADRStatus(str(self.status).strip().lower()))
         if self.task_id is not None:
             object.__setattr__(self, "task_id", str(self.task_id).strip() or None)
@@ -532,7 +542,7 @@ class UpdateADRStatusCommandV1:
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
         object.__setattr__(self, "adr_id", _require_non_empty("adr_id", self.adr_id))
         object.__setattr__(self, "note", str(self.note or "").strip())
-        if not isinstance(self.status, ADRStatus):
+        if not _is_enum_member(self.status, ADRStatus):
             object.__setattr__(self, "status", ADRStatus(str(self.status).strip().lower()))
 
 
@@ -582,7 +592,7 @@ class TechRadarEntryV1:
         object.__setattr__(self, "rationale", str(self.rationale or "").strip())
         object.__setattr__(self, "owner", _require_non_empty("owner", self.owner))
         object.__setattr__(self, "decided_at", _require_non_empty("decided_at", self.decided_at))
-        if not isinstance(self.ring, TechRadarRing):
+        if not _is_enum_member(self.ring, TechRadarRing):
             object.__setattr__(self, "ring", TechRadarRing(str(self.ring).strip().lower()))
         object.__setattr__(
             self,
@@ -619,7 +629,7 @@ class RegisterTechRadarCommandV1:
         object.__setattr__(self, "owner", _require_non_empty("owner", self.owner))
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
         object.__setattr__(self, "rationale", str(self.rationale or "").strip())
-        if not isinstance(self.ring, TechRadarRing):
+        if not _is_enum_member(self.ring, TechRadarRing):
             object.__setattr__(self, "ring", TechRadarRing(str(self.ring).strip().lower()))
 
 
@@ -632,7 +642,7 @@ class ListTechRadarQueryV1:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
-        if self.ring is not None and not isinstance(self.ring, TechRadarRing):
+        if self.ring is not None and not _is_enum_member(self.ring, TechRadarRing):
             object.__setattr__(self, "ring", TechRadarRing(str(self.ring).strip().lower()))
 
 
@@ -649,7 +659,7 @@ class UpdateTechRadarRingCommandV1:
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
         object.__setattr__(self, "entry_id", _require_non_empty("entry_id", self.entry_id))
         object.__setattr__(self, "note", str(self.note or "").strip())
-        if not isinstance(self.ring, TechRadarRing):
+        if not _is_enum_member(self.ring, TechRadarRing):
             object.__setattr__(self, "ring", TechRadarRing(str(self.ring).strip().lower()))
 
 
@@ -664,7 +674,7 @@ class StackPolicyViolationV1:
     def __post_init__(self) -> None:
         object.__setattr__(self, "library", _require_non_empty("library", self.library))
         object.__setattr__(self, "rationale", str(self.rationale or "").strip())
-        if not isinstance(self.ring, TechRadarRing):
+        if not _is_enum_member(self.ring, TechRadarRing):
             object.__setattr__(self, "ring", TechRadarRing(str(self.ring).strip().lower()))
 
     def to_dict(self) -> dict[str, Any]:
@@ -726,9 +736,9 @@ class PostMortemRecordV1:
         object.__setattr__(self, "occurred_at", _require_non_empty("occurred_at", self.occurred_at))
         object.__setattr__(self, "owner", _require_non_empty("owner", self.owner))
         object.__setattr__(self, "recorded_at", _require_non_empty("recorded_at", self.recorded_at))
-        if not isinstance(self.severity, IncidentSeverity):
+        if not _is_enum_member(self.severity, IncidentSeverity):
             object.__setattr__(self, "severity", IncidentSeverity(str(self.severity).strip().lower()))
-        if not isinstance(self.status, PostMortemStatus):
+        if not _is_enum_member(self.status, PostMortemStatus):
             object.__setattr__(self, "status", PostMortemStatus(str(self.status).strip().lower()))
         object.__setattr__(self, "timeline", tuple(str(v) for v in self.timeline))
         object.__setattr__(self, "action_items", tuple(str(v) for v in self.action_items))
@@ -782,7 +792,7 @@ class RegisterPostMortemCommandV1:
         object.__setattr__(self, "summary", str(self.summary or "").strip())
         object.__setattr__(self, "root_cause", str(self.root_cause or "").strip())
         object.__setattr__(self, "impact", str(self.impact or "").strip())
-        if not isinstance(self.severity, IncidentSeverity):
+        if not _is_enum_member(self.severity, IncidentSeverity):
             object.__setattr__(self, "severity", IncidentSeverity(str(self.severity).strip().lower()))
         object.__setattr__(self, "timeline", tuple(str(v) for v in self.timeline))
         object.__setattr__(self, "action_items", tuple(str(v) for v in self.action_items))
@@ -799,9 +809,9 @@ class ListPostMortemsQueryV1:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
-        if self.severity is not None and not isinstance(self.severity, IncidentSeverity):
+        if self.severity is not None and not _is_enum_member(self.severity, IncidentSeverity):
             object.__setattr__(self, "severity", IncidentSeverity(str(self.severity).strip().lower()))
-        if self.status is not None and not isinstance(self.status, PostMortemStatus):
+        if self.status is not None and not _is_enum_member(self.status, PostMortemStatus):
             object.__setattr__(self, "status", PostMortemStatus(str(self.status).strip().lower()))
 
 
@@ -818,7 +828,7 @@ class UpdatePostMortemStatusCommandV1:
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
         object.__setattr__(self, "incident_id", _require_non_empty("incident_id", self.incident_id))
         object.__setattr__(self, "note", str(self.note or "").strip())
-        if not isinstance(self.status, PostMortemStatus):
+        if not _is_enum_member(self.status, PostMortemStatus):
             object.__setattr__(self, "status", PostMortemStatus(str(self.status).strip().lower()))
 
 

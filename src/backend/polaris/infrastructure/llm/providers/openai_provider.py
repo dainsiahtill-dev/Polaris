@@ -20,6 +20,7 @@ from polaris.kernelone.llm.providers.stream_thinking_parser import StreamThinkin
 from polaris.kernelone.llm.response_parser import LLMResponseParser
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelListResult, Usage
 from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 if TYPE_CHECKING:
     from polaris.cells.roles.profile.public.service import RoleProfile
@@ -346,7 +347,7 @@ def _extract_tokens_from_openai_stream_event(
     has_seen_native_reasoning: bool,
 ) -> tuple[list[str], bool]:
     out: list[str] = []
-    if not isinstance(raw_event, dict):
+    if opaque_not_isinstance(raw_event, dict):
         return out, has_seen_native_reasoning
 
     event_type = str(raw_event.get("type") or "").strip()

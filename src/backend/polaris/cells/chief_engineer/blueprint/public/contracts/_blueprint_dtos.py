@@ -43,6 +43,7 @@ from polaris.cells.chief_engineer.blueprint.public.contracts._helpers import (
 from polaris.cells.orchestration.pm_planning.public.artifact_contracts import (
     GeneratedOutputV1,
 )
+from polaris.kernelone.type_ops import opaque_isinstance
 
 
 @dataclass(frozen=True)
@@ -1185,7 +1186,7 @@ class TaskBlueprintResultV1:
         for item in self.architecture_decisions:
             if isinstance(item, ArchitectureDecisionV1):
                 decisions.append(item)
-            elif isinstance(item, Mapping):
+            elif opaque_isinstance(item, Mapping):
                 decisions.append(ArchitectureDecisionV1.from_mapping(item))
         object.__setattr__(self, "architecture_decisions", tuple(decisions))
         object.__setattr__(self, "selected_libraries", _string_tuple(self.selected_libraries))

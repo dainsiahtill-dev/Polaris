@@ -37,6 +37,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 logger = logging.getLogger(__name__)
 
 
@@ -228,7 +230,7 @@ def from_kernel_event(kernel_event: dict[str, Any]) -> StandardStreamEvent | Non
     ``StandardStreamEvent`` when the event has a recognised type, or ``None``
     when the event lacks a type field.
     """
-    if not isinstance(kernel_event, dict):
+    if opaque_not_isinstance(kernel_event, dict):
         logger.warning(
             "from_kernel_event received non-dict input: %s",
             type(kernel_event).__name__,

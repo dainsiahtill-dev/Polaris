@@ -21,6 +21,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -760,7 +762,7 @@ def _mainline_publish_dispatch_tasks_to_task_market(
     plan_task_ids = {str(entry.get("id") or "").strip() for entry in tasks if isinstance(entry, dict)}
     plan_task_ids.discard("")
     for task in tasks:
-        if not isinstance(task, dict):
+        if opaque_not_isinstance(task, dict):
             continue
         task_id = str(task.get("id") or "").strip()
         if not task_id:
@@ -923,7 +925,7 @@ def _publish_dispatch_tasks_to_governed_design_queue(
     plan_task_ids = {str(entry.get("id") or "").strip() for entry in tasks if isinstance(entry, dict)}
     plan_task_ids.discard("")
     for task in tasks:
-        if not isinstance(task, dict):
+        if opaque_not_isinstance(task, dict):
             continue
         task_id = str(task.get("id") or "").strip()
         if not task_id:
@@ -1252,7 +1254,7 @@ def run_dispatch_pipeline(
     if trace_service is not None and isinstance(outcome.get("chief_engineer_result"), dict):
         chief_engineer_result = outcome["chief_engineer_result"]
         for task in dispatch_tasks:
-            if not isinstance(task, dict):
+            if opaque_not_isinstance(task, dict):
                 continue
             task_id = str(task.get("id") or "").strip()
             if not task_id:
@@ -1280,7 +1282,7 @@ def run_dispatch_pipeline(
 
     # Persist minimal blueprint so traceability gate 14 can verify approval status
     for task in dispatch_tasks:
-        if not isinstance(task, dict):
+        if opaque_not_isinstance(task, dict):
             continue
         task_id = str(task.get("id") or "").strip()
         if not task_id:

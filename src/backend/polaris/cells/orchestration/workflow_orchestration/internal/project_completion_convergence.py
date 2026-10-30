@@ -50,6 +50,7 @@ from polaris.cells.orchestration.workflow_runtime.public.project_completion_curs
     ProjectCompletionCursorTransitionV1,
 )
 from polaris.cells.runtime.projection.public.contracts import ProjectOutcomeAuthorityBindingV1
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 _EVENT_RESERVED = "project_completion.action_reserved.v1"
 _EVENT_DISPATCH_CLAIMED = "project_completion.dispatch_claimed.v1"
@@ -1524,7 +1525,7 @@ class ProjectCompletionConvergenceEngineV1:
         event = state.terminal_event
         if event is None:
             raise RuntimeError("terminal event expected")
-        if not isinstance(event.payload, Mapping):
+        if opaque_not_isinstance(event.payload, Mapping):
             return self._invalid_terminal(identity, workflow_id, event.seq)
         try:
             _require_event_identity(event.payload, identity)
@@ -1607,7 +1608,7 @@ class ProjectCompletionConvergenceEngineV1:
         event: ProjectCompletionCursorEventV1,
     ) -> ProjectCompletionAdvanceResultV1:
         payload = event.payload
-        if not isinstance(payload, Mapping):
+        if opaque_not_isinstance(payload, Mapping):
             return self._invalid_terminal(identity, workflow_id, event.seq)
         reason_codes_value = payload.get("reason_codes", [])
         if type(reason_codes_value) is not list or any(type(item) is not str for item in reason_codes_value):

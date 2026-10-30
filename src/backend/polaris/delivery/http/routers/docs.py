@@ -43,6 +43,7 @@ from polaris.kernelone.events import emit_event
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
 from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from .jetstream_utils import publish_to_jetstream
 
@@ -166,7 +167,7 @@ async def _drain_docs_init_queue_to_jetstream(
                     await producer_done
                 chunk = next_chunk.result()
 
-            if not isinstance(chunk, dict):
+            if opaque_not_isinstance(chunk, dict):
                 continue
             await _publish_docs_init_chunk(
                 stream_name=stream_name,

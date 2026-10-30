@@ -81,6 +81,7 @@ from polaris.cells.orchestration.pm_planning.public.task_intent import (
     PmTaskIntentError,
     validate_pm_task_intent_tasks,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 _PM_CONTRACT_GOVERNANCE_EXACT_MARKERS = (
     "补全文件级路径",
@@ -1290,7 +1291,7 @@ def autofix_pm_contract_for_quality(
     has_dependency = False
 
     for index, task in enumerate(normalized_tasks, start=1):
-        if not isinstance(task, dict):
+        if opaque_not_isinstance(task, dict):
             continue
 
         if not task.get("phase"):

@@ -41,6 +41,7 @@ from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import _reso
 from polaris.cells.roles.kernel.internal.tool_loop_controller import ToolLoopController
 from polaris.cells.roles.profile.public.service import RoleProfile, RoleTurnRequest, RoleTurnResult
 from polaris.kernelone.audit.context_os_prompt import summarize_context_os_audit_from_ledger
+from polaris.kernelone.type_ops import opaque_isinstance
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -532,7 +533,7 @@ async def execute_transaction_kernel_stream(
                 result_metadata["model"] = str(profile.model).strip()
             monitoring_payload = event.monitoring if isinstance(event.monitoring, dict) else {}
             context_os_audit = monitoring_payload.get("context_os_audit")
-            if isinstance(context_os_audit, dict):
+            if opaque_isinstance(context_os_audit, dict):
                 result_metadata["context_os_audit"] = dict(context_os_audit)
                 event_dict["metadata"] = dict(result_metadata)
             try:

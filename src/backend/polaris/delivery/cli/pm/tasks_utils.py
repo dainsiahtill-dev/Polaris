@@ -13,6 +13,7 @@ from typing import Any
 
 from polaris.delivery.cli.pm.orchestration_core import build_enhanced_task_with_tech_stack, detect_tech_stack
 from polaris.delivery.cli.pm.tasks import normalize_task_status
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -265,7 +266,7 @@ def _annotate_tasks_with_docs_stage(tasks: list[dict[str, Any]], stage_context: 
         "total_stages": _safe_int(stage_context.get("total_stages"), default=0),
     }
     for task in tasks:
-        if not isinstance(task, dict):
+        if opaque_not_isinstance(task, dict):
             continue
         metadata = task.get("metadata")
         if not isinstance(metadata, dict):
@@ -321,7 +322,7 @@ def _ensure_fallback_quality_contract(tasks: list[dict[str, Any]], tech_stack: d
     verify_command = verify_commands[0] if verify_commands else "python -m pytest -q"
     has_explicit_dependencies = False
     for task in tasks:
-        if not isinstance(task, dict):
+        if opaque_not_isinstance(task, dict):
             continue
         dependencies = task.get("depends_on")
         if not isinstance(dependencies, list):
@@ -876,7 +877,7 @@ def build_requirements_fallback_payload(
         },
     }
     normalized = normalize_pm_payload(payload, int(iteration or 1), str(timestamp or ""))
-    if not isinstance(normalized, dict):
+    if opaque_not_isinstance(normalized, dict):
         return None
     normalized["quality_gate"] = payload["quality_gate"]
     normalized["detected_tech_stack"] = tech_stack

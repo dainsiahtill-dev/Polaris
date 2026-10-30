@@ -12,6 +12,7 @@ import logging
 from typing import Any
 
 from polaris.kernelone.context.contributions import is_model_proposal
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from ..budget_math import (
     SMALL_CONTEXT_WINDOW_TOKENS,
@@ -86,7 +87,7 @@ class _ContextOSSchedulerMixin:
         # the transcript, preserving causal ordering.
         pending_tool_calls: list[tuple[int, dict[str, Any], str]] = []  # (sequence, tool_call, source_event_id)
         for _fallback, raw in enumerate(messages or ()):
-            if not isinstance(raw, dict):
+            if opaque_not_isinstance(raw, dict):
                 continue
             metadata: dict[str, Any] = dict(raw.get("metadata") or {})
             tool_calls = metadata.get("tool_calls")
@@ -172,7 +173,7 @@ class _ContextOSSchedulerMixin:
                 _assistant_source_ids_with_tool_calls.add(src_id)
 
         for _fallback, raw in enumerate(messages or ()):
-            if not isinstance(raw, dict):
+            if opaque_not_isinstance(raw, dict):
                 continue
             role = str(raw.get("role") or "").strip().lower()
             content = _normalize_text(raw.get("content") or raw.get("message") or "")

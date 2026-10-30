@@ -27,6 +27,7 @@ from polaris.kernelone.events.registry import get_global_bus
 from polaris.kernelone.fs import KernelFileSystem
 from polaris.kernelone.fs.jsonl.ops import _commit_seq_for_path, _next_seq_for_path
 from polaris.kernelone.fs.registry import get_default_adapter
+from polaris.kernelone.type_ops import opaque_not_isinstance
 from polaris.kernelone.utils.time_utils import utc_now_str
 
 logger = logging.getLogger(__name__)
@@ -82,7 +83,7 @@ def _infer_workspace_for_path(path: str) -> str:
 
 def _extract_workspace_from_llm_event_data(data: dict[str, Any]) -> str:
     """Return a validated workspace path carried by an LLM event payload."""
-    if not isinstance(data, dict):
+    if opaque_not_isinstance(data, dict):
         return ""
 
     candidates: list[Any] = [data.get("workspace")]
@@ -360,7 +361,7 @@ def _should_suppress_runtime_event(path: str, fingerprint: str, now_ts: float) -
 
 
 def _normalize_llm_event_data(data: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(data, dict):
+    if opaque_not_isinstance(data, dict):
         return {}
     keys = (
         "stage",

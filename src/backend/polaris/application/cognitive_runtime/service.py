@@ -34,6 +34,7 @@ from polaris.infrastructure.cognitive_runtime import CognitiveRuntimeSqliteStore
 from polaris.kernelone.audit.context_os_prompt import audit_context_os_prompt_messages
 from polaris.kernelone.context.context_os.runtime.engine import StateFirstContextOS
 from polaris.kernelone.llm.toolkit.write_scope import WriteGate
+from polaris.kernelone.type_ops import opaque_not_isinstance
 from polaris.kernelone.utils.time_utils import utc_now as _utc_now
 
 logger = logging.getLogger(__name__)
@@ -212,7 +213,7 @@ async def _project_state_first_context_os(
 def _receipt_ref_count(messages: list[dict[str, Any]]) -> int:
     count = 0
     for message in messages:
-        if not isinstance(message, Mapping):
+        if opaque_not_isinstance(message, Mapping):
             continue
         refs = message.get("receipt_refs")
         if isinstance(refs, (list, tuple)):

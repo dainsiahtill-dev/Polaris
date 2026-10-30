@@ -15,6 +15,7 @@ from typing import Any
 from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.llm.engine import ResponseNormalizer
 from polaris.kernelone.storage import resolve_runtime_path, resolve_workspace_persistent_path
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from .base import BaseRoleAdapter
 from .runtime_dialogue import invoke_role_runtime_first
@@ -819,7 +820,7 @@ class ArchitectAdapter(BaseRoleAdapter):
 
     @staticmethod
     def _looks_like_doc_payload(payload: dict[str, Any]) -> bool:
-        if not isinstance(payload, dict):
+        if opaque_not_isinstance(payload, dict):
             return False
         keys = {str(key or "").strip().lower() for key in payload}
         if not keys:

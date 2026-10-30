@@ -18,6 +18,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -445,7 +447,7 @@ def inject_chief_engineer_constraints(
 
     all_scope_paths: list[str] = []
     for task in tasks:
-        if not isinstance(task, dict):
+        if opaque_not_isinstance(task, dict):
             continue
         paths = task.get("scope_paths") or []
         all_scope_paths.extend(_normalize_path_list(paths))
@@ -471,7 +473,7 @@ def build_chief_engineer_decision_evidence(
     malformed_task_count = 0
 
     for task in director_tasks:
-        if not isinstance(task, dict):
+        if opaque_not_isinstance(task, dict):
             malformed_task_count += 1
             continue
         status = str(task.get("status") or "").strip().lower() or "unknown"

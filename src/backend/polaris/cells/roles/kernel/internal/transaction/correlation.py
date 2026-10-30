@@ -30,6 +30,7 @@ from polaris.cells.roles.kernel.internal.transaction.truthlog_recorder import (
 )
 from polaris.cells.roles.kernel.public.turn_events import TurnEvent
 from polaris.cells.storage.layout.public.service import resolve_polaris_roots
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +90,7 @@ def attach_event_correlation(
 def resolve_workspace_for_truthlog(context: list[dict[str, Any]]) -> str:
     """Resolve workspace path for turn truthlog persistence."""
     for message in reversed(context):
-        if not isinstance(message, Mapping):
+        if opaque_not_isinstance(message, Mapping):
             continue
 
         metadata = message.get("metadata")

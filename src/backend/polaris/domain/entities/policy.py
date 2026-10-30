@@ -8,6 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 
 @dataclass
 class RepairPolicy:
@@ -167,7 +169,7 @@ class Policy:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Policy:
         """Create Policy from dictionary."""
-        if not isinstance(data, dict):
+        if opaque_not_isinstance(data, dict):
             return cls()
 
         return cls(

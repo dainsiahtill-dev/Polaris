@@ -28,6 +28,7 @@ from typing import Any
 from polaris.kernelone.fs import KernelFileSystem
 from polaris.kernelone.fs.guarded_namespace_ops import NamespaceOperationEffectUnknownError
 from polaris.kernelone.fs.registry import get_default_adapter
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,7 @@ def record_scout_anchors(workspace: str, query: str, findings: list[dict[str, An
     """
     fresh: list[dict[str, Any]] = []
     for finding in findings:
-        if not isinstance(finding, dict):
+        if opaque_not_isinstance(finding, dict):
             continue
         path = str(finding.get("path") or "").strip()
         confidence = float(finding.get("confidence") or 0.0)

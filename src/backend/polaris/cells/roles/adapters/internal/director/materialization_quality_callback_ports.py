@@ -25,6 +25,7 @@ from polaris.cells.director.runtime.public.service import (
     query_director_repair_materialization_quality_schedule,
 )
 from polaris.cells.runtime.task_runtime.public import TaskRuntimeExecutionAttemptIdentityV1
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from .runtime_repair_tool_adapter import run_runtime_repair_with_director_tools
 
@@ -1199,7 +1200,7 @@ def _rust_missing_binary_paths_from_quality_issues(
 ) -> tuple[str, ...]:
     paths: list[str] = []
     for issue in artifact_quality_issues:
-        if not isinstance(issue, Mapping):
+        if opaque_not_isinstance(issue, Mapping):
             continue
         code = str(issue.get("code") or "").strip()
         message = str(issue.get("message") or "")

@@ -37,6 +37,7 @@ from polaris.kernelone.quality import (
     partition_paths_by_declared_scope,
     scope_authority_decision_summary,
 )
+from polaris.kernelone.type_ops import opaque_isinstance, opaque_not_isinstance
 
 from .. import execute_method as _em
 from ..artifact_quality_diagnostics import (
@@ -366,7 +367,7 @@ def _quality_repair_zero_artifact_sibling_snapshot(task: Mapping[str, Any]) -> A
     contract: Mapping[str, Any] = raw_contract if isinstance(raw_contract, Mapping) else {}
     dependency_ids: list[str] = []
     for container in (metadata, task, contract):
-        if not isinstance(container, Mapping):
+        if opaque_not_isinstance(container, Mapping):
             continue
         for key in (
             "resolved_depends_on_task_ids",
@@ -2023,7 +2024,7 @@ def _unresolved_import_importer_paths(
             if normalized:
                 paths.append(normalized)
     for issue in artifact_quality_issues:
-        if not isinstance(issue, Mapping):
+        if opaque_not_isinstance(issue, Mapping):
             continue
         metadata = issue.get("metadata")
         metadata_map = metadata if isinstance(metadata, Mapping) else {}

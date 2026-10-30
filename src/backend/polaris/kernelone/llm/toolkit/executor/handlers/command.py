@@ -23,6 +23,7 @@ from polaris.kernelone.llm.toolkit.executor.utils import (
     resolve_workspace_path,
     to_workspace_relative_path,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 if TYPE_CHECKING:
     from polaris.kernelone.llm.toolkit.executor.core import AgentAccelToolExecutor
@@ -1106,7 +1107,7 @@ def _translated_command_result(
     payload: dict[str, Any],
 ) -> dict[str, Any]:
     """Build a translated command result dict."""
-    if not isinstance(payload, dict):
+    if opaque_not_isinstance(payload, dict):
         return {"ok": False, "error": f"Translated {translated_tool} payload is invalid"}
     if not bool(payload.get("ok")):
         return payload

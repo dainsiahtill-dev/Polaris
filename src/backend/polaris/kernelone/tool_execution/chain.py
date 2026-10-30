@@ -14,6 +14,7 @@ from polaris.kernelone.tool_execution.constants import (
 from polaris.kernelone.tool_execution.contracts import canonicalize_tool_name
 from polaris.kernelone.tool_execution.models import ToolChainStep
 from polaris.kernelone.tool_execution.utils import safe_int
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 
 def parse_tool_chain_step(step: dict[str, Any]) -> ToolChainStep:
@@ -50,7 +51,7 @@ def normalize_tool_plan(
     """Normalize a tool plan, handling around history suggestions."""
     normalized: list[dict[str, Any]] = []
     for step in tool_plan:
-        if not isinstance(step, dict):
+        if opaque_not_isinstance(step, dict):
             continue
         raw_tool = str(step.get("tool") or "").strip()
         tool = canonicalize_tool_name(raw_tool)

@@ -33,6 +33,7 @@ from polaris.delivery.http.v2.chief_engineer._schemas import (
     ChiefEngineerPMTaskPlanProbe,
 )
 from polaris.delivery.http.v2.llm_event_filters import filter_llm_events_by_workspace
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 
 def _pm_task_plan_candidate_paths(workspace: str, *, ramdisk_root: str = "") -> tuple[list[Path], list[str]]:
@@ -211,7 +212,7 @@ def _build_llm_diagnostics(settings: Any) -> ChiefEngineerDiagnosticsLLMStatus:
             error=str(exc),
         )
 
-    if not isinstance(payload, dict):
+    if opaque_not_isinstance(payload, dict):
         return ChiefEngineerDiagnosticsLLMStatus(
             ok=False,
             state="error",

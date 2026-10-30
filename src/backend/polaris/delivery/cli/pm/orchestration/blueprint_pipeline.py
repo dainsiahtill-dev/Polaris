@@ -11,6 +11,7 @@ from polaris.delivery.cli.pm.config import TERMINAL_TASK_STATUSES
 from polaris.delivery.cli.pm.tasks import normalize_task_status
 from polaris.kernelone.fs.text_ops import read_file_safe, write_json_atomic, write_text_atomic
 from polaris.kernelone.storage.io_paths import resolve_artifact_path
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from .helpers import (
     _ZHONGSHU_BLUEPRINTS_MANIFEST_REL,
@@ -121,7 +122,7 @@ def _materialize_zhongshu_blueprints(
     docs: list[dict[str, Any]] = []
     previous_doc_id = ""
     for index, stage in enumerate(stages, start=1):
-        if not isinstance(stage, dict):
+        if opaque_not_isinstance(stage, dict):
             continue
         doc_id = str(stage.get("id") or f"DOC-STAGE-{index:02d}").strip()
         title = str(stage.get("title") or f"Stage {index}").strip()

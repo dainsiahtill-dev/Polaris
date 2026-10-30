@@ -67,6 +67,7 @@ from typing import Any
 
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 from polaris.kernelone.storage import resolve_logical_path
+from polaris.kernelone.type_ops import opaque_isinstance
 
 from .dependency_validator import DependencyCycleError, Schedule, compute_schedule
 from .milestones import MilestoneRecordV1, MilestoneRegister, classify_milestone_health
@@ -182,7 +183,7 @@ def _coerce_iteration(current_iteration: int) -> int:
     """Return a genuine non-``bool`` ``int`` iteration, fail-closed to ``0``."""
     if isinstance(current_iteration, bool):
         return 0
-    if isinstance(current_iteration, int):
+    if opaque_isinstance(current_iteration, int):
         return current_iteration
     return 0
 

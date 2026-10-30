@@ -19,6 +19,7 @@ from polaris.delivery.http.workspace import active_workspace_value
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.llm.model_identity import model_identity_equal
 from polaris.kernelone.storage.io_paths import build_cache_root
+from polaris.kernelone.type_ops import opaque_not_isinstance
 from starlette.responses import JSONResponse
 
 require_auth = _canonical_require_auth
@@ -103,7 +104,7 @@ def _dedupe_index_candidates(candidates: list[dict[str, Any]]) -> list[dict[str,
     deduped: list[dict[str, Any]] = []
     seen: set[int] = set()
     for index in candidates:
-        if not isinstance(index, dict):
+        if opaque_not_isinstance(index, dict):
             continue
         identity = id(index)
         if identity in seen:

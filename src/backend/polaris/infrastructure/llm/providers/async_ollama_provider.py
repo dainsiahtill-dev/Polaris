@@ -33,6 +33,7 @@ from polaris.kernelone.llm.types import (
 from polaris.kernelone.shared.text_utils import (
     normalize_timeout_seconds,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from .async_base_provider import AsyncBaseProvider
 from .async_http_client import AsyncProviderHttpClient
@@ -184,7 +185,7 @@ def _usage_from_response(prompt: str, output: str, data: dict[str, Any], is_open
 
 def _extract_output(data: dict[str, Any], is_compat: bool) -> str:
     """Extract output text from Ollama response."""
-    if not isinstance(data, dict):
+    if opaque_not_isinstance(data, dict):
         return ""
     if is_compat:
         choices = data.get("choices", [])

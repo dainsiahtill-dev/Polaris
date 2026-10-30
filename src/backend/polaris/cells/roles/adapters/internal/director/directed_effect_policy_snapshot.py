@@ -59,6 +59,7 @@ from polaris.kernelone.llm.toolkit.tool_normalization.normalizers._shared import
     recover_write_body_string as _recover_write_body_string,
 )
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from .execution_tools import (
     DirectorToolExecutor as _DirectorToolExecutor,
@@ -1228,7 +1229,7 @@ class _DirectorEffectPolicySnapshotPort:
             actual_command = _items_to_dict(request.normalized_arguments).get("command")
             if restriction.allowed_commands != scoped_commands or actual_command != request.canonical_command:
                 return self._snapshot_denial(request, "deo_command_scope_denied", target_state), target_state
-            if not isinstance(actual_command, str):
+            if opaque_not_isinstance(actual_command, str):
                 return self._snapshot_denial(request, "deo_operation_hash_mismatch", target_state), target_state
             result = validate_command_capability(
                 CommandCapabilityValidationInputV1(

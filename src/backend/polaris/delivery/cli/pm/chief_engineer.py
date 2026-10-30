@@ -38,6 +38,7 @@ from polaris.delivery.cli.pm.utils import normalize_path_list
 from polaris.kernelone.fs.text_ops import write_json_atomic
 from polaris.kernelone.shared.path_utils import normalize_path
 from polaris.kernelone.storage.io_paths import resolve_artifact_path
+from polaris.kernelone.type_ops import opaque_not_isinstance
 from polaris.kernelone.utils.time_utils import utc_now_str
 
 logger = logging.getLogger(__name__)
@@ -746,7 +747,7 @@ def _build_modules_from_files(files_payload: dict[str, dict[str, Any]]) -> dict[
     modules: dict[str, dict[str, Any]] = {}
 
     for rel_path, file_payload in files_payload.items():
-        if not isinstance(file_payload, dict):
+        if opaque_not_isinstance(file_payload, dict):
             continue
         module = str(file_payload.get("module") or _module_key(rel_path)).strip() or "root"
         mod = modules.setdefault(
@@ -859,7 +860,7 @@ def _detect_api_contracts(
     # 收集每个模块的导出符号
     module_exports: dict[str, list[str]] = {mod: [] for mod in modules}
     for rel_path, file_payload in files_payload.items():
-        if not isinstance(file_payload, dict):
+        if opaque_not_isinstance(file_payload, dict):
             continue
         module = str(file_payload.get("module") or _module_key(rel_path)).strip() or "root"
         symbols = file_payload.get("symbols", [])
@@ -870,7 +871,7 @@ def _detect_api_contracts(
 
     # 检测跨模块引用形成契约
     for rel_path, file_payload in files_payload.items():
-        if not isinstance(file_payload, dict):
+        if opaque_not_isinstance(file_payload, dict):
             continue
         module = str(file_payload.get("module") or _module_key(rel_path)).strip() or "root"
         imports = file_payload.get("resolved_imports", [])
@@ -908,7 +909,7 @@ def _build_data_flows(
     flows: list[dict[str, Any]] = []
 
     for rel_path, file_payload in files_payload.items():
-        if not isinstance(file_payload, dict):
+        if opaque_not_isinstance(file_payload, dict):
             continue
         source_module = str(file_payload.get("module") or _module_key(rel_path)).strip() or "root"
         imports = file_payload.get("imports", [])
@@ -1345,7 +1346,7 @@ def _merge_with_existing_blueprint(
     """将新分析与现有蓝图合并，保持架构决策的连续性。"""
     merged = dict(new_analysis)
 
-    if not isinstance(existing_blueprint, dict):
+    if opaque_not_isinstance(existing_blueprint, dict):
         return merged
 
     # 保留已接受的架构决策

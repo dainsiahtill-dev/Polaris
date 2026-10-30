@@ -12,6 +12,7 @@ from typing import Any
 from polaris.cells.runtime.projection.internal.io_helpers import read_json, resolve_artifact_path
 from polaris.kernelone.fs.text_ops import write_json_atomic
 from polaris.kernelone.storage import resolve_storage_roots
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 _JETSTREAM_PUBLISH_FALSE_VALUES = {"0", "false", "no", "off", "disabled"}
@@ -668,7 +669,7 @@ def _apply_workflow_task_results(
         return
     completion_authorization_by_run: dict[str, bool] = {}
     for item in tasks:
-        if not isinstance(item, dict):
+        if opaque_not_isinstance(item, dict):
             continue
         task_id = _workflow_task_id(item)
         if not task_id:
@@ -903,7 +904,7 @@ def build_workflow_task_rows(
         workspace=workspace,
         cache_root=cache_root,
     ):
-        if not isinstance(item, dict):
+        if opaque_not_isinstance(item, dict):
             continue
         task_id = str(item.get("id") or "").strip()
         if not task_id:
@@ -1149,7 +1150,7 @@ def should_prefer_workflow_status(
         status_tokens = []
         if isinstance(workflow_tasks, list):
             for item in workflow_tasks:
-                if not isinstance(item, dict):
+                if opaque_not_isinstance(item, dict):
                     continue
                 status_tokens.append(str(item.get("status") or item.get("state") or "").strip().upper())
         workflow_has_live_rows = any(

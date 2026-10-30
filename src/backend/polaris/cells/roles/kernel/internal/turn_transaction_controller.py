@@ -166,6 +166,7 @@ from polaris.cells.runtime.task_runtime.public import (
     TaskRuntimeExecutionAttemptAuthorityV1,
     TaskRuntimeExecutionAttemptIdentityV1,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -477,7 +478,7 @@ class TurnTransactionController:
         if configured:
             return configured
         for message in reversed(context or []):
-            if not isinstance(message, dict):
+            if opaque_not_isinstance(message, dict):
                 continue
             for source in (
                 message,

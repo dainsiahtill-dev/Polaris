@@ -23,6 +23,7 @@ from polaris.delivery.cli.pm.utils import (
 from polaris.kernelone.events import emit_dialogue, emit_event
 from polaris.kernelone.fs.text_ops import ensure_parent_dir, write_json_atomic
 from polaris.kernelone.storage.io_paths import resolve_artifact_path
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 
 def _execute_non_director_task(
@@ -263,7 +264,7 @@ def execute_non_director_tasks(
     ensure_parent_dir(os.path.join(queue_dir, "placeholder"))
 
     for index, task in enumerate(tasks or [], start=1):
-        if not isinstance(task, dict):
+        if opaque_not_isinstance(task, dict):
             continue
         task_id = str(task.get("id") or "").strip() or f"T{index:03d}"
         assignee = normalize_assigned_to(task.get("assigned_to"))

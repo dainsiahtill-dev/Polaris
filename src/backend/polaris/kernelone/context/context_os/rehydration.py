@@ -5,6 +5,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from polaris.kernelone.context.control_plane_noise import is_control_plane_noise
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 
 def _dict_list(value: Any) -> list[dict[str, Any]]:
@@ -71,7 +72,7 @@ def _rehydrate_transcript_from_index(
     events_by_id: dict[str, dict[str, Any]] = {}
     events_by_role: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
     for event in session_turn_events:
-        if not isinstance(event, Mapping):
+        if opaque_not_isinstance(event, Mapping):
             continue
         event_dict = dict(event)
         event_id = str(event_dict.get("event_id") or "").strip()
@@ -84,7 +85,7 @@ def _rehydrate_transcript_from_index(
     restored: list[dict[str, Any]] = []
     consumed_ids: set[str] = set()
     for item in transcript_index:
-        if not isinstance(item, Mapping):
+        if opaque_not_isinstance(item, Mapping):
             continue
         event_id = str(item.get("event_id") or "").strip()
         role = str(item.get("role") or "").strip().lower()

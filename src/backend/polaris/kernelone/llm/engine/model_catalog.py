@@ -11,6 +11,7 @@ from typing import Any
 from polaris.kernelone._runtime_config import resolve_env_str
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.storage.io_paths import build_cache_root
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from .contracts import ModelSpec
 
@@ -125,7 +126,7 @@ def _iter_longest_prefix_matches(mapping: dict[str, Any]) -> list[tuple[str, Any
     """Return normalized string keys sorted by longest-prefix-first."""
     candidates: list[tuple[str, Any]] = []
     for key, value in mapping.items():
-        if not isinstance(key, str):
+        if opaque_not_isinstance(key, str):
             continue
         normalized = key.strip().lower()
         if not normalized:

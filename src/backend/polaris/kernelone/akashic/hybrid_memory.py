@@ -44,6 +44,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.storage import resolve_runtime_path
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 if TYPE_CHECKING:
     pass
@@ -162,7 +163,7 @@ class Memory:
             object.__setattr__(self, "memory_id", f"mem_{uuid.uuid4().hex[:16]}")
         if self.created_at is None:
             object.__setattr__(self, "created_at", datetime.now(timezone.utc))
-        if not isinstance(self.importance, int):
+        if opaque_not_isinstance(self.importance, int):
             object.__setattr__(self, "importance", int(self.importance))
         object.__setattr__(self, "importance", max(1, min(10, self.importance)))
 

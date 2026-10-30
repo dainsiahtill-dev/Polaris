@@ -14,6 +14,7 @@ from typing import Any
 from polaris.cells.roles.kernel.public.service import is_authoritative_write_result
 from polaris.kernelone.constants import DIRECTOR_TIMEOUT_SECONDS
 from polaris.kernelone.tools.tool_kinds import is_write_tool_name
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 # -----------------------------------------------------------------------------
 # 配置解析辅助函数
@@ -406,7 +407,7 @@ def summarize_tools_for_debug(tool_results: list[dict[str, Any]]) -> list[dict[s
     """Summarize tool results for debug logging."""
     summary: list[dict[str, Any]] = []
     for item in tool_results[:12]:
-        if not isinstance(item, dict):
+        if opaque_not_isinstance(item, dict):
             continue
         result_value = item.get("result")
         result: dict[str, Any] = result_value if isinstance(result_value, dict) else {}
@@ -457,7 +458,7 @@ def is_timeout_failure(error_text: str) -> bool:
 def has_successful_write_tool(tool_results: list[dict[str, Any]]) -> bool:
     """Check whether tool results contain an authoritative successful write."""
     for item in tool_results:
-        if not isinstance(item, dict):
+        if opaque_not_isinstance(item, dict):
             continue
         if not _is_successful_tool_result(item):
             continue
@@ -516,7 +517,7 @@ def _has_tool_execution_receipt(item: Mapping[str, Any]) -> bool:
 
 def is_empty_role_response(role_response: dict[str, Any]) -> bool:
     """Check if role response is empty (no content, error, or tools)."""
-    if not isinstance(role_response, dict):
+    if opaque_not_isinstance(role_response, dict):
         return True
     content = str(role_response.get("content") or "").strip()
     error = str(role_response.get("error") or "").strip()
@@ -694,7 +695,7 @@ def coerce_task_record(entry: Any) -> dict[str, Any]:
 
 def taskboard_snapshot_brief(snapshot: dict[str, Any]) -> str:
     """Build brief string from taskboard snapshot."""
-    if not isinstance(snapshot, dict):
+    if opaque_not_isinstance(snapshot, dict):
         return "taskboard unavailable"
     _raw_counts = snapshot.get("counts")
     counts: dict[str, Any] = _raw_counts if isinstance(_raw_counts, dict) else {}

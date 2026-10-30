@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from polaris.cells.orchestration.pm_planning.public.artifact_contracts import GeneratedOutputV1
 from polaris.cells.orchestration.pm_planning.public.task_intent import is_pm_task_intent
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -638,7 +639,7 @@ class _Mixin01:
         root_cause_hint = ""
         if stage_status == "failed":
             for signal in stage_signals:
-                if not isinstance(signal, dict):
+                if opaque_not_isinstance(signal, dict):
                     continue
                 if str(signal.get("severity") or "").strip().lower() != "error":
                     continue

@@ -86,6 +86,7 @@ from polaris.cells.roles.kernel.public.turn_events import (
     TurnPhaseEvent,
 )
 from polaris.kernelone.audit.context_os_prompt import summarize_context_os_audit_from_ledger
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -332,7 +333,7 @@ def _build_continue_visible_content(
             "[/SUPER_MODE_DIRECTOR_CONTINUE]",
         )
         for message in conversation_context:
-            if not isinstance(message, dict):
+            if opaque_not_isinstance(message, dict):
                 continue
             content = str(message.get("content", ""))
             if any(m in content for m in _super_markers):
@@ -1131,7 +1132,7 @@ class StreamOrchestrator:
         # Architect/PM/CE use "auto" since they may legitimately produce text analysis.
         _super_tool_choice_override: Any | None = None
         for _msg in context:
-            if not isinstance(_msg, dict):
+            if opaque_not_isinstance(_msg, dict):
                 continue
             _content = str(_msg.get("content", ""))
             if "[SUPER_MODE_DIRECTOR_TASK_HANDOFF]" in _content or "[SUPER_MODE_DIRECTOR_CONTINUE]" in _content:

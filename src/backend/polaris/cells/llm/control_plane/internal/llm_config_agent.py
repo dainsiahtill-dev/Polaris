@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 
 def _parse_iso_timestamp(value: Any) -> datetime:
@@ -277,7 +278,7 @@ class LLMConfigStore:
             rows = self._load_all_unlocked()
             configs: list[LLMConfig] = []
             for payload in rows.values():
-                if not isinstance(payload, dict):
+                if opaque_not_isinstance(payload, dict):
                     continue
                 try:
                     configs.append(LLMConfig.from_dict(payload))

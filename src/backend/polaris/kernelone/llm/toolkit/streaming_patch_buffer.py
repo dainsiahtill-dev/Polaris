@@ -20,6 +20,8 @@ import logging
 import re
 from dataclasses import dataclass
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 logger = logging.getLogger(__name__)
 
 
@@ -309,7 +311,7 @@ class StreamingPatchBuffer:
             operations = ProtocolParser.parse(text)
 
             for op in operations:
-                if not isinstance(op, FileOperation):
+                if opaque_not_isinstance(op, FileOperation):
                     continue
 
                 edit_type = "search_replace"

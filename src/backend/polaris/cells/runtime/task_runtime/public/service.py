@@ -13,6 +13,7 @@ from typing import NoReturn, SupportsIndex, TypeAlias, cast
 
 from polaris.cells.runtime.task_runtime.internal.directed_effect_operation import DirectedEffectOperationRepository
 from polaris.cells.runtime.task_runtime.internal.service import TaskRuntimeService, reset_runtime_task_records
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from .contracts import (
     AbortDirectedEffectOperationCommandV1,
@@ -544,7 +545,7 @@ class TaskRuntimeExecutionAttemptAuthorityV1:
                     identity=current,
                     callback_error_type=type(exc).__name__,
                 )
-            if not isinstance(verdict, TaskRuntimeExecutionAttemptHeartbeatVerdictV1):
+            if opaque_not_isinstance(verdict, TaskRuntimeExecutionAttemptHeartbeatVerdictV1):
                 return TaskRuntimeExecutionAttemptAuthorityHeartbeatVerdictV1(
                     success=False,
                     code="heartbeat_invalid_verdict",
@@ -666,7 +667,7 @@ class TaskRuntimeExecutionAttemptAuthorityV1:
                     outcome=typed_outcome,
                     callback_error_type=type(exc).__name__,
                 )
-            if not isinstance(verdict, TaskRuntimeExecutionAttemptSettlementVerdictV1):
+            if opaque_not_isinstance(verdict, TaskRuntimeExecutionAttemptSettlementVerdictV1):
                 return TaskRuntimeExecutionAttemptAuthoritySettlementVerdictV1(
                     success=False,
                     code="settlement_invalid_verdict",

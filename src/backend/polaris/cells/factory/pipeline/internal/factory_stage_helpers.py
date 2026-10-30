@@ -23,6 +23,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 from .factory_run_models import (
     _PM_DIRECTIVE_META_LINE_PATTERN,
     _PM_PLAN_META_DIAGNOSTIC_MARKERS,
@@ -685,7 +687,7 @@ def collect_declared_delivery_targets(tasks: list[dict[str, Any]]) -> list[str]:
         seen.add(normalized)
 
     for task in tasks:
-        if not isinstance(task, dict):
+        if opaque_not_isinstance(task, dict):
             continue
         for field in ("target_files", "output_files", "expected_files"):
             raw_values = task.get(field)

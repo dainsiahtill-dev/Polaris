@@ -46,6 +46,7 @@ from polaris.kernelone.security.dangerous_patterns import (
     is_dangerous_command,
     is_path_traversal,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 # 工具系统集成 - 延迟加载以避免循环导入
 _ROLE_MODEL_LOOKUP_AVAILABLE = False
@@ -186,7 +187,7 @@ def _build_tool_feedback(tool_results: list[dict[str, Any]]) -> str:
 def _collect_missing_read_paths(tool_results: list[dict[str, Any]]) -> list[str]:
     missing_paths: list[str] = []
     for item in tool_results:
-        if not isinstance(item, dict):
+        if opaque_not_isinstance(item, dict):
             continue
         tool_name = str(item.get("tool") or item.get("name") or "").strip().lower()
         if tool_name != "read_file":

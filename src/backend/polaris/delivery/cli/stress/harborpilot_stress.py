@@ -11,6 +11,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 _PM_FALLBACK_NOTES_TOKENS = (
     "fallback tasks",
     "fallback",
@@ -123,7 +125,7 @@ def _is_agents_content_usable(content: str, *, min_bytes: int = 256) -> bool:
 
 def _pm_fallback_detected(pm_contract: dict[str, Any]) -> bool:
     """Detect PM fallback payload from notes and synthetic task IDs."""
-    if not isinstance(pm_contract, dict):
+    if opaque_not_isinstance(pm_contract, dict):
         return False
     notes = str(pm_contract.get("notes") or "").lower()
     if any(token in notes for token in _PM_FALLBACK_NOTES_TOKENS):

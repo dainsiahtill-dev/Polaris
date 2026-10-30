@@ -23,6 +23,7 @@ from polaris.kernelone.context.session_continuity import (
     history_pairs_to_messages,
     messages_to_history_pairs,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 try:
     from sqlalchemy.exc import SQLAlchemyError
@@ -208,7 +209,7 @@ async def persist_session_turn_state(
             _seen_event_keys: set[tuple[str, str, str]] = set()
             deduped_turn_events: list[dict[str, Any]] = []
             for ev in combined_turn_events:
-                if not isinstance(ev, dict):
+                if opaque_not_isinstance(ev, dict):
                     continue  # Skip non-dict events (defensive)
                 ev_role = str(ev.get("role") or "").strip().lower()
                 ev_content = str(ev.get("content") or "").strip()

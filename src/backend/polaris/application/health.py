@@ -14,6 +14,7 @@ import sys
 from typing import TYPE_CHECKING, Any
 
 from polaris.domain.exceptions import ServiceUnavailableError
+from polaris.kernelone.type_ops import opaque_not_isinstance
 from polaris.kernelone.utils.time_utils import utc_now_str
 
 logger = logging.getLogger(__name__)
@@ -105,7 +106,7 @@ def _resolve_pm_runtime_binding(settings: Settings) -> dict[str, Any]:
         workspace = str(getattr(settings, "workspace", "") or "").strip() or os.getcwd()
         cache_root = build_cache_root(getattr(settings, "ramdisk_root", "") or "", workspace)
         config = llm_config.load_llm_config(workspace, cache_root, settings=settings)
-        if not isinstance(config, dict):
+        if opaque_not_isinstance(config, dict):
             return {"configured": False, "kind": "", "provider_id": "", "model": ""}
         roles = config.get("roles") if isinstance(config.get("roles"), dict) else {}
         role_cfg = roles.get("pm") if isinstance(roles, dict) else None

@@ -74,6 +74,7 @@ from polaris.cells.director.runtime.public.contracts import (
     RunDirectorTaskBoundaryQualityLoopCommandV1,
 )
 from polaris.cells.director.runtime.public.directed_effect_contracts import DirectedEffectImmutableItemsV1
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from ._core import (
     _ALLOWED_CONVERGENCE_VERIFIER_EVIDENCE_SOURCES,
@@ -1295,7 +1296,7 @@ def _attach_native_revalidation_evidence(
             metadata={"revalidation_failure_reason": "missing_revalidation_evidence"},
         )
 
-    if not isinstance(revalidation_input, DirectorRepairRevalidationInputV1):
+    if opaque_not_isinstance(revalidation_input, DirectorRepairRevalidationInputV1):
         return _attach_failed_native_revalidation(
             receipt,
             diagnostics_before,

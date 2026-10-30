@@ -57,6 +57,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 from .dependency_validator import Schedule, _task_weight
 
 __all__ = ["WsjfScore", "render_wsjf_markdown", "score_tasks_wsjf"]
@@ -301,7 +303,7 @@ def score_tasks_wsjf(
 
     scores: list[WsjfScore] = []
     for task in tasks:
-        if not isinstance(task, dict):
+        if opaque_not_isinstance(task, dict):
             continue
         task_id = str(task.get("id") or "").strip()
         on_path = task_id in critical_set

@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.kernelone.context.context_os.models_v2 import TranscriptEventV2 as TranscriptEvent
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 if TYPE_CHECKING:
     from polaris.cells.roles.kernel.public.turn_contracts import CommitReceipt, SealedTurn
@@ -114,12 +115,12 @@ def _execute_commit_protocol(
     so a single request cannot observe a partially updated local snapshot.
     """
     transcript_log: list[dict[str, Any]] = snapshot.get("transcript_log") or []
-    if not isinstance(transcript_log, list):
+    if opaque_not_isinstance(transcript_log, list):
         transcript_log = []
 
     base_sequence = len(transcript_log)
     for idx, meta in enumerate(turn_events_metadata):
-        if not isinstance(meta, dict):
+        if opaque_not_isinstance(meta, dict):
             continue
         seq = base_sequence + idx
         event = TranscriptEvent(
@@ -321,7 +322,7 @@ def _build_turn_history_and_events(
         )
 
     for tr in tool_results:
-        if not isinstance(tr, dict):
+        if opaque_not_isinstance(tr, dict):
             continue
         tool_name = str(tr.get("tool") or "tool").strip() or "tool"
         result_value = tr.get("result")

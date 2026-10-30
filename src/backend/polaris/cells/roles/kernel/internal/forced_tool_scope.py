@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 _FORCED_SCOPE_CONTEXT_TOOL_NAMES = frozenset(
     {
         "file_exists",
@@ -72,7 +74,7 @@ def augment_forced_transaction_tool_definitions(
     merged: list[dict[str, Any]] = [dict(item) for item in forced_definitions]
     seen = {_tool_definition_name(item) for item in merged}
     for definition in tool_definitions:
-        if not isinstance(definition, dict):
+        if opaque_not_isinstance(definition, dict):
             continue
         tool_name = _tool_definition_name(definition)
         if tool_name not in _FORCED_SCOPE_CONTEXT_TOOL_NAMES or tool_name in seen:

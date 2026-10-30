@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from polaris.kernelone.constants import DEFAULT_OPERATION_TIMEOUT_SECONDS, MAX_WORKFLOW_TIMEOUT_SECONDS
+from polaris.kernelone.type_ops import opaque_isinstance, opaque_not_isinstance
 
 _SUPPORTED_TASK_TYPES = {"activity", "workflow", "noop"}
 _TASK_ID_MAX_LENGTH = 128
@@ -270,7 +271,7 @@ class WorkflowContract:
 
 def validate_contract(contract: WorkflowContract) -> list[str]:
     """Validate contract and return all detected violations."""
-    if not isinstance(contract, WorkflowContract):
+    if opaque_not_isinstance(contract, WorkflowContract):
         return ["contract_type_invalid"]
     if not contract.is_dag:
         return []

@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from polaris.kernelone.type_ops import opaque_isinstance
+
 from .helpers import get_metadata_value
 from .models_v2 import ContextOSProjectionV2 as ContextOSProjection, ContextOSSnapshotV2 as ContextOSSnapshot, DialogAct
 from .runtime import StateFirstContextOS
@@ -1523,7 +1525,7 @@ async def generate_attention_runtime_report(
         loaded_suite = load_attention_runtime_eval_suite(suite)
         if loaded_suite is None:
             return None
-    elif isinstance(suite, dict):
+    elif opaque_isinstance(suite, dict):
         loaded_suite = AttentionRuntimeEvalSuite.from_mapping(suite)
         if loaded_suite is None:
             return None

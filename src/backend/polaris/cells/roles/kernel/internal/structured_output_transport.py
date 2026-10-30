@@ -24,6 +24,7 @@ from polaris.cells.roles.kernel.public.structured_output_contracts import (
     RoleStructuredOutputContractV1,
 )
 from polaris.cells.roles.kernel.public.turn_contracts import RawLLMResponse
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 STRUCTURED_OUTPUT_TOOL_NAME = "submit_structured_role_output"
 STRUCTURED_OUTPUT_TRANSPORT_SCHEMA = "roles.kernel.structured_output_transport.v1"
@@ -177,7 +178,7 @@ def require_exact_structured_output_tool_surface(
 
     reserved_definitions: list[Mapping[str, Any]] = []
     for raw_definition in tool_definitions:
-        if not isinstance(raw_definition, Mapping):
+        if opaque_not_isinstance(raw_definition, Mapping):
             continue
         raw_function = raw_definition.get("function")
         if isinstance(raw_function, Mapping):

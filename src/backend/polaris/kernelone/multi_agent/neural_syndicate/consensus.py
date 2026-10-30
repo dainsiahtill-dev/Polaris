@@ -69,6 +69,7 @@ from polaris.kernelone.multi_agent.neural_syndicate.protocol import (
     MessageType,
     Performative,
 )
+from polaris.kernelone.type_ops import opaque_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -342,7 +343,7 @@ class ConsensusEngine:
 
         try:
             payload = message.payload
-            if isinstance(payload, str):
+            if opaque_isinstance(payload, str):
                 import json
 
                 payload = json.loads(payload)

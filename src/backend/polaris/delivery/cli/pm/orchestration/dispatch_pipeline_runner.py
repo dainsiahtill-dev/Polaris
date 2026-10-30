@@ -51,6 +51,7 @@ from polaris.kernelone.constants import MAX_WORKFLOW_TIMEOUT_SECONDS
 from polaris.kernelone.fs.text_ops import write_json_atomic
 from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
 from polaris.kernelone.storage.io_paths import resolve_artifact_path
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 __all__ = ["run_dispatch_pipeline_with_workflow"]
 
@@ -133,7 +134,7 @@ def run_dispatch_pipeline_with_workflow(
             "pending": 0,
         }
         for item in tasks:
-            if not isinstance(item, dict):
+            if opaque_not_isinstance(item, dict):
                 continue
             state = canonicalize_workflow_task_state(item.get("status") or item.get("state"))
             if state == "completed":
@@ -162,7 +163,7 @@ def run_dispatch_pipeline_with_workflow(
                 counts["pending"] = 0
                 counts["active"] = 0
                 for item in tasks:
-                    if not isinstance(item, dict):
+                    if opaque_not_isinstance(item, dict):
                         continue
                     state = canonicalize_workflow_task_state(item.get("status") or item.get("state"))
                     if state == "completed":

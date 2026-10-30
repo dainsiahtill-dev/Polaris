@@ -39,6 +39,7 @@ from polaris.cells.control_plane.run_ledger.public.tool_lifecycle._helpers impor
     _text_fallback_lifecycle_fields,
 )
 from polaris.kernelone.tools.tool_kinds import is_write_tool_name
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 
 def normalize_native_tool_call_envelope_refs(value: Any) -> tuple[dict[str, Any], ...]:
@@ -475,7 +476,7 @@ def build_missing_dispatch_lifecycle_receipt(
     derived_from_native_write_envelopes = False
     if not tools:
         for envelope in native_envelopes:
-            if not isinstance(envelope, Mapping):
+            if opaque_not_isinstance(envelope, Mapping):
                 continue
             normalized = _clean_string(envelope.get("tool_name"))
             if not normalized or not is_write_tool_name(normalized) or normalized in seen_tools:

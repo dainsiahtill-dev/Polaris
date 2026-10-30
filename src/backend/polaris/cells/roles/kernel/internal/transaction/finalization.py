@@ -30,6 +30,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnId,
 )
 from polaris.cells.roles.kernel.public.turn_events import CompletionEvent, TurnEvent, TurnPhaseEvent
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -648,7 +649,7 @@ class FinalizationHandler:
 
         latest_user_request = ""
         for message in reversed(original_context):
-            if not isinstance(message, Mapping):
+            if opaque_not_isinstance(message, Mapping):
                 continue
             role = str(message.get("role") or "").strip().lower()
             if role != "user":
@@ -661,7 +662,7 @@ class FinalizationHandler:
         # 保留原始上下文中的 system 消息（避免 HARD GATE 丢失）
         preserved_messages: list[dict[str, Any]] = []
         for msg in original_context:
-            if not isinstance(msg, Mapping):
+            if opaque_not_isinstance(msg, Mapping):
                 continue
             role = str(msg.get("role") or "").strip().lower()
             if role == "system":

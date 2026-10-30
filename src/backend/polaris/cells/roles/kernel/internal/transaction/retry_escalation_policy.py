@@ -14,6 +14,7 @@ import os
 from typing import Any, cast
 
 from polaris.kernelone.llm.budget_policy import RETRY_CREATE_OUTPUT_FLOOR_TOKENS
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 
 def resolve_retry_model_override(retry_llm_call_ordinal: int) -> str | None:
@@ -77,7 +78,7 @@ def remove_verification_tools_for_forced_write(tool_definitions: list[dict[str, 
     """Drop verification-only tools once API-level tool_choice forces a write tool."""
     narrowed: list[dict[str, Any]] = []
     for definition in tool_definitions:
-        if not isinstance(definition, dict):
+        if opaque_not_isinstance(definition, dict):
             narrowed.append(definition)
             continue
         function_payload = definition.get("function")
@@ -104,7 +105,7 @@ def narrow_edit_blocks_schema_to_line_range(tool_definitions: list[dict[str, Any
     """
     narrowed: list[dict[str, Any]] = []
     for definition in tool_definitions:
-        if not isinstance(definition, dict):
+        if opaque_not_isinstance(definition, dict):
             narrowed.append(definition)
             continue
         function_payload = definition.get("function")

@@ -10,6 +10,7 @@ from polaris.cells.policy.workspace_guard.service import SELF_UPGRADE_MODE_ENV
 from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.runtime.defaults import DEFAULT_PM_LOG
 from polaris.kernelone.storage.io_paths import normalize_artifact_rel_path
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 _E2E_PROTECT_GLOBAL_SETTINGS_ENV = "KERNELONE_E2E_PROTECT_GLOBAL_SETTINGS"
@@ -240,7 +241,7 @@ def sync_process_settings_environment(settings: "Settings") -> None:
 
 
 def _normalize_persisted_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(payload, dict):
+    if opaque_not_isinstance(payload, dict):
         return {}
     normalized = dict(payload)
     raw_json_log_path = str(normalized.get("json_log_path") or "").strip()

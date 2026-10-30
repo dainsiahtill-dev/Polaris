@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from polaris.kernelone.events.final_request_evidence import ContextSnapshotReferenceOwnerV1
 from polaris.kernelone.telemetry import debug_stream as _debug_stream_module
 from polaris.kernelone.trace import get_trace_id
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from ... import providers as _providers_module
 from ...provider_adapters.factory import get_adapter
@@ -373,7 +374,7 @@ class StreamExecutor:
         content_blocks: list[dict[str, Any]] = [text_block]
         openai_tool_calls: list[dict[str, Any]] = []
         for index, call in enumerate(emitted_tool_calls):
-            if not isinstance(call, dict):
+            if opaque_not_isinstance(call, dict):
                 continue
             tool_name = str(call.get("tool") or call.get("name") or "").strip()
             if not tool_name:

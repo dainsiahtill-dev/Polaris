@@ -21,6 +21,7 @@ from typing import Any, cast
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from . import factory_stage_helpers as helpers
 from .factory_role_evidence_authority import FactoryRoleEvidenceAuthorityPort
@@ -1693,7 +1694,7 @@ async def _execute_director_dispatch(executor: Any, run: FactoryRun, context: di
     error_code = ""
     root_cause_hint = ""
     for signal in stage_signals:
-        if not isinstance(signal, dict):
+        if opaque_not_isinstance(signal, dict):
             continue
         if str(signal.get("severity") or "").strip().lower() != "error":
             continue
@@ -1709,7 +1710,7 @@ async def _execute_director_dispatch(executor: Any, run: FactoryRun, context: di
         )
 
     for signal in stage_signals:
-        if not isinstance(signal, dict):
+        if opaque_not_isinstance(signal, dict):
             continue
         if str(signal.get("severity") or "").strip().lower() != "error":
             continue

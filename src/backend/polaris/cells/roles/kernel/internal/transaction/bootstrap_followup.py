@@ -39,6 +39,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnDecisionKind,
     TurnId,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +103,7 @@ def _extract_declared_step_card(original_context: list[dict[str, Any]]) -> dict[
     never satisfy a real verify and only poisons the rightful owner step).
     """
     for message in reversed(original_context or []):
-        if not isinstance(message, dict):
+        if opaque_not_isinstance(message, dict):
             continue
         for source in (
             message,
@@ -584,7 +585,7 @@ def _context_text_for_bootstrap(
 ) -> str:
     parts: list[str] = []
     for message in original_context:
-        if not isinstance(message, Mapping):
+        if opaque_not_isinstance(message, Mapping):
             continue
         content = message.get("content")
         if isinstance(content, str) and content.strip():

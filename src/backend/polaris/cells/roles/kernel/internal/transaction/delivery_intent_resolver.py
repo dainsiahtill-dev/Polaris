@@ -27,6 +27,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     RawLLMResponse,
     TurnDecision,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 _EXPLICIT_MATERIALIZE_MODE_MARKERS = (
     "[mode:materialize]",
@@ -62,7 +63,7 @@ def enforce_explicit_materialize_delivery_marker(
 def detect_target_files_known(context: list[dict[str, Any]]) -> bool:
     """检测上下文中是否包含明确的文件路径信息。"""
     for message in context:
-        if not isinstance(message, Mapping):
+        if opaque_not_isinstance(message, Mapping):
             continue
         content = str(message.get("content") or "")
         # 简单启发式：包含常见代码文件扩展名或路径分隔符
@@ -173,7 +174,7 @@ def inherit_materialize_from_history(
     # 检查最近 3 轮历史用户消息
     user_messages: list[str] = []
     for msg in reversed(context):
-        if not isinstance(msg, Mapping):
+        if opaque_not_isinstance(msg, Mapping):
             continue
         role = str(msg.get("role") or "").strip().lower()
         if role != "user":

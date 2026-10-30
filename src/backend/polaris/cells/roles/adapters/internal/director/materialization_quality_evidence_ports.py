@@ -20,6 +20,7 @@ from polaris.cells.director.runtime.public.service import (
     project_director_repair_materialization_bridge_metadata,
     query_director_repair_strategy_catalog,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from .helpers import has_successful_write_tool
 from .repair_profile_projection import project_repair_kernel_summary, summarize_deterministic_repair_source_tools
@@ -803,7 +804,7 @@ def _callback_receipt_projections_by_materialization_step(
     by_step: dict[str, list[dict[str, Any]]] = {step.step_id: [] for step in ordered_steps}
     untagged: list[dict[str, Any]] = []
     for projection in callback_receipt_projections:
-        if not isinstance(projection, dict):
+        if opaque_not_isinstance(projection, dict):
             continue
         step_id = _payload_step_id(projection)
         if step_id in by_step:
@@ -1372,7 +1373,7 @@ def _tool_results_by_materialization_step(
     by_step: dict[str, list[dict[str, Any]]] = {step.step_id: [] for step in ordered_steps}
     untagged: list[dict[str, Any]] = []
     for item in tool_results:
-        if not isinstance(item, dict):
+        if opaque_not_isinstance(item, dict):
             continue
         result = item.get("result")
         payload = result if isinstance(result, dict) else {}
@@ -1395,7 +1396,7 @@ def _repair_source_tool_status(source_tool: str, catalog: dict[str, dict[str, An
 
 def _has_native_verifier_evidence(tool_results: list[dict[str, Any]]) -> bool:
     for item in tool_results:
-        if not isinstance(item, dict):
+        if opaque_not_isinstance(item, dict):
             continue
         result = item.get("result")
         payload = result if isinstance(result, dict) else {}
@@ -1421,7 +1422,7 @@ def _has_native_verifier_evidence(tool_results: list[dict[str, Any]]) -> bool:
 
 def _has_verifier_evidence_in_mappings(payloads: list[dict[str, Any]]) -> bool:
     for payload in payloads:
-        if not isinstance(payload, dict):
+        if opaque_not_isinstance(payload, dict):
             continue
         if _mapping_has_verifier_evidence(payload.get("revalidation_evidence")):
             return True

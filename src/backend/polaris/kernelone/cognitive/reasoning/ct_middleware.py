@@ -18,6 +18,7 @@ from polaris.kernelone.context.context_os.models_v2 import (
     TranscriptEventV2 as TranscriptEvent,
     WorkingStateV2 as WorkingState,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 if TYPE_CHECKING:
     pass
@@ -333,7 +334,7 @@ class CTEngineMiddleware(ContextOSHooksSpec):
         Returns:
             Summarized version with key fields.
         """
-        if not isinstance(result, dict):
+        if opaque_not_isinstance(result, dict):
             return {"type": type(result).__name__}
 
         summary = {}

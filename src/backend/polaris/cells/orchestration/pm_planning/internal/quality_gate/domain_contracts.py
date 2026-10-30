@@ -40,6 +40,7 @@ from polaris.cells.orchestration.pm_planning.internal.quality_gate.primitives im
     _unique_task_id,
     _workspace_relative_path,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 _GAME_PM_MIN_TASKS = 12
 _GAME_PM_REQUIRED_DOMAINS = (
@@ -600,7 +601,7 @@ def _infer_primary_contract_language(normalized: dict[str, Any], tasks: list[dic
         if value is not None:
             parts.append(_normalize_text(value))
     for task in tasks:
-        if not isinstance(task, dict):
+        if opaque_not_isinstance(task, dict):
             continue
         projection = _task_projection(task)
         explicit = _normalize_primary_language_value(projection.get("primary_language"))

@@ -67,6 +67,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
 from polaris.cells.roles.kernel.public.turn_events import TurnPhaseEvent
 from polaris.kernelone.tool_execution.contracts import tool_batch_inventory_error
 from polaris.kernelone.tools.tool_kinds import is_write_tool_name
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from ._helpers import (
     _DIRECT_READ_TOOLS,
@@ -1328,7 +1329,7 @@ class _ToolBatchExecuteMixin:
         # it can materialize changes. Blocking re-reads of truncated files
         # causes the infinite loop in MATERIALIZE_CHANGES mode.
         for receipt in receipts_as_dicts:
-            if not isinstance(receipt, dict):
+            if opaque_not_isinstance(receipt, dict):
                 continue
             for result_item in receipt.get("results", []) or []:
                 if not isinstance(result_item, dict):

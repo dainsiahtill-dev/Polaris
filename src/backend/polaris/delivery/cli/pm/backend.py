@@ -33,6 +33,7 @@ from polaris.kernelone.tool_execution.io_tools import (
     ensure_codex_available,
     ensure_ollama_available,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -479,7 +480,7 @@ def _build_codex_env_from_role_config(state: PmRoleState) -> dict[str, str]:
         except (OSError, RuntimeError, TypeError, ValueError):
             provider_cfg = {}
 
-    if not isinstance(provider_cfg, dict):
+    if opaque_not_isinstance(provider_cfg, dict):
         return env
     provider_type = str(provider_cfg.get("type") or "").strip().lower()
     if provider_type not in {"codex", "codex_cli", "codex_sdk"}:

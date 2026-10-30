@@ -71,6 +71,7 @@ from polaris.cells.runtime.task_runtime.public import (
     mark_directed_effect_recovery_pending,
     seal_directed_effect_inventory,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 
 @dataclass(frozen=True, slots=True)
@@ -426,7 +427,7 @@ class DirectedEffectLifecycleService:
         batch_id: str,
         candidates: tuple[DirectedEffectLifecycleCandidateV1, ...],
     ) -> DirectedEffectLifecycleResultV1:
-        if not isinstance(execution_attempt, TaskRuntimeExecutionAttemptIdentityV1):
+        if opaque_not_isinstance(execution_attempt, TaskRuntimeExecutionAttemptIdentityV1):
             return _denied("input", "deo_execution_attempt_invalid")
         if not candidates:
             return DirectedEffectLifecycleResultV1(

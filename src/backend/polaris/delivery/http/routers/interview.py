@@ -26,6 +26,7 @@ from polaris.infrastructure.messaging.nats.nats_types import create_runtime_even
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.llm.model_identity import model_identity_equal
 from polaris.kernelone.storage.io_paths import build_cache_root
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from .jetstream_utils import publish_to_jetstream
 from .llm_models import InterviewAskPayload, InterviewCancelPayload, InterviewSavePayload
@@ -276,7 +277,7 @@ async def _run_interview_jetstream(
                     await producer_done
                 chunk = next_chunk.result()
 
-            if not isinstance(chunk, dict):
+            if opaque_not_isinstance(chunk, dict):
                 continue
             await _publish_interview_chunk(session_id=session_id, chunk=chunk, seq=seq)
             seq += 1

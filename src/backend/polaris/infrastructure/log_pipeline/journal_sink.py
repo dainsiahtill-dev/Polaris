@@ -22,6 +22,7 @@ from polaris.kernelone.events.topics import (
     TOPIC_RUNTIME_STREAM,
     UEP_PERSISTENCE_TOPICS,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from .canonical_event import CanonicalLogEventV2
 from .writer import get_writer
@@ -91,7 +92,7 @@ def _redact_raw_payload(value: Any) -> Any:
 def _normalize_uep_payload(message: Message) -> CanonicalLogEventV2 | None:
     """Convert a UEP Message payload into a CanonicalLogEventV2."""
     payload = message.payload
-    if not isinstance(payload, dict):
+    if opaque_not_isinstance(payload, dict):
         return None
 
     topic = payload.get("topic")

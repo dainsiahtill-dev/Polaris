@@ -12,6 +12,8 @@ import logging
 import os
 from typing import Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 logger = logging.getLogger(__name__)
 
 _BACKEND_ALIVE_REASONS: frozenset[str] = frozenset(
@@ -207,7 +209,7 @@ def _drive_role_workers(
         """True if the claim proves the bound backend ran (a resolved step or a
         model-ran failure reason), as opposed to the empty-output dead signature."""
         for row in batch:
-            if not isinstance(row, dict):
+            if opaque_not_isinstance(row, dict):
                 continue
             if row.get("ok"):
                 return True

@@ -39,6 +39,7 @@ if TYPE_CHECKING:
 
 from polaris.kernelone.context.control_plane_noise import is_control_plane_noise
 from polaris.kernelone.llm.toolkit.contracts import ServiceLocator
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 # T2-A veto gate (Headroom token-shrink veto, fix-design-review-corrected form).
 # Default OFF because the veto can change WHICH messages ship to the LLM on a
@@ -165,7 +166,7 @@ def build_continuity_summary_text(
     """
     normalized_records: list[dict[str, Any]] = []
     for index, item in enumerate(messages or []):
-        if not isinstance(item, Mapping):
+        if opaque_not_isinstance(item, Mapping):
             continue
         role = str(item.get("role") or "").strip().lower()
         content = _normalize_continuity_text(item.get("content") or item.get("message") or "")

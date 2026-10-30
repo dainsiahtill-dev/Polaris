@@ -37,6 +37,7 @@ from polaris.kernelone.llm.provider_adapters.base import (
     serialize_transcript_for_prompt,
 )
 from polaris.kernelone.llm.types import InvokeResult
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -519,7 +520,7 @@ class OpenAIResponsesAdapter(ProviderAdapter):
         Returns:
             DecodedProviderOutput（含增量内容/工具调用）或 None（ping/done 事件）。
         """
-        if not isinstance(raw_event, dict):
+        if opaque_not_isinstance(raw_event, dict):
             return None
 
         event_type = str(raw_event.get("event") or "").strip().lower()

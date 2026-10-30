@@ -62,6 +62,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
 )
 from polaris.cells.roles.kernel.public.turn_events import TurnEvent, TurnPhaseEvent
 from polaris.kernelone.tools.tool_kinds import is_write_tool_name
+from polaris.kernelone.type_ops import opaque_isinstance, opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +101,7 @@ def _with_decision_metadata(decision: TurnDecision, metadata: dict[str, Any]) ->
         "finalize_mode",
         "domain",
     )
-    if not isinstance(decision, dict) or not all(field in decision for field in required_fields):
+    if opaque_not_isinstance(decision, dict) or not all(field in decision for field in required_fields):
         partial_decision = dict(decision)
         partial_decision["metadata"] = metadata
         return cast(TurnDecision, partial_decision)
@@ -265,7 +266,7 @@ def ensure_native_write_tool_batch_or_fail(
 
     merged_metadata = dict(decision_metadata)
     decision_meta = decision.get("metadata") if isinstance(decision, Mapping) else None
-    if isinstance(decision_meta, Mapping):
+    if opaque_isinstance(decision_meta, Mapping):
         merged_metadata = {**merged_metadata, **dict(decision_meta)}
     native_tool_call_facts = native_tool_call_facts_from_sources(
         merged_metadata,

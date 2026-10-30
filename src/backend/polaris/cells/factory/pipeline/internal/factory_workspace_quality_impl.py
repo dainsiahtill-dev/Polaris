@@ -36,6 +36,7 @@ from polaris.cells.runtime.task_runtime.public.service import (
     bind_runtime_task_to_factory_run,
 )
 from polaris.kernelone.llm.budget_policy import FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from .factory_run_models import _WORKSPACE_VALIDATION_TIMEOUT_SECONDS, FactoryRun
 from .factory_workspace_quality_evidence import (
@@ -2328,11 +2329,11 @@ async def _apply_workspace_quality_deterministic_repairs(
                 turn_id=(f"workspace-quality-repair-{run_id}-round{repair_attempt}-candidate{candidate_index}"),
                 context=commit_context,
             )
-            if not isinstance(candidate_receipts, list | tuple):
+            if opaque_not_isinstance(candidate_receipts, list | tuple):
                 physical_carrier_invalid = True
                 raise ValueError("physical_receipt_carrier_invalid:collection")
             for batch in candidate_receipts:
-                if not isinstance(batch, Mapping):
+                if opaque_not_isinstance(batch, Mapping):
                     physical_carrier_invalid = True
                     raise ValueError("physical_receipt_carrier_invalid:batch")
                 raw_rows = batch.get("raw_results", [])

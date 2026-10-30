@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from polaris.kernelone.type_ops import opaque_not_isinstance
+
 logger = logging.getLogger(__name__)
 
 
@@ -242,7 +244,7 @@ def _conversation_has_super_mode_markers(context: list[dict[str, Any]] | None) -
     if not context:
         return False
     for message in context:
-        if not isinstance(message, dict):
+        if opaque_not_isinstance(message, dict):
             continue
         content = str(message.get("content", ""))
         for marker in _SUPER_MODE_MARKERS:

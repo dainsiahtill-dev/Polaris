@@ -30,6 +30,7 @@ from polaris.kernelone.fs import (
 from polaris.kernelone.llm.engine.internal.context_hash import validate_context_hash
 from polaris.kernelone.storage import resolve_storage_roots_read_only
 from polaris.kernelone.storage.layout import default_kernelone_cache_base, workspace_key
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,7 +213,7 @@ def instance_runtime_root_candidates(
 
     matches: list[dict[str, Any]] = []
     for record in records:
-        if not isinstance(record, dict):
+        if opaque_not_isinstance(record, dict):
             continue
         record_workspace = _normalize_workspace(record.get("workspace"))
         runtime_root = _string_field(record.get("runtime_root"))

@@ -23,6 +23,7 @@ from polaris.kernelone.quality.scope_authority import (
     path_matches_any_declared_scope_candidate,
     path_matches_declared_scope_candidate,
 )
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 
 def _filter_diff_to_task_declared_paths(
@@ -165,7 +166,7 @@ def _task_text_blob(task: dict[str, Any]) -> str:
     raw_metadata = task.get("metadata")
     metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
     for record in (task, metadata):
-        if not isinstance(record, dict):
+        if opaque_not_isinstance(record, dict):
             continue
         for key in (
             "subject",

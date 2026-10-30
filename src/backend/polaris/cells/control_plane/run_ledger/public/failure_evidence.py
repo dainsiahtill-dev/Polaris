@@ -15,6 +15,7 @@ from enum import Enum
 from typing import Any
 
 from polaris.kernelone.events.final_request_evidence import looks_like_failed_gate_evidence_context_payload
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 _TASK_BOUNDARY_FAILURE_BOOL_KEYS: tuple[str, ...] = (
     "repairable_by_director",
@@ -265,7 +266,7 @@ def task_boundary_failure_evidence_from_verdict(
         count and ``r`` is the evidence-ref count.
     """
 
-    if not isinstance(verdict, Mapping):
+    if opaque_not_isinstance(verdict, Mapping):
         return {}
     payload = _task_boundary_verdict_mapping(verdict)
     if bool(payload.get("ok")):

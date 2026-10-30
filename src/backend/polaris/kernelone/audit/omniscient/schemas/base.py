@@ -18,9 +18,11 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Self
 
+from polaris.kernelone.audit.omniscient.bus import AuditPriority
+
 # Import AuditPriority from bus for consistency
 # This IntEnum is used for comparisons in the bus layer
-from polaris.kernelone.audit.omniscient.bus import AuditPriority
+from polaris.kernelone.type_ops import opaque_isinstance
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
@@ -221,7 +223,7 @@ class AuditEvent(BaseModel, frozen=True):
     @classmethod
     def _strip_whitespace(cls, v: str) -> str:
         """Strip whitespace from ID fields."""
-        if isinstance(v, str):
+        if opaque_isinstance(v, str):
             return v.strip()
         return v
 

@@ -31,6 +31,7 @@ from polaris.cells.roles.kernel.public.service import (
 )
 from polaris.kernelone.context.projection_engine import ProjectionEngine
 from polaris.kernelone.context.receipt_store import ReceiptStore
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 
 def _signal_ctx(role: str, *, task_id: str = "T1") -> SignalBuildContext:
@@ -244,7 +245,7 @@ def _messages_have_control_plane_leak(messages: list[dict[str, Any]]) -> list[st
     """返回泄漏证据列表（应为空）."""
     leaks: list[str] = []
     for i, msg in enumerate(messages):
-        if not isinstance(msg, Mapping):
+        if opaque_not_isinstance(msg, Mapping):
             continue
         for key in _CONTROL_PLANE_KEYS:
             if key in msg:

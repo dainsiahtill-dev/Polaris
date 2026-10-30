@@ -27,6 +27,7 @@ from polaris.cells.roles.kernel.internal.transaction.task_contract_builder impor
     resolve_callable_tool_names,
 )
 from polaris.kernelone.audit.task_write_guidance import render_task_write_guidance
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 
 def _extract_latest_assistant_message(context: list[dict[str, Any]]) -> str:
@@ -37,7 +38,7 @@ def _extract_latest_assistant_message(context: list[dict[str, Any]]) -> str:
     OWN plan into a concrete edit instead of re-deriving (or re-narrating) it.
     """
     for message in reversed(context):
-        if not isinstance(message, Mapping):
+        if opaque_not_isinstance(message, Mapping):
             continue
         if str(message.get("role") or "").strip().lower() != "assistant":
             continue
@@ -50,7 +51,7 @@ def _extract_latest_assistant_message(context: list[dict[str, Any]]) -> str:
 def _extract_role_definition_block(context: list[dict[str, Any]]) -> str:
     """Return the first role identity block from the original system context."""
     for message in context:
-        if not isinstance(message, Mapping):
+        if opaque_not_isinstance(message, Mapping):
             continue
         if str(message.get("role") or "").strip().lower() != "system":
             continue
@@ -186,7 +187,7 @@ def build_contract_retry_context(
     write_candidates = set(ACTIVE_WRITE_TOOLS)
     write_tools: list[str] = []
     for item in tool_definitions:
-        if not isinstance(item, Mapping):
+        if opaque_not_isinstance(item, Mapping):
             continue
         function_payload = item.get("function")
         if isinstance(function_payload, Mapping):
@@ -299,7 +300,7 @@ def build_contract_retry_context(
         retry_context.append(retry_message)
     else:
         for item in context:
-            if not isinstance(item, Mapping):
+            if opaque_not_isinstance(item, Mapping):
                 continue
             role = str(item.get("role") or "").strip()
             content = str(item.get("content") or "")

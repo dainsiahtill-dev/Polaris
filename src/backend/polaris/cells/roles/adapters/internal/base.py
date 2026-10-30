@@ -19,6 +19,7 @@ from polaris.cells.runtime.task_runtime.public import task_row_execution_event_f
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.storage.paths import resolve_signal_path
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 _logger = logging.getLogger(__name__)
 _TERMINAL_TASK_ROW_STATUSES = frozenset({"completed", "failed", "cancelled", "timeout"})
@@ -356,7 +357,7 @@ class BaseRoleAdapter(RoleOrchestrationAdapter):
         source_token = str(source or f"{role_token}_adapter").strip()
 
         for item in signals:
-            if not isinstance(item, dict):
+            if opaque_not_isinstance(item, dict):
                 continue
             code = str(item.get("code") or "").strip() or "unknown_signal"
             severity = str(item.get("severity") or "").strip().lower() or "info"

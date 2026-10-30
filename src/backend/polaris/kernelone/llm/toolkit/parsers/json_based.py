@@ -28,6 +28,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 from polaris.kernelone.llm.contracts.tool import ToolCall
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -268,7 +269,7 @@ class JSONToolParser:
         Returns:
             List of parsed tool calls from this dictionary.
         """
-        if not isinstance(data, dict):
+        if opaque_not_isinstance(data, dict):
             return []
 
         # Extract tool name

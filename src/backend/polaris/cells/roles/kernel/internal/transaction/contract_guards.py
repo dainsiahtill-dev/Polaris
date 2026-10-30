@@ -46,6 +46,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
 )
 from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_name
 from polaris.kernelone.tools.tool_kinds import is_write_tool_name
+from polaris.kernelone.type_ops import opaque_not_isinstance
 
 logger = logging.getLogger(__name__)
 
@@ -1190,7 +1191,7 @@ def has_successful_recon_execution(tool_executions: list[dict[str, Any]]) -> boo
     - status 必须为 ``"success"``（失败的侦察调用不构成落地证据）。
     """
     for entry in tool_executions:
-        if not isinstance(entry, Mapping):
+        if opaque_not_isinstance(entry, Mapping):
             continue
         raw_name = str(entry.get("tool_name") or "").strip()
         tool_name = normalize_tool_name(raw_name)

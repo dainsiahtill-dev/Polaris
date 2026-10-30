@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from polaris.kernelone.constants import MAX_WORKFLOW_TIMEOUT_SECONDS
+from polaris.kernelone.type_ops import opaque_not_isinstance
 from polaris.kernelone.utils.time_utils import utc_now as _utc_now
 
 # ============================================================================
@@ -260,7 +261,7 @@ class OrchestrationRunRequest:
         if not self.run_id:
             errors.append("run_id cannot be empty")
 
-        if not isinstance(self.workspace, Path):
+        if opaque_not_isinstance(self.workspace, Path):
             errors.append(f"workspace must be Path, got {type(self.workspace)}")
         elif not self.workspace.exists():
             errors.append(f"Workspace does not exist: {self.workspace}")
