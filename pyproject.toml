@@ -136,7 +136,9 @@ filterwarnings = [
 ]
 
 [tool.mypy]
-python_version = "3.10"
+# Runtime is CPython 3.12 (tests/CI); 3.10 target falsely flagged stdlib
+# 3.11+ APIs like enum.StrEnum.
+python_version = "3.12"
 # Resolve polaris.* imports from source (a stale editable install previously
 # shadowed them into Any-typed silent imports).
 mypy_path = "src/backend"

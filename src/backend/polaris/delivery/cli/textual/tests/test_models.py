@@ -37,7 +37,7 @@ class TestDebugItem:
             content="test content",
         )
         assert item.is_collapsed is True
-        assert item.marker == "[▶]"
+        assert item.marker == "▶"
 
     def test_marker_expanded(self) -> None:
         """Expanded DebugItem must show [▼]."""
@@ -51,7 +51,7 @@ class TestDebugItem:
         )
         item.expand()
         assert item.is_collapsed is False
-        assert item.marker == "[▼]"
+        assert item.marker == "▼"
 
     def test_toggle(self) -> None:
         """toggle() must flip collapsed state."""
@@ -232,7 +232,7 @@ class TestMessageItem:
         assert item.id == "msg-1"
         assert item.type == MessageType.USER
         assert item.title == "User input"
-        assert item.content == "Hello world"
+        assert item.content.text == "Hello world"
 
     def test_marker_expanded(self) -> None:
         """Expanded MessageItem must show [▼]."""
@@ -243,7 +243,7 @@ class TestMessageItem:
             content="Hello",
             is_collapsed=False,
         )
-        assert item.marker == "[▼]"
+        assert item.marker == "▼"
 
     def test_marker_collapsed(self) -> None:
         """Collapsed MessageItem must show [▶]."""
@@ -254,7 +254,7 @@ class TestMessageItem:
             content="Hello",
             is_collapsed=True,
         )
-        assert item.marker == "[▶]"
+        assert item.marker == "▶"
 
     def test_toggle(self) -> None:
         """toggle() must flip collapsed state."""

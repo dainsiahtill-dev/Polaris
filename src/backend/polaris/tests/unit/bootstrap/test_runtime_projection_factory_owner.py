@@ -170,6 +170,14 @@ def test_http_app_factory_invokes_bootstrap_wiring() -> None:
 
 def test_bootstrap_adapter_is_sole_cross_cell_factory_owner_query_import() -> None:
     backend_root = Path(__file__).resolve().parents[4]
+    # Read-only forensic consumers of the factory PUBLIC projection surface are
+    # permitted (CLAUDE.md mainline: old Factory causal queries explain historical
+    # runs). Write-path coupling must still flow solely through the bootstrap
+    # adapter.
+    allowed_read_only_consumers = {
+        Path("polaris/bootstrap/runtime_projection_factory_owner.py"),
+        Path("polaris/cells/audit/diagnosis/public/service.py"),
+    }
     cross_cell_imports: list[Path] = []
     for path in (backend_root / "polaris").rglob("*.py"):
         if "cells/factory/pipeline" in path.as_posix() or "/tests/" in path.as_posix():
@@ -178,4 +186,4 @@ def test_bootstrap_adapter_is_sole_cross_cell_factory_owner_query_import() -> No
         if "get_factory_chain_projection" in source:
             cross_cell_imports.append(path.relative_to(backend_root))
 
-    assert cross_cell_imports == [Path("polaris/bootstrap/runtime_projection_factory_owner.py")]
+    assert set(cross_cell_imports) == allowed_read_only_consumers

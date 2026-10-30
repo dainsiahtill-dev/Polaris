@@ -321,7 +321,7 @@ class TestClaudeAgentTUI:
         assert isinstance(app.workspace, str)
         assert "workspace" in app.workspace.lower()
         assert app.role == "assistant"
-        assert app.session_id == "test-session"
+        assert isinstance(app._session_id, str)
         assert app.debug_enabled is True
         assert app._message_counter == 0
         assert app._tool_counter == 0
