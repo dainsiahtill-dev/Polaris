@@ -33,8 +33,9 @@ class FakeTxController:
     async def execute_stream(
         self,
         turn_id: str,
-        context: list[dict],
-        tool_definitions: list[dict],
+        context: list[dict[str, Any]],
+        tool_definitions: list[dict[str, Any]],
+        **_kwargs: Any,
     ) -> Any:
         self.execute_stream_call_count += 1
         for event in self.events_by_turn.get(turn_id, []):
@@ -83,7 +84,7 @@ class TestConsoleHostE2ESmoke:
 
         tx_controller: FakeTxController | None = None
 
-        def _make_controller(_cmd: Any) -> FakeTxController:
+        async def _make_controller(_cmd: Any) -> FakeTxController:
             nonlocal tx_controller
             tx_controller = FakeTxController(events_by_turn)
             return tx_controller
@@ -210,7 +211,12 @@ class TestConsoleHostE2ESmoke:
         }
 
         mock_runtime = cast(MagicMock, mock_host._runtime_service)
-        mock_runtime.create_transaction_controller.return_value = FakeTxController(turn_events)
+        handoff_controller = FakeTxController(turn_events)
+
+        async def _make_handoff_controller(_cmd: Any) -> FakeTxController:
+            return handoff_controller
+
+        mock_runtime.create_transaction_controller.side_effect = _make_handoff_controller
 
         create_payload = {
             "id": session_id,

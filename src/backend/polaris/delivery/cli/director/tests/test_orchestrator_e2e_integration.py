@@ -39,18 +39,28 @@ class FakeTxController:
         self.events_by_turn = events_by_turn
         self.tool_runtime = MagicMock()
         self.execute_stream_call_count = 0
-        self.contexts: list[list[dict]] = []
+        self.contexts: list[list[dict[str, Any]]] = []
 
     async def execute_stream(
         self,
         turn_id: str,
-        context: list[dict],
-        tool_definitions: list[dict],
+        context: list[dict[str, Any]],
+        tool_definitions: list[dict[str, Any]],
+        **_kwargs: Any,
     ) -> Any:
         self.execute_stream_call_count += 1
         self.contexts.append(context)
         for event in self.events_by_turn.get(turn_id, []):
             yield event
+
+
+def _async_controller(controller: FakeTxController) -> Any:
+    """Wrap a controller so awaiting create_transaction_controller returns it."""
+
+    async def _make(_cmd: Any) -> FakeTxController:
+        return controller
+
+    return _make
 
 
 def _make_envelope(
@@ -126,7 +136,7 @@ class TestAnalysisOnlyPath:
         }
 
         mock_runtime = cast(MagicMock, mock_host._runtime_service)
-        mock_runtime.create_transaction_controller.return_value = FakeTxController(events_by_turn)
+        mock_runtime.create_transaction_controller.side_effect = _async_controller(FakeTxController(events_by_turn))
 
         create_payload = {
             "id": session_id,
@@ -168,7 +178,7 @@ class TestAnalysisOnlyPath:
 
             async def run() -> list[dict[str, Any]]:
                 events: list[dict[str, Any]] = []
-                async for evt in mock_host.stream_turn(None, "summarize the project"):
+                async for evt in mock_host.stream_turn(None, "read server.py and summarize its structure"):
                     events.append(evt)
                 return events
 
@@ -228,7 +238,7 @@ class TestWritePath:
 
         mock_runtime = cast(MagicMock, mock_host._runtime_service)
         controller = FakeTxController(events_by_turn)
-        mock_runtime.create_transaction_controller.return_value = controller
+        mock_runtime.create_transaction_controller.side_effect = _async_controller(controller)
 
         create_payload = {
             "id": session_id,
@@ -332,7 +342,7 @@ class TestContextSwitch:
 
         mock_runtime = cast(MagicMock, mock_host._runtime_service)
         controller = FakeTxController(events_by_turn)
-        mock_runtime.create_transaction_controller.return_value = controller
+        mock_runtime.create_transaction_controller.side_effect = _async_controller(controller)
 
         create_payload = {
             "id": session_id,
@@ -359,7 +369,7 @@ class TestContextSwitch:
 
             async def run_first() -> list[dict[str, Any]]:
                 events: list[dict[str, Any]] = []
-                async for evt in mock_host.stream_turn(None, "summarize the project"):
+                async for evt in mock_host.stream_turn(None, "read server.py and summarize its structure"):
                     events.append(evt)
                 return events
 

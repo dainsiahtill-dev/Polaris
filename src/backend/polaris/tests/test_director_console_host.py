@@ -658,33 +658,15 @@ def test_toad_console_entrypoint_runs_role_console(monkeypatch: pytest.MonkeyPat
     assert captured["json_render"] == "pretty"
 
 
-def test_director_cli_thin_main_routes_console_to_run_director_console(
+def test_director_cli_thin_rejects_retired_console_subcommand(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """polaris-director is the engineering CLI; the console subcommand is retired."""
     import sys
 
-    from polaris.delivery.cli import terminal as terminal_cli
     from polaris.delivery.cli.director import cli_thin
 
-    captured: dict[str, Any] = {}
-
-    def _fake_run_director_console(
-        workspace: str,
-        *,
-        role: str = "director",
-        backend: str = "auto",
-        session_id: str | None = None,
-        session_title: str | None = None,
-    ) -> int:
-        captured["workspace"] = workspace
-        captured["role"] = role
-        captured["backend"] = backend
-        captured["session_id"] = session_id
-        captured["session_title"] = session_title
-        return 19
-
-    monkeypatch.setattr(terminal_cli, "run_director_console", _fake_run_director_console)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -697,19 +679,55 @@ def test_director_cli_thin_main_routes_console_to_run_director_console(
             "plain",
             "--session-id",
             "session-7",
-            "--session-title",
-            "Director CLI",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_thin.main()
+
+    assert exc_info.value.code == 2
+
+
+def test_director_cli_thin_main_runs_engineering_action(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """cli_thin dispatches to the shared engineering service with role=director."""
+    import sys
+
+    from polaris.delivery.cli.director import cli_thin
+
+    captured: dict[str, Any] = {}
+
+    async def _fake_run_engineering_action(args: Any, *, role: str) -> int:
+        captured["workspace"] = args.workspace
+        captured["role"] = role
+        captured["instruction"] = args.instruction
+        captured["engineering_action"] = args.engineering_action
+        return 21
+
+    monkeypatch.setattr(cli_thin, "run_engineering_action", _fake_run_engineering_action)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "director-thin",
+            "--workspace",
+            str(tmp_path),
+            "--instruction",
+            "fix router.py parse bug",
+            "--engineering-action",
+            "discuss",
         ],
     )
 
     exit_code = cli_thin.main()
 
-    assert exit_code == 19
-    assert captured["workspace"] == str(tmp_path.resolve())
+    assert exit_code == 21
+    assert captured["workspace"] == str(tmp_path)
     assert captured["role"] == "director"
-    assert captured["backend"] == "plain"
-    assert captured["session_id"] == "session-7"
-    assert captured["session_title"] == "Director CLI"
+    assert captured["instruction"] == "fix router.py parse bug"
+    assert captured["engineering_action"] == "discuss"
 
 
 def test_run_director_console_accepts_non_textual_backend_but_runs(

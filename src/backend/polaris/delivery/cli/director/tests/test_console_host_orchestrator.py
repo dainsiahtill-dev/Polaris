@@ -74,7 +74,10 @@ class TestNormalizeOrchestratorEvent:
             arguments={"path": "foo.py"},
         )
         normalized = RoleConsoleHost._normalize_orchestrator_event(event)
-        assert normalized == {"type": "tool_call", "data": {"tool": "read_file", "args": {"path": "foo.py"}}}
+        assert normalized == {
+            "type": "tool_call",
+            "data": {"tool": "read_file", "args": {"path": "foo.py"}, "call_id": "c1"},
+        }
 
     def test_tool_batch_success(self) -> None:
         event = ToolBatchEvent(
@@ -89,7 +92,7 @@ class TestNormalizeOrchestratorEvent:
         normalized = RoleConsoleHost._normalize_orchestrator_event(event)
         assert normalized == {
             "type": "tool_result",
-            "data": {"tool": "read_file", "result": {"content": "x"}, "success": True},
+            "data": {"tool": "read_file", "call_id": "c1", "result": {"content": "x"}, "success": True},
         }
 
     def test_tool_batch_error(self) -> None:
@@ -105,7 +108,7 @@ class TestNormalizeOrchestratorEvent:
         normalized = RoleConsoleHost._normalize_orchestrator_event(event)
         assert normalized == {
             "type": "tool_result",
-            "data": {"tool": "read_file", "error": "not found", "success": False},
+            "data": {"tool": "read_file", "call_id": "c1", "error": "not found", "success": False},
         }
 
     def test_completion_event(self) -> None:
@@ -215,13 +218,19 @@ class TestStreamTurnOrchestratorPath:
         }
 
         class FakeTxController:
-            async def execute_stream(self, turn_id: str, context: list[dict], tool_definitions: list[dict]) -> Any:
+            async def execute_stream(
+                self, turn_id: str, context: list[dict[str, Any]], tool_definitions: list[dict[str, Any]], **_kwargs: Any
+            ) -> Any:
                 yield ContentChunkEvent(turn_id=turn_id, chunk="hello from orch")
                 yield CompletionEvent(turn_id=turn_id, status="success")
 
         mock_tx_controller = FakeTxController()
         mock_runtime = cast(MagicMock, mock_host._runtime_service)
-        mock_runtime.create_transaction_controller.return_value = mock_tx_controller
+
+        async def fake_create_controller(_command: Any) -> Any:
+            return mock_tx_controller
+
+        mock_runtime.create_transaction_controller = fake_create_controller
 
         with (
             patch.object(mock_host, "create_session", return_value=create_payload),
@@ -238,7 +247,7 @@ class TestStreamTurnOrchestratorPath:
 
             async def run() -> list[dict[str, Any]]:
                 events: list[dict[str, Any]] = []
-                async for evt in mock_host.stream_turn(None, "hello"):
+                async for evt in mock_host.stream_turn(None, "fix bug in test.py"):
                     events.append(evt)
                 return events
 
@@ -286,7 +295,7 @@ class TestStreamTurnOrchestratorPath:
 
             async def run() -> list[dict[str, Any]]:
                 events: list[dict[str, Any]] = []
-                async for evt in mock_host.stream_turn(None, "hello"):
+                async for evt in mock_host.stream_turn(None, "fix bug in test.py"):
                     events.append(evt)
                 return events
 
@@ -308,12 +317,19 @@ class TestStreamTurnOrchestratorPath:
         }
 
         class FakeTxController:
-            async def execute_stream(self, turn_id: str, context: list[dict], tool_definitions: list[dict]) -> Any:
+            async def execute_stream(
+                self, turn_id: str, context: list[dict[str, Any]], tool_definitions: list[dict[str, Any]], **_kwargs: Any
+            ) -> Any:
                 yield ContentChunkEvent(turn_id=turn_id, chunk="log me")
                 yield CompletionEvent(turn_id=turn_id, status="success")
 
         mock_runtime = cast(MagicMock, mock_host._runtime_service)
-        mock_runtime.create_transaction_controller.return_value = FakeTxController()
+        fake_controller = FakeTxController()
+
+        async def fake_create_controller(_command: Any) -> Any:
+            return fake_controller
+
+        mock_runtime.create_transaction_controller = fake_create_controller
 
         with (
             patch.object(mock_host, "create_session", return_value=create_payload),
@@ -329,7 +345,7 @@ class TestStreamTurnOrchestratorPath:
         ):
 
             async def run() -> None:
-                async for _ in mock_host.stream_turn(None, "hello"):
+                async for _ in mock_host.stream_turn(None, "fix bug in test.py"):
                     pass
 
             asyncio.run(run())
