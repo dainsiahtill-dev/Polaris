@@ -61,9 +61,6 @@ from polaris.cells.roles.kernel.public.llm_caller_contracts import (
     resolve_role_output_budget,
 )
 from polaris.cells.roles.kernel.public.service import QualityChecker
-from polaris.cells.roles.kernel.public.structured_output_contracts import (
-    RoleStructuredOutputContractV1,
-)
 from polaris.cells.roles.runtime.public.contracts import (
     RoleExecutionResultV1,
 )
