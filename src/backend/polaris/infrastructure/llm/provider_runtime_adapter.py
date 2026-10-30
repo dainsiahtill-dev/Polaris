@@ -85,9 +85,6 @@ def _resolve_settings_from_di() -> Any:
             try:
                 asyncio.get_running_loop()
             except RuntimeError:
-                # Cast container to Coroutine for asyncio.run
-                from typing import cast
-
                 container = asyncio.run(container)
             else:
                 close = getattr(container, "close", None)
