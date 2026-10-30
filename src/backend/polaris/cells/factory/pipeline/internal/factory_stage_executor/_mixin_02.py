@@ -1521,22 +1521,6 @@ class _Mixin02:
                     }
                 )
             structured_output_contract = self._chief_engineer_structured_output_contract(portfolio_task_ids)
-            if schema_repair_patch_schema is not None:
-                structured_output_contract = RoleStructuredOutputContractV1(
-                    schema_name=(
-                        "chief_engineer_blueprint_portfolio_schema_patch"
-                        if schema_residual_plan is not None
-                        else "chief_engineer_blueprint_portfolio_required_patch"
-                    ),
-                    description=(
-                        "Exact diagnosis-scoped edit envelope for an immutable untrusted CE draft; "
-                        "all other members stay unchanged and the complete schema is revalidated."
-                        if schema_residual_plan is not None
-                        else "Strict merge patch containing only schema-proven missing required object members. "
-                        "The platform retains and revalidates the immutable full CE candidate."
-                    ),
-                    json_schema=schema_repair_patch_schema,
-                )
             result = cast(
                 RoleExecutionResultV1,
                 await self._call_with_factory_role_evidence_authority(
