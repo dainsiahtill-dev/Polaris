@@ -137,6 +137,9 @@ filterwarnings = [
 
 [tool.mypy]
 python_version = "3.10"
+# Resolve polaris.* imports from source (a stale editable install previously
+# shadowed them into Any-typed silent imports).
+mypy_path = "src/backend"
 # Strict mode enforcement (Task #4)
 strict = true
 warn_return_any = true
