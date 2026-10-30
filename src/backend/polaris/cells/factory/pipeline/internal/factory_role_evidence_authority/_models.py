@@ -7,6 +7,7 @@ import binascii
 import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import cast
 
 from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FACTORY_ROLE_EVIDENCE_CUTOFF_REQUEST_SCHEMA,
@@ -318,7 +319,7 @@ class FactoryRoleEvidenceResolvedCutV1:
             raise ValueError("source_cut_slots_list_required")
         return cls(
             schema_version=value.get("schema_version"),  # type: ignore[arg-type]
-            role=value.get("role"),  # type: ignore[arg-type]
+            role=cast("str", value.get("role")),
             policy_hash=value.get("policy_hash"),  # type: ignore[arg-type]
             slots=tuple(FactoryRoleEvidenceSourceSlotV1.from_record(slot) for slot in raw_slots),
         )
@@ -405,14 +406,14 @@ class FactoryRoleEvidenceCutoffBodyV1:
             raise ValueError("cutoff_body_candidate_refs_list_required")
         request = FactoryRoleEvidenceCutoffRequestV1(
             schema_version=FACTORY_ROLE_EVIDENCE_CUTOFF_REQUEST_SCHEMA,
-            run_id=value.get("run_id"),
-            role=value.get("role"),
-            turn_id=value.get("turn_id"),
-            call_id=value.get("call_id"),
-            request_freeze_id=value.get("request_freeze_id"),
-            semantic_candidate_hash=value.get("semantic_candidate_hash"),
-            attempt_budget=value.get("attempt_budget"),
-            execution_authority_hash=value.get("execution_authority_hash"),
+            run_id=cast("str", value.get("run_id")),
+            role=cast("str", value.get("role")),
+            turn_id=cast("str", value.get("turn_id")),
+            call_id=cast("str", value.get("call_id")),
+            request_freeze_id=cast("str", value.get("request_freeze_id")),
+            semantic_candidate_hash=cast("str", value.get("semantic_candidate_hash")),
+            attempt_budget=cast("int", value.get("attempt_budget")),
+            execution_authority_hash=cast("str", value.get("execution_authority_hash")),
             candidate_refs=tuple(raw_candidate_refs),
         )
         authority = FactoryRoleEvidenceStageAuthorityV1(
