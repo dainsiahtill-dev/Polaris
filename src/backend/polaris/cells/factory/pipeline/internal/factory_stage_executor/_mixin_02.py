@@ -1517,7 +1517,6 @@ class _Mixin02:
                         "chief_engineer_portfolio_required": False,
                     }
                 )
-            structured_output_contract = self._chief_engineer_structured_output_contract(portfolio_task_ids)
             result = cast(
                 RoleExecutionResultV1,
                 await self._call_with_factory_role_evidence_authority(
