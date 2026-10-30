@@ -11,7 +11,7 @@ import asyncio
 import concurrent.futures
 import logging
 from contextvars import copy_context
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.llm.providers import BaseProvider, ProviderConfigValidationResult, ProviderInfo
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelListResult
@@ -90,17 +90,17 @@ class AsyncProviderAdapter(BaseProvider):
     def health(self, config: dict[str, Any]) -> HealthResult:
         """Sync wrapper for async health check."""
         instance = self._get_async_instance()
-        return _run_async(instance.health(config))
+        return cast("HealthResult", (_run_async(instance.health(config))))
 
     def list_models(self, config: dict[str, Any]) -> ModelListResult:
         """Sync wrapper for async model listing."""
         instance = self._get_async_instance()
-        return _run_async(instance.list_models(config))
+        return cast("ModelListResult", (_run_async(instance.list_models(config))))
 
     def invoke(self, prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
         """Sync wrapper for async invoke."""
         instance = self._get_async_instance()
-        return _run_async(instance.invoke(prompt, model, config))
+        return cast("InvokeResult", (_run_async(instance.invoke(prompt, model, config))))
 
 
 class AsyncProviderClassAdapter:
@@ -157,15 +157,15 @@ class AsyncProviderClassAdapter:
 
             def health(self, config: dict[str, Any]) -> HealthResult:
                 instance = self._get_instance()
-                return _run_async(instance.health(config))
+                return cast("HealthResult", (_run_async(instance.health(config))))
 
             def list_models(self, config: dict[str, Any]) -> ModelListResult:
                 instance = self._get_instance()
-                return _run_async(instance.list_models(config))
+                return cast("ModelListResult", (_run_async(instance.list_models(config))))
 
             def invoke(self, prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
                 instance = self._get_instance()
-                return _run_async(instance.invoke(prompt, model, config))
+                return cast("InvokeResult", (_run_async(instance.invoke(prompt, model, config))))
 
         # Preserve the original class name for debugging
         AdaptedProvider.__name__ = f"Adapted{async_class.__name__}"

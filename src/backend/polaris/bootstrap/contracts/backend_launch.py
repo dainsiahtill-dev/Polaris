@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.type_ops import opaque_not_isinstance
 
@@ -160,7 +160,7 @@ class BackendLaunchRequest:
                 for warning in snapshot_result.warnings:
                     result = result.add_warning(warning)
 
-        return result
+        return cast("ConfigValidationResult", (result))
 
     def to_uvicorn_options(self) -> dict[str, Any]:
         """Convert to uvicorn run options.

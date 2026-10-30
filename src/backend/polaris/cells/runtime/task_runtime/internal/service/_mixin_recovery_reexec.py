@@ -131,19 +131,34 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
         )
 
         if time.monotonic() >= deadline_monotonic:
-            return self._directed_effect_recovery_deadline_result(
-                stage="before_tasks_directory", owner_epoch=owner_epoch
+            return cast(
+                "_DirectedEffectRecoveryTaskCatalog | DirectedEffectRecoverySweepResultV1",
+                (
+                    self._directed_effect_recovery_deadline_result(
+                        stage="before_tasks_directory", owner_epoch=owner_epoch
+                    )
+                ),
             )
         tasks_dir = self._board.tasks_dir
         tasks_dir.mkdir(parents=True, exist_ok=True)
         if time.monotonic() >= deadline_monotonic:
-            return self._directed_effect_recovery_deadline_result(
-                stage="before_task_projection", owner_epoch=owner_epoch
+            return cast(
+                "_DirectedEffectRecoveryTaskCatalog | DirectedEffectRecoverySweepResultV1",
+                (
+                    self._directed_effect_recovery_deadline_result(
+                        stage="before_task_projection", owner_epoch=owner_epoch
+                    )
+                ),
             )
         projection = self.query_observable_task_rows_projection()
         if time.monotonic() >= deadline_monotonic:
-            return self._directed_effect_recovery_deadline_result(
-                stage="after_task_projection", owner_epoch=owner_epoch
+            return cast(
+                "_DirectedEffectRecoveryTaskCatalog | DirectedEffectRecoverySweepResultV1",
+                (
+                    self._directed_effect_recovery_deadline_result(
+                        stage="after_task_projection", owner_epoch=owner_epoch
+                    )
+                ),
             )
         rows = {
             task_id: dict(row)
@@ -151,8 +166,13 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
             if (task_id := self.normalize_task_id(row.get("id"))) is not None
         }
         if time.monotonic() >= deadline_monotonic:
-            return self._directed_effect_recovery_deadline_result(
-                stage="after_task_projection_materialization", owner_epoch=owner_epoch
+            return cast(
+                "_DirectedEffectRecoveryTaskCatalog | DirectedEffectRecoverySweepResultV1",
+                (
+                    self._directed_effect_recovery_deadline_result(
+                        stage="after_task_projection_materialization", owner_epoch=owner_epoch
+                    )
+                ),
             )
         discovered = self._scan_directed_effect_recovery_session_catalog(
             tasks_dir, owner_epoch=owner_epoch, deadline_monotonic=deadline_monotonic
@@ -183,21 +203,36 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
         deadline_monotonic: float,
     ) -> set[int] | DirectedEffectRecoverySweepResultV1:
         if time.monotonic() >= deadline_monotonic:
-            return self._directed_effect_recovery_deadline_result(
-                stage="before_session_catalog_scan", owner_epoch=owner_epoch
+            return cast(
+                "set[int] | DirectedEffectRecoverySweepResultV1",
+                (
+                    self._directed_effect_recovery_deadline_result(
+                        stage="before_session_catalog_scan", owner_epoch=owner_epoch
+                    )
+                ),
             )
         task_ids: set[int] = set()
         for session_path in tasks_dir.glob("task_*.session.json"):
             if time.monotonic() >= deadline_monotonic:
-                return self._directed_effect_recovery_deadline_result(
-                    stage="during_session_catalog_scan", owner_epoch=owner_epoch
+                return cast(
+                    "set[int] | DirectedEffectRecoverySweepResultV1",
+                    (
+                        self._directed_effect_recovery_deadline_result(
+                            stage="during_session_catalog_scan", owner_epoch=owner_epoch
+                        )
+                    ),
                 )
             match = _TASK_SESSION_FILE_PATTERN.fullmatch(session_path.name)
             if match is not None:
                 task_ids.add(int(match.group(1)))
         if time.monotonic() >= deadline_monotonic:
-            return self._directed_effect_recovery_deadline_result(
-                stage="after_session_catalog_scan", owner_epoch=owner_epoch
+            return cast(
+                "set[int] | DirectedEffectRecoverySweepResultV1",
+                (
+                    self._directed_effect_recovery_deadline_result(
+                        stage="after_session_catalog_scan", owner_epoch=owner_epoch
+                    )
+                ),
             )
         return task_ids
 

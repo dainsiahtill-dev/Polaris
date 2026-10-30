@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import cast
 
 from polaris.cells.runtime.task_market.public.contracts import (
     AcknowledgeTaskStageCommandV1,
@@ -171,4 +172,4 @@ class AcknowledgeMixin:
                 task_id=item.task_id,
                 trace_id=item.trace_id,
             )
-            return self._result_from_item(item, reason="acknowledged")
+            return cast("TaskWorkItemResultV1", (self._result_from_item(item, reason="acknowledged")))

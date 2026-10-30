@@ -149,7 +149,7 @@ class WorkflowRoleAdapter:
             max_retries=kwargs.get("max_retries", 1),
         )
         result.all_tool_results = list(result.tool_results or [])
-        return result
+        return cast("WorkflowRoleResult", (result))
 
     async def _store_execution_data(self, role: str, task_id: str, result: WorkflowRoleResult) -> None:
         """存储执行数据到角色数据目录"""

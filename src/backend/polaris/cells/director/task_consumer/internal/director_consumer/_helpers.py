@@ -11,7 +11,7 @@ import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Coroutine
+from typing import Any, Callable, Coroutine, cast
 
 from polaris.cells.director.task_consumer.public.project_verification import (
     ProjectArtifactReceiptV1,
@@ -1138,28 +1138,33 @@ class _QaLocalRepairAuthority:
 
 
 def _verification_receipt_query_from_command(command: Any) -> QueryProjectVerificationReceiptV1:
-    return _package().QueryProjectVerificationReceiptV1(
-        workspace=command.workspace,
-        project_id=command.project_id,
-        run_id=command.run_id,
-        completion_contract_hash=command.completion_contract_hash,
-        obligation_id=command.obligation_id,
-        owner_task_id=command.owner_task_id,
-        modality=command.modality,
-        argv=command.argv,
-        cwd=command.cwd,
-        command_authority_hash=command.command_authority_hash,
-        input_artifacts=command.input_artifacts,
-        timeout_seconds=command.timeout_seconds,
-        job_token_id=command.job_token_id,
-        job_token_set_hash=command.job_token_set_hash,
-        execution_policy_hash=command.execution_policy_hash,
-        authority_revision=command.authority_revision,
-        policy_profile_id=command.policy_profile_id,
-        policy_decision_hash=command.policy_decision_hash,
-        executable_path=command.executable_path,
-        executable_realpath=command.executable_realpath,
-        executable_hash=command.executable_hash,
+    return cast(
+        "QueryProjectVerificationReceiptV1",
+        (
+            _package().QueryProjectVerificationReceiptV1(
+                workspace=command.workspace,
+                project_id=command.project_id,
+                run_id=command.run_id,
+                completion_contract_hash=command.completion_contract_hash,
+                obligation_id=command.obligation_id,
+                owner_task_id=command.owner_task_id,
+                modality=command.modality,
+                argv=command.argv,
+                cwd=command.cwd,
+                command_authority_hash=command.command_authority_hash,
+                input_artifacts=command.input_artifacts,
+                timeout_seconds=command.timeout_seconds,
+                job_token_id=command.job_token_id,
+                job_token_set_hash=command.job_token_set_hash,
+                execution_policy_hash=command.execution_policy_hash,
+                authority_revision=command.authority_revision,
+                policy_profile_id=command.policy_profile_id,
+                policy_decision_hash=command.policy_decision_hash,
+                executable_path=command.executable_path,
+                executable_realpath=command.executable_realpath,
+                executable_hash=command.executable_hash,
+            )
+        ),
     )
 
 

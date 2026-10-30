@@ -12,7 +12,7 @@ import sys
 from collections.abc import Iterable
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from polaris.kernelone.quality.artifact_quality._constants import (
     _ARTIFACT_QUALITY_ERROR_PREFIX,
@@ -678,15 +678,23 @@ def _scan_package_manifest_evidence(
                     },
                 )
                 if not pure_static:
-                    return sys.modules[__package__]._package_manifest_evidence_from_errors(
-                        errors, relative_path, issues
+                    return cast(
+                        "_FileArtifactQualityEvidence",
+                        (
+                            sys.modules[__package__]._package_manifest_evidence_from_errors(
+                                errors, relative_path, issues
+                            )
+                        ),
                     )
                 break
     if pure_static:
         return _package_manifest_evidence_from_errors(
             errors, relative_path, issues, deferred_checks=deferred_checks, incomplete_reasons=incomplete_reasons
         )
-    return sys.modules[__package__]._package_manifest_evidence_from_errors(errors, relative_path, issues)
+    return cast(
+        "_FileArtifactQualityEvidence",
+        (sys.modules[__package__]._package_manifest_evidence_from_errors(errors, relative_path, issues)),
+    )
 
 
 def _scan_npm_script_node_eval_syntax(

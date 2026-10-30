@@ -94,7 +94,10 @@ def _directed_effect_authority_failure(
 ) -> DirectedEffectOperationResultV1 | None:
     """Validate the persisted attempt before any aggregate read or mutation."""
 
-    return repository.validate_attempt(command.workspace, command.execution_attempt)
+    return cast(
+        "DirectedEffectOperationResultV1 | None",
+        (repository.validate_attempt(command.workspace, command.execution_attempt)),
+    )
 
 
 def _inventory_failure(
@@ -144,7 +147,7 @@ def get_directed_effect_parent_registry(
             code=failure.code,
             evidence=failure.evidence,
         )
-    return repository.get_parent_registry(query)
+    return cast("DirectedEffectParentRegistryResultV1", (repository.get_parent_registry(query)))
 
 
 def enroll_directed_effect_parent_registry_stream(
@@ -154,7 +157,10 @@ def enroll_directed_effect_parent_registry_stream(
 
     if not isinstance(command, EnrollDirectedEffectParentRegistryStreamCommandV1):
         raise TypeError("command must be EnrollDirectedEffectParentRegistryStreamCommandV1")
-    return DirectedEffectOperationRepository().enroll_parent_registry_stream(command)
+    return cast(
+        "DirectedEffectStreamEnrollmentResultV1",
+        (DirectedEffectOperationRepository().enroll_parent_registry_stream(command)),
+    )
 
 
 def enroll_directed_effect_operation_stream(
@@ -164,7 +170,9 @@ def enroll_directed_effect_operation_stream(
 
     if not isinstance(command, EnrollDirectedEffectOperationStreamCommandV1):
         raise TypeError("command must be EnrollDirectedEffectOperationStreamCommandV1")
-    return DirectedEffectOperationRepository().enroll_operation_stream(command)
+    return cast(
+        "DirectedEffectStreamEnrollmentResultV1", (DirectedEffectOperationRepository().enroll_operation_stream(command))
+    )
 
 
 def seal_directed_effect_inventory(
@@ -312,7 +320,7 @@ def get_directed_effect_parent_readiness(
             code=failure.code,
             evidence=failure.evidence,
         )
-    return repository.get_parent_readiness(query)
+    return cast("DirectedEffectParentReadinessResultV1", (repository.get_parent_readiness(query)))
 
 
 def heartbeat_task_runtime_execution_attempt(

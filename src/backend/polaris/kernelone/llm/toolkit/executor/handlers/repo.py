@@ -7,7 +7,7 @@ Each tool has precise semantics that must not be aliased to other tools.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger(__name__)
 
@@ -891,7 +891,7 @@ def _find_all_symbols_ts(content: str, language: str, max_results: int = 500) ->
         return []
 
     try:
-        parser = get_parser(cast("str", language))
+        parser = get_parser(language)
     except (LookupError, RuntimeError, ValueError) as e:
         logger.debug("tree-sitter grammar unavailable for language '%s': %s", language, e)
         return []

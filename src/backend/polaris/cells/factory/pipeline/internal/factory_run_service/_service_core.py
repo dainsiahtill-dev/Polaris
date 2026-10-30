@@ -387,7 +387,7 @@ class _FactoryRunServiceCore:
     def _acquire_workspace_lease(self: Any, run: FactoryRun) -> FactoryWorkspaceRunLeaseV1:
         lease = self._admission.acquire(run.id)
         self._attach_workspace_lease(run, lease)
-        return lease
+        return cast("FactoryWorkspaceRunLeaseV1", (lease))
 
     def _claim_lifecycle_operation(
         self: Any,
@@ -462,7 +462,7 @@ class _FactoryRunServiceCore:
                         rollback_exc,
                     )
                 raise
-        return lease
+        return cast("FactoryWorkspaceRunLeaseV1", (lease))
 
     async def _release_lifecycle_operation(
         self: Any,
@@ -480,7 +480,7 @@ class _FactoryRunServiceCore:
         self._attach_workspace_lease(run, lease)
         run.updated_at = self._now()
         await self.store.save_run(run)
-        return lease
+        return cast("FactoryWorkspaceRunLeaseV1", (lease))
 
     async def _rollback_lifecycle_operation(
         self: Any,
@@ -570,13 +570,13 @@ class _FactoryRunServiceCore:
                 current_lease=lease,
             )
         self._attach_workspace_lease(run, lease)
-        return lease
+        return cast("FactoryWorkspaceRunLeaseV1", (lease))
 
     def _assert_active_workspace_lease(self: Any, run: FactoryRun) -> FactoryWorkspaceRunLeaseV1:
         fencing_token = self._workspace_lease_fencing_token(run)
         lease = self._admission.assert_active(run.id, fencing_token=fencing_token)
         self._attach_workspace_lease(run, lease)
-        return lease
+        return cast("FactoryWorkspaceRunLeaseV1", (lease))
 
     def _claim_stage_execution(
         self: Any,
@@ -592,7 +592,7 @@ class _FactoryRunServiceCore:
             nonce=nonce,
         )
         self._attach_workspace_lease(run, lease)
-        return lease
+        return cast("FactoryWorkspaceRunLeaseV1", (lease))
 
     def _build_factory_role_evidence_cutoff_port(
         self: Any,
@@ -661,7 +661,7 @@ class _FactoryRunServiceCore:
         self._attach_workspace_lease(target_run, lease)
         target_run.updated_at = self._now()
         await self.store.save_run(target_run)
-        return lease
+        return cast("FactoryWorkspaceRunLeaseV1", (lease))
 
     @staticmethod
     def _stage_result_releases_execution_claim(result: StageResult) -> bool:
@@ -718,24 +718,29 @@ class _FactoryRunServiceCore:
     ) -> FactoryWorkspaceRunLeaseV1 | None:
         current = self._admission.current()
         if current is None or current.run_id != run.id:
-            return current
+            return cast("FactoryWorkspaceRunLeaseV1 | None", (current))
         claim = current.stage_execution_claim
         if claim is None or run.metadata.get(_STAGE_IN_FLIGHT_METADATA_KEY) is not False:
             self._attach_workspace_lease(run, current)
-            return current
+            return cast("FactoryWorkspaceRunLeaseV1 | None", (current))
 
         evidence = dict(settlement or self._query_child_session_settlement(run.id))
         run.metadata[_CHILD_SESSION_SETTLEMENT_EVIDENCE_METADATA_KEY] = evidence
         run.metadata[_CHILD_SESSIONS_SETTLED_METADATA_KEY] = evidence.get("settled") is True
         if evidence.get("settled") is not True:
             self._attach_workspace_lease(run, current)
-            return current
+            return cast("FactoryWorkspaceRunLeaseV1 | None", (current))
 
         self._attach_workspace_lease(run, current)
-        return await self._release_stage_execution(
-            run,
-            stage=claim.stage,
-            nonce=claim.nonce,
+        return cast(
+            "FactoryWorkspaceRunLeaseV1 | None",
+            (
+                await self._release_stage_execution(
+                    run,
+                    stage=claim.stage,
+                    nonce=claim.nonce,
+                )
+            ),
         )
 
     async def _begin_terminal_drain(
@@ -767,7 +772,7 @@ class _FactoryRunServiceCore:
         )
         self._attach_workspace_lease(run, lease)
         await self.store.save_run(run)
-        return lease
+        return cast("FactoryWorkspaceRunLeaseV1 | None", (lease))
 
     async def _record_drain_conflict(
         self: Any,

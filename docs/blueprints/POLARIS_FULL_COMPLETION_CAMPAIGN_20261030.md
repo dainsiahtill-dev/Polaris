@@ -86,16 +86,20 @@ fail-closed：任一门禁红不得标记批次完成；同题连败 5 次升级
 - **CI 工作流漂移**：门禁接线前先读现有 6 workflows，避免重复/覆盖。
 - **超大测试件**（8808 行 boundary-fence helpers 等）：拆分放 P5 末尾，配套 characterization。
 
-## 7. 未完成门禁记录（滚动）
+## 7. 未完成门禁记录（滚动，2026-10-30 晚更新）
 
-- [ ] P1 ruff check → 0 errors（基线 2355）
-- [ ] P1 ruff format → 0 files（基线 195）
-- [ ] P1 mypy → Success（基线 2573）
-- [ ] P1 type:ignore → 剩余全部合法（基线 1994）
-- [ ] P2 vitest → 0 failed（基线 54）
-- [ ] P2 vitest 不再收集 e2e spec；config 镜像合一
+- [x] P1 ruff check → **0 errors**（2355 → 0；typescript_syntax F405×990 星链 de-wildcard；残余43清零）
+- [x] P1 ruff format → **0 files**（195 → 0）
+- [ ] P1 mypy → 0（**4078 → 956**：M1 unused-ignore 剥371 / M2 type-arg 503→6 / M3 cast 包1642 / M4 注解383 / M6 冗余 cast 剥1132 / M7 opaque isinstance（unreachable 492→148）/ M8 __all__ 显式化 63 模块（attr-defined 693→209）；基建：卸毒 editable install（指向已删 /tmp/polaris-ws1_72-01，曾把单文件/子集 mypy 全解析成 Any）+ pyproject mypy_path=src/backend）
+- [ ] P1 type:ignore → 逐项解除（1994 中 371 已证死剥离；余量在 mypy 清零后靠 warn_unused_ignores 复查）
+- [x] P2 vitest → **0 failed**（54 → 0；1756 tests / 164 files；新增 typecheck:test 171 → 0）
+- [x] P2 vitest 不再收集 e2e spec；vite/tailwind `.js` 镜像删除（`.ts` 唯一）
+- [x] pytest 收集 → **0 errors**（7 → 0；52259 collected；RoleExecutionKernel 断 import×3 / 断 helper×2 / fixture 污染×2 全修）
+- [ ] 先有红测试清单（~60 项，全部 HEAD worktree 对账实证非本战役损伤）：cli/bootstrap 34、roles-runtime 20、kernel/facadea 9、repair-kernel 4、storage namespace 4、domain/application 3、kernelone llm 2（reference_owner mock 漂移、C:/ 硬路径）、runtime_checkable 1、taskboard_mainline 1 等
 - [ ] P3 旧链调用点 → 0 处新 run 写路径（基线 ~15）
 - [ ] P4 双真相源 → 单一来源 + parity 测试
 - [ ] P5 god-module 全部拆毕 + 三陷阱审计记录
 - [ ] P6 TODO 生产码 → 0（基线 26）；休眠面决议落档
 - [ ] P7 测试覆盖缺口补齐清单
+
+> 并发注记：openhands 自动提交曾将本战役 M3 工作收入其 `7f0d22c4e`（内容完整入账，以内容级验证为准）。

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.runtime.task_market.public.contracts import (
     TASK_REQUEUE_RECEIPTS_METADATA_KEY,
@@ -50,29 +50,37 @@ class RequeueDlqMixin:
                             record=existing_record,
                         )
                     except (TypeError, ValueError):
-                        return self._result_from_item(item, ok=False, reason="idempotency_receipt_invalid")
+                        return cast(
+                            "TaskWorkItemResultV1",
+                            (self._result_from_item(item, ok=False, reason="idempotency_receipt_invalid")),
+                        )
                     if (
                         existing_receipt.idempotency_fingerprint != command.idempotency_fingerprint
                         or existing_receipt.effect_hash != command.effect_hash
                     ):
-                        return self._result_from_item(item, ok=False, reason="idempotency_conflict")
-                    return self._result_from_item(item, reason="already_requeued")
+                        return cast(
+                            "TaskWorkItemResultV1",
+                            (self._result_from_item(item, ok=False, reason="idempotency_conflict")),
+                        )
+                    return cast("TaskWorkItemResultV1", (self._result_from_item(item, reason="already_requeued")))
 
             if item.status in {"rejected", "dead_letter"}:
-                return self._result_from_item(item, ok=False, reason="terminal_status")
+                return cast("TaskWorkItemResultV1", (self._result_from_item(item, ok=False, reason="terminal_status")))
             resolved_reopen_source = ""
             if item.status == "resolved":
                 reopen_allowed, reopen_reason, resolved_reopen_source = self._resolved_reopen_allowed(item, command)
                 if not reopen_allowed:
-                    return self._result_from_item(item, ok=False, reason=reopen_reason)
+                    return cast("TaskWorkItemResultV1", (self._result_from_item(item, ok=False, reason=reopen_reason)))
             if item.status in {"completed", "cancelled"}:
-                return self._result_from_item(item, ok=False, reason="unsupported_status")
+                return cast(
+                    "TaskWorkItemResultV1", (self._result_from_item(item, ok=False, reason="unsupported_status"))
+                )
             if item.status == "waiting_human":
-                return self._result_from_item(item, ok=False, reason="waiting_human")
+                return cast("TaskWorkItemResultV1", (self._result_from_item(item, ok=False, reason="waiting_human")))
 
             lm = LeaseManager(store)
             if str(item.lease_token or "").strip() and not lm.is_lease_expired(item):
-                return self._result_from_item(item, ok=False, reason="active_lease")
+                return cast("TaskWorkItemResultV1", (self._result_from_item(item, ok=False, reason="active_lease")))
 
             previous_status = item.status
             previous_version = int(item.version)
@@ -181,7 +189,7 @@ class RequeueDlqMixin:
             )
 
             self._observe("requeue", (time.monotonic() - t0) * 1000.0, stage=command.target_stage, task_id=item.task_id)
-            return self._result_from_item(item, reason="requeued")
+            return cast("TaskWorkItemResultV1", (self._result_from_item(item, reason="requeued")))
 
     def query_task_requeue_receipt(
         self,
@@ -309,7 +317,7 @@ class RequeueDlqMixin:
             )
 
             self._observe("dead_letter", (time.monotonic() - t0) * 1000.0, task_id=item.task_id)
-            return self._result_from_item(item, reason="dead_lettered")
+            return cast("TaskWorkItemResultV1", (self._result_from_item(item, reason="dead_lettered")))
 
     @staticmethod
     def _requeue_context_payload(metadata: Any) -> dict[str, Any]:

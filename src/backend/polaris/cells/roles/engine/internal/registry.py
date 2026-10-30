@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any
+from typing import Any, cast
 
 from .base import BaseEngine, EngineStrategy
 
@@ -112,7 +112,7 @@ class EngineRegistry:
         """
         # 优先从实例缓存获取
         if strategy in self._instances:
-            return self._instances[strategy]
+            return cast("BaseEngine", (self._instances[strategy]))
 
         # 否则创建新实例
         if strategy in self._engines:
@@ -122,7 +122,7 @@ class EngineRegistry:
             defaults.update(kwargs)
             instance = engine_class(**defaults)
             self._instances[strategy] = instance
-            return instance
+            return cast("BaseEngine", (instance))
 
         raise ValueError(f"No engine registered for strategy: {strategy.value}")
 

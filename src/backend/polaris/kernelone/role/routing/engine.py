@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from polaris.kernelone.role.loaders import (
     AnchorLoader,
@@ -85,7 +85,7 @@ class RoleRoutingEngine:
         cached = self._cache.get(context)
         if cached and not manual_spec:
             logger.debug("Cache hit for routing context")
-            return cached
+            return cast("RoutingResult", (cached))
 
         # Step 2: Intent inference (if context not provided)
         if not context.task_type or context.task_type == "default":

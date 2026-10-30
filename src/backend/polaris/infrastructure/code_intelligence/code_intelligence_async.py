@@ -230,7 +230,7 @@ class AsyncIndexManager:
                 cls._instances[workspace_key] = super().__new__(cls)
                 cls._instances[workspace_key]._initialized = False
                 cls._instances[workspace_key]._workspace_key = workspace_key
-            return cls._instances[workspace_key]
+            return cast("AsyncIndexManager", (cls._instances[workspace_key]))
 
     def __init__(self, workspace: str | Path, accel_home: str | Path | None = None) -> None:
         # Use stored workspace_key if available (re-entered via __new__ returning existing instance)

@@ -1498,14 +1498,19 @@ class _TaskRowsMixin(_ServiceMixinBase):
     ) -> FactStreamQueryResultV1:
         """Query the task-runtime execution FactStream through one local gateway."""
 
-        return query_fact_events(
-            QueryFactEventsV1(
-                workspace=self.workspace,
-                stream=TASK_RUNTIME_EXECUTION_STREAM_V1,
-                limit=limit,
-                offset=offset,
-                strict_integrity=True,
-            )
+        return cast(
+            "FactStreamQueryResultV1",
+            (
+                query_fact_events(
+                    QueryFactEventsV1(
+                        workspace=self.workspace,
+                        stream=TASK_RUNTIME_EXECUTION_STREAM_V1,
+                        limit=limit,
+                        offset=offset,
+                        strict_integrity=True,
+                    )
+                )
+            ),
         )
 
     def query_same_task_local_rework_authorization(

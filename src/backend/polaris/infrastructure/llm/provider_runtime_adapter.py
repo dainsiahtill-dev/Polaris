@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from typing import Any, Coroutine
+from typing import Any
 
 from polaris.kernelone.llm import KernelLLMRuntimeAdapter, config_store as llm_config
 
@@ -88,7 +88,7 @@ def _resolve_settings_from_di() -> Any:
                 # Cast container to Coroutine for asyncio.run
                 from typing import cast
 
-                container = asyncio.run(cast("Coroutine[Any, Any, DIContainer]", container))
+                container = asyncio.run(container)
             else:
                 close = getattr(container, "close", None)
                 if callable(close):

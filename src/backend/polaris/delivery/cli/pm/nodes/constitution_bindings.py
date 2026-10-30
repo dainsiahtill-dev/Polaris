@@ -119,13 +119,13 @@ def constitutional_execute(method: Callable[..., Any]) -> Callable[..., Any]:
     def wrapper(self: Any, context: RoleContext, *args: Any, **kwargs: Any) -> RoleResult:
         # 检查是否启用了宪法
         if not getattr(self, "_constitution_enabled", False):
-            return method(self, context, *args, **kwargs)
+            return cast("RoleResult", (method(self, context, *args, **kwargs)))
 
         role = getattr(self, "_constitution_role", None)
         guard = getattr(self, "_constitution_guard", None)
 
         if not role or not guard:
-            return method(self, context, *args, **kwargs)
+            return cast("RoleResult", (method(self, context, *args, **kwargs)))
 
         # 检查 execute 权限
         error = guard.guard_action(role, "execute")
@@ -146,7 +146,7 @@ def constitutional_execute(method: Callable[..., Any]) -> Callable[..., Any]:
         )
 
         # 执行方法
-        return method(self, wrapped_context, *args, **kwargs)
+        return cast("RoleResult", (method(self, wrapped_context, *args, **kwargs)))
 
     return wrapper
 
@@ -233,7 +233,7 @@ def patch_role_node(base_node_class: type[BaseRoleNode]) -> type[BaseRoleNode]:
         def execute(self, context: RoleContext) -> RoleResult:
             """带宪法检查的 execute。"""
             if not self._constitution_enabled:
-                return super().execute(context)
+                return cast("RoleResult", (super().execute(context)))
 
             # 检查权限
             self._enforce_action("execute")
@@ -250,7 +250,7 @@ def patch_role_node(base_node_class: type[BaseRoleNode]) -> type[BaseRoleNode]:
             elif role_name == "QA":
                 self._enforce_qa_actions(context)
 
-            return super().execute(context)
+            return cast("RoleResult", (super().execute(context)))
 
         def _enforce_pm_actions(self, context: RoleContext) -> None:
             """PM 特定检查。"""

@@ -10,7 +10,7 @@ Turn Phase Renderer - CLI观测渲染器
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.roles.kernel.public.turn_events import (
     CompletionEvent,
@@ -72,15 +72,15 @@ class TurnPhaseRenderer:
     def _render_event(self: Any, event: Any) -> list[str]:
         """渲染单个事件"""
         if isinstance(event, TurnPhaseEvent):
-            return self._render_phase_event(event)
+            return cast("list[str]", (self._render_phase_event(event)))
         elif isinstance(event, ToolBatchEvent):
-            return self._render_tool_event(event)
+            return cast("list[str]", (self._render_tool_event(event)))
         elif isinstance(event, CompletionEvent):
-            return self._render_completion(event)
+            return cast("list[str]", (self._render_completion(event)))
         elif isinstance(event, ErrorEvent):
-            return self._render_error(event)
+            return cast("list[str]", (self._render_error(event)))
         elif isinstance(event, ContentChunkEvent):
-            return self._render_content(event)
+            return cast("list[str]", (self._render_content(event)))
         else:
             return []
 

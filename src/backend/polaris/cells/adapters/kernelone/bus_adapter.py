@@ -94,7 +94,7 @@ class KernelOneBusPortAdapter(IBusPort):
             The next `AgentEnvelope` for `receiver`, or None if no message
             is available within the timeout.
         """
-        return self._impl.poll(receiver, block=block, timeout=timeout)
+        return cast("AgentEnvelope | None", (self._impl.poll(receiver, block=block, timeout=timeout)))
 
     async def poll_async(
         self,
@@ -114,7 +114,7 @@ class KernelOneBusPortAdapter(IBusPort):
             The next `AgentEnvelope` for `receiver`, or None if no message
             is available within the timeout.
         """
-        return await self._impl.poll_async(receiver, block=block, timeout=timeout)
+        return cast("AgentEnvelope | None", (await self._impl.poll_async(receiver, block=block, timeout=timeout)))
 
     def ack(self, message_id: str, receiver: str) -> bool:
         """Acknowledge successful processing of a message.

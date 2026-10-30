@@ -14,7 +14,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # 导入 Context Gateway
 from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
@@ -82,7 +82,7 @@ class ChiefEngineerLLMClient:
         """
         if not self.enable_tools:
             # 回退到普通调用
-            return self._invoke_plain(prompt, system_prompt, **kwargs)
+            return cast("dict[str, Any]", (self._invoke_plain(prompt, system_prompt, **kwargs)))
 
         # 构建消息 - PR-05/06: 通过 RoleContextGateway 构建上下文
         messages: list[dict[str, str]] = []
@@ -181,7 +181,7 @@ class ChiefEngineerLLMClient:
 
         full_prompt = "\n\n".join(prompt_parts)
 
-        return self._invoke_plain(full_prompt, **kwargs)
+        return cast("dict[str, Any]", (self._invoke_plain(full_prompt, **kwargs)))
 
 
 class ChiefEngineerToolEnabledAnalysis:

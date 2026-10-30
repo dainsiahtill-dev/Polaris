@@ -28,7 +28,7 @@ Usage
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from polaris.kernelone.traceability.public.contracts import (
@@ -131,12 +131,17 @@ class TraceabilityAdminService:
         if service is None:
             return None
         try:
-            return service.register_node(
-                node_kind=node_kind,
-                role=role,
-                external_id=external_id,
-                content=content,
-                metadata=metadata,
+            return cast(
+                "TraceNode | None",
+                (
+                    service.register_node(
+                        node_kind=node_kind,
+                        role=role,
+                        external_id=external_id,
+                        content=content,
+                        metadata=metadata,
+                    )
+                ),
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -172,7 +177,7 @@ class TraceabilityAdminService:
         if service is None:
             return None
         try:
-            return service.link(source, target, link_kind)
+            return cast("TraceLink | None", (service.link(source, target, link_kind)))
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "safe_link failed: %s",
@@ -201,7 +206,7 @@ class TraceabilityAdminService:
         if service is None:
             return None
         try:
-            return service.find_node(external_id, node_kind)
+            return cast("TraceNode | None", (service.find_node(external_id, node_kind)))
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "safe_find_node failed (kind=%s, external_id=%s): %s",

@@ -339,7 +339,7 @@ class ChiefEngineerToolIntegration:
 
         # 达到最大迭代次数
         logger.warning(f"Max iterations ({max_iterations}) reached")
-        return messages[-1]["content"]
+        return cast("str", (messages[-1]["content"]))
 
 
 # ============== Director 集成 ==============
@@ -973,7 +973,7 @@ class ToolEnabledLLMClient:
             result = self.integration.process_llm_response(content)
 
             if not result["has_tools"]:
-                return response
+                return cast("dict[str, Any]", (response))
 
             # 执行工具后继续对话
             messages.append({"role": "assistant", "content": content})
@@ -985,7 +985,7 @@ class ToolEnabledLLMClient:
 
         # 达到最大迭代次数
         final_response = await self._call_base_client(messages, **kwargs)
-        return final_response
+        return cast("dict[str, Any]", (final_response))
 
     async def _call_base_client(self: Any, messages: list[dict[str, str]], **kwargs: Any) -> dict[str, Any]:
         """调用基础客户端.

@@ -62,7 +62,7 @@ class AuditGateway:
                 instance = super().__new__(cls)
                 cls._instances[key] = instance
                 instance._initialized = False
-            return instance
+            return cast("AuditGateway", (instance))
 
     def __init__(self, runtime_root: Path) -> None:
         if getattr(self, "_initialized", False):

@@ -485,23 +485,28 @@ class _FactsEventsMixin(_ServiceMixinBase):
                     replay_expected_seq if replay_expected_seq is not None else self._next_execution_fact_expected_seq()
                 )
                 try:
-                    return append_fact_event(
-                        AppendFactEventCommandV1(
-                            workspace=self.workspace,
-                            stream=TASK_RUNTIME_EXECUTION_STREAM_V1,
-                            event_type=event_type_str,
-                            payload=payload,
-                            source=TASK_RUNTIME_EXECUTION_SOURCE_V1,
-                            run_id=str(payload.get("run_id") or "").strip() or None,
-                            task_id=str(payload.get("task_id") or "").strip() or None,
-                            correlation_id=str(payload.get("session_id") or "").strip() or None,
-                            idempotency_key=idempotency_key,
-                            expected_seq=expected_seq,
-                            # New envelopes always carry KernelOne digests.
-                            # Keep old undigested history resumable without
-                            # rewriting it; canonical qualification is strict.
-                            strict_integrity=False,
-                        )
+                    return cast(
+                        "FactEventAppendedV1",
+                        (
+                            append_fact_event(
+                                AppendFactEventCommandV1(
+                                    workspace=self.workspace,
+                                    stream=TASK_RUNTIME_EXECUTION_STREAM_V1,
+                                    event_type=event_type_str,
+                                    payload=payload,
+                                    source=TASK_RUNTIME_EXECUTION_SOURCE_V1,
+                                    run_id=str(payload.get("run_id") or "").strip() or None,
+                                    task_id=str(payload.get("task_id") or "").strip() or None,
+                                    correlation_id=str(payload.get("session_id") or "").strip() or None,
+                                    idempotency_key=idempotency_key,
+                                    expected_seq=expected_seq,
+                                    # New envelopes always carry KernelOne digests.
+                                    # Keep old undigested history resumable without
+                                    # rewriting it; canonical qualification is strict.
+                                    strict_integrity=False,
+                                )
+                            )
+                        ),
                     )
                 except FactStreamError as exc:
                     if exc.code != "expected_seq_drift":

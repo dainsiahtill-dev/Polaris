@@ -303,7 +303,7 @@ class _DirectedEffectMixin(_ServiceMixinBase):
         )
         if failure is not None:
             return failure
-        return repository.admit_parent_with_validated_authority(command)
+        return cast("DirectedEffectOperationResultV1", (repository.admit_parent_with_validated_authority(command)))
 
     def _admit_directed_effect_parent_batch_locked(
         self,
@@ -320,7 +320,9 @@ class _DirectedEffectMixin(_ServiceMixinBase):
         )
         if failure is not None:
             return failure
-        return repository.admit_parent_batch_with_validated_authority(command)
+        return cast(
+            "DirectedEffectOperationResultV1", (repository.admit_parent_batch_with_validated_authority(command))
+        )
 
     def _directed_effect_active_attempt_failure_locked(
         self,
@@ -393,7 +395,7 @@ class _DirectedEffectMixin(_ServiceMixinBase):
             identity=identity,
             evidence=evidence,
         )
-        return repository.attempt_validation_failure_result(verdict)
+        return cast("DirectedEffectOperationResultV1", (repository.attempt_validation_failure_result(verdict)))
 
     def _directed_effect_inactive_pre_barrier_locked(
         self,

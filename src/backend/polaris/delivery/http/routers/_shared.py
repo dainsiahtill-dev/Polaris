@@ -2,7 +2,7 @@
 
 import os
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from fastapi import HTTPException, Request
 from polaris.cells.llm.evaluation.public.service import (
@@ -56,7 +56,7 @@ require_role = _require_role
 
 
 def get_state(request: Request) -> AppState:
-    return request.app.state.app_state
+    return cast("AppState", (request.app.state.app_state))
 
 
 def _workspace_value(settings: Any) -> str:

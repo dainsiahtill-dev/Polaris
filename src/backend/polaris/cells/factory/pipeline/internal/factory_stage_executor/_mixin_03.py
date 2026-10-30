@@ -1897,14 +1897,19 @@ class _Mixin03:
         cancel_on_timeout: bool = True,
         authority: RunCompletionAuthority = RunCompletionAuthority.ROLE_LIFECYCLE,
     ) -> CommandResult:
-        return await self._run_completion_waiter.wait(
-            service,
-            initial_result,
-            timeout_seconds,
-            cancel_event=cancel_event,
-            abort_checker=abort_checker,
-            cancel_on_timeout=cancel_on_timeout,
-            authority=authority,
+        return cast(
+            "CommandResult",
+            (
+                await self._run_completion_waiter.wait(
+                    service,
+                    initial_result,
+                    timeout_seconds,
+                    cancel_event=cancel_event,
+                    abort_checker=abort_checker,
+                    cancel_on_timeout=cancel_on_timeout,
+                    authority=authority,
+                )
+            ),
         )
 
     @staticmethod

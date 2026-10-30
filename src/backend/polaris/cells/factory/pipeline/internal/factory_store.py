@@ -451,7 +451,7 @@ class FactoryStore:
 
         # 完全异步的原子写入
         await self._write_file_atomic(run_file, content)
-        return self.run_snapshot_ref(run.id)
+        return cast("str", (self.run_snapshot_ref(run.id)))
 
     @staticmethod
     def _encode_snapshot(document: dict[str, Any]) -> str:
@@ -650,7 +650,7 @@ class FactoryStore:
         logical_ref = self.checkpoint_ref(run)
         content = self._encode_snapshot(run.to_dict())
         await asyncio.to_thread(self._persist_immutable_checkpoint_sync, logical_ref, content.encode("utf-8"))
-        return logical_ref
+        return cast("str", (logical_ref))
 
     def _persist_immutable_checkpoint_sync(self, logical_ref: str, content: bytes) -> None:
         try:

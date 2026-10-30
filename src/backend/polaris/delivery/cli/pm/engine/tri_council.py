@@ -390,14 +390,11 @@ def _run_tri_council_round(
         return {}
 
     _policy_raw = coordination_policy if isinstance(coordination_policy, dict) else {}
-    policy = cast("dict[str, Any]", _policy_raw)
+    policy = _policy_raw
     if not _normalize_bool(policy.get("enabled"), default=True):
         return {}
     _triggers_raw = policy.get("triggers")
-    triggers = cast(
-        "list[Any]",
-        _triggers_raw if isinstance(_triggers_raw, list) else ["complex_task", "qa_fail", "qa_inconclusive"],
-    )
+    triggers = _triggers_raw if isinstance(_triggers_raw, list) else ["complex_task", "qa_fail", "qa_inconclusive"]
     triggers_set = {str(item or "").strip().lower() for item in triggers if str(item or "").strip()}
     max_rounds = _safe_int(
         policy.get("max_rounds"),

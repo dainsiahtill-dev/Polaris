@@ -403,7 +403,7 @@ class FailRetryMixin:
             self._observe(
                 "fail", (time.monotonic() - t0) * 1000.0, stage=item.stage, task_id=item.task_id, trace_id=item.trace_id
             )
-            return self._result_from_item(item, reason=reason)
+            return cast("TaskWorkItemResultV1", (self._result_from_item(item, reason=reason)))
 
     def next_local_retry_delay(self, workspace: str, stage: str) -> float | None:
         """Return the exact durable wake delay for the next deferred local retry."""

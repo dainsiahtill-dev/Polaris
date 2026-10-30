@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timezone
+from typing import cast
 
 from polaris.cells.runtime.task_market.public.contracts import (
     TASK_REQUEUE_RECEIPTS_METADATA_KEY,
@@ -183,7 +184,7 @@ class PublishClaimMixin:
                 task_id=command.task_id,
                 trace_id=command.trace_id,
             )
-            return self._result_from_item(item, reason="published")
+            return cast("TaskWorkItemResultV1", (self._result_from_item(item, reason="published")))
 
     def claim_work_item(self, command: ClaimTaskWorkItemCommandV1) -> TaskWorkItemResultV1:
         t0 = time.monotonic()
@@ -307,7 +308,10 @@ class PublishClaimMixin:
                     expected_versions={selected.task_id: selected_expected_version},
                     dead_letter_records=[dead_letter_record],
                 )
-                return self._result_from_item(selected, ok=False, reason="retry_exhausted_on_claim")
+                return cast(
+                    "TaskWorkItemResultV1",
+                    (self._result_from_item(selected, ok=False, reason="retry_exhausted_on_claim")),
+                )
 
             # Grant lease via LeaseManager.
             lm = LeaseManager(store)
@@ -389,7 +393,9 @@ class PublishClaimMixin:
             )
 
             self._observe("claim", (time.monotonic() - t0) * 1000.0, stage=command.stage, task_id=selected.task_id)
-            return self._result_from_item(selected, lease_token=lease_token, reason="claimed")
+            return cast(
+                "TaskWorkItemResultV1", (self._result_from_item(selected, lease_token=lease_token, reason="claimed"))
+            )
 
     def renew_task_lease(self, command: RenewTaskLeaseCommandV1) -> TaskLeaseRenewResultV1:
         t0 = time.monotonic()

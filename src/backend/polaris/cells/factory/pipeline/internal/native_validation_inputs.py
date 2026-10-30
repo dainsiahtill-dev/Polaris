@@ -11,7 +11,7 @@ import hashlib
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Sequence, cast
 
 from polaris.cells.chief_engineer.blueprint.public import (
     ChiefEngineerBlueprintErrorV1,
@@ -339,7 +339,10 @@ def _validate_projection(
 
 def _immutable(value: Any) -> DirectedEffectImmutableValueV1:
     if value is None or type(value) in {bool, int, float, str}:
-        return value
+        return cast(
+            "bool | int | float | str | tuple[DirectedEffectImmutableValueV1, ...] | DirectedEffectImmutableMapV1 | DirectedEffectImmutableSequenceV1 | None",
+            (value),
+        )
     if isinstance(value, Mapping):
         if any(type(key) is not str or not key or key != key.strip() for key in value):
             raise NativeValidationInputError("native_validation_physical_body_keys_invalid")

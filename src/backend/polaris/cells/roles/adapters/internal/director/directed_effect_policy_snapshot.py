@@ -203,28 +203,23 @@ def _operation_hash(
     effect_type: str,
     execution_mode: str,
 ) -> str:
-    return cast(
-        "str",
+    return hash_directed_effect_arguments(
         (
-            hash_directed_effect_arguments(
-                (
-                    ("batch_id", batch_id),
-                    ("effect_type", effect_type),
-                    ("execution_mode", execution_mode),
-                    ("inventory_ordinal", inventory_ordinal),
-                    ("normalized_arguments", DirectedEffectImmutableMapV1(items=normalized_arguments)),
-                    ("normalized_tool_name", normalized_tool_name),
-                    ("tool_call_id", tool_call_id),
-                    ("turn_id", turn_id),
-                    ("workspace", workspace),
-                )
-            )
-        ),
+            ("batch_id", batch_id),
+            ("effect_type", effect_type),
+            ("execution_mode", execution_mode),
+            ("inventory_ordinal", inventory_ordinal),
+            ("normalized_arguments", DirectedEffectImmutableMapV1(items=normalized_arguments)),
+            ("normalized_tool_name", normalized_tool_name),
+            ("tool_call_id", tool_call_id),
+            ("turn_id", turn_id),
+            ("workspace", workspace),
+        )
     )
 
 
 def _subject_operation_hash(subject: DirectorEffectPolicyOperationSubjectV1) -> str:
-    return cast("str", (hash_director_effect_policy_operation_subject(subject)))
+    return hash_director_effect_policy_operation_subject(subject)
 
 
 def _items_to_dict(items: DirectedEffectImmutableItemsV1) -> dict[str, object]:
@@ -238,7 +233,7 @@ def _tuple_tokens(value: object, *, field_name: str) -> tuple[str, ...]:
 
 
 def _scope_hash(field_name: str, values: tuple[str, ...]) -> str:
-    return cast("str", (hash_directed_effect_arguments(((field_name, values),))))
+    return hash_directed_effect_arguments(((field_name, values),))
 
 
 def _restriction_values(items: DirectedEffectImmutableItemsV1) -> _JobRestrictionEvidence:
@@ -581,7 +576,7 @@ class _DirectorEffectPolicySnapshotPort:
             )
         except (AttributeError, TypeError, ValueError):
             return False
-        return cast("bool", (canonical == grant))
+        return canonical == grant
 
     @staticmethod
     def _target_evidence_semantically_matches(
@@ -596,15 +591,12 @@ class _DirectorEffectPolicySnapshotPort:
         Semantic match is path + exists + content hash + agents policy + no-file.
         """
 
-        return cast(
-            "bool",
-            (
-                current.target_path == baseline.target_path
-                and current.exists == baseline.exists
-                and current.is_no_file_state == baseline.is_no_file_state
-                and current.before_content_hash == baseline.before_content_hash
-                and current.agents_policy_hash == baseline.agents_policy_hash
-            ),
+        return (
+            current.target_path == baseline.target_path
+            and current.exists == baseline.exists
+            and current.is_no_file_state == baseline.is_no_file_state
+            and current.before_content_hash == baseline.before_content_hash
+            and current.agents_policy_hash == baseline.agents_policy_hash
         )
 
     def _capture_policy_target_source(
@@ -1687,21 +1679,16 @@ def _target_state_hash(
     minimal_content_evidence: DirectedEffectImmutableItemsV1,
     agents_policy_hash: str,
 ) -> str:
-    return cast(
-        "str",
-        (
-            hash_directed_effect_target_state_components(
-                target_path=target_path,
-                exists=exists,
-                before_content_hash=before_content_hash,
-                minimal_content_evidence=minimal_content_evidence,
-                agents_policy_hash=agents_policy_hash,
-                is_no_file_state=not target_path,
-            )
-        ),
+    return hash_directed_effect_target_state_components(
+        target_path=target_path,
+        exists=exists,
+        before_content_hash=before_content_hash,
+        minimal_content_evidence=minimal_content_evidence,
+        agents_policy_hash=agents_policy_hash,
+        is_no_file_state=not target_path,
     )
 
 
 def snapshot_target_path(request: DirectorEffectPolicyRevalidationRequestV1) -> str:
     """Return the retained pre-seal target instead of trusting current arguments."""
-    return cast("str", (request.bound_snapshot.snapshot.baseline_target_state_evidence.target_path))
+    return request.bound_snapshot.snapshot.baseline_target_state_evidence.target_path

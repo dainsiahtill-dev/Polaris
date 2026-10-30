@@ -16,7 +16,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Self
+from typing import Any, Self, cast
 
 from polaris.kernelone.audit.omniscient.bus import AuditPriority
 
@@ -236,7 +236,7 @@ class AuditEvent(BaseModel, frozen=True):
     def _validate_priority(cls, v: Any) -> AuditPriority:
         if isinstance(v, str):
             return AuditPriority[v.upper()]
-        return v
+        return cast("AuditPriority", (v))
 
     @field_validator("trace_id", "run_id", "span_id", "parent_span_id", mode="before")
     @classmethod

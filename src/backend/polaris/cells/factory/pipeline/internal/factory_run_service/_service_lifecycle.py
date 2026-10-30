@@ -1093,7 +1093,7 @@ class _FactoryRunServiceLifecycleMixin:
                         code="factory_workspace_run_drain_unproven",
                         details={"current_lease": released.to_dict() if released is not None else None},
                     )
-                return released
+                return cast("FactoryWorkspaceRunLeaseV1", (released))
             operation = "recover_stale_workspace_owner"
             operation_nonce = uuid.uuid4().hex
             claimed = False
@@ -1203,7 +1203,7 @@ class _FactoryRunServiceLifecycleMixin:
                         "timestamp": run.updated_at,
                     },
                 )
-                return released
+                return cast("FactoryWorkspaceRunLeaseV1", (released))
             except Exception:
                 if claimed:
                     await self._rollback_lifecycle_operation(
