@@ -14,7 +14,6 @@ from typing import Any
 # Import canonical PM package modules.
 import polaris.delivery.cli.pm.agents as _pm_agents_module
 import polaris.delivery.cli.pm.backend as _pm_backend_module
-import polaris.delivery.cli.pm.orchestration_engine as _pm_orchestration_engine_module
 
 # Re-export selected PM package helpers for the direct CLI compatibility entrypoint.
 from polaris.delivery.cli.pm import (
@@ -142,14 +141,11 @@ def _invoke_pm_backend(*args: Any, **kwargs: Any) -> Any:
 def run_once(args: Any, iteration: Any = 1) -> Any:
     # Keep wrapper-level monkeypatch behavior for tests that patch this module.
     prev_backend_invoke = _pm_backend_module.invoke_pm_backend
-    prev_engine_invoke = _pm_orchestration_engine_module.invoke_pm_backend
     try:
         _pm_backend_module.invoke_pm_backend = _invoke_pm_backend
-        _pm_orchestration_engine_module.invoke_pm_backend = _invoke_pm_backend
         return _run_once_impl(args, iteration=iteration)
     finally:
         _pm_backend_module.invoke_pm_backend = prev_backend_invoke
-        _pm_orchestration_engine_module.invoke_pm_backend = prev_engine_invoke
 
 
 __all__ = [
