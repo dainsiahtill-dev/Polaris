@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from polaris.kernelone.fs import KernelFileSystem
@@ -159,7 +159,7 @@ class TokenService:
         """
         from polaris.kernelone.llm.engine.token_estimator import TokenEstimator
 
-        return cast("int", (TokenEstimator.estimate(text)))
+        return TokenEstimator.estimate(text)
 
     def estimate_message_tokens(
         self,

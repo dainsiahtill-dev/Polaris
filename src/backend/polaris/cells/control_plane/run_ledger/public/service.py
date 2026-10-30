@@ -1893,14 +1893,9 @@ def _publish_run_ledger_projection_update(
             },
             "meta": {"source": "control_plane.run_ledger"},
         }
-        return cast(
-            "bool",
-            (
-                get_log_jetstream_publisher().publish(
-                    subject=f"hp.runtime.{workspace_key}.status.control_plane",
-                    payload=envelope,
-                )
-            ),
+        return get_log_jetstream_publisher().publish(
+            subject=f"hp.runtime.{workspace_key}.status.control_plane",
+            payload=envelope,
         )
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         logger.debug("Run Ledger projection JetStream publish failed: %s", exc)

@@ -266,7 +266,7 @@ class MessageForwarder:
                         remaining,
                     )
 
-                return cast("bool", (success > 0))
+                return success > 0
 
             except ValueError as exc:
                 # Message was expired (TTL <= 0)

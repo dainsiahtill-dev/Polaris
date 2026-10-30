@@ -60,7 +60,7 @@ def looks_like_pm_contract_payload(value: Any) -> bool:
         ),
     )
     if has_contract_schema:
-        return cast("bool", (has_structured_contract))
+        return has_structured_contract
     return has_task_identity and has_structured_contract
 
 
@@ -104,7 +104,7 @@ def looks_like_ce_blueprint_payload(value: Any) -> bool:
     ):
         return False
     if has_blueprint_schema:
-        return cast("bool", (has_structured_blueprint))
+        return has_structured_blueprint
     return has_blueprint_identity and has_structured_blueprint
 
 

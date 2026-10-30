@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 from polaris.kernelone.utils.json_utils import parse_json_payload
 
@@ -185,7 +185,7 @@ class LLMResponseParser:
 
     @classmethod
     def extract_json_object(cls, text: str) -> dict[str, Any] | None:
-        return cast("dict[str, Any] | None", (parse_json_payload(text)))
+        return parse_json_payload(text)
 
     @staticmethod
     def _first_choice(payload: dict[str, Any]) -> dict[str, Any] | None:

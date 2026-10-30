@@ -335,10 +335,10 @@ class KernelAuditRuntime:
             latest_events = self._store.query(limit=1, offset=0)
         except (OSError, RuntimeError, ValueError) as exc:
             logger.warning("Failed to resolve previous audit hash, falling back to GENESIS_HASH: %s", exc)
-            return cast("str", (GENESIS_HASH))
+            return GENESIS_HASH
 
         if not latest_events:
-            return cast("str", (GENESIS_HASH))
+            return GENESIS_HASH
         return self._hash_event(latest_events[0])
 
     @staticmethod

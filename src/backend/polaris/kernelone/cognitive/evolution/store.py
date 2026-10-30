@@ -50,9 +50,7 @@ class EvolutionStore:
         except (RuntimeError, ValueError):
             # Fallback for when storage is not available
             metadata_dir = get_workspace_metadata_dir_name()
-            return cast(
-                "Path", (Path(self._workspace) / metadata_dir / "runtime" / "evolution" / "evolution_state.jsonl")
-            )
+            return Path(self._workspace) / metadata_dir / "runtime" / "evolution" / "evolution_state.jsonl"
 
     def _ensure_initialized(self) -> None:
         """Lazily initialize state."""
@@ -465,4 +463,4 @@ class EvolutionStore:
         if self._state is None:
             return []
 
-        return cast("list[str]", (self._integrity.verify_chain(list(self._state.update_history))))
+        return self._integrity.verify_chain(list(self._state.update_history))

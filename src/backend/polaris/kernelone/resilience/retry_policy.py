@@ -156,7 +156,7 @@ def compute_delay(policy: RetryPolicy, attempt: int) -> float:
     # build_backoff_seconds already applies up to 20% jitter.  If the policy
     # requests a different ratio we scale the jitter component accordingly.
     if policy.jitter_ratio == 0.2:
-        return cast("float", (raw))
+        return raw
 
     # Reverse-engineer the bounded exponential component (no jitter).
     exp_delay = policy.base_delay_seconds * (2 ** max(0, attempt - 1))

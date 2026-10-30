@@ -937,13 +937,9 @@ def _negative_invocation_matches(
     ):
         return False
     try:
-        return cast(
-            "bool",
-            (
-                _canonical_sha256(normalize_tool_arguments_from_snapshot(snapshot, native_arguments))
-                == _canonical_sha256(arguments)
-            ),
-        )
+        return _canonical_sha256(
+            normalize_tool_arguments_from_snapshot(snapshot, native_arguments)
+        ) == _canonical_sha256(arguments)
     except (TypeError, ValueError):
         return False
 

@@ -274,9 +274,7 @@ def _task_identity_key(task: dict[str, Any]) -> str:
 
 def _task_dependency_ids(task: dict[str, Any]) -> list[str]:
     """Extract dependency IDs from task."""
-    return cast(
-        "list[str]", (normalize_str_list(task.get("dependencies") or task.get("depends_on") or task.get("deps")))
-    )
+    return normalize_str_list(task.get("dependencies") or task.get("depends_on") or task.get("deps"))
 
 
 def _collect_completed_task_ids(

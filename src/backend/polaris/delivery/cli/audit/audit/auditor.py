@@ -315,7 +315,7 @@ def smart_triage(
         result["suggestions"] = suggestions
         result["help_message"] = "未找到匹配事件，请尝试以上建议"
 
-    return cast("dict[str, Any]", (result))
+    return result
 
 
 def run_diff(

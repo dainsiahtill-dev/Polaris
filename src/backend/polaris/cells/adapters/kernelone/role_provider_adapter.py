@@ -8,8 +8,6 @@ role normalization logic.
 
 from __future__ import annotations
 
-from typing import cast
-
 from polaris.cells.roles.kernel.public.role_alias import (
     ROLE_ALIASES,
     normalize_role_alias as _normalize,
@@ -45,7 +43,7 @@ class RoleProviderAdapter(IRoleProvider):
         Returns:
             The canonical role string (lowercase, stripped).
         """
-        return cast("str", (_normalize(role)))
+        return _normalize(role)
 
     def get_role_aliases(self) -> dict[str, str]:
         """Return the complete role alias mapping table.

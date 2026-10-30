@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import cast
 
 from polaris.kernelone.storage import normalize_logical_rel_path, resolve_logical_path, resolve_storage_roots
 
@@ -50,7 +49,7 @@ def _resolve_relative_database_path(workspace: str, token: str, *, kind: str, al
     if prefix in {"runtime", "workspace", "config"}:
         try:
             logical = normalize_logical_rel_path(token)
-            return cast("str", (resolve_logical_path(workspace, logical)))
+            return resolve_logical_path(workspace, logical)
         except (RuntimeError, ValueError) as exc:
             raise DatabasePathError(f"managed {kind} path resolution failed: {token}") from exc
     try:

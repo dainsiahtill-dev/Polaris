@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import Any, cast
+from typing import Any
 
 from polaris.cells.roles.kernel.internal.speculation.candidate_decoder import (
     CandidateDecoder,
@@ -280,16 +280,11 @@ class StreamShadowEngine:
         """Authoritative 阶段入口：ADOPT / JOIN / REPLAY 裁决."""
         if self._resolver is None:
             raise RuntimeError("resolver not configured")
-        return cast(
-            "dict[str, Any]",
-            (
-                await self._resolver.resolve_or_execute(
-                    turn_id=turn_id,
-                    call_id=call_id,
-                    tool_name=tool_name,
-                    args=args,
-                )
-            ),
+        return await self._resolver.resolve_or_execute(
+            turn_id=turn_id,
+            call_id=call_id,
+            tool_name=tool_name,
+            args=args,
         )
 
     @property
@@ -301,7 +296,7 @@ class StreamShadowEngine:
         """返回当前 turn 的推测执行指标快照；无 metrics 时返回空 dict."""
         if self._metrics is None:
             return {}
-        return cast("dict[str, float | int]", (self._metrics.snapshot()))
+        return self._metrics.snapshot()
 
     def reset(self) -> None:
         """Clear the internal buffer and close the task group."""

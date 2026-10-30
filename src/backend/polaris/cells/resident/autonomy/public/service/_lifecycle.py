@@ -66,7 +66,7 @@ _CYCLE_ACTIONS: tuple[str, ...] = (
 
 def query_resident_status(query: QueryResidentStatusV1, *, include_details: bool = False) -> dict[str, Any]:
     """Handle :class:`QueryResidentStatusV1` → resident status snapshot."""
-    return cast("dict[str, Any]", (get_resident_service(query.workspace).get_status(include_details=include_details)))
+    return get_resident_service(query.workspace).get_status(include_details=include_details)
 
 
 def start_resident_goal_attempt(
@@ -115,7 +115,7 @@ def start_resident(command: StartResidentCommandV1) -> dict[str, Any]:
         action="resident_started",
         status_payload=result,
     )
-    return cast("dict[str, Any]", (result))
+    return result
 
 
 def stop_resident(command: StopResidentCommandV1) -> dict[str, Any]:
@@ -127,7 +127,7 @@ def stop_resident(command: StopResidentCommandV1) -> dict[str, Any]:
         action="resident_stopped",
         status_payload=result,
     )
-    return cast("dict[str, Any]", (result))
+    return result
 
 
 def run_resident_tick(command: RunResidentTickCommandV1) -> dict[str, Any]:
@@ -140,7 +140,7 @@ def run_resident_tick(command: RunResidentTickCommandV1) -> dict[str, Any]:
         status_payload=result,
         detail={"force": command.force},
     )
-    return cast("dict[str, Any]", (result))
+    return result
 
 
 def update_resident_identity(command: UpdateResidentIdentityCommandV1) -> dict[str, Any]:
@@ -151,7 +151,7 @@ def update_resident_identity(command: UpdateResidentIdentityCommandV1) -> dict[s
         workspace=command.workspace,
         action="identity_updated",
     )
-    return cast("dict[str, Any]", (result))
+    return result
 
 
 def update_resident_agi_participation(command: UpdateResidentAgiParticipationCommandV1) -> dict[str, Any]:
@@ -189,7 +189,7 @@ def create_resident_goal(command: CreateResidentGoalCommandV1) -> dict[str, Any]
         action="goal_created",
         detail={"goal_id": str(result.get("goal_id") or "")},
     )
-    return cast("dict[str, Any]", (result))
+    return result
 
 
 def approve_resident_goal(command: ApproveResidentGoalCommandV1) -> dict[str, Any] | None:
@@ -245,7 +245,7 @@ def materialize_resident_goal(command: MaterializeResidentGoalCommandV1) -> dict
             status_payload=service.get_status(include_details=True),
             detail={"goal_id": command.goal_id},
         )
-    return cast("dict[str, Any] | None", (contract))
+    return contract
 
 
 def archive_resident_goal(command: ArchiveResidentGoalCommandV1) -> dict[str, Any] | None:
@@ -282,7 +282,7 @@ def stage_resident_goal(command: StageResidentGoalCommandV1) -> dict[str, Any] |
                 "promote_to_pm_runtime": command.promote_to_pm_runtime,
             },
         )
-    return cast("dict[str, Any] | None", (staged))
+    return staged
 
 
 async def run_resident_goal(command: RunResidentGoalCommandV1) -> dict[str, Any] | None:
@@ -309,7 +309,7 @@ async def run_resident_goal(command: RunResidentGoalCommandV1) -> dict[str, Any]
                 "director_iterations": command.director_iterations,
             },
         )
-    return cast("dict[str, Any] | None", (result))
+    return result
 
 
 def _emit_cycle_completed_event(
@@ -406,7 +406,7 @@ def record_resident_evidence(command: RecordResidentEvidenceCommandV1) -> dict[s
             "decision_id": str(recorded.get("decision_id") or ""),
         },
     )
-    return cast("dict[str, Any]", (recorded))
+    return recorded
 
 
 def record_resident_decision_entry(command: RecordResidentDecisionCommandV1) -> dict[str, Any]:
@@ -425,7 +425,7 @@ def record_resident_decision_entry(command: RecordResidentDecisionCommandV1) -> 
         action=command.action,
         detail=detail,
     )
-    return cast("dict[str, Any]", (recorded))
+    return recorded
 
 
 def extract_resident_skills(command: ExtractResidentSkillsCommandV1) -> list[dict[str, Any]]:
@@ -449,7 +449,7 @@ def run_resident_experiments(command: RunResidentExperimentsCommandV1) -> list[d
         action="experiments_run",
         detail={"count": len(experiments)},
     )
-    return cast("list[dict[str, Any]]", (experiments))
+    return experiments
 
 
 def run_resident_improvements(command: RunResidentImprovementsCommandV1) -> list[dict[str, Any]]:
@@ -461,4 +461,4 @@ def run_resident_improvements(command: RunResidentImprovementsCommandV1) -> list
         action="improvements_run",
         detail={"count": len(improvements)},
     )
-    return cast("list[dict[str, Any]]", (improvements))
+    return improvements

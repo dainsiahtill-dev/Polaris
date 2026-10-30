@@ -12,7 +12,7 @@ from collections import OrderedDict
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.fs import KernelFileSystem, LockedRegularFileError, LockedRegularFileSetV1, StreamLeaseV1
 from polaris.kernelone.fs.contracts import DurabilityMode, validate_durability
@@ -216,7 +216,7 @@ class JsonlEventStore:
 
     @property
     def workspace(self) -> str:
-        return cast("str", (self._workspace))
+        return self._workspace
 
     @property
     def storage_identity(self) -> WorkspaceRuntimeIdentity:

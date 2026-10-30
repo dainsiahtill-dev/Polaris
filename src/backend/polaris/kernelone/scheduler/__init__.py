@@ -189,11 +189,11 @@ class SimpleScheduler(SchedulerPort):
         if spec.kind == ScheduleKind.ONCE:
             return 0.0
         if spec.kind == ScheduleKind.DELAYED:
-            return cast("float", (spec.delay_seconds))
+            return spec.delay_seconds
         if spec.kind == ScheduleKind.PERIODIC:
-            return cast("float", (max(0.1, spec.interval_seconds)))
+            return max(0.1, spec.interval_seconds)
         if spec.kind == ScheduleKind.CRON:
-            return cast("float", (max(0.1, spec.interval_seconds)))
+            return max(0.1, spec.interval_seconds)
         return 0.0
 
     def _schedule_loop(self, task_id: str) -> None:

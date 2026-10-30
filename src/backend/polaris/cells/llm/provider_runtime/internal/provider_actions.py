@@ -54,14 +54,14 @@ def run_provider_action(
         from polaris.infrastructure.llm.providers.openai_provider import health, list_models
 
         if action == "health":
-            return cast("dict[str, Any]", (health(provider_cfg, api_key).to_dict()))
-        return cast("dict[str, Any]", (list_models(provider_cfg, api_key).to_dict()))
+            return health(provider_cfg, api_key).to_dict()
+        return list_models(provider_cfg, api_key).to_dict()
 
     if provider_type == "anthropic_compat":
         from polaris.infrastructure.llm.providers.anthropic_provider import health, list_models
 
         if action == "health":
-            return cast("dict[str, Any]", (health(provider_cfg, api_key).to_dict()))
-        return cast("dict[str, Any]", (list_models(provider_cfg, api_key).to_dict()))
+            return health(provider_cfg, api_key).to_dict()
+        return list_models(provider_cfg, api_key).to_dict()
 
     raise UnsupportedProviderTypeError(provider_type)

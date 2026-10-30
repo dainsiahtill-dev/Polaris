@@ -327,7 +327,7 @@ class GoalGovernor:
                 return dict(goal.pm_contract_outline), changed
             return None, False
 
-        return cast("dict[str, Any] | None", (self._storage.mutate_goals(mutate)))
+        return self._storage.mutate_goals(mutate)
 
     def archive_goal(
         self,

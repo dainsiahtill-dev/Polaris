@@ -43,7 +43,7 @@ import os
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from polaris.cells.roles.kernel.internal.circuit_breaker import (
     CircuitBreakerLevel,
@@ -962,7 +962,7 @@ class ToolLoopController:
             tool_name=tool_name,
             payload=payload,
         )
-        return cast("str", (format_tool_result(tool_name, compact_payload)))
+        return format_tool_result(tool_name, compact_payload)
 
     def _compact_tool_result_payload(
         self,

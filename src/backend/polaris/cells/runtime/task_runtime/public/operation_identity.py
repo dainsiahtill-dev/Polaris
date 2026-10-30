@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Final, cast
+from typing import Final
 
 from polaris.kernelone.effect.immutable_payload import (
     DirectedEffectImmutableItemsV1,
@@ -98,24 +98,19 @@ def hash_directed_effect_operation_subject(
 
     if type(subject) is not DirectedEffectOperationSubjectV1:
         raise TypeError("subject must be exactly DirectorEffectPolicyOperationSubjectV1")
-    return cast(
-        "str",
+    return hash_directed_effect_arguments(
         (
-            hash_directed_effect_arguments(
-                (
-                    ("batch_id", subject.batch_id),
-                    ("effect_type", subject.effect_type),
-                    ("execution_mode", subject.execution_mode),
-                    ("inventory_ordinal", subject.inventory_ordinal),
-                    (
-                        "normalized_arguments",
-                        DirectedEffectImmutableMapV1(items=subject.normalized_arguments),
-                    ),
-                    ("normalized_tool_name", subject.normalized_tool_name),
-                    ("tool_call_id", subject.tool_call_id),
-                    ("turn_id", subject.turn_id),
-                    ("workspace", subject.workspace),
-                )
-            )
-        ),
+            ("batch_id", subject.batch_id),
+            ("effect_type", subject.effect_type),
+            ("execution_mode", subject.execution_mode),
+            ("inventory_ordinal", subject.inventory_ordinal),
+            (
+                "normalized_arguments",
+                DirectedEffectImmutableMapV1(items=subject.normalized_arguments),
+            ),
+            ("normalized_tool_name", subject.normalized_tool_name),
+            ("tool_call_id", subject.tool_call_id),
+            ("turn_id", subject.turn_id),
+            ("workspace", subject.workspace),
+        )
     )

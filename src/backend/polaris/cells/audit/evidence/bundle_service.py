@@ -48,7 +48,7 @@ def _get_bundle_storage_path(workspace: str, bundle_id: str) -> Path:
     """Get bundle storage path."""
     from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
 
-    return cast("Path", (Path(workspace) / get_workspace_metadata_dir_name() / "bundles" / bundle_id))
+    return Path(workspace) / get_workspace_metadata_dir_name() / "bundles" / bundle_id
 
 
 def _get_bundle_index_path(workspace: str) -> Path:

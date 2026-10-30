@@ -169,7 +169,7 @@ class TaskOrchestrator:
                 },
                 "next_id": 1,
             }
-        return cast("dict[str, Any]", (data))
+        return data
 
     def _save_registry(self, registry: dict[str, Any]) -> None:
         """Save task registry atomically."""
@@ -180,7 +180,7 @@ class TaskOrchestrator:
         data = self.state_manager.read_subsystem_data("tasks", self.ASSIGNMENTS_FILE)
         if data is None:
             return {"version": "1.0", "assignments": []}
-        return cast("dict[str, Any]", (data))
+        return data
 
     def _save_assignments(self, assignments: dict[str, Any]) -> None:
         """Save task assignments."""
@@ -191,7 +191,7 @@ class TaskOrchestrator:
         data = self.state_manager.read_subsystem_data("tasks", self.STATS_FILE)
         if data is None:
             return {"version": "1.0", "executors": {}}
-        return cast("dict[str, Any]", (data))
+        return data
 
     def _save_stats(self, stats: dict[str, Any]) -> None:
         """Save executor stats."""

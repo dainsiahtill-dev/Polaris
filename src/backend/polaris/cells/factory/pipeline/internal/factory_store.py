@@ -66,7 +66,7 @@ def _get_run_file_lock(file_path: Path) -> threading.Lock:
         if lock is None:
             lock = threading.Lock()
             _RUN_FILE_LOCKS.set(key, lock)
-        return cast("threading.Lock", (lock))
+        return lock
 
 
 class FileLockTimeoutError(TimeoutError):

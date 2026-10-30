@@ -31,7 +31,7 @@ import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 # Import implementation from local bus_port.py
 from polaris.cells.roles.runtime.internal.bus_port import InMemoryAgentBusPort
@@ -417,7 +417,7 @@ class KernelOneMessageBusPort:
                 envelope.sender,
                 envelope.receiver,
             )
-        return cast("bool", (fallback_ok))
+        return fallback_ok
 
     def poll(
         self,
@@ -463,7 +463,7 @@ class KernelOneMessageBusPort:
 
     def ack(self, message_id: str, receiver: str) -> bool:
         """Acknowledge successful processing of a message."""
-        return cast("bool", (self._fallback_bus.ack(message_id, receiver)))
+        return self._fallback_bus.ack(message_id, receiver)
 
     def nack(
         self,
@@ -474,33 +474,28 @@ class KernelOneMessageBusPort:
         requeue: bool = True,
     ) -> bool:
         """Negative-acknowledge a message."""
-        return cast(
-            "bool",
-            (
-                self._fallback_bus.nack(
-                    message_id,
-                    receiver,
-                    reason=reason,
-                    requeue=requeue,
-                )
-            ),
+        return self._fallback_bus.nack(
+            message_id,
+            receiver,
+            reason=reason,
+            requeue=requeue,
         )
 
     def pending_count(self, receiver: str) -> int:
         """Return number of pending messages for receiver."""
-        return cast("int", (self._fallback_bus.pending_count(receiver)))
+        return self._fallback_bus.pending_count(receiver)
 
     def requeue_all_inflight(self, receiver: str) -> int:
         """Requeue ALL inflight messages for a receiver back to inbox.
 
         Delegates to the in-memory fallback.
         """
-        return cast("int", (self._fallback_bus.requeue_all_inflight(receiver)))
+        return self._fallback_bus.requeue_all_inflight(receiver)
 
     @property
     def dead_letters(self) -> list[DeadLetterRecord]:
         """Snapshot of all dead-letter records."""
-        return cast("list[Any]", (self._fallback_bus.dead_letters))
+        return self._fallback_bus.dead_letters
 
     # ── NATS-specific Methods ────────────────────────────────────────────────
 
@@ -576,7 +571,7 @@ class KernelOneMessageBusPort:
                 "nats_ever_connected": self._nats_ever_connected,
             }
         )
-        return cast("dict[str, Any]", (stats))
+        return stats
 
 
 # ── Serialization Helpers ──────────────────────────────────────────────────────

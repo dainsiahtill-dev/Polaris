@@ -639,7 +639,7 @@ def _repair_diagnostics_from_artifact_quality_issues(
 
 
 def _repair_diagnostic_has_explicit_id(diagnostic: RepairDiagnostic) -> bool:
-    return cast("bool", (diagnostic.diagnostic_id != replace(diagnostic, diagnostic_id="").diagnostic_id))
+    return diagnostic.diagnostic_id != replace(diagnostic, diagnostic_id="").diagnostic_id
 
 
 def _repair_diagnostic_specifier(diagnostic: RepairDiagnostic) -> str:

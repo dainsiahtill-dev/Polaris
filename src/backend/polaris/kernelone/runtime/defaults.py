@@ -67,7 +67,7 @@ def resolve_default_workspace(start: str | None = None) -> str:
     """
     explicit = get_workspace()
     if explicit:
-        return cast("str", (os.path.abspath(explicit)))
+        return os.path.abspath(explicit)
     start_path = str(start or os.getcwd())
     return find_workspace_root(start_path) or os.path.abspath(start_path)
 

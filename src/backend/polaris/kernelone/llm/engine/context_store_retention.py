@@ -618,7 +618,7 @@ class ContextSnapshotAuditPinRepository:
     @staticmethod
     def _validated_ref(value: str) -> str:
         try:
-            return cast("str", (validate_context_hash(str(value or ""))))
+            return validate_context_hash(str(value or ""))
         except ValueError as exc:
             raise ContextSnapshotAuditPinError("context_snapshot_ref must be exactly 24 lowercase hex") from exc
 

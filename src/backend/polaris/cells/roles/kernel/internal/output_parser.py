@@ -193,7 +193,7 @@ class OutputParser:
             sanitize_assistant_transcript_message,
         )
 
-        return cast("str", (sanitize_assistant_transcript_message(sanitized)))
+        return sanitize_assistant_transcript_message(sanitized)
 
     def parse_execution_tool_calls(
         self,

@@ -677,7 +677,7 @@ def _failure_class_for_observed_verdict(verdict: str) -> str:
     """Map a local observation token to typed evidence, never to a transition."""
 
     failure_class, _ = classify_qa_audit_failure({"verdict": verdict})
-    return cast("str", (failure_class))
+    return failure_class
 
 
 def _normalize_path_values(raw: Any) -> list[str]:
@@ -854,7 +854,7 @@ def _first_failing_verify_clause(verify: str, *, cwd: str) -> str:
     (single source of truth for the three verify touchpoints)."""
     from polaris.kernelone.quality.step_verify import first_failing_verify_clause
 
-    return cast("str", (first_failing_verify_clause(verify, cwd=cwd)))
+    return first_failing_verify_clause(verify, cwd=cwd)
 
 
 class QAConsumer:

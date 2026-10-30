@@ -218,40 +218,30 @@ def wait_for_agents_confirmation(
 
     # Handle auto_accept mode
     if mode == "auto_accept":
-        return cast(
-            "bool",
-            (
-                handle_auto_accept(
-                    agents_path,
-                    draft_path,
-                    pm_state,
-                    pm_state_full,
-                    pm_report_full,
-                    dialogue_full,
-                    run_id,
-                    pm_iteration,
-                    timestamp,
-                )
-            ),
+        return handle_auto_accept(
+            agents_path,
+            draft_path,
+            pm_state,
+            pm_state_full,
+            pm_report_full,
+            dialogue_full,
+            run_id,
+            pm_iteration,
+            timestamp,
         )
 
     # Handle fail_fast mode
     if mode == "fail_fast":
-        return cast(
-            "bool",
-            (
-                handle_fail_fast(
-                    pm_state,
-                    pm_state_full,
-                    workspace_full,
-                    pm_report_full,
-                    dialogue_full,
-                    run_id,
-                    pm_iteration,
-                    timestamp,
-                    draft_path,
-                )
-            ),
+        return handle_fail_fast(
+            pm_state,
+            pm_state_full,
+            workspace_full,
+            pm_report_full,
+            dialogue_full,
+            run_id,
+            pm_iteration,
+            timestamp,
+            draft_path,
         )
 
     # Handle wait mode
@@ -335,21 +325,16 @@ def wait_for_agents_confirmation(
                         },
                         meta={"approval_mode": mode, "autonomy": "unattended"},
                     )
-                return cast(
-                    "bool",
-                    (
-                        handle_auto_accept(
-                            agents_path,
-                            draft_path,
-                            pm_state,
-                            pm_state_full,
-                            pm_report_full,
-                            dialogue_full,
-                            run_id,
-                            pm_iteration,
-                            timestamp,
-                        )
-                    ),
+                return handle_auto_accept(
+                    agents_path,
+                    draft_path,
+                    pm_state,
+                    pm_state_full,
+                    pm_report_full,
+                    dialogue_full,
+                    run_id,
+                    pm_iteration,
+                    timestamp,
                 )
             reason = f"AGENTS.md missing after waiting {timeout_sec}s. Review AGENTS.generated.md and resume after manual confirmation."
             _mark_manual_intervention(

@@ -422,7 +422,7 @@ class RoleContextCompressor:
         """Token estimation using unified estimator."""
         estimator = ServiceLocator.get_token_estimator()
         if estimator is not None:
-            return cast("int", (estimator.estimate_messages_tokens(messages)))
+            return estimator.estimate_messages_tokens(messages)
         # Fallback
         return cast("int", (len(str(messages)) // self.max_chars_per_token))
 

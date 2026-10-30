@@ -40,14 +40,14 @@ class ReceiptStore:
         """Store receipt content and return its content hash."""
         ref = self._content_store.intern(content)
         self._index[receipt_id] = ref
-        return cast("str", (ref.hash))
+        return ref.hash
 
     def get(self, receipt_id: str) -> str | None:
         """Retrieve receipt content by receipt_id."""
         ref = self._index.get(receipt_id)
         if ref is None:
             return None
-        return cast("str | None", (self._content_store.get_if_present(ref)))
+        return self._content_store.get_if_present(ref)
 
     def offload_content(
         self,

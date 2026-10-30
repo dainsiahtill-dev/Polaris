@@ -80,7 +80,7 @@ def _write_atomic_text(path: str, content: str) -> None:
 
 def _now_iso() -> str:
     """Get current ISO format timestamp."""
-    return cast("str", (utc_now_str()))
+    return utc_now_str()
 
 
 def _generate_id(prefix: str = "ID") -> str:

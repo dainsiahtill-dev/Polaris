@@ -407,7 +407,7 @@ class SessionEventPublisher:
     @staticmethod
     def _utc_now() -> str:
         """返回当前 UTC 时间 ISO 格式字符串"""
-        return cast("str", (_utc_now_str()))
+        return _utc_now_str()
 
     def publish_session_created(
         self,

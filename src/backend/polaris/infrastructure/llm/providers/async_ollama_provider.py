@@ -138,7 +138,7 @@ def _extract_messages(prompt: str, config: dict[str, Any]) -> list[dict[str, Any
 
     adapter_messages = _CONTRACT.extract_messages({"config": config})
     if adapter_messages:
-        return cast("list[dict[str, Any]]", (adapter_messages))
+        return adapter_messages
 
     messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
     system_prompt = str(config.get("system_prompt") or config.get("system") or "").strip()

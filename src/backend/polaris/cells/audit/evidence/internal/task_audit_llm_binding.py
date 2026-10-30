@@ -13,7 +13,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 from polaris.kernelone.llm.runtime import normalize_provider_type
 
@@ -147,7 +147,7 @@ def _resolve_provider_type_for_provider_id(workspace: str, settings: Any, provid
         provider_cfg = providers.get(provider_token) if isinstance(providers, dict) else None
         if not isinstance(provider_cfg, dict):
             return ""
-        return cast("str", (normalize_provider_type(str(provider_cfg.get("type") or "").strip().lower())))
+        return normalize_provider_type(str(provider_cfg.get("type") or "").strip().lower())
     except (RuntimeError, ValueError) as exc:
         logger.debug("Failed to resolve audit provider type for %s: %s", provider_token, exc)
         return ""

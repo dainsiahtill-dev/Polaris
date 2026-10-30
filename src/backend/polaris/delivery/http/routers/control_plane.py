@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from polaris.cells.control_plane.run_ledger.public import (
@@ -67,7 +67,7 @@ def get_control_plane_ledger_projection(
         run_id=run_id,
         max_runs=max_runs,
     )
-    return cast("dict[str, Any]", (read_run_ledger_projection(query).projection))
+    return read_run_ledger_projection(query).projection
 
 
 @router.get("/ledger/provenance")
@@ -87,7 +87,7 @@ def get_control_plane_run_provenance_bundle(
             run_id=run_id,
             include_migration_ledgers=include_migration_ledgers,
         )
-        return cast("dict[str, Any]", (read_run_provenance_bundle(query).bundle))
+        return read_run_provenance_bundle(query).bundle
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -103,7 +103,7 @@ def get_control_plane_verifier_policy(
     resolved_workspace = requested_or_active_workspace(state.settings, workspace)
     query = ReadVerifierPolicyQueryV1(workspace=resolved_workspace)
     try:
-        return cast("dict[str, Any]", (read_verifier_policy(query).policy))
+        return read_verifier_policy(query).policy
     except ControlPlaneVerifierPolicyV1Error as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -128,6 +128,6 @@ def update_control_plane_verifier_policy(
         custom_scripts=tuple(item.model_dump() for item in payload.custom_scripts),
     )
     try:
-        return cast("dict[str, Any]", (update_verifier_policy(command).policy))
+        return update_verifier_policy(command).policy
     except ControlPlaneVerifierPolicyV1Error as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -148,16 +148,11 @@ class _InvokerBindingMixin:
         provider_id = str((binding or {}).get("provider_id") or getattr(profile, "provider_id", "") or "").strip()
         model = str((binding or {}).get("model") or getattr(profile, "model", "") or "").strip()
         binding_id = str((binding or {}).get("binding_id") or "").strip()
-        return cast(
-            "bool",
-            (
-                is_role_binding_healthy(
-                    role_id,
-                    provider_id=provider_id,
-                    model=model,
-                    binding_id=binding_id,
-                )
-            ),
+        return is_role_binding_healthy(
+            role_id,
+            provider_id=provider_id,
+            model=model,
+            binding_id=binding_id,
         )
 
     @staticmethod

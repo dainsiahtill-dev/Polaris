@@ -344,7 +344,7 @@ def _event_to_dict(event: TurnEvent) -> dict[str, Any]:
 
 def _event_type_name(event: TurnEvent) -> str:
     """Get the event type name."""
-    return cast("str", (event.__class__.__name__))
+    return event.__class__.__name__
 
 
 def _is_subsequence(sub: list[str], seq: list[str]) -> bool:

@@ -176,7 +176,7 @@ class SqliteRuntimeStore:
 
     @staticmethod
     def _now() -> str:
-        return cast("str", (_now()))
+        return _now()
 
     @staticmethod
     def _loads_json(raw: str | None, default: Any) -> Any:

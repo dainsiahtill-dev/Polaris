@@ -216,7 +216,7 @@ class SimpleAuthContext:
     def is_expired(self) -> bool:
         if self.expires_at is None:
             return False
-        return cast("bool", (_utc_now() > self.expires_at))
+        return _utc_now() > self.expires_at
 
     # -------------------------------------------------------------------------
     # Session-based auth methods

@@ -50,13 +50,13 @@ def _lifecycle_failure_evidence_from_metadata(metadata: Mapping[str, Any]) -> di
 
 def _extract_tool_calls(result: RoleTurnResult) -> tuple[str, ...]:
     metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
-    return cast("tuple[str, ...]", (observed_tool_call_names_from_sources(result.tool_calls or (), metadata)))
+    return observed_tool_call_names_from_sources(result.tool_calls or (), metadata)
 
 
 def _has_tool_dispatch_evidence(result: RoleTurnResult) -> bool:
     if result.tool_results:
         return True
-    return cast("bool", (batch_receipt_has_dispatch_evidence(result.batch_receipt)))
+    return batch_receipt_has_dispatch_evidence(result.batch_receipt)
 
 
 def _tool_dispatch_dropped_error(result: RoleTurnResult) -> str:

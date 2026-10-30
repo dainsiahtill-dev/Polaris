@@ -254,7 +254,7 @@ class EngineeringSessionStore:
                 if existing["request_key"] == request_key and all(
                     existing[key] == value for key, value in payload.items()
                 ):
-                    return cast("str", (command.session_id))
+                    return command.session_id
                 raise EngineeringSessionConflictError("engineering session_id conflict")
             now = time.time()
             values = {
@@ -273,7 +273,7 @@ class EngineeringSessionStore:
                 "INSERT INTO runs (" + ",".join(values) + ") VALUES (" + ",".join("?" for _ in values) + ")",
                 tuple(values.values()),
             )
-        return cast("str", (command.session_id))
+        return command.session_id
 
     def find_current_session_id(self, *, workspace: Path, engine_version: str) -> str | None:
         """Select saved workspace identity without recovering or changing a run."""

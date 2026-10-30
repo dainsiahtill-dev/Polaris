@@ -103,7 +103,7 @@ class SignalSourceProvider:
                 load_scout_anchors,
             )
 
-            return cast("str | None", (format_anchor_card(load_scout_anchors(str(self._workspace)))))
+            return format_anchor_card(load_scout_anchors(str(self._workspace)))
         except (RuntimeError, ValueError, OSError) as e:
             logger.debug(f"侦察锚点卡构建失败: {e}")
             return None

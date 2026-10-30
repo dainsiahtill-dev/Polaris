@@ -2,7 +2,7 @@
 
 import os
 from collections.abc import Mapping
-from typing import Any, cast
+from typing import Any
 
 from fastapi import HTTPException, Request
 from polaris.cells.llm.evaluation.public.service import (
@@ -30,7 +30,7 @@ def get_state(request: Request) -> AppState:
 
 
 def _workspace_value(settings: Any) -> str:
-    return cast("str", (active_workspace_value(settings)))
+    return active_workspace_value(settings)
 
 
 def _settings_qa_enabled(settings: Any) -> bool:

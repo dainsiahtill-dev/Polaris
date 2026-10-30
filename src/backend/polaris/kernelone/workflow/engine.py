@@ -260,7 +260,7 @@ class WorkflowEngine:
 
     def _now(self) -> str:
         """Return current UTC timestamp as ISO string."""
-        return cast("str", (_now()))
+        return _now()
 
     async def start(self) -> None:
         if self._running:

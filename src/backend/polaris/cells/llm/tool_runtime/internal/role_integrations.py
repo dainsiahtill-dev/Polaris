@@ -497,15 +497,10 @@ class DirectorToolIntegration:
 
     def format_tools_for_native_calling(self) -> list[dict[str, Any]]:
         """格式化为原生 Function Calling 格式."""
-        return cast(
-            "list[dict[str, Any]]",
-            (
-                ToolSpecRegistry.generate_llm_schemas(
-                    format="openai",
-                    include_arg_aliases=True,
-                    deterministic=True,
-                )
-            ),
+        return ToolSpecRegistry.generate_llm_schemas(
+            format="openai",
+            include_arg_aliases=True,
+            deterministic=True,
         )
 
     def build_tool_results_prompt(self, executed_tools: list[dict[str, Any]]) -> str:

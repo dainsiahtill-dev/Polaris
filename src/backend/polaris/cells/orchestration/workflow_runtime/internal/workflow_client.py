@@ -324,7 +324,7 @@ def describe_workflow_sync(
             "workflow_id": str(workflow_id or "").strip(),
             "error": "workflow_runtime_disabled",
         }
-    return cast("dict[str, Any]", (_describe_workflow_sync(workflow_id, config=runtime_config)))
+    return _describe_workflow_sync(workflow_id, config=runtime_config)
 
 
 def query_workflow_sync(
@@ -342,7 +342,7 @@ def query_workflow_sync(
             "query_name": str(query_name or "").strip(),
             "error": "workflow_runtime_disabled",
         }
-    return cast("dict[str, Any]", (_query_workflow_sync(workflow_id, query_name, *args, config=runtime_config)))
+    return _query_workflow_sync(workflow_id, query_name, *args, config=runtime_config)
 
 
 async def _cancel_workflow_async(
@@ -352,7 +352,7 @@ async def _cancel_workflow_async(
     adapter = await get_adapter()
     if not adapter._running:
         await adapter.start()
-    return cast("dict[str, Any]", (await adapter.cancel_workflow(workflow_id, reason)))
+    return await adapter.cancel_workflow(workflow_id, reason)
 
 
 def cancel_workflow_sync(

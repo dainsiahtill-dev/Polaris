@@ -80,7 +80,7 @@ class CognitiveRuntimeSqliteStore:
 
     @property
     def workspace(self) -> str:
-        return cast("str", (self._kernel_db.workspace))
+        return self._kernel_db.workspace
 
     @classmethod
     def open_existing_read_only(cls, workspace: str) -> CognitiveRuntimeSqliteStore | None:

@@ -131,9 +131,7 @@ def _preview_edit_blocks_content(
     if "start" in values or "end" in values:
         if blocks_text.strip():
             raise ValueError("edit_blocks cannot combine a line range and SEARCH/REPLACE blocks")
-        return cast(
-            "str", (compose_line_range_edit(old_content, values.get("start"), values.get("end"), values.get("replace")))
-        )
+        return compose_line_range_edit(old_content, values.get("start"), values.get("end"), values.get("replace"))
     if not blocks_text.strip():
         return old_content
     normalized_target = str(target_path or "").replace("\\", "/").strip().lstrip("./")

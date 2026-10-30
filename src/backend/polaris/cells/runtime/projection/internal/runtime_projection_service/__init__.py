@@ -305,14 +305,9 @@ async def _list_recent_orchestration_runs(workspace: str, limit: int = 50) -> li
         workflow_runtime_projection_owner_port,
     )
 
-    return cast(
-        "list[Any]",
-        (
-            await workflow_runtime_projection_owner_port().list_runs(
-                workspace=workspace,
-                limit=limit,
-            )
-        ),
+    return await workflow_runtime_projection_owner_port().list_runs(
+        workspace=workspace,
+        limit=limit,
     )
 
 

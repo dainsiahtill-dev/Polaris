@@ -103,16 +103,11 @@ def v2_provider_health(request: Request, provider_id: str, payload: ProviderActi
     api_key = provider_context.api_key
 
     try:
-        return cast(
-            "dict[str, Any]",
-            (
-                run_provider_action(
-                    action="health",
-                    provider_type=provider_type,
-                    provider_cfg=provider_cfg,
-                    api_key=api_key,
-                )
-            ),
+        return run_provider_action(
+            action="health",
+            provider_type=provider_type,
+            provider_cfg=provider_cfg,
+            api_key=api_key,
         )
     except LlmProviderRuntimeError as exc:
         raise _map_provider_runtime_error(exc) from exc
@@ -134,16 +129,11 @@ def v2_provider_models(request: Request, provider_id: str, payload: ProviderActi
     api_key = provider_context.api_key
 
     try:
-        return cast(
-            "dict[str, Any]",
-            (
-                run_provider_action(
-                    action="models",
-                    provider_type=provider_type,
-                    provider_cfg=provider_cfg,
-                    api_key=api_key,
-                )
-            ),
+        return run_provider_action(
+            action="models",
+            provider_type=provider_type,
+            provider_cfg=provider_cfg,
+            api_key=api_key,
         )
     except LlmProviderRuntimeError as exc:
         raise _map_provider_runtime_error(exc) from exc
@@ -220,7 +210,7 @@ def v2_get_provider_default_config(request: Request, provider_type: str) -> dict
         config = _provider_manager.get_provider_default_config(provider_type)
         if config is None:
             raise StructuredHTTPException(status_code=404, code="PROVIDER_NOT_FOUND", message="Provider not found")
-        return cast("dict[str, Any]", (config))
+        return config
     except StructuredHTTPException:
         raise
     except (RuntimeError, ValueError) as exc:

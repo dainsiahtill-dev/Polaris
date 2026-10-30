@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, cast
+from typing import Any
 from uuid import uuid4
 
 from polaris.cells.audit.evidence.public.service import EvidenceBundleService, create_evidence_bundle_service
@@ -65,13 +65,8 @@ def publish_resident_status_update(
                 "channel": f"runtime.v2.{_RESIDENT_STATUS_CHANNEL}",
             },
         }
-        return cast(
-            "bool",
-            (
-                _service_pkg.get_log_jetstream_publisher().publish(
-                    subject=f"hp.runtime.{workspace_key}.{_RESIDENT_STATUS_CHANNEL}", payload=envelope
-                )
-            ),
+        return _service_pkg.get_log_jetstream_publisher().publish(
+            subject=f"hp.runtime.{workspace_key}.{_RESIDENT_STATUS_CHANNEL}", payload=envelope
         )
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         logger.debug("Resident AGI status JetStream publish failed: %s", exc)

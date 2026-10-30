@@ -167,7 +167,7 @@ class AgentBusProxy:
             message_id=message.id,
             correlation_id=message.correlation_id,
         )
-        return cast("bool", (self._bus.publish(envelope)))
+        return self._bus.publish(envelope)
 
     def receive(
         self,
@@ -213,7 +213,7 @@ class AgentBusProxy:
         `receipt_path` is accepted for API compatibility but ignored;
         the bus port tracks inflight by message_id.
         """
-        return cast("bool", (self._bus.ack(str(message_id or ""), self.agent_name)))
+        return self._bus.ack(str(message_id or ""), self.agent_name)
 
     def nack(
         self,
@@ -224,16 +224,11 @@ class AgentBusProxy:
         requeue: bool = True,
     ) -> bool:
         """Negative-acknowledge — requeue or dead-letter via bus port."""
-        return cast(
-            "bool",
-            (
-                self._bus.nack(
-                    str(message_id or ""),
-                    self.agent_name,
-                    reason=reason,
-                    requeue=requeue,
-                )
-            ),
+        return self._bus.nack(
+            str(message_id or ""),
+            self.agent_name,
+            reason=reason,
+            requeue=requeue,
         )
 
     def peek(self) -> list[AgentMessage]:
@@ -311,7 +306,7 @@ class AgentBusProxy:
 
     def pending_count(self) -> int:
         """Return count of pending messages in inbox."""
-        return cast("int", (self._bus.pending_count(self.agent_name)))
+        return self._bus.pending_count(self.agent_name)
 
 
 class AgentMemory:

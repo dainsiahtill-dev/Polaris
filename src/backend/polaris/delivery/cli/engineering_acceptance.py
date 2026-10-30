@@ -821,7 +821,7 @@ def cancel(
 
 def _read_activity(workspace: Path) -> dict[str, Any]:
     """Compatibility activity projection; semantics remain with the store owner."""
-    return cast("dict[str, Any]", (query_engineering_resource_state(workspace)))
+    return query_engineering_resource_state(workspace)
 
 
 def _resource_state(binding: dict[str, Any]) -> dict[str, Any]:
@@ -832,7 +832,7 @@ def _resource_state(binding: dict[str, Any]) -> dict[str, Any]:
         request_key=binding["request_key"],
     )
     if state.get("status") != "readable":
-        return cast("dict[str, Any]", (state))
+        return state
     if not binding.get("run_id"):
         expected = {
             "request_key": binding["request_key"],
@@ -846,7 +846,7 @@ def _resource_state(binding: dict[str, Any]) -> dict[str, Any]:
         binding["run_id"] = state["run_id"]
         binding["request_recovered"] = True
         _write(Path(plan["evidence_dir"]) / "binding.json", binding)
-    return cast("dict[str, Any]", (state))
+    return state
 
 
 def _resource_unknown(binding: dict[str, Any], error: Exception) -> dict[str, Any]:

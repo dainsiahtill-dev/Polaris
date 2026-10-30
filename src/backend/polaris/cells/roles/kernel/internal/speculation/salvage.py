@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from typing import cast
 
 from polaris.cells.roles.kernel.internal.speculation.models import (
     SalvageDecision,
@@ -84,7 +83,7 @@ class SalvageGovernor:
         started_at = record.started_at
         if started_at is None:
             return 0.0
-        return cast("float", ((time.monotonic() - started_at) * 1000.0))
+        return (time.monotonic() - started_at) * 1000.0
 
     def batch_evaluate(self, records: list[ShadowTaskRecord]) -> dict[str, SalvageDecision]:
         """批量评估多个 shadow task."""

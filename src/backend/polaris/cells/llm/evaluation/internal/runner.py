@@ -303,10 +303,7 @@ class EvaluationRunner:
                 api_key=None,
                 headers=None,
             )
-            return cast(
-                "dict[str, Any]",
-                (resolve_provider_api_key(provider_id, context.provider_type or "generic", context.provider_cfg or {})),
-            )
+            return resolve_provider_api_key(provider_id, context.provider_type or "generic", context.provider_cfg or {})
         except (RuntimeError, ValueError) as exc:
             logger.debug("[evaluation.runner] failed to load provider config for %s: %s", provider_id, exc)
             return {}

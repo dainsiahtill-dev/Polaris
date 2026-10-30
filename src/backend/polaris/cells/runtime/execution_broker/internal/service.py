@@ -8,7 +8,7 @@ import os
 import shlex
 import weakref
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TextIO, cast
+from typing import TYPE_CHECKING, Any, TextIO
 
 from polaris.cells.runtime.execution_broker.public.contracts import (
     ExecutionBrokerError,
@@ -491,10 +491,10 @@ class ExecutionBrokerService:
             success=terminated,
         )
 
-        return cast("bool", (terminated))
+        return terminated
 
     async def cancel_execution(self, execution_id: str) -> bool:
-        return cast("bool", (await self._facade.resolve_handle(execution_id).cancel()))
+        return await self._facade.resolve_handle(execution_id).cancel()
 
     def get_process_status(
         self,

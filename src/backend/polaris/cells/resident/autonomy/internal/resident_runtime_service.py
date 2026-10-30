@@ -225,7 +225,7 @@ class ResidentService:
             self.runtime_state.mode = self.identity.operating_mode
             self.runtime_state.updated_at = now
             self._persist_core_state()
-            return cast("dict[str, Any]", (self.identity.to_dict()))
+            return self.identity.to_dict()
 
     def record_decision(self, payload: DecisionRecord | Mapping[str, Any]) -> DecisionRecord:
         with self._lock:
@@ -313,7 +313,7 @@ class ResidentService:
                 expected_revision=expected_revision,
             )
             self._refresh_agenda_view()
-            return cast("dict[str, Any] | None", (contract))
+            return contract
 
     def archive_goal(self, goal_id: str, *, expected_revision: int) -> GoalProposal | None:
         with self._lock:
@@ -432,7 +432,7 @@ class ResidentService:
 
     def run_meta_cognition(self, decisions: Iterable[DecisionRecord] | None = None) -> dict[str, Any]:
         records = list(decisions) if decisions is not None else self.storage.load_decisions(limit=1000)
-        return cast("dict[str, Any]", (self.meta_cognition.refresh(records)))
+        return self.meta_cognition.refresh(records)
 
     def run_skill_foundry(self, decisions: Iterable[DecisionRecord] | None = None) -> list[SkillArtifact]:
         records = list(decisions) if decisions is not None else self.storage.load_decisions(limit=1000)
@@ -446,7 +446,7 @@ class ResidentService:
         records = list(decisions) if decisions is not None else self.storage.load_decisions(limit=1000)
         skill_list = list(skills) if skills is not None else self.storage.load_skills()
         graph = self.capability_graph.rebuild(records, skill_list)
-        return cast("dict[str, Any]", (graph.to_dict()))
+        return graph.to_dict()
 
     def run_counterfactual_lab(self, decisions: Iterable[DecisionRecord] | None = None) -> list[dict[str, Any]]:
         records = list(decisions) if decisions is not None else self.storage.load_decisions(limit=1000)
@@ -978,4 +978,4 @@ def reset_resident_services() -> None:
 
 def record_resident_decision(workspace: str, payload: DecisionRecord | Mapping[str, Any]) -> dict[str, Any]:
     service = get_resident_service(workspace)
-    return cast("dict[str, Any]", (service.record_decision(payload).to_dict()))
+    return service.record_decision(payload).to_dict()

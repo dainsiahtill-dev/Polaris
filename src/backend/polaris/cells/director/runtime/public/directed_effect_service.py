@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import fields
-from typing import cast
 
 from polaris.cells.director.runtime.public.directed_effect_contracts import (
     DirectorEffectAuthorizationBindingV1,
@@ -55,7 +54,7 @@ def _bound_snapshot_is_canonical(bound_snapshot: object) -> bool:
         )
     except (AttributeError, TypeError, ValueError):
         return False
-    return cast("bool", (canonical == bound_snapshot))
+    return canonical == bound_snapshot
 
 
 def _policy_matches_binding(

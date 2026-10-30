@@ -189,7 +189,7 @@ def _extract_slot_answer(slot_id: str, text: str) -> str:
 
     if slot_id == "key_user_flow":
         if "->" in body or "→" in body:
-            return cast("str", (truncate_text(body, 96)))
+            return truncate_text(body, 96)
         return ""
 
     if slot_id == "external_dependencies":

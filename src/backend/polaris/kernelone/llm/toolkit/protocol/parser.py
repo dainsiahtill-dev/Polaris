@@ -8,7 +8,6 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import cast
 
 from polaris.kernelone.llm.toolkit.protocol.constants import EditType
 from polaris.kernelone.llm.toolkit.protocol.models import FileOperation, _normalize_path
@@ -349,7 +348,7 @@ class ProtocolParser:
                 continue
             # If it looks like a path, use it
             if "/" in line or "." in line or "\\" in line:
-                return cast("str", (_normalize_path(line)))
+                return _normalize_path(line)
 
         return _normalize_path(header) if header else ""
 

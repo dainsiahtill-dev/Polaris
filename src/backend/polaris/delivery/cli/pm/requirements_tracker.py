@@ -148,14 +148,14 @@ class RequirementsTracker:
 
     def _get_requirements_dir(self) -> str:
         """Get requirements data directory."""
-        return cast("str", (self.state_manager.get_data_path("requirements", "")))
+        return self.state_manager.get_data_path("requirements", "")
 
     def _load_registry(self) -> dict[str, Any]:
         """Load requirements registry."""
         data = self.state_manager.read_subsystem_data("requirements", self.REGISTRY_FILE)
         if data is None:
             return {"version": "1.0", "requirements": {}, "next_id": 1}
-        return cast("dict[str, Any]", (data))
+        return data
 
     def _save_registry(self, registry: dict[str, Any]) -> None:
         """Save requirements registry."""
@@ -166,7 +166,7 @@ class RequirementsTracker:
         data = self.state_manager.read_subsystem_data("requirements", self.MATRIX_FILE)
         if data is None:
             return {"version": "1.0", "matrix": {}, "dependencies": {}}
-        return cast("dict[str, Any]", (data))
+        return data
 
     def _save_matrix(self, matrix: dict[str, Any]) -> None:
         """Save traceability matrix."""
@@ -177,7 +177,7 @@ class RequirementsTracker:
         data = self.state_manager.read_subsystem_data("requirements", self.DEPENDENCIES_FILE)
         if data is None:
             return {"version": "1.0", "dependencies": {}, "reverse_deps": {}}
-        return cast("dict[str, Any]", (data))
+        return data
 
     def _save_dependencies(self, deps: dict[str, Any]) -> None:
         """Save dependencies graph."""
@@ -622,7 +622,7 @@ class RequirementsTracker:
             orchestrator = get_task_orchestrator(self.workspace)
             task = orchestrator.get_task(task_id)
             if task:
-                return cast("bool", (task.status == TaskStatus.COMPLETED))
+                return task.status == TaskStatus.COMPLETED
         except (RuntimeError, ValueError):
             logger.debug("DEBUG: requirements_tracker.py:{616} {exc} (swallowed)")
         return False
@@ -706,7 +706,7 @@ class RequirementsTracker:
         if req_id:
             records = [r for r in records if r.get("req_id") == req_id]
 
-        return cast("list[dict[str, Any]]", (records))
+        return records
 
     def delete_requirement(self, req_id: str, reason: str = "") -> bool:
         """Delete a requirement (soft delete by marking deprecated).

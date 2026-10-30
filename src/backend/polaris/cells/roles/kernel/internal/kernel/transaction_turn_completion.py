@@ -302,7 +302,7 @@ def _build_completion_metadata(
         handoff_pack = build_context_handoff_pack(kernel, tk_result, role, request)
         metadata["handoff_pack"] = handoff_pack.to_dict()
         metadata["transaction_kind"] = "handoff_workflow"
-    return cast("dict[str, Any]", (metadata))
+    return metadata
 
 
 def _copy_string_list(value: Any) -> list[str]:
@@ -354,16 +354,11 @@ def _build_missing_dispatch_lifecycle_receipt(
     batch_receipt: Mapping[str, Any] | None,
 ) -> dict[str, Any] | None:
     required_write_tools = [tool for tool in _extract_required_tools(metadata) if is_write_tool_name(tool)]
-    return cast(
-        "dict[str, Any] | None",
-        (
-            build_missing_dispatch_lifecycle_receipt(
-                required_write_tools=required_write_tools,
-                metadata_candidates=(metadata, _last_decision_metadata(ledger)),
-                tool_results=tool_results,
-                batch_receipt=batch_receipt,
-            )
-        ),
+    return build_missing_dispatch_lifecycle_receipt(
+        required_write_tools=required_write_tools,
+        metadata_candidates=(metadata, _last_decision_metadata(ledger)),
+        tool_results=tool_results,
+        batch_receipt=batch_receipt,
     )
 
 
@@ -513,23 +508,18 @@ def _append_task_boundary_verdict(
             *tool_results,
         ]
     try:
-        return cast(
-            "dict[str, Any] | None",
-            (
-                append_role_turn_task_boundary_verdict(
-                    role=role,
-                    workspace=str(request.workspace or kernel.workspace or "."),
-                    task_id=str(request.task_id or ""),
-                    run_id=str(request.run_id or turn_id),
-                    context_override=getattr(request, "context_override", None),
-                    tool_results=tool_results,
-                    tool_dispatch=task_boundary_tool_dispatch_from_lifecycle_metadata(metadata),
-                    needs_followup_workflow=bool(metadata.get("needs_followup_workflow")),
-                    workflow_reason=str(metadata.get("workflow_reason") or ""),
-                    error_message=error_msg,
-                    evidence_refs=task_boundary_evidence_refs_from_metadata(metadata),
-                )
-            ),
+        return append_role_turn_task_boundary_verdict(
+            role=role,
+            workspace=str(request.workspace or kernel.workspace or "."),
+            task_id=str(request.task_id or ""),
+            run_id=str(request.run_id or turn_id),
+            context_override=getattr(request, "context_override", None),
+            tool_results=tool_results,
+            tool_dispatch=task_boundary_tool_dispatch_from_lifecycle_metadata(metadata),
+            needs_followup_workflow=bool(metadata.get("needs_followup_workflow")),
+            workflow_reason=str(metadata.get("workflow_reason") or ""),
+            error_message=error_msg,
+            evidence_refs=task_boundary_evidence_refs_from_metadata(metadata),
         )
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         run_id = str(request.run_id or turn_id)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any
 
 from polaris.cells.resident.autonomy.internal.agi_tactical_actions import (
     resident_agi_tactical_action_catalog,
@@ -56,27 +56,22 @@ def query_resident_agi_tactical_chat(query: QueryResidentAgiTacticalChatV1) -> d
     repair_overlay_query = query_resident_agi_repair_advisory_overlay(
         QueryResidentAgiRepairAdvisoryOverlayV1(workspace=query.workspace, limit=query.decision_limit)
     )
-    return cast(
-        "dict[str, Any]",
-        (
-            build_resident_agi_tactical_chat_response(
-                workspace=query.workspace,
-                message=query.message,
-                context_refs=query.context_refs,
-                evidence_refs=query.evidence_refs,
-                status_payload=status_payload,
-                audit_pack=audit_pack,
-                evidence_interfaces=evidence_interfaces,
-                repair_overlay_query=repair_overlay_query,
-            )
-        ),
+    return build_resident_agi_tactical_chat_response(
+        workspace=query.workspace,
+        message=query.message,
+        context_refs=query.context_refs,
+        evidence_refs=query.evidence_refs,
+        status_payload=status_payload,
+        audit_pack=audit_pack,
+        evidence_interfaces=evidence_interfaces,
+        repair_overlay_query=repair_overlay_query,
     )
 
 
 def query_resident_agi_tactical_action_catalog() -> dict[str, Any]:
     """Return the read-only Resident AGI tactical-console action catalog."""
 
-    return cast("dict[str, Any]", (resident_agi_tactical_action_catalog()))
+    return resident_agi_tactical_action_catalog()
 
 
 def _resident_agi_tactical_action_tool_trace(

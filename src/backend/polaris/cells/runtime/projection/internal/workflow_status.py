@@ -7,7 +7,7 @@ import os
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, cast
+from typing import Any
 
 from polaris.cells.runtime.projection.internal.io_helpers import read_json, resolve_artifact_path
 from polaris.kernelone.fs.text_ops import write_json_atomic
@@ -84,7 +84,7 @@ def describe_workflow_sync(workflow_id: str, config: Any) -> dict[str, Any]:
         workflow_runtime_projection_owner_port,
     )
 
-    return cast("dict[str, Any]", (workflow_runtime_projection_owner_port().describe_workflow(workflow_id, config)))
+    return workflow_runtime_projection_owner_port().describe_workflow(workflow_id, config)
 
 
 def query_workflow_sync(
@@ -97,22 +97,15 @@ def query_workflow_sync(
         workflow_runtime_projection_owner_port,
     )
 
-    return cast(
-        "dict[str, Any]", (workflow_runtime_projection_owner_port().query_workflow(workflow_id, query_name, config))
-    )
+    return workflow_runtime_projection_owner_port().query_workflow(workflow_id, query_name, config)
 
 
 def workflow_state_path(workspace: str, cache_root: str) -> str:
     """Resolve the canonical runtime path for workflow state."""
-    return cast(
-        "str",
-        (
-            resolve_artifact_path(
-                workspace,
-                cache_root,
-                WORKFLOW_STATE_FILE,
-            )
-        ),
+    return resolve_artifact_path(
+        workspace,
+        cache_root,
+        WORKFLOW_STATE_FILE,
     )
 
 
@@ -158,14 +151,9 @@ def _publish_workflow_status_to_jetstream(workspace: str, payload: dict[str, Any
             "payload": payload,
             "meta": {"source": "runtime_projection.workflow_status"},
         }
-        return cast(
-            "bool",
-            (
-                get_log_jetstream_publisher().publish(
-                    subject=f"hp.runtime.{workspace_key}.status.workflow",
-                    payload=envelope,
-                )
-            ),
+        return get_log_jetstream_publisher().publish(
+            subject=f"hp.runtime.{workspace_key}.status.workflow",
+            payload=envelope,
         )
     except Exception as exc:  # noqa: BLE001
         logger.debug("workflow status JetStream publish failed: %s", exc)

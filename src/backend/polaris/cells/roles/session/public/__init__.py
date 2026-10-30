@@ -59,7 +59,7 @@ def init_db() -> None:
     """Initialize the session database."""
     from polaris.cells.roles.session.internal.conversation import init_db as _init_db
 
-    return cast("None", (_init_db()))
+    return _init_db()
 
 
 def get_db() -> Any:

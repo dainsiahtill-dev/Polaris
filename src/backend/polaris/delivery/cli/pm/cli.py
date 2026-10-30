@@ -6,7 +6,6 @@ import argparse
 import asyncio
 import sys
 from pathlib import Path
-from typing import cast
 
 from polaris.delivery.cli.engineering import add_engineering_arguments, run_engineering_action
 from polaris.kernelone.fs.encoding import enforce_utf8
@@ -24,7 +23,7 @@ def create_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = create_parser().parse_args(sys.argv[1:])
     enforce_utf8()
-    return cast("int", (asyncio.run(run_engineering_action(args, role="pm"))))
+    return asyncio.run(run_engineering_action(args, role="pm"))
 
 
 if __name__ == "__main__":

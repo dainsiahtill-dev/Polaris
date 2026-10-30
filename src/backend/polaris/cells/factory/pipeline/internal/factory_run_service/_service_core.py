@@ -792,14 +792,9 @@ class _FactoryRunServiceCore:
         return run
 
     def _query_child_session_settlement(self: Any, run_id: str) -> dict[str, object]:
-        return cast(
-            "dict[str, object]",
-            (
-                query_factory_run_settlement(
-                    str(self.workspace),
-                    factory_run_id=run_id,
-                )
-            ),
+        return query_factory_run_settlement(
+            str(self.workspace),
+            factory_run_id=run_id,
         )
 
     @staticmethod
@@ -1213,4 +1208,4 @@ class _FactoryRunServiceCore:
 
     @staticmethod
     def _now() -> str:
-        return cast("str", (utc_now_iso()))
+        return utc_now_iso()

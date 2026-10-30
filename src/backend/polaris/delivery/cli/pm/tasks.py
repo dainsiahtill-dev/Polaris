@@ -4,7 +4,7 @@ import hashlib
 import json
 import os
 import re
-from typing import Any, cast
+from typing import Any
 
 from polaris.delivery.cli.pm.config import (
     ACTIVE_TASK_STATUSES,
@@ -580,9 +580,7 @@ def list_task_dependencies(task: Any) -> list[str]:
     """Return normalized dependency IDs for one task payload."""
     if not isinstance(task, dict):
         return []
-    return cast(
-        "list[str]", (normalize_str_list(task.get("dependencies") or task.get("depends_on") or task.get("deps")))
-    )
+    return normalize_str_list(task.get("dependencies") or task.get("depends_on") or task.get("deps"))
 
 
 def build_taskboard_sync_payload(tasks: Any) -> list[dict[str, Any]]:

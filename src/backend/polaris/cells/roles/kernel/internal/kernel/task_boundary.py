@@ -198,20 +198,13 @@ def committed_task_tool_results(request: Any, workspace: str) -> list[dict[str, 
     evidence = metadata.get(CONTINUATION_EVIDENCE_KEY)
     if evidence is None:
         return []
-    return cast(
-        "list[dict[str, Any]]",
-        (
-            load_committed_continuation_rows(
-                evidence,
-                workspace=workspace,
-                run_id=str(request.run_id or ""),
-                task_id=str(request.task_id or ""),
-                session_id=str(metadata.get("role_session_id") or ""),
-                source_targets=tuple(
-                    director_task_boundary_source_targets(request.context_override, workspace=workspace)
-                ),
-            )
-        ),
+    return load_committed_continuation_rows(
+        evidence,
+        workspace=workspace,
+        run_id=str(request.run_id or ""),
+        task_id=str(request.task_id or ""),
+        session_id=str(metadata.get("role_session_id") or ""),
+        source_targets=tuple(director_task_boundary_source_targets(request.context_override, workspace=workspace)),
     )
 
 
@@ -572,7 +565,7 @@ def append_deferred_followup_task_boundary_verdict(
         run_id=run_id,
         verdict=verdict,
     )
-    return cast("dict[str, Any]", (verdict))
+    return verdict
 
 
 def append_role_turn_task_boundary_verdict(

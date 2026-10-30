@@ -272,7 +272,7 @@ def _normalize_priority(priority: Any) -> int:
     if isinstance(priority, TaskPriority):
         return _PRIORITY_LABEL_TO_VALUE.get(priority.value, 1)
     if isinstance(priority, PolarisTaskPriority):
-        return cast("int", (priority.numeric_value))
+        return priority.numeric_value
     if isinstance(priority, (int, float)):
         return int(priority)
     if isinstance(priority, str):
@@ -1322,17 +1322,12 @@ class TaskBoard:
     def _next_terminal_event_expected_seq(self) -> int:
         """Return the optimistic next sequence for terminal compatibility facts."""
 
-        return cast(
-            "int",
-            (
-                query_fact_stream_head(
-                    QueryFactStreamHeadV1(
-                        workspace=str(self.workspace),
-                        stream=_TASKBOARD_TERMINAL_EVENTS_STREAM,
-                    )
-                ).next_expected_seq
-            ),
-        )
+        return query_fact_stream_head(
+            QueryFactStreamHeadV1(
+                workspace=str(self.workspace),
+                stream=_TASKBOARD_TERMINAL_EVENTS_STREAM,
+            )
+        ).next_expected_seq
 
     def _write_terminal_event(self, event_data: dict[str, Any]) -> None:
         """Write a compatibility terminal event outside the board transaction.

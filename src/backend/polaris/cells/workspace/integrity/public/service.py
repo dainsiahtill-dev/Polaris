@@ -7,7 +7,7 @@ All internal imports are lazy-loaded to maintain proper architectural boundaries
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from polaris.cells.workspace.integrity.internal.code_parser import (
@@ -80,7 +80,7 @@ class WorkspaceIntegrityService:
     def validate_workspace(self: Any, command: Any) -> str:
         from polaris.cells.workspace.integrity.internal.fs_utils import validate_workspace
 
-        return cast("str", (validate_workspace(command.path, self_upgrade_mode=command.self_upgrade_mode)))
+        return validate_workspace(command.path, self_upgrade_mode=command.self_upgrade_mode)
 
     def ensure_docs_ready(self: Any, command: Any) -> None:
         from polaris.cells.workspace.integrity.internal.workspace_service import (

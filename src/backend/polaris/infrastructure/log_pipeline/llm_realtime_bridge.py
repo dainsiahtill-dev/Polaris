@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from polaris.infrastructure.log_pipeline.writer import get_writer
 from polaris.kernelone.events.constants import (
@@ -274,29 +274,29 @@ def _build_projection_event_type(raw_event_type: str, data: dict[str, Any]) -> s
     normalized = _normalize_token(raw_event_type)
     stage = _normalize_token(data.get("stage"))
     if normalized in _WAITING_EVENT_TYPES:
-        return cast("str", (EVENT_TYPE_LLM_WAITING))
+        return EVENT_TYPE_LLM_WAITING
     if normalized in _COMPLETED_EVENT_TYPES:
-        return cast("str", (EVENT_TYPE_LLM_COMPLETED))
+        return EVENT_TYPE_LLM_COMPLETED
     if normalized in _FAILED_EVENT_TYPES:
-        return cast("str", (EVENT_TYPE_LLM_FAILED))
+        return EVENT_TYPE_LLM_FAILED
     if normalized in _TOOL_CALL_EVENT_TYPES:
-        return cast("str", (EVENT_TYPE_TOOL_CALL))
+        return EVENT_TYPE_TOOL_CALL
     if normalized in _TOOL_RESULT_EVENT_TYPES:
-        return cast("str", (EVENT_TYPE_TOOL_RESULT))
+        return EVENT_TYPE_TOOL_RESULT
     if normalized == "thinking_preview":
         return "thinking_preview"
     if normalized == "thinking_chunk":
-        return cast("str", (EVENT_TYPE_THINKING_CHUNK))
+        return EVENT_TYPE_THINKING_CHUNK
     if normalized == "content_preview":
         return "content_preview"
     if normalized == "content_chunk":
-        return cast("str", (EVENT_TYPE_CONTENT_CHUNK))
+        return EVENT_TYPE_CONTENT_CHUNK
     if normalized == "iteration" and stage in {"started", "retrying", "waiting"}:
-        return cast("str", (EVENT_TYPE_LLM_WAITING))
+        return EVENT_TYPE_LLM_WAITING
     if normalized == "iteration" and stage in {"completed", "success"}:
-        return cast("str", (EVENT_TYPE_LLM_COMPLETED))
+        return EVENT_TYPE_LLM_COMPLETED
     if normalized == "iteration" and stage in {"failed", "error"}:
-        return cast("str", (EVENT_TYPE_LLM_FAILED))
+        return EVENT_TYPE_LLM_FAILED
     return normalized or "llm_event"
 
 
@@ -361,7 +361,7 @@ def _build_message(
             return f"{EVENT_TYPE_TOOL_CALL}:{tool_name} args={_safe_json_compact(tool_args)}"
         if tool_name:
             return f"{EVENT_TYPE_TOOL_CALL}:{tool_name}"
-        return cast("str", (EVENT_TYPE_TOOL_CALL))
+        return EVENT_TYPE_TOOL_CALL
 
     if projection_event_type == EVENT_TYPE_TOOL_RESULT:
         success = _extract_success(data)

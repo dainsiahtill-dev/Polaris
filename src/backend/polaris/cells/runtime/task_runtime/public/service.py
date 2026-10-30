@@ -750,13 +750,8 @@ def query_observable_task_rows(workspace: str) -> ObservableTaskRowsProjectionV1
 def query_factory_run_settlement(workspace: str, *, factory_run_id: str) -> dict[str, object]:
     """Return TaskRuntime-owned settlement evidence for one Factory run."""
 
-    return cast(
-        "dict[str, object]",
-        (
-            TaskRuntimeService(workspace).query_factory_run_settlement(
-                factory_run_id=factory_run_id,
-            )
-        ),
+    return TaskRuntimeService(workspace).query_factory_run_settlement(
+        factory_run_id=factory_run_id,
     )
 
 

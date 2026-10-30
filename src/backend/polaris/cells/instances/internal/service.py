@@ -763,14 +763,9 @@ def publish_instances_update(
         "meta": {"source": "polaris.instances"},
     }
     try:
-        return cast(
-            "bool",
-            (
-                get_log_jetstream_publisher().publish(
-                    subject="hp.runtime.instances.status.instances",
-                    payload=envelope,
-                )
-            ),
+        return get_log_jetstream_publisher().publish(
+            subject="hp.runtime.instances.status.instances",
+            payload=envelope,
         )
     except (OSError, RuntimeError, ValueError):
         return False
@@ -1926,7 +1921,7 @@ class InstanceSupervisor:
 
     @staticmethod
     def _wait_for_pid_exit(pid: int, *, timeout_seconds: float = PROCESS_TERMINATE_TIMEOUT_SECONDS) -> bool:
-        return cast("bool", (wait_for_process_exit(pid, deadline=time.monotonic() + timeout_seconds)))
+        return wait_for_process_exit(pid, deadline=time.monotonic() + timeout_seconds)
 
     @staticmethod
     def _terminate_pid(pid: int | None) -> None:

@@ -110,7 +110,7 @@ async def execute_single_tool(
             "[execute_single_tool] _injected_tool_executor (with auth gate): tool=%s",
             tool_name,
         )
-        return cast("dict[str, Any]", (await kernel._injected_tool_executor.execute(tool_name, args, context=context)))
+        return await kernel._injected_tool_executor.execute(tool_name, args, context=context)
 
     from polaris.cells.roles.kernel.internal.kernel.tool_executor import KernelToolExecutor
 

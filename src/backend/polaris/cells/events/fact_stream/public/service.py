@@ -663,7 +663,7 @@ def _fact_stream_failure_code(operation: str, exc: Exception) -> str:
     if isinstance(exc, EventSourcingError):
         if exc.code in _STRICT_FAILURE_CODES:
             return "strict_stream_corruption"
-        return cast("str", (exc.code))
+        return exc.code
     return f"{operation}_failed"
 
 

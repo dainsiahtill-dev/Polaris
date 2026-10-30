@@ -710,10 +710,7 @@ def _adapter_materialized_file_paths(
     adapter: Any,
     reported_paths: list[str],
 ) -> tuple[list[str], list[str]]:
-    return cast(
-        "tuple[list[str], list[str]]",
-        (materialized_file_paths(str(getattr(adapter, "workspace", "") or ""), reported_paths)),
-    )
+    return materialized_file_paths(str(getattr(adapter, "workspace", "") or ""), reported_paths)
 
 
 def _select_empty_write_content_retry_tool_name(
@@ -762,18 +759,18 @@ def _empty_write_retry_tool_definition(
             ("write_file",),
             pin_write_paths=target_files if pin_file_enum else None,
         )
-        return cast("dict[str, Any]", (surface[0]))
+        return surface[0]
     # Non-write tools: registry only, never invent schemas, never pin paths
     # (qualification rejects path enums on edit_file/edit_blocks).
     try:
-        return cast("dict[str, Any]", (resolve_registry_tool_schema(name)))
+        return resolve_registry_tool_schema(name)
     except ForcedToolSurfaceError:
         # Last resort: write_file registry surface so retry remains qualifiable.
         surface = build_forced_tool_surface(
             ("write_file",),
             pin_write_paths=target_files if pin_file_enum else None,
         )
-        return cast("dict[str, Any]", (surface[0]))
+        return surface[0]
 
 
 _NO_WRITE_MULTI_TARGET_RETRY_TOOL_NAMES = ("write_file", "edit_file")
@@ -800,7 +797,7 @@ def _pin_file_schema_to_declared_targets(definition: dict[str, Any], target_file
         # Drop unauthorized path enums on non-write tools: return registry clone.
         return dict(definition)
     try:
-        return cast("dict[str, Any]", (pin_write_file_paths(definition, target_files)))
+        return pin_write_file_paths(definition, target_files)
     except ForcedToolSurfaceError:
         return dict(definition)
 
@@ -831,9 +828,9 @@ def _no_write_materialization_retry_tool_definitions(
     from polaris.kernelone.tool_execution.forced_tool_surface import build_forced_tool_surface
 
     if strict_write_only:
-        return cast("list[dict[str, Any]]", (build_forced_tool_surface(("write_file",), pin_write_paths=target_files)))
+        return build_forced_tool_surface(("write_file",), pin_write_paths=target_files)
     if forced_tool_name == "edit_file":
-        return cast("list[dict[str, Any]]", (build_forced_tool_surface(("edit_file",))))
+        return build_forced_tool_surface(("edit_file",))
 
     # write_file pinned + edit_file unpinned (registry only)
     write_surface = build_forced_tool_surface(("write_file",), pin_write_paths=target_files)

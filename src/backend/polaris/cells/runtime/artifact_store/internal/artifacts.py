@@ -479,16 +479,11 @@ def build_snapshot(
     projection = RuntimeProjectionService.build(workspace=ws, cache_root=Path(cr), state=state)
 
     # Convert to snapshot payload
-    return cast(
-        "dict[str, Any]",
-        (
-            build_snapshot_payload_from_projection(
-                projection=projection,
-                state=state,
-                workspace=ws,
-                cache_root=Path(cr),
-            )
-        ),
+    return build_snapshot_payload_from_projection(
+        projection=projection,
+        state=state,
+        workspace=ws,
+        cache_root=Path(cr),
     )
 
 
@@ -735,7 +730,7 @@ def build_runtime_snapshot_v2(
         summary=summary,
     )
 
-    return cast("dict[str, Any]", (snapshot.model_dump(mode="json")))
+    return snapshot.model_dump(mode="json")
 
 
 def _build_pm_status(state: AppState) -> dict[str, Any]:

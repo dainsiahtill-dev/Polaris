@@ -706,7 +706,7 @@ class ArtifactService:
     def _resolve(self, key: str) -> str:
         """Resolve artifact key to absolute path."""
         rel_path = get_artifact_path(key)
-        return cast("str", (resolve_artifact_path(self.workspace, self.cache_root, rel_path)))
+        return resolve_artifact_path(self.workspace, self.cache_root, rel_path)
 
     def _resolve_for_write(self, key: str) -> str:
         """Resolve artifact key to absolute path for writing.
@@ -718,7 +718,7 @@ class ArtifactService:
         parent = os.path.dirname(path)
         if parent:
             os.makedirs(parent, exist_ok=True)
-        return cast("str", (path))
+        return path
 
     def _write_text(self, path: str, content: str) -> None:
         _write_text_atomic(path, content, workspace=self.workspace)

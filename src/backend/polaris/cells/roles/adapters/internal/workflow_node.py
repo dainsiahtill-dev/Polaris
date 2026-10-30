@@ -127,7 +127,7 @@ class WorkflowRoleNode(ABC):
             return False, f"未知角色: {self.role_id}"
 
         gateway = RoleToolGateway(profile, self.workspace)
-        return cast("tuple[bool, str]", (gateway.check_tool_permission(tool_name, tool_args)))
+        return gateway.check_tool_permission(tool_name, tool_args)
 
 
 # 便捷函数：快速执行工作流角色

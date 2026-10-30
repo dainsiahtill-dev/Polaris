@@ -6,7 +6,7 @@ Exposes BackgroundTask, Todo, Token, Security, and Transcript services.
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from polaris.delivery.http.dependencies import (
@@ -295,7 +295,7 @@ async def get_transcript(
     if message_type:
         messages = [m for m in messages if m.get("type") == message_type]
 
-    return cast("list[dict[str, Any]]", (messages))
+    return messages
 
 
 @router.get("/transcript/session", dependencies=[Depends(require_auth)])

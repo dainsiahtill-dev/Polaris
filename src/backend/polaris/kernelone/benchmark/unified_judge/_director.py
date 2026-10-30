@@ -12,8 +12,6 @@ helper and the domain-layer safe-scope validator defined in ``_base``.
 
 from __future__ import annotations
 
-from typing import cast
-
 from polaris.domain.verification.business_validators import (
     validate_director_safe_scope as _validate_director_safe_scope_domain,
 )
@@ -50,7 +48,7 @@ class DirectorSafeScopeValidator:
         Returns:
             Tuple of (is_valid, message).
         """
-        return cast("tuple[bool, str]", (_validate_director_safe_scope_domain(output_text)))
+        return _validate_director_safe_scope_domain(output_text)
 
 
 class DirectorRefactorPlanValidator:

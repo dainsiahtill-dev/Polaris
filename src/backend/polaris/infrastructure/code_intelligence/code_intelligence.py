@@ -58,7 +58,7 @@ class CodeIntelligenceService:
             full=full,
         )
         self._index_initialized = True
-        return cast("dict[str, Any]", (manifest))
+        return manifest
 
     def get_context_for_task(
         self,
@@ -82,7 +82,7 @@ class CodeIntelligenceService:
             hints=hints or [],
             budget_override=budget_override,
         )
-        return cast("dict[str, Any]", (pack))
+        return pack
 
     def verify_changes(
         self,
@@ -92,15 +92,10 @@ class CodeIntelligenceService:
         """运行增量验证."""
         # Note: evidence_run mode is no longer a parameter in run_verify
         # The verification behavior is controlled via config
-        return cast(
-            "dict[str, Any]",
-            (
-                run_verify(
-                    project_dir=self.workspace,
-                    config=self.config,
-                    changed_files=changed_files,
-                )
-            ),
+        return run_verify(
+            project_dir=self.workspace,
+            config=self.config,
+            changed_files=changed_files,
         )
 
     def get_relevant_files(

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from polaris.kernelone.runtime.run_id import validate_run_id
 from polaris.kernelone.storage import (
@@ -104,14 +104,9 @@ def normalize_failure_run_id(run_id: str) -> str:
 
 def resolve_failure_hops_output_path(workspace: str, run_id: str) -> str:
     normalized_run_id = normalize_failure_run_id(run_id)
-    return cast(
-        "str",
-        (
-            resolve_runtime_path(
-                workspace,
-                f"runtime/artifacts/runs/{normalized_run_id}/failure_hops.json",
-            )
-        ),
+    return resolve_runtime_path(
+        workspace,
+        f"runtime/artifacts/runs/{normalized_run_id}/failure_hops.json",
     )
 
 

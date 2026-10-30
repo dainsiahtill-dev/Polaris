@@ -7,7 +7,6 @@ No HTTP semantics — callers map domain exceptions to HTTP at the delivery boun
 from __future__ import annotations
 
 import os
-from typing import cast
 
 from polaris.domain.exceptions import ValidationError
 from polaris.kernelone.storage import resolve_storage_roots
@@ -18,7 +17,7 @@ from polaris.kernelone.storage.io_paths import (
 
 
 def normalize_artifact_rel_path(rel_path: str) -> str:
-    return cast("str", (_kernelone_normalize_artifact_rel_path(rel_path)))
+    return _kernelone_normalize_artifact_rel_path(rel_path)
 
 
 def _strip_artifact_root_prefix(rel_path: str) -> str:
@@ -36,7 +35,7 @@ def _artifact_base_dir(workspace_full: str, cache_root_full: str) -> str:
     if cache_root_full:
         return cache_root_full
     roots = resolve_storage_roots(workspace_full)
-    return cast("str", (roots.runtime_root))
+    return roots.runtime_root
 
 
 def _cache_join(cache_root_full: str, rel_path: str) -> str:
@@ -61,14 +60,12 @@ def is_hot_artifact_path(rel_path: str) -> bool:
 
 
 def _resolve_absolute_if_allowed(workspace_full: str, rel_path: str) -> str:
-    return cast("str", (_kernelone_resolve_artifact_path(workspace_full, "", rel_path)))
+    return _kernelone_resolve_artifact_path(workspace_full, "", rel_path)
 
 
 def resolve_artifact_path(workspace_full: str, cache_root_full: str, rel_path: str) -> str:
     try:
-        return cast(
-            "str", (os.path.abspath(_kernelone_resolve_artifact_path(workspace_full, cache_root_full, rel_path)))
-        )
+        return os.path.abspath(_kernelone_resolve_artifact_path(workspace_full, cache_root_full, rel_path))
     except ValueError:
         return ""
 

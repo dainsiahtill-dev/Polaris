@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from polaris.cells.finops.budget_guard.public.service import BudgetService
 
@@ -30,7 +30,7 @@ class CFOAgent(RoleAgent):
         tb.register("set_budget_limit", self._tool_set_budget_limit, description="Update budget limit")
 
     def _tool_set_global_budget(self, limit: int, unit: str = "tokens") -> dict[str, Any]:
-        return cast("dict[str, Any]", (self._budget_service.set_global_budget(limit=limit, unit=unit)))
+        return self._budget_service.set_global_budget(limit=limit, unit=unit)
 
     def _tool_allocate_budget(
         self,
@@ -39,15 +39,10 @@ class CFOAgent(RoleAgent):
         limit: int,
         unit: str = "tokens",
     ) -> dict[str, Any]:
-        return cast(
-            "dict[str, Any]",
-            (self._budget_service.allocate_budget(task_id=task_id, budget_type=budget_type, limit=limit, unit=unit)),
-        )
+        return self._budget_service.allocate_budget(task_id=task_id, budget_type=budget_type, limit=limit, unit=unit)
 
     def _tool_check_budget(self, task_id: str, estimated_cost: int) -> dict[str, Any]:
-        return cast(
-            "dict[str, Any]", (self._budget_service.check_budget(task_id=task_id, estimated_cost=estimated_cost))
-        )
+        return self._budget_service.check_budget(task_id=task_id, estimated_cost=estimated_cost)
 
     def _tool_record_usage(
         self,
@@ -56,27 +51,22 @@ class CFOAgent(RoleAgent):
         resource_type: str,
         amount: int,
     ) -> dict[str, Any]:
-        return cast(
-            "dict[str, Any]",
-            (
-                self._budget_service.record_usage(
-                    task_id=task_id, agent_id=agent_id, resource_type=resource_type, amount=amount
-                )
-            ),
+        return self._budget_service.record_usage(
+            task_id=task_id, agent_id=agent_id, resource_type=resource_type, amount=amount
         )
 
     def _tool_get_budget_status(self, task_id: str) -> dict[str, Any]:
-        return cast("dict[str, Any]", (self._budget_service.get_budget_status(task_id=task_id)))
+        return self._budget_service.get_budget_status(task_id=task_id)
 
     def _tool_get_usage_stats(
         self,
         task_id: str | None = None,
         agent_id: str | None = None,
     ) -> dict[str, Any]:
-        return cast("dict[str, Any]", (self._budget_service.get_usage_stats(task_id=task_id, agent_id=agent_id)))
+        return self._budget_service.get_usage_stats(task_id=task_id, agent_id=agent_id)
 
     def _tool_set_budget_limit(self, budget_id: str, new_limit: int) -> dict[str, Any]:
-        return cast("dict[str, Any]", (self._budget_service.set_budget_limit(budget_id=budget_id, new_limit=new_limit)))
+        return self._budget_service.set_budget_limit(budget_id=budget_id, new_limit=new_limit)
 
     def handle_message(self, message: AgentMessage) -> AgentMessage | None:
         payload = dict(message.payload or {})

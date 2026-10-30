@@ -202,7 +202,7 @@ class WorkflowRoleAdapter:
             return False, f"未知角色: {role}"
 
         gateway = RoleToolGateway(profile, self.workspace)
-        return cast("tuple[bool, str]", (gateway.check_tool_permission(tool_name, tool_args)))
+        return gateway.check_tool_permission(tool_name, tool_args)
 
 
 class WorkflowRoleResult:

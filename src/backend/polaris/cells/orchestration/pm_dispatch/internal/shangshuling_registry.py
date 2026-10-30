@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, cast
+from typing import Any
 
 from polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils import (
     ShangshulingPort,
@@ -35,15 +35,15 @@ _TERMINAL_STATUSES = {"done", "failed", "blocked"}
 
 
 def _now_iso() -> str:
-    return cast("str", (_now()))
+    return _now()
 
 
 def _registry_path(workspace_full: str) -> str:
-    return cast("str", (resolve_runtime_path(workspace_full, _REGISTRY_REL_PATH)))
+    return resolve_runtime_path(workspace_full, _REGISTRY_REL_PATH)
 
 
 def _history_path(workspace_full: str) -> str:
-    return cast("str", (resolve_runtime_path(workspace_full, _HISTORY_REL_PATH)))
+    return resolve_runtime_path(workspace_full, _HISTORY_REL_PATH)
 
 
 def _load_registry(workspace_full: str) -> dict[str, Any]:

@@ -918,17 +918,12 @@ class _ToolBatchExecuteMixin:
                     FinalizationHandler,
                 )
 
-                return cast(
-                    "dict[str, Any]",
-                    (
-                        FinalizationHandler.complete_with_tool_results(
-                            decision,
-                            normalization_failed_receipts,
-                            state_machine,
-                            ledger,
-                            self.emit_event,
-                        )
-                    ),
+                return FinalizationHandler.complete_with_tool_results(
+                    decision,
+                    normalization_failed_receipts,
+                    state_machine,
+                    ledger,
+                    self.emit_event,
                 )
             raise
 
@@ -1586,13 +1581,8 @@ class _ToolBatchExecuteMixin:
                 FinalizationHandler,
             )
 
-            return cast(
-                "dict[str, Any]",
-                (
-                    FinalizationHandler.complete_with_tool_results(
-                        decision, receipts_as_dicts, state_machine, ledger, self.emit_event
-                    )
-                ),
+            return FinalizationHandler.complete_with_tool_results(
+                decision, receipts_as_dicts, state_machine, ledger, self.emit_event
             )
 
         elif finalize_mode == FinalizeMode.LOCAL:
@@ -1600,13 +1590,8 @@ class _ToolBatchExecuteMixin:
                 FinalizationHandler,
             )
 
-            return cast(
-                "dict[str, Any]",
-                (
-                    FinalizationHandler.finalize_local(
-                        decision, receipts_as_dicts, state_machine, ledger, self.emit_event
-                    )
-                ),
+            return FinalizationHandler.finalize_local(
+                decision, receipts_as_dicts, state_machine, ledger, self.emit_event
             )
 
         elif finalize_mode == FinalizeMode.LLM_ONCE:

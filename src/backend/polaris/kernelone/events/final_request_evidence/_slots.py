@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, cast
+from typing import Any
 
 from polaris.kernelone.events.final_request_evidence._helpers import (
     _as_mapping,
@@ -72,10 +72,7 @@ def missing_required_refs_from_evidence_coverage(
     if slot_refs:
         return slot_refs
     existing = _as_mapping(existing_evidence)
-    return cast(
-        "list[str]",
-        (_string_list(evidence_coverage.get("missing_required_refs") or existing.get("missing_required_refs"))),
-    )
+    return _string_list(evidence_coverage.get("missing_required_refs") or existing.get("missing_required_refs"))
 
 
 def missing_required_tools_from_evidence_coverage(
@@ -94,10 +91,7 @@ def missing_required_tools_from_evidence_coverage(
     if slot_tools is not None:
         return slot_tools
     existing = _as_mapping(existing_evidence)
-    return cast(
-        "list[str]",
-        (_string_list(evidence_coverage.get("missing_required_tools") or existing.get("missing_required_tools"))),
-    )
+    return _string_list(evidence_coverage.get("missing_required_tools") or existing.get("missing_required_tools"))
 
 
 def build_final_request_evidence_slots(

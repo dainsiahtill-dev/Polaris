@@ -360,14 +360,14 @@ class KimiProvider(BaseProvider):
         )
 
     def _base_url(self, config: dict[str, Any]) -> str:
-        return cast("str", (normalize_base_url(str(config.get("base_url") or ""))))
+        return normalize_base_url(str(config.get("base_url") or ""))
 
     def _build_url(
         self, config: dict[str, Any], path_key: str = "api_path", default_path: str = DEFAULT_CHAT_PATH
     ) -> str:
         base = self._base_url(config)
         path = str(config.get(path_key) or default_path).strip()
-        return cast("str", (join_url(base, path, strip_prefixes=["/v1"])))
+        return join_url(base, path, strip_prefixes=["/v1"])
 
     def _headers(self, config: dict[str, Any], api_key: str | None) -> dict[str, str]:
         headers = {

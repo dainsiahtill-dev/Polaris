@@ -12,7 +12,7 @@ import subprocess as subprocess
 import sys as sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from polaris.cells.chief_engineer.blueprint.public import (
     ProjectCompletionContractV1,
@@ -497,7 +497,7 @@ def _append_receipt_bound_preflight_task_boundary(
             },
         )
     )
-    return cast("dict[str, Any]", (payload))
+    return payload
 
 
 def _declared_scope_existing_file_evidence_refs(
@@ -608,7 +608,7 @@ def _append_declared_scope_preflight_task_boundary(
             },
         )
     )
-    return cast("dict[str, Any]", (payload))
+    return payload
 
 
 def _project_dependency_artifact_tool_results(

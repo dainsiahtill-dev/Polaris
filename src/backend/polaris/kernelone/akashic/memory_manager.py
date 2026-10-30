@@ -686,7 +686,7 @@ class _LegacyMemoryStoreAdapter:
             hash=content_hash,
             context=metadata or {},
         )
-        return cast("str", (await self._store.add(item)))
+        return await self._store.add(item)
 
     async def search(
         self,

@@ -51,19 +51,14 @@ def _handle_repo_tree(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, 
         authorized = resolve_committed_read_paths(self._kernel_fs, self._capability_token)
     except (OSError, ValueError, PathSecurityError):
         return {"ok": False, "error": "Missing or invalid committed read scope"}
-    return cast(
-        "dict[str, Any]",
-        (
-            _handle_list_directory(
-                self,
-                path=path,
-                recursive=True,
-                max_entries=kwargs.get("max_entries", 100),
-                depth=kwargs.get("depth"),
-                include_hidden=False,
-                authorized_read_paths=authorized,
-            )
-        ),
+    return _handle_list_directory(
+        self,
+        path=path,
+        recursive=True,
+        max_entries=kwargs.get("max_entries", 100),
+        depth=kwargs.get("depth"),
+        include_hidden=False,
+        authorized_read_paths=authorized,
     )
 
 
@@ -89,19 +84,14 @@ def _handle_repo_rg(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, An
     context_lines = kwargs.get("context_lines", 0)
     case_sensitive = kwargs.get("case_sensitive", False)
 
-    return cast(
-        "dict[str, Any]",
-        (
-            _handle_unified_search(
-                self,
-                query=pattern,
-                path=path,
-                max_results=max_results,
-                file_patterns=file_patterns,
-                context_lines=context_lines,
-                case_sensitive=case_sensitive,
-            )
-        ),
+    return _handle_unified_search(
+        self,
+        query=pattern,
+        path=path,
+        max_results=max_results,
+        file_patterns=file_patterns,
+        context_lines=context_lines,
+        case_sensitive=case_sensitive,
     )
 
 
@@ -127,18 +117,12 @@ def _handle_repo_read_around(self: AgentAccelToolExecutor, **kwargs: Any) -> dic
         end = int(line) + radius
 
     if start is not None and end is not None:
-        return cast(
-            "dict[str, Any]",
-            (
-                _handle_read_file(
-                    self,
-                    file=file,
-                    start_line=int(start),
-                    end_line=int(end),
-                )
-            ),
+        return _handle_read_file(
+            self,
+            file=file,
+            start_line=int(start),
+            end_line=int(end),
         )
-
     return {"ok": False, "error": "Missing required parameters: line or start/end"}
 
 
@@ -160,16 +144,11 @@ def _handle_repo_read_slice(self: AgentAccelToolExecutor, **kwargs: Any) -> dict
     if end is None:
         return {"ok": False, "error": "Missing required parameter: end"}
 
-    return cast(
-        "dict[str, Any]",
-        (
-            _handle_read_file(
-                self,
-                file=file,
-                start_line=int(start),
-                end_line=int(end),
-            )
-        ),
+    return _handle_read_file(
+        self,
+        file=file,
+        start_line=int(start),
+        end_line=int(end),
     )
 
 
@@ -211,7 +190,7 @@ def _handle_repo_read_head(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[
     )
 
     if not result.get("ok"):
-        return cast("dict[str, Any]", (result))
+        return result
 
     # Enhance result with clear status message for LLM understanding
     content = result.get("content", "")
@@ -228,7 +207,7 @@ def _handle_repo_read_head(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[
     result["status"] = "success"
     result["message"] = status_message
 
-    return cast("dict[str, Any]", (result))
+    return result
 
 
 def _handle_repo_read_tail(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str, Any]:
@@ -263,7 +242,7 @@ def _handle_repo_read_tail(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[
     # Read entire file and slice - this is a limitation
     result = _handle_read_file(self, file=file, start_line=1, end_line=9999999)
     if not result.get("ok"):
-        return cast("dict[str, Any]", (result))
+        return result
 
     # _handle_read_file returns content at top level, not nested in "result"
     content = result.get("content", "")
@@ -910,8 +889,6 @@ def _find_all_symbols_ts(content: str, language: str, max_results: int = 500) ->
     except ImportError:
         logger.debug("tree_sitter_language_pack not installed; symbols index unavailable")
         return []
-
-    from typing import cast
 
     try:
         parser = get_parser(cast("str", language))

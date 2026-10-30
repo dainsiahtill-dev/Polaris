@@ -201,23 +201,18 @@ class FactoryRoleEvidenceAuthorityPort:
 
     def _grant_hash(self, *, role: str, grant_nonce: str) -> str:
         authority = self._authority
-        return cast(
-            "str",
-            (
-                canonical_role_final_request_hash(
-                    {
-                        "schema_version": FACTORY_ROLE_EVIDENCE_EXECUTION_AUTHORITY_SCHEMA,
-                        "factory_run_id": authority.factory_run_id,
-                        "stage": authority.stage,
-                        "workspace_fencing_token": authority.workspace_fencing_token,
-                        "stage_claim_attempt": authority.stage_claim_attempt,
-                        "stage_claim_nonce": authority.stage_claim_nonce,
-                        "role": role,
-                        "attempt_budget": FACTORY_ROLE_EVIDENCE_ATTEMPT_BUDGET,
-                        "grant_nonce": grant_nonce,
-                    }
-                )
-            ),
+        return canonical_role_final_request_hash(
+            {
+                "schema_version": FACTORY_ROLE_EVIDENCE_EXECUTION_AUTHORITY_SCHEMA,
+                "factory_run_id": authority.factory_run_id,
+                "stage": authority.stage,
+                "workspace_fencing_token": authority.workspace_fencing_token,
+                "stage_claim_attempt": authority.stage_claim_attempt,
+                "stage_claim_nonce": authority.stage_claim_nonce,
+                "role": role,
+                "attempt_budget": FACTORY_ROLE_EVIDENCE_ATTEMPT_BUDGET,
+                "grant_nonce": grant_nonce,
+            }
         )
 
     def mint_authority_binding(self, role: str) -> FactoryRoleEvidenceAuthorityBindingV1:

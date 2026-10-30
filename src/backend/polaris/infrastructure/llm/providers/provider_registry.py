@@ -325,7 +325,7 @@ class ProviderManager:
         if provider_class:
             try:
                 result = provider_class.validate_config(config)
-                return cast("bool", (result.valid))
+                return result.valid
             except (RuntimeError, ValueError) as e:
                 logger.warning(
                     "Error validating config for %s: %s",
@@ -354,7 +354,7 @@ class ProviderManager:
         provider_class = self.get_provider_class(provider_type)
         if provider_class:
             try:
-                return cast("bool", (provider_class.supports_feature(feature)))
+                return provider_class.supports_feature(feature)
             except (RuntimeError, ValueError) as e:
                 logger.warning(
                     "Error checking feature support for %s: %s",

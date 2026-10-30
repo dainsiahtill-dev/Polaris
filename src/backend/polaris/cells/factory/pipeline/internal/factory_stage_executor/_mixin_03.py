@@ -220,7 +220,7 @@ class _Mixin03:
                 self.workspace,
                 task_id="factory-workspace-quality-post-execution-repair",
             )
-            return cast("list[dict[str, Any]]", (results))
+            return results
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             return [
                 {

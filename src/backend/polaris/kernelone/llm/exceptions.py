@@ -680,7 +680,7 @@ def is_retryable(error: Exception) -> bool:
         True if the error is retryable, False otherwise.
     """
     if isinstance(error, _LLMErrorType):
-        return cast("bool", (error.retryable))
+        return error.retryable
 
     # Default classifications for common exceptions
     error_str = str(error).lower()

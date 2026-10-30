@@ -466,21 +466,16 @@ class StreamEventProjector:
                 *tool_results,
             ]
         try:
-            return cast(
-                "dict[str, Any] | None",
-                (
-                    append_role_turn_task_boundary_verdict(
-                        role=self.role,
-                        workspace=str(self.request.workspace or self.kernel.workspace or "."),
-                        task_id=str(self.request.task_id or ""),
-                        run_id=str(self.request.run_id or turn_id),
-                        context_override=getattr(self.request, "context_override", None),
-                        tool_results=tool_results,
-                        tool_dispatch=tool_dispatch,
-                        needs_followup_workflow=bool(metadata.get("needs_followup_workflow")),
-                        evidence_refs=task_boundary_evidence_refs_from_metadata(metadata),
-                    )
-                ),
+            return append_role_turn_task_boundary_verdict(
+                role=self.role,
+                workspace=str(self.request.workspace or self.kernel.workspace or "."),
+                task_id=str(self.request.task_id or ""),
+                run_id=str(self.request.run_id or turn_id),
+                context_override=getattr(self.request, "context_override", None),
+                tool_results=tool_results,
+                tool_dispatch=tool_dispatch,
+                needs_followup_workflow=bool(metadata.get("needs_followup_workflow")),
+                evidence_refs=task_boundary_evidence_refs_from_metadata(metadata),
             )
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             run_id = str(self.request.run_id or turn_id)

@@ -148,20 +148,14 @@ def _get_http_pool() -> concurrent.futures.ThreadPoolExecutor:
     """Get or create the shared HTTP blocking pool."""
     from polaris.kernelone.concurrency import get_concurrency_manager
 
-    return cast(
-        "concurrent.futures.ThreadPoolExecutor",
-        (get_concurrency_manager().get_http_pool(max_workers=_MAX_HTTP_WORKERS)),
-    )
+    return get_concurrency_manager().get_http_pool(max_workers=_MAX_HTTP_WORKERS)
 
 
 def _get_sleep_pool() -> concurrent.futures.ThreadPoolExecutor:
     """Get or create the shared sleep pool."""
     from polaris.kernelone.concurrency import get_concurrency_manager
 
-    return cast(
-        "concurrent.futures.ThreadPoolExecutor",
-        (get_concurrency_manager().get_sleep_pool(max_workers=_MAX_SLEEP_WORKERS)),
-    )
+    return get_concurrency_manager().get_sleep_pool(max_workers=_MAX_SLEEP_WORKERS)
 
 
 # Backward compatibility: module-level pool references for external code that

@@ -7,7 +7,7 @@ import logging
 import re
 import time
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.context.context_os.budget_math import active_window_token_budget
 from polaris.kernelone.context.context_os.classifier import DialogActClassifier
@@ -88,7 +88,7 @@ def _extract_assistant_followup_action(text: str) -> str:
         action = re.sub(r"^[,\uFF0C\u3002:\uFF1A;\-\s]+", "", action).strip()
         action = re.sub(r"[?\uFF1F!\uFF01\u3002]+$", "", action).strip()
         if action:
-            return cast("str", (_trim_text(action, max_chars=220)))
+            return _trim_text(action, max_chars=220)
     return ""
 
 

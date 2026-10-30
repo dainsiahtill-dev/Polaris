@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import Mapping
-from typing import Any, cast
+from typing import Any
 
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
     DeliveryContract,
@@ -108,7 +108,7 @@ def is_refusal_response(response: RawLLMResponse) -> bool:
         is_refusal_response,
     )
 
-    return cast("bool", (is_refusal_response(response)))
+    return is_refusal_response(response)
 
 
 def inherit_materialize_from_history(
@@ -223,7 +223,7 @@ def classify_user_intent(message: str) -> str:
         classify_intent_regex,
     )
 
-    return cast("str", (classify_intent_regex(message)))
+    return classify_intent_regex(message)
 
 
 async def requires_mutation_intent_hybrid(message: str) -> bool:
@@ -242,7 +242,7 @@ async def requires_mutation_intent_hybrid(message: str) -> bool:
 
     explicit = leading_instruction_delivery_contract(message)
     if explicit is not None:
-        return cast("bool", (explicit.requires_mutation))
+        return explicit.requires_mutation
     if _is_negated_mutation(message):
         return False
 
@@ -268,7 +268,7 @@ def requires_mutation_intent(message: str) -> bool:
 
     explicit = leading_instruction_delivery_contract(message)
     if explicit is not None:
-        return cast("bool", (explicit.requires_mutation))
+        return explicit.requires_mutation
     if _is_negated_mutation(message):
         return False
     intent = classify_user_intent(message)

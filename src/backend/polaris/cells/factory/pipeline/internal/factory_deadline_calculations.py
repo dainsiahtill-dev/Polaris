@@ -367,7 +367,7 @@ def quality_gate_reserved_budget_seconds(context: dict[str, Any]) -> float:
     except (TypeError, ValueError):
         value = _QUALITY_GATE_RESERVED_BUDGET_SECONDS
     minimum = _QUALITY_GATE_MIN_START_BUDGET_SECONDS + _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS
-    return cast("float", (max(minimum, min(value, 600.0))))
+    return max(minimum, min(value, 600.0))
 
 
 def director_downstream_reserved_budget_seconds(
@@ -391,7 +391,7 @@ def director_downstream_reserved_budget_seconds(
     configured_reserve = quality_gate_reserved_budget_seconds(context)
     minimum_reserve = _QUALITY_GATE_MIN_START_BUDGET_SECONDS + _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS
     if materialization_pending and max(1, int(remaining_task_count)) > 1:
-        return cast("float", (min(configured_reserve, minimum_reserve)))
+        return min(configured_reserve, minimum_reserve)
     return configured_reserve
 
 
@@ -487,16 +487,11 @@ def chief_engineer_llm_timeout_seconds(context: dict[str, Any]) -> int:
             return value
 
     output_tokens = resolve_role_output_budget(context=context, requested=chief_engineer_structured_output_tokens())
-    return cast(
-        "int",
-        (
-            min(
-                MAX_LLM_PROVIDER_TIMEOUT_SECONDS,
-                max(
-                    _DEFAULT_CHIEF_ENGINEER_LLM_TIMEOUT_SECONDS,
-                    math.ceil(chief_engineer_generation_floor_seconds_for_output_tokens(output_tokens)),
-                ),
-            )
+    return min(
+        MAX_LLM_PROVIDER_TIMEOUT_SECONDS,
+        max(
+            _DEFAULT_CHIEF_ENGINEER_LLM_TIMEOUT_SECONDS,
+            math.ceil(chief_engineer_generation_floor_seconds_for_output_tokens(output_tokens)),
         ),
     )
 

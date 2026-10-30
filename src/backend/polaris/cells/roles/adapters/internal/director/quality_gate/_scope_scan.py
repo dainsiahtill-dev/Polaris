@@ -263,7 +263,7 @@ def _semantic_exporter_scope_discrepancy_evidence(
             "task_interface_contract_keys": sorted(str(key) for key in task_interface_contract),
         }
     )
-    return cast("dict[str, Any]", (receipt))
+    return receipt
 
 
 def _artifact_quality_issue_paths_by_raw(

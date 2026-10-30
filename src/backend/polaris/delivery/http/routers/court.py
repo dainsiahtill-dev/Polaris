@@ -54,14 +54,14 @@ def _get_engine_status(app_state: AppState) -> dict[str, Any] | None:
 
 async def _get_pm_status(app_state: AppState) -> dict[str, Any]:
     """构建 PM 状态."""
-    return cast("dict[str, Any]", (await build_pm_status_async(app_state)))
+    return await build_pm_status_async(app_state)
 
 
 async def _get_director_status(app_state: AppState) -> dict[str, Any]:
     """构建 Director 状态."""
     workspace = app_state.settings.workspace or DEFAULT_WORKSPACE
     cache_root = build_cache_root("", str(workspace))
-    return cast("dict[str, Any]", (await build_director_status(app_state, str(workspace), str(cache_root))))
+    return await build_director_status(app_state, str(workspace), str(cache_root))
 
 
 @router.get("/v2/court/topology", response_model=CourtTopologyResponse)
@@ -120,7 +120,7 @@ async def get_state_v2(
         director_status=director_status,
     )
 
-    return cast("dict[str, Any]", (court_state))
+    return court_state
 
 
 @router.get("/v2/court/actors/{role_id}", response_model=CourtActorResponse)

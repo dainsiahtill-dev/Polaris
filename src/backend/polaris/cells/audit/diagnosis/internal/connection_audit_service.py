@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from polaris.kernelone.audit import (
     KernelAuditEventType,
@@ -17,7 +17,7 @@ _logger = logging.getLogger(__name__)
 
 
 def _now_iso() -> str:
-    return cast("str", (utc_now_iso()))
+    return utc_now_iso()
 
 
 def _normalize_details(details: dict[str, Any] | None) -> dict[str, Any]:

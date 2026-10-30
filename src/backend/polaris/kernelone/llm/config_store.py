@@ -766,7 +766,7 @@ def llm_config_path(workspace: str, cache_root: str) -> str:
     env_path = str(os.environ.get("KERNELONE_LLM_CONFIG") or "").strip()
     if env_path:
         return os.path.abspath(os.path.expanduser(os.path.expandvars(env_path)))
-    return cast("str", (resolve_global_path("config/llm/llm_config.json")))
+    return resolve_global_path("config/llm/llm_config.json")
 
 
 def _load_json_payload(path: str) -> dict[str, Any]:
@@ -1193,7 +1193,7 @@ def redact_llm_config(payload: dict[str, Any]) -> dict[str, Any]:
 def resolve_workspace_cache_root(settings: Any) -> str:
     workspace = str(_setting(settings, "workspace", ".") or ".")
     ramdisk_root = str(_setting(settings, "ramdisk_root", "") or "")
-    return cast("str", (build_cache_root(ramdisk_root, workspace)))
+    return build_cache_root(ramdisk_root, workspace)
 
 
 def resolve_workspace_cache_root_for_workspace(
@@ -1202,4 +1202,4 @@ def resolve_workspace_cache_root_for_workspace(
     ramdisk_root: str | None = None,
 ) -> str:
     root = str(ramdisk_root).strip() if ramdisk_root is not None else _runtime_config.resolve_env_str("ramdisk_root")
-    return cast("str", (build_cache_root(root, str(workspace or "."))))
+    return build_cache_root(root, str(workspace or "."))

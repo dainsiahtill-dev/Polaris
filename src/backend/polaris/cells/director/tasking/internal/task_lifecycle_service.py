@@ -842,14 +842,14 @@ class TaskService:
         sm = self._state_machines.get(task_id)
         if not sm:
             return []
-        return cast("list[dict[str, Any]]", (sm.get_trajectory()))
+        return sm.get_trajectory()
 
     async def should_retry_task(self, task_id: str) -> bool:
         """Check if task should be retried based on verification."""
         sm = self._state_machines.get(task_id)
         if not sm:
             return False
-        return cast("bool", (sm.should_retry()))
+        return sm.should_retry()
 
     # ==============================================================================
     # Anti-Hallucination Verification
@@ -957,7 +957,7 @@ class TaskService:
     ) -> list[str]:
         """Get verification recommendations based on impact."""
         result = self._impact_analyzer.analyze(changed_files)
-        return cast("list[str]", (result.recommendations))
+        return result.recommendations
 
     # ==============================================================================
     # Evidence Collection
@@ -1084,7 +1084,7 @@ class TaskService:
         """Get task execution trajectory from state store."""
         sm = self._state_machines.get(task_id)
         if sm:
-            return cast("list[dict[str, Any]]", (sm.get_trajectory()))
+            return sm.get_trajectory()
         return self._state_store.load_trajectory(task_id)
 
     async def write_task_log(

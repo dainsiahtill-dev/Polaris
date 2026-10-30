@@ -6,7 +6,7 @@ capability profiles and adapts role execution accordingly.
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any
 
 from polaris.cells.roles.host.public.contracts import (
     HostCapabilityProfile,
@@ -46,15 +46,15 @@ class UnifiedHostAdapter:
 
     def supports_streaming(self) -> bool:
         """Whether this host supports streaming."""
-        return cast("bool", (self.get_profile().supports_streaming))
+        return self.get_profile().supports_streaming
 
     def supports_tool_async(self) -> bool:
         """Whether this host supports async tool execution."""
-        return cast("bool", (self.get_profile().supports_tool_async))
+        return self.get_profile().supports_tool_async
 
     def supports_file_write(self) -> bool:
         """Whether this host supports direct file system writes."""
-        return cast("bool", (self.get_profile().supports_file_write))
+        return self.get_profile().supports_file_write
 
     def get_execution_hints(self) -> dict[str, Any]:
         """Get execution hints for role runtime based on host capabilities.

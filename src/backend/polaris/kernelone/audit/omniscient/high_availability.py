@@ -209,7 +209,7 @@ class AuditStormDetector:
         Returns:
             True if in EMERGENCY state.
         """
-        return cast("bool", (self.get_level() == StormLevel.EMERGENCY))
+        return self.get_level() == StormLevel.EMERGENCY
 
     def should_skip_body(self) -> bool:
         """Check if event bodies should be skipped.

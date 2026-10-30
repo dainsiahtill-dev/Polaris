@@ -340,7 +340,7 @@ class RoleSessionService:
         if self.persistence is None:
             return False
         try:
-            return cast("bool", (self.persistence.persist_session(session)))
+            return self.persistence.persist_session(session)
         except (RuntimeError, ValueError) as e:
             logger.warning(
                 "Failed to persist session: id=%s, error=%s",
@@ -1054,7 +1054,7 @@ class RoleSessionService:
         self._require_writable()
         try:
             cleanup_service = _get_ttl_cleanup_service(self.workspace)
-            return cast("list[str]", (cleanup_service.cleanup_expired()))
+            return cleanup_service.cleanup_expired()
         except (RuntimeError, ValueError) as e:
             logger.warning(
                 "Failed to cleanup expired sessions: error=%s",

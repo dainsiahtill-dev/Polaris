@@ -96,10 +96,10 @@ class RecoveredTurnOutcomeV1:
 def query_prepared_turn_outcome(query: QueryPreparedTurnOutcomeV1) -> PreparedTurnOutcomeReferenceV1 | None:
     from polaris.cells.roles.kernel.internal.transaction.outcome_commit import find_prepared_turn_outcome
 
-    return cast("PreparedTurnOutcomeReferenceV1 | None", (find_prepared_turn_outcome(query)))
+    return find_prepared_turn_outcome(query)
 
 
 def replay_prepared_turn_outcome(command: ReplayPreparedTurnOutcomeCommandV1) -> RecoveredTurnOutcomeV1:
     from polaris.cells.roles.kernel.internal.transaction.outcome_commit import replay_prepared_outcome
 
-    return cast("RecoveredTurnOutcomeV1", (replay_prepared_outcome(command)))
+    return replay_prepared_outcome(command)

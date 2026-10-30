@@ -115,7 +115,7 @@ class ProcessRunResult:
 
     @property
     def ok(self) -> bool:
-        return cast("bool", (self.snapshot.ok))
+        return self.snapshot.ok
 
 
 class ExecutionFacade:

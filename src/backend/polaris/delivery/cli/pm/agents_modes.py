@@ -3,7 +3,7 @@
 import logging
 import os
 from datetime import datetime
-from typing import Any, cast
+from typing import Any
 
 from polaris.delivery.cli.pm.agents_helpers import _build_fallback, is_usable_agents_content
 from polaris.delivery.cli.pm.config import (
@@ -34,7 +34,7 @@ def resolve_manual_intervention_mode() -> str:
         .lower()
     )
     if raw not in MANUAL_INTERVENTION_MODES:
-        return cast("str", (DEFAULT_MANUAL_INTERVENTION_MODE))
+        return DEFAULT_MANUAL_INTERVENTION_MODE
     return raw
 
 

@@ -300,7 +300,7 @@ class MultiResolutionStore:
                         next_level.value,
                         multi_res.content_id[:8],
                     )
-                    return cast("str", (content))
+                    return content
             current_level = next_level
 
         # All resolutions evicted - return placeholder

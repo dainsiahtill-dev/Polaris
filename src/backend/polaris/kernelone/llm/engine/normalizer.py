@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any
 
 from polaris.kernelone.llm.response_parser import LLMResponseParser
 from polaris.kernelone.utils.json_utils import parse_json_payload
@@ -37,7 +37,7 @@ class ResponseNormalizer:
         can never silently diverge from (or drop reasoning relative to) the single
         authoritative parser.
         """
-        return cast("str", (LLMResponseParser.extract_text(payload)))
+        return LLMResponseParser.extract_text(payload)
 
     @classmethod
     def extract_reasoning(cls, payload: Any) -> str:
@@ -45,7 +45,7 @@ class ResponseNormalizer:
 
         DEFECT 2 SSoT: delegate to the canonical LLMResponseParser.
         """
-        return cast("str", (LLMResponseParser.extract_reasoning(payload)))
+        return LLMResponseParser.extract_reasoning(payload)
 
     @classmethod
     def extract_finish_reason(cls, payload: Any) -> str:
@@ -83,7 +83,7 @@ class ResponseNormalizer:
     @classmethod
     def extract_json_object(cls, text: str) -> dict[str, Any] | None:
         """从文本中提取 JSON 对象（委托给 parse_json_payload）"""
-        return cast("dict[str, Any] | None", (parse_json_payload(text)))
+        return parse_json_payload(text)
 
     @staticmethod
     def _first_choice(payload: dict[str, Any]) -> dict[str, Any] | None:

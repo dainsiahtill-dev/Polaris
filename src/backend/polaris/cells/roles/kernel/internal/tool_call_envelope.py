@@ -98,14 +98,9 @@ def native_tool_call_envelopes_from_response(
     if not raw_calls:
         return []
 
-    return cast(
-        "list[dict[str, Any]]",
-        (
-            build_native_tool_call_envelope_payloads(
-                raw_calls,
-                provider=native_tool_call_provider_from_metadata(metadata),
-            )
-        ),
+    return build_native_tool_call_envelope_payloads(
+        raw_calls,
+        provider=native_tool_call_provider_from_metadata(metadata),
     )
 
 

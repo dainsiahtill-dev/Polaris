@@ -359,7 +359,7 @@ class NATSBroker:
         """
         connected = self._bus_port.ensure_nats_connected()
         self._nats_connected = connected
-        return cast("bool", (connected))
+        return connected
 
     def disconnect_nats(self) -> None:
         """Disconnect from NATS (for graceful shutdown)."""
@@ -380,7 +380,7 @@ class NATSBroker:
         Returns:
             True if subscribed successfully
         """
-        return cast("bool", (self._bus_port.subscribe(topic)))
+        return self._bus_port.subscribe(topic)
 
     # ─── Internal Methods ─────────────────────────────────────────────────────
 
