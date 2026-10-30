@@ -403,7 +403,8 @@ def format_journal_events_compact(
         ts = evt.get("ts", evt.get("timestamp", ""))
         ts = format_relative_time(ts) if use_relative_time else (ts[11:19] if ts else "")
         evt_type = evt.get("kind", "unknown")
-        lines.append(f"{ts:12} [journal    ] {evt_type:20}")
+        actor = str(evt.get("actor") or "journal")[:12]
+        lines.append(f"{ts:12} [{actor:12}] {evt_type:20}")
 
     return "\n".join(lines)
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import tempfile
+import json
 from pathlib import Path
 
 from polaris.delivery.cli import router as cli_router
@@ -141,38 +141,27 @@ def test_build_director_task_handoff_message_contains_blueprint_context() -> Non
     assert "terminal/console.py" in handoff
 
 
-def test_route_console_passes_super_flag(monkeypatch) -> None:
-    captured: dict[str, object] = {}
+def test_route_console_super_flag_is_retired(capsys) -> None:
+    """Reopening the role console (super/session) is retired fail-closed."""
+    args = argparse.Namespace(
+        workspace=".",
+        role="director",
+        backend="auto",
+        session_id="",
+        session_title="",
+        prompt_style="plain",
+        omp_config="",
+        json_render="raw",
+        debug=False,
+        dry_run=False,
+        batch=False,
+        super=True,
+    )
 
-    def _fake_run_role_console(**kwargs):
-        captured.update(kwargs)
-        return 0
-
-    runtime_tmp_root = Path("runtime") / "pytest_workspaces"
-    runtime_tmp_root.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=runtime_tmp_root) as tmpdir:
-        tmp_path = Path(tmpdir)
-        monkeypatch.setattr(cli_router.WorkspaceGuard, "ensure_workspace", lambda _path: tmp_path)
-        monkeypatch.setattr("polaris.delivery.cli.terminal.run_role_console", _fake_run_role_console)
-
-        args = argparse.Namespace(
-            workspace=str(tmp_path),
-            role="director",
-            backend="auto",
-            session_id="",
-            session_title="",
-            prompt_style="plain",
-            omp_config="",
-            json_render="raw",
-            debug=False,
-            dry_run=False,
-            batch=False,
-            super=True,
-        )
-
-        exit_code = cli_router._route_console(args)
-        assert exit_code == 0
-        assert captured["super_mode"] is True
+    exit_code = cli_router._route_console(args)
+    assert exit_code == 1
+    body = json.loads(capsys.readouterr().out)
+    assert body["error_code"] == "legacy_engine_retired"
 
 
 def test_super_route_decision_pipeline_flags_for_full_pipeline() -> None:

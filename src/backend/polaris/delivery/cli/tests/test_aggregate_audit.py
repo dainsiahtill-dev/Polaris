@@ -30,41 +30,15 @@ async def test_build_aggregate_runtime_audit_package_plan_only(tmp_path) -> None
 
 
 @pytest.mark.asyncio
-async def test_build_aggregate_runtime_audit_package_lobe_chain_materializes(monkeypatch, tmp_path) -> None:
-    from polaris.cells.roles.runtime.public.service import RoleRuntimeService
-
-    captured: list[Any] = []
-
-    async def fake_stream_chat_turn(self, command):
-        captured.append((self, command))
-        yield {
-            "type": "fingerprint",
-            "profile_id": f"code.{command.role}",
-            "profile_hash": "hash",
-            "bundle_id": "bundle-code",
-            "bundle_version": "v1",
-            "run_id": "strategy-run",
-            "turn_index": 1,
-            "cognitive_strategy_override_applied": False,
-        }
-        yield {"type": "content_chunk", "content": "aggregate audit materialized"}
-
-    monkeypatch.setattr(RoleRuntimeService, "stream_chat_turn", fake_stream_chat_turn)
-
-    payload = await build_aggregate_runtime_audit_package(
-        workspace=str(tmp_path),
-        objective="Audit aggregate lobe chain.",
-        execution_mode="lobe_chain",
-        max_lobe_turns=1,
-    )
-
-    assert captured
-    assert payload["status"] == "PASS"
-    assert payload["execution_mode"] == "lobe_chain"
-    assert payload["runtime_materialization"]["executed"] is True
-    assert payload["runtime_materialization"]["executed_turns"] == 1
-    assert payload["runtime_materialization"]["all_unique_technology_ids_materialized"] is True
-    assert len(payload["runtime_materialization"]["runtime_integrations_wired"]) == 16
+async def test_build_aggregate_runtime_audit_package_lobe_chain_retired(tmp_path) -> None:
+    """Stateful aggregate execution is retired; only plan_only advice remains legal."""
+    with pytest.raises(RuntimeError, match="legacy_engine_retired"):
+        await build_aggregate_runtime_audit_package(
+            workspace=str(tmp_path),
+            objective="Audit aggregate lobe chain.",
+            execution_mode="lobe_chain",
+            max_lobe_turns=1,
+        )
 
 
 def test_write_audit_package_uses_utf8_json(tmp_path) -> None:
