@@ -1008,7 +1008,7 @@ async def test_b33_role_binding_fallback_refreezes_and_uses_new_exact_port() -> 
             return_value={},
         ),
         patch(
-            "polaris.cells.roles.kernel.internal.llm_caller.invoker._store_active_request_context_snapshot",
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._binding._store_active_request_context_snapshot",
             AsyncMock(),
         ),
         patch("polaris.cells.roles.kernel.internal.llm_caller.invoker.get_role_binding_override", return_value=None),
