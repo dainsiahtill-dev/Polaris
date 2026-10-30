@@ -401,7 +401,7 @@ class EngineeringSessionStore:
             raise PermissionError("context reference has no matching host role turn")
         prepared = connection.execute(
             "SELECT payload FROM events WHERE session_id=? AND kind='request_prepared' AND role=? "
-            "AND seq>? AND json_extract(payload,'$.turn_seq')=? ORDER BY seq LIMIT 2",
+            "AND seq>? AND json_valid(payload) AND json_extract(payload,'$.turn_seq')=? ORDER BY seq LIMIT 2",
             (session_id, role, turn_seq, turn_seq),
         ).fetchall()
         if len(prepared) > 1:
@@ -1376,7 +1376,8 @@ def query_resource_state(
             for call in started:
                 events = connection.execute(
                     "SELECT payload FROM events WHERE session_id=? AND kind='tool_reconciled' "
-                    "AND json_extract(payload,'$.turn_seq')=? AND json_extract(payload,'$.call_id')=? LIMIT 2",
+                    "AND json_valid(payload) AND json_extract(payload,'$.turn_seq')=? "
+                    "AND json_extract(payload,'$.call_id')=? LIMIT 2",
                     (call["session_id"], call["turn_seq"], call["call_id"]),
                 ).fetchall()
                 payload = json.loads(events[0]["payload"]) if len(events) == 1 else None

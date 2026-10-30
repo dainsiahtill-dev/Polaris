@@ -230,6 +230,9 @@ def test_native_capture_ignores_auxiliary_payload_but_preserves_python_turn_iden
             "workspace": str(isolated_workspace),
             "engine_version": "engineering_v2",
             "turn_seq": turn,
+            # The corrupted auxiliary request_prepared payload carries no trusted
+            # call_id, so the host falls back to its deterministic turn identity.
+            "call_id": f"{SESSION_ID}:director:{turn}",
         },
     )
     for wrong_turn, wrong_role in ((str(turn), "director"), (turn, "qa")):
