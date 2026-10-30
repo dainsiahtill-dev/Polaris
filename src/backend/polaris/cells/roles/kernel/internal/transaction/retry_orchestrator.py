@@ -125,6 +125,24 @@ _CIRCUIT_OPEN_REMAINING_RE = re.compile(r"circuit_open:(\d+)s_remaining")
 _MAX_CIRCUIT_OPEN_WAIT_SECONDS = 90.0
 
 
+
+
+def _bootstrap_tool_names(decision: Any) -> set[str]:
+    """Tool names the emitted bootstrap batch will actually execute.
+
+    The bootstrap-read path may switch in after attempts were narrowed to the
+    strict write surface; the emitted (safety-validated) read invocations must
+    remain admissible or the bootstrap can never pass its own surface check.
+    """
+    names: set[str] = set()
+    for invocation in _extract_decision_invocations(decision):
+        if isinstance(invocation, Mapping):
+            name = str(invocation.get("tool_name") or "").strip()
+        else:
+            name = str(getattr(invocation, "tool_name", "") or "").strip()
+        if name:
+            names.add(name)
+    return names
 def _is_transient_llm_provider_exception(exc: BaseException) -> bool:
     if isinstance(exc, (ConnectionError, TimeoutError)):
         return True
@@ -984,7 +1002,7 @@ class RetryOrchestrator:
                             attempt_index + 1,
                         )
                         candidate_bootstrap_decision = bootstrap_decision
-                        candidate_bootstrap_allowed_tools = set(attempt_allowed_tool_names)
+                        candidate_bootstrap_allowed_tools = set(attempt_allowed_tool_names) | _bootstrap_tool_names(candidate_bootstrap_decision)
                         break
                 if not is_mutation_contract_violation(retry_exc):
                     raise
@@ -1001,7 +1019,7 @@ class RetryOrchestrator:
                         attempt_index + 1,
                     )
                     candidate_bootstrap_decision = retry_decision
-                    candidate_bootstrap_allowed_tools = set(attempt_allowed_tool_names)
+                    candidate_bootstrap_allowed_tools = set(attempt_allowed_tool_names) | _bootstrap_tool_names(candidate_bootstrap_decision)
                     break
                 if escalated_definitions is not None and not any(
                     name in ACTIVE_WRITE_TOOLS for name in retry_tool_names

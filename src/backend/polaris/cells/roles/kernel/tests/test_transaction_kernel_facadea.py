@@ -671,18 +671,18 @@ async def test_execute_tool_batch_rejects_readonly_batch_for_mutation_request() 
         tool_runtime=AsyncMock(return_value={}),
         config=TransactionConfig(domain="code", mutation_guard_mode="strict"),
     )
+    read_invocation = {
+        "call_id": "call_readme",
+        "tool_name": "read_file",
+        "arguments": {"file": "README.md"},
+    }
     decision = {
         "turn_id": "turn_contract_guard",
         "metadata": {"workspace": "."},
         "tool_batch": {
             "batch_id": "batch_contract_guard",
-            "invocations": [
-                {
-                    "call_id": "call_readme",
-                    "tool_name": "read_file",
-                    "arguments": {"file": "README.md"},
-                }
-            ],
+            "invocations": [read_invocation],
+            "parallel_readonly": [read_invocation],
         },
     }
     state_machine = TurnStateMachine(turn_id="turn_contract_guard")
@@ -702,20 +702,20 @@ async def test_execute_tool_batch_rejects_write_target_drift_for_explicit_mutati
         tool_runtime=AsyncMock(return_value={}),
         config=TransactionConfig(domain="code", mutation_guard_mode="strict"),
     )
+    write_invocation = {
+        "call_id": "call_write",
+        "tool_name": "write_file",
+        "arguments": {"file": "game.py", "content": "print('x')"},
+        "effect_type": ToolEffectType.WRITE.value,
+        "execution_mode": ToolExecutionMode.WRITE_SERIAL.value,
+    }
     decision = {
         "turn_id": "turn_target_guard",
         "metadata": {"workspace": "."},
         "tool_batch": {
             "batch_id": "batch_target_guard",
-            "invocations": [
-                {
-                    "call_id": "call_write",
-                    "tool_name": "write_file",
-                    "arguments": {"file": "game.py", "content": "print('x')"},
-                    "effect_type": ToolEffectType.WRITE,
-                    "execution_mode": ToolExecutionMode.WRITE_SERIAL,
-                }
-            ],
+            "invocations": [write_invocation],
+            "serial_writes": [write_invocation],
         },
     }
     state_machine = TurnStateMachine(turn_id="turn_target_guard")
@@ -1691,8 +1691,8 @@ async def test_retry_tool_batch_stream_escalates_without_single_tool_lock(monkey
     assert result["kind"] == "tool_batch_with_receipt"
     assert stream_calls == 2
     assert non_stream_calls == 0
-    assert execute_allowed_names[0] == {"read_file", "list_directory", "edit_file"}
-    assert execute_allowed_names[1] == {"read_file", "list_directory", "edit_file"}
+    assert execute_allowed_names[0] == {"edit_file", "read_file", "repo_tree"}
+    assert execute_allowed_names[1] == {"edit_file", "read_file", "repo_tree"}
 
 
 @pytest.mark.asyncio
@@ -1764,6 +1764,7 @@ async def test_retry_stale_edit_violation_switches_to_bootstrap_read_path(monkey
         workspace,
         tool_batch,
         ledger,
+        allowed_tool_names=None,
     ):
         captured["bootstrap_turn_id"] = turn_id
         captured["bootstrap_workspace"] = workspace
@@ -1932,6 +1933,7 @@ async def test_retry_bootstrap_scaffold_followup_forces_write_file(monkeypatch) 
         workspace,
         tool_batch,
         ledger,
+        allowed_tool_names=None,
     ):
         del turn_id, workspace, tool_batch, ledger
         return {
@@ -2067,6 +2069,7 @@ async def test_retry_bootstrap_existing_edit_blocks_followup_keeps_write_file_co
         workspace: str,
         tool_batch: Any,
         ledger: Any,
+        allowed_tool_names: set[str] | None = None,
     ) -> dict[str, object]:
         del turn_id, workspace, tool_batch, ledger
         return {
@@ -2223,6 +2226,7 @@ async def test_retry_known_target_requires_read_switches_to_context_bootstrap(mo
         workspace,
         tool_batch,
         ledger,
+        allowed_tool_names=None,
     ):
         captured["bootstrap_turn_id"] = turn_id
         captured["bootstrap_workspace"] = workspace
