@@ -96,7 +96,28 @@ class _AsyncSession:
         self.closed = True
 
 
-class _RecordingStreamDispatchPort:
+class _AsyncDispatchSentinel:
+    """Fail when a test takes an async transport branch it did not declare."""
+
+    async def dispatch_async(self, *, wire_request: Mapping[str, Any], send: Callable[[Mapping[str, Any]], Any]) -> Any:
+        raise AssertionError("Unexpected async JSON dispatch")
+
+    async def dispatch_blocking_async(
+        self, *, wire_request: Mapping[str, Any], send: Callable[[Mapping[str, Any]], Any]
+    ) -> Any:
+        raise AssertionError("Unexpected async blocking dispatch")
+
+    def dispatch_stream_async(
+        self,
+        *,
+        wire_request: Mapping[str, Any],
+        open_stream: Callable[[Mapping[str, Any]], Any],
+        consume: Callable[[Any], AsyncIterator[Any]],
+    ) -> AsyncIterator[Any]:
+        raise AssertionError("Unexpected async stream dispatch")
+
+
+class _RecordingStreamDispatchPort(_AsyncDispatchSentinel):
     def __init__(self) -> None:
         self.wire_requests: list[Mapping[str, Any]] = []
 
@@ -117,7 +138,7 @@ class _RecordingStreamDispatchPort:
         return _dispatch()
 
 
-class _RecordingAsyncDispatchPort:
+class _RecordingAsyncDispatchPort(_AsyncDispatchSentinel):
     def __init__(self) -> None:
         self.wire_requests: list[Mapping[str, Any]] = []
 
@@ -140,7 +161,7 @@ def _assert_single_governed_post(
     assert len(port.wire_requests) == 1
     assert len(raw_posts) == 1
     wire = port.wire_requests[0]
-    assert wire["transport"]["kind"] == "requests.post"
+    assert wire["transport"]["kind"] == "aiohttp.ClientSession.post"
     assert raw_posts[0]["json"] == wire["body"]
     if "model" in wire["body"]:
         assert wire["body"]["model"] == expected_model
@@ -160,7 +181,7 @@ def test_gemini_direct_invoke_crosses_bound_physical_dispatch(
         raw_posts.append(kwargs)
         return _JsonResponse(sample_gemini_response)
 
-    monkeypatch.setattr("requests.post", _post)
+    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post", _post)
     with bind_physical_provider_dispatch_port(port):
         result = GeminiAPIProvider().invoke("hello", "gemini-1.5-pro", gemini_api_config)
 
@@ -180,7 +201,7 @@ def test_ollama_direct_invoke_crosses_bound_physical_dispatch(
         raw_posts.append(kwargs)
         return _JsonResponse(sample_ollama_response)
 
-    monkeypatch.setattr("requests.post", _post)
+    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post", _post)
     with bind_physical_provider_dispatch_port(port):
         result = OllamaProvider().invoke("hello", "llama2", ollama_config)
 
@@ -204,7 +225,7 @@ def test_minimax_direct_invoke_crosses_bound_physical_dispatch(
         raw_posts.append(kwargs)
         return _JsonResponse(payload)
 
-    monkeypatch.setattr("requests.post", _post)
+    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post", _post)
     with bind_physical_provider_dispatch_port(port):
         result = MiniMaxProvider().invoke("hello", "MiniMax-M2.1", minimax_config)
 
@@ -354,7 +375,7 @@ async def test_gemini_stream_to_thread_preserves_bound_sync_dispatch(
         raw_posts.append(kwargs)
         return _JsonResponse(sample_gemini_response)
 
-    monkeypatch.setattr("requests.post", _post)
+    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post", _post)
     with bind_physical_provider_dispatch_port(port):
         chunks = [
             item async for item in GeminiAPIProvider().invoke_stream("hello", "gemini-1.5-pro", gemini_api_config)
@@ -377,7 +398,7 @@ async def test_ollama_stream_to_thread_preserves_bound_sync_dispatch(
         raw_posts.append(kwargs)
         return _JsonResponse(sample_ollama_response)
 
-    monkeypatch.setattr("requests.post", _post)
+    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post", _post)
     with bind_physical_provider_dispatch_port(port):
         chunks = [item async for item in OllamaProvider().invoke_stream("hello", "llama2", ollama_config)]
 

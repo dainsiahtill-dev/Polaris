@@ -47,7 +47,7 @@ class TestOllamaProviderHappyPath:
         mock_resp.raise_for_status.return_value = None
 
         monkeypatch.setattr(
-            "requests.post",
+            "polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post",
             lambda _url, **kwargs: mock_resp,
         )
 
@@ -79,7 +79,7 @@ class TestOllamaProviderHappyPath:
         mock_resp.raise_for_status.return_value = None
 
         monkeypatch.setattr(
-            "requests.post",
+            "polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post",
             lambda _url, **kwargs: mock_resp,
         )
 
@@ -221,7 +221,7 @@ class TestOllamaProviderEdgeCases:
         mock_resp.raise_for_status.return_value = None
 
         monkeypatch.setattr(
-            "requests.post",
+            "polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post",
             lambda _url, **kwargs: mock_resp,
         )
 
@@ -253,7 +253,7 @@ class TestOllamaProviderEdgeCases:
         mock_resp.raise_for_status.return_value = None
 
         monkeypatch.setattr(
-            "requests.post",
+            "polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post",
             lambda _url, **kwargs: mock_resp,
         )
 
@@ -327,7 +327,7 @@ class TestOllamaProviderExceptions:
         mock_resp.raise_for_status.side_effect = requests.HTTPError("500 Server Error")
 
         monkeypatch.setattr(
-            "requests.post",
+            "polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post",
             lambda _url, **kwargs: mock_resp,
         )
 
@@ -354,7 +354,7 @@ class TestOllamaProviderExceptions:
             raise requests.ConnectionError("Connection refused")
 
         monkeypatch.setattr(
-            "requests.post",
+            "polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post",
             _mock_post,
         )
 
@@ -428,7 +428,7 @@ class TestOllamaProviderExceptions:
         mock_resp.raise_for_status.return_value = None
 
         monkeypatch.setattr(
-            "requests.post",
+            "polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post",
             lambda _url, **kwargs: mock_resp,
         )
 
@@ -453,7 +453,7 @@ class TestOllamaProviderExceptions:
         mock_resp.raise_for_status.side_effect = RuntimeError("429 Rate Limited")
 
         monkeypatch.setattr(
-            "requests.post",
+            "polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post",
             lambda _url, **kwargs: mock_resp,
         )
 
