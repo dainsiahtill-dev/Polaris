@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +55,15 @@ def merge_headers(base: dict[str, str] | None = None, extra: dict[str, Any] | No
 # SSRF protection
 # ----------------------------------------------------------------------
 
-# RFC 1918 private blocks + link-local + loopback (CIDR notation)
-_BLOCKED_NETWORKS: list[tuple[str, int]] = [
+_PRIVATE_NETWORKS: list[tuple[str, int]] = [
     ("10.0.0.0", 8),  # RFC 1918: 10.0.0.0/8
     ("172.16.0.0", 12),  # RFC 1918: 172.16.0.0/12
     ("192.168.0.0", 16),  # RFC 1918: 192.168.0.0/16
+]
+
+# RFC 1918 private blocks + link-local + loopback (CIDR notation)
+_BLOCKED_NETWORKS: list[tuple[str, int]] = [
+    *_PRIVATE_NETWORKS,
     ("169.254.0.0", 16),  # RFC 3927: link-local (AWS metadata 169.254.169.254)
     ("127.0.0.0", 8),  # RFC 1122: loopback
 ]
@@ -78,12 +82,16 @@ def _is_blocked_ip(ip_str: str) -> bool:
     return False
 
 
-def validate_base_url_for_ssrf(base_url: str, allow_localhost: bool = False) -> tuple[bool, str]:
+def validate_base_url_for_ssrf(
+    base_url: str, allow_localhost: bool = False, *, allowed_private_hosts: Sequence[str] = ()
+) -> tuple[bool, str]:
     """Validate that *base_url* does not point to an internal network (SSRF guard).
 
     Args:
         base_url: URL to validate.
         allow_localhost: If True, localhost/127.0.0.1/::1 are permitted (development use).
+        allowed_private_hosts: Operator-authorized RFC 1918 IPv4 literals. An
+            exact host match permits HTTP/HTTPS, never metadata or loopback.
 
     Returns:
         (True, "") when the URL is safe.
@@ -93,8 +101,33 @@ def validate_base_url_for_ssrf(base_url: str, allow_localhost: bool = False) -> 
     if not base_url:
         return False, "base_url cannot be empty"
 
+    if not isinstance(allowed_private_hosts, (list, tuple)):
+        return False, "allowed_private_hosts must be a list or tuple of private IP literals"
+    for allowed_host in allowed_private_hosts:
+        try:
+            if not isinstance(allowed_host, str):
+                return False, "allowed_private_hosts entries must be private IP literals"
+            address = ipaddress.ip_address(allowed_host)
+        except ValueError:
+            return False, "allowed_private_hosts entries must be private IP literals"
+        if not any(address in ipaddress.ip_network(f"{start}/{prefix}") for start, prefix in _PRIVATE_NETWORKS):
+            return False, "allowed_private_hosts entries must be RFC 1918 IPv4 literals"
+
     stripped = base_url.strip()
     lower_stripped = stripped.lower()
+
+    if allowed_private_hosts:
+        try:
+            parsed = urlparse(stripped)
+            host = parsed.hostname or ""
+            if host in allowed_private_hosts and parsed.scheme in {"http", "https"}:
+                if parsed.username is not None or parsed.password is not None:
+                    return False, "Private endpoint URLs must not contain credentials"
+                if parsed.port is not None and not 1 <= parsed.port <= 65535:
+                    return False, "Private endpoint URL has an invalid port"
+                return True, ""
+        except ValueError as error:
+            return False, f"Invalid private endpoint URL: {error}"
 
     # Scheme check
     if lower_stripped.startswith("http://"):

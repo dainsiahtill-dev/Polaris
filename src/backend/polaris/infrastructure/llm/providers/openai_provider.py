@@ -16,7 +16,7 @@ from polaris.kernelone.llm.providers import (
     ProviderConfigValidationResult,
     ProviderInfo,
 )
-from polaris.kernelone.llm.providers.stream_thinking_parser import StreamThinkingParser
+from polaris.kernelone.llm.providers.stream_thinking_parser import ChunkKind, StreamThinkingParser
 from polaris.kernelone.llm.response_parser import LLMResponseParser
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelListResult, Usage
 from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
@@ -406,7 +406,7 @@ def _extract_tokens_from_openai_stream_event(
         for think_kind, parsed in think_parser.feed_sync(text):
             if not parsed:
                 continue
-            if think_kind == "thinking":
+            if think_kind == ChunkKind.THINKING:
                 out.append(f"{THINKING_PREFIX}{parsed}")
             else:
                 out.append(parsed)
@@ -504,10 +504,17 @@ class OpenAIProvider(BaseProvider):
         warnings: list[str] = []
         normalized = dict(config)
 
+        allowed_private_hosts = config.get("allowed_private_hosts", [])
+        if not isinstance(allowed_private_hosts, list) or any(
+            not isinstance(host, str) for host in allowed_private_hosts
+        ):
+            errors.append("allowed_private_hosts must be a list of private IP literals")
+            allowed_private_hosts = []
+
         base_url = normalize_base_url(str(config.get("base_url") or ""))
         if base_url:
             normalized["base_url"] = base_url
-            is_safe, reason = validate_base_url_for_ssrf(base_url)
+            is_safe, reason = validate_base_url_for_ssrf(base_url, allowed_private_hosts=allowed_private_hosts)
             if not is_safe:
                 errors.append(f"SSRF check failed: {reason}")
 
@@ -524,6 +531,12 @@ class OpenAIProvider(BaseProvider):
             warnings.append("models_path is empty; model listing may fail")
         else:
             normalized["models_path"] = models_path
+
+        for field_name, action_path in (("api_path", api_path), ("models_path", models_path)):
+            if action_path.lower().startswith(("http://", "https://")):
+                is_safe, reason = validate_base_url_for_ssrf(action_path, allowed_private_hosts=allowed_private_hosts)
+                if not is_safe:
+                    errors.append(f"{field_name} SSRF check failed: {reason}")
 
         timeout = config.get("timeout", 60)
         if not isinstance(timeout, (int, float)):
@@ -662,10 +675,10 @@ class OpenAIProvider(BaseProvider):
             for kind, text in think_parser.flush():
                 if not text:
                     continue
-                if kind == "thinking":
+                if kind == ChunkKind.THINKING:
                     if not has_seen_native_reasoning:
                         yield f"{THINKING_PREFIX}{text}"
-                elif kind == "answer":
+                elif kind == ChunkKind.TEXT:
                     yield text
                 else:
                     yield text

@@ -8,15 +8,143 @@ Covers:
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from polaris.infrastructure.llm.providers.http_utils import validate_base_url_for_ssrf
 from polaris.infrastructure.llm.providers.openai_provider import (
     OpenAIProvider,
+    _extract_tokens_from_openai_stream_event,
 )
 from polaris.kernelone.llm.providers import THINKING_PREFIX
+from polaris.kernelone.llm.providers.stream_thinking_parser import StreamThinkingParser
 from polaris.kernelone.llm.types import InvokeResult
+
+
+class TestExplicitPrivateEndpoints:
+    """An operator may authorize exact LAN IPs without disabling SSRF checks."""
+
+    @pytest.mark.parametrize("allowed", ["192.168.10.170", {"192.168.10.17": False}, [True]])
+    def test_shared_validator_rejects_malformed_allowlist(self, allowed: Any) -> None:
+        valid, _reason = validate_base_url_for_ssrf("http://192.168.10.17:18020/v1", allowed_private_hosts=allowed)
+        assert not valid
+
+    @pytest.mark.parametrize("host", ["*", "127.0.0.1", "169.254.169.254", "example.com", "not-an-ip"])
+    def test_allowlist_rejects_non_private_literals_even_for_public_endpoint(self, host: str) -> None:
+        result = OpenAIProvider.validate_config(
+            {
+                "base_url": "https://api.example.com/v1",
+                "api_path": "/v1/chat/completions",
+                "allowed_private_hosts": [host],
+            }
+        )
+        assert not result.valid
+
+    @pytest.mark.parametrize("host", ["10.20.30.40", "172.20.10.2", "192.168.10.17"])
+    @pytest.mark.parametrize("scheme", ["http", "https"])
+    def test_explicit_private_host_is_accepted(self, host: str, scheme: str) -> None:
+        result = OpenAIProvider.validate_config(
+            {
+                "base_url": f"{scheme}://{host}:18020/v1",
+                "api_path": "/v1/chat/completions",
+                "allowed_private_hosts": [host],
+            }
+        )
+        assert result.valid, result.errors
+
+    @pytest.mark.parametrize(
+        ("url", "allowed"),
+        [
+            ("http://192.168.10.17:18020/v1", []),
+            ("https://192.168.10.17:18020/v1", []),
+            ("http://192.168.10.18:18020/v1", ["192.168.10.17"]),
+            ("http://169.254.169.254/latest", ["169.254.169.254"]),
+            ("https://169.254.169.254/latest", ["169.254.169.254"]),
+            ("http://127.0.0.1:18020/v1", ["127.0.0.1"]),
+            ("https://[::1]:18020/v1", ["::1"]),
+            ("http://192.168.10.17.example.com/v1", ["192.168.10.17"]),
+            ("http://8.8.8.8/v1", ["8.8.8.8"]),
+            ("ftp://192.168.10.17/v1", ["192.168.10.17"]),
+            ("http://user:pass@192.168.10.17:18020/v1", ["192.168.10.17"]),
+            ("http://192.168.10.17:bad/v1", ["192.168.10.17"]),
+            ("http://192.168.10.17:70000/v1", ["192.168.10.17"]),
+            ("http://192.168.10.17:0/v1", ["192.168.10.17"]),
+        ],
+    )
+    def test_private_host_authorization_remains_bounded(self, url: str, allowed: list[str]) -> None:
+        result = OpenAIProvider.validate_config(
+            {"base_url": url, "api_path": "/v1/chat/completions", "allowed_private_hosts": allowed}
+        )
+        assert not result.valid
+
+    @pytest.mark.parametrize("allowed", [True, "192.168.10.17", [True], {"192.168.10.17": True}])
+    def test_private_allowlist_must_be_an_explicit_string_list(self, allowed: Any) -> None:
+        result = OpenAIProvider.validate_config(
+            {
+                "base_url": "http://192.168.10.17:18020/v1",
+                "api_path": "/v1/chat/completions",
+                "allowed_private_hosts": allowed,
+            }
+        )
+        assert not result.valid
+        assert any("allowed_private_hosts" in error for error in result.errors)
+
+    @pytest.mark.parametrize("field", ["api_path", "models_path"])
+    def test_absolute_action_url_cannot_bypass_private_host_policy(self, field: str) -> None:
+        config: dict[str, Any] = {
+            "base_url": "http://192.168.10.17:18020/v1",
+            "api_path": "/v1/chat/completions",
+            "allowed_private_hosts": ["192.168.10.17"],
+            field: "http://169.254.169.254/latest",
+        }
+        result = OpenAIProvider.validate_config(config)
+        assert not result.valid
+        assert any(field in error for error in result.errors)
+
+    @pytest.mark.parametrize("field", ["api_path", "models_path"])
+    def test_absolute_authorized_private_action_url_is_accepted(self, field: str) -> None:
+        config: dict[str, Any] = {
+            "base_url": "http://192.168.10.17:18020/v1",
+            "api_path": "/v1/chat/completions",
+            "allowed_private_hosts": ["192.168.10.17"],
+            field: "http://192.168.10.17:18020/v1/chat/completions",
+        }
+        result = OpenAIProvider.validate_config(config)
+        assert result.valid, result.errors
+
+
+def test_inline_thinking_stream_stays_separate_from_answer() -> None:
+    tokens, native = _extract_tokens_from_openai_stream_event(
+        {"choices": [{"delta": {"content": "<think>private thought</think>Visible answer"}}]},
+        think_parser=StreamThinkingParser(),
+        has_seen_native_reasoning=False,
+    )
+    assert native is False
+    assert f"{THINKING_PREFIX}private thought" in tokens
+    assert "private thought" not in tokens
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("<think>private thought</think>Visible answer", [f"{THINKING_PREFIX}private thought", "Visible answer"]),
+        ("<think>unfinished thought", [f"{THINKING_PREFIX}unfinished thought"]),
+        ("Visible answer", ["Visible answer"]),
+    ],
+)
+async def test_stream_flush_preserves_thinking_boundary(
+    monkeypatch: pytest.MonkeyPatch, content: str, expected: list[str]
+) -> None:
+    async def events(
+        self: OpenAIProvider, prompt: str, model: str, config: dict[str, Any]
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        yield {"choices": [{"delta": {"content": content}}]}
+
+    monkeypatch.setattr(OpenAIProvider, "invoke_stream_events", events)
+    tokens = [token async for token in OpenAIProvider().invoke_stream("hello", "local-model", {})]
+    assert tokens == expected
 
 
 class TestOpenAIProviderHappyPath:
