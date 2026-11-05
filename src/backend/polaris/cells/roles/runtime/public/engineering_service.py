@@ -11,11 +11,11 @@ import subprocess
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractContextManager
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, TypeVar, cast
 
 from polaris.cells.roles.runtime.internal.engineering_session import (
     EngineeringSessionConflictError as EngineeringSessionConflictError,
@@ -31,6 +31,7 @@ from polaris.cells.roles.runtime.public.contracts.engineering_run import (
     RunLimits,
     ToolObservation,
 )
+from polaris.kernelone.concurrency import get_concurrency_manager
 from polaris.kernelone.events.final_request_evidence import ContextSnapshotReferenceOwnerV1
 from polaris.kernelone.exceptions import PathSecurityError
 from polaris.kernelone.llm.engine import ContextSnapshotAuditPinRepository
@@ -44,6 +45,31 @@ from polaris.kernelone.storage import resolve_workspace_runtime_identity
 
 _TERMINAL = frozenset({"completed", "failed", "cancelled", "interrupted"})
 logger = logging.getLogger(__name__)
+_ObservationT = TypeVar("_ObservationT")
+
+
+async def _observe_in_io(observation: Callable[[], _ObservationT]) -> _ObservationT:
+    """Keep fresh readonly observations off the loop, owned until drained."""
+    context = copy_context()
+    future = asyncio.get_running_loop().run_in_executor(
+        get_concurrency_manager().get_io_pool(), context.run, observation
+    )
+    try:
+        return await asyncio.shield(future)
+    except asyncio.CancelledError:
+        # Cancelling an executor Future cannot stop its running callable. Keep
+        # ownership until it finishes; never release a candidate while an old
+        # observation is still traversing its inputs.
+        while not future.done():
+            try:
+                await asyncio.shield(future)
+            except asyncio.CancelledError:
+                continue
+            except Exception:  # noqa: BLE001 - report the completed drain error below.
+                break
+        if not future.cancelled() and (error := future.exception()) is not None:
+            logger.warning("Candidate observation failed while cancellation drained: %s", error)
+        raise
 
 
 class _NativeEngineProvider(AIExecutor):
@@ -286,7 +312,7 @@ class EngineeringRunService:
         if context.get("engine_version") != self.engine_version or row["engine_version"] != self.engine_version:
             raise ValueError("native request observation engine mismatch")
         turn_seq = context.get("turn_seq")
-        if not any(
+        if type(turn_seq) is not int or not any(
             event["seq"] == turn_seq and event["kind"] == "turn_started" and event["role"] == request.role
             for event in self.store.load_events(session_id, kinds=("turn_started",), role=request.role)
         ):
@@ -303,6 +329,8 @@ class EngineeringRunService:
             payload["snapshot_status"] = "invalid_reference"
         elif payload.get("snapshot_status") == "available":
             try:
+                if not isinstance(reference, str):
+                    raise ValueError("available native context has no snapshot reference")
                 expected = self._reference_owner(
                     session_id, str(request.role), turn_seq, str(payload.get("provider_request_id") or ""), host_call_id
                 )
@@ -1177,7 +1205,11 @@ class EngineeringRunService:
             raise self._shutdown_error
 
     async def cancel(self, session_id: str, *, workspace: Path) -> None:
-        row = self.observe(session_id, workspace=workspace)
+        # Stopping effects does not require certifying the candidate. In
+        # particular, an unavailable or large input tree must not delay the
+        # cancellation signal. Public reads still validate acceptance afresh.
+        self._assert_workspace(workspace)
+        row = self.store.load_run(session_id, workspace=self.workspace)
         task = self._tasks.get(session_id)
         if task is None:
             if row["status"] in _TERMINAL:
@@ -1200,7 +1232,7 @@ class EngineeringRunService:
 
     async def resume(self, session_id: str, *, workspace: Path) -> str:
         self._publication_loop = asyncio.get_running_loop()
-        row = self.observe(session_id, workspace=workspace)
+        row = await _observe_in_io(partial(self.observe, session_id, workspace=workspace))
         if row["engine_version"] != self.engine_version:
             raise ValueError("engineering run cannot change engine version on resume")
         from polaris.cells.roles.runtime.internal.engineering_execution_policy import resolve_execution_policy
@@ -1438,8 +1470,9 @@ class EngineeringRunService:
             verifier = self._verification(scope, limits, cancel, output_roots=self._saved_outputs(current))
             if pending_review is not None:
                 resume_review = (
-                    pending_review["payload"].get("input_binding") == verifier.review_binding(command.session_id)
-                    and verifier.current_verification(command.session_id) == "passed"
+                    pending_review["payload"].get("input_binding")
+                    == await _observe_in_io(partial(verifier.review_binding, command.session_id))
+                    and await _observe_in_io(partial(verifier.current_verification, command.session_id)) == "passed"
                 )
                 pending_review = None
             commands = tuple(current["verification_commands"])
@@ -1452,7 +1485,7 @@ class EngineeringRunService:
                 and event["payload"].get("input_binding", {}).get("requested_by") is not None
                 for event in history
             )
-            completed = verifier.current_completed_result(command.session_id)
+            completed = await _observe_in_io(partial(verifier.current_completed_result, command.session_id))
             if resume_review or completed is not None:
                 checks = tuple(ToolObservation(**check) for check in current["checks"])
             else:
@@ -1507,7 +1540,7 @@ class EngineeringRunService:
             row = self.store.load_run(command.session_id, workspace=self.workspace)
             verification = row["verification"]
             if verification == "passed":
-                verification = verifier.current_verification(command.session_id)
+                verification = await _observe_in_io(partial(verifier.current_verification, command.session_id))
             if cancel.is_set() or verification == "unknown":
                 return replace(
                     result,
@@ -1649,7 +1682,7 @@ class EngineeringRunService:
 
         row = self.store.load_run(command.session_id, workspace=self.workspace)
         self._revalidated_scope(row)
-        binding = verifier.review_binding(command.session_id)
+        binding = await _observe_in_io(partial(verifier.review_binding, command.session_id))
         instruction = (
             "Original user goal:\n"
             + row["instruction"]
@@ -1724,8 +1757,8 @@ class EngineeringRunService:
             if (
                 result.status == "completed"
                 and reports
-                and binding == verifier.review_binding(command.session_id)
-                and verifier.current_verification(command.session_id) == "passed"
+                and binding == await _observe_in_io(partial(verifier.review_binding, command.session_id))
+                and await _observe_in_io(partial(verifier.current_verification, command.session_id)) == "passed"
             ):
                 verdict, feedback, report_call_id = interpret_review_reports([event["payload"] for event in reports])
                 if verdict == "approved":
@@ -1856,8 +1889,9 @@ class EngineeringRunService:
                 if saved["require_qa"] and pending_review is not None:
                     verifier = self._verification(scope, limits, cancel, output_roots=self._saved_outputs(saved))
                     resume_review = (
-                        pending_review["payload"].get("input_binding") == verifier.review_binding(command.session_id)
-                        and verifier.current_verification(command.session_id) == "passed"
+                        pending_review["payload"].get("input_binding")
+                        == await _observe_in_io(partial(verifier.review_binding, command.session_id))
+                        and await _observe_in_io(partial(verifier.current_verification, command.session_id)) == "passed"
                     )
                     if not resume_review:
                         self.store.append_event(

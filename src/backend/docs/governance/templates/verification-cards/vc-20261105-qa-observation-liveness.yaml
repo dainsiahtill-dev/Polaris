@@ -1,0 +1,36 @@
+card_id: vc-20261105-qa-observation-liveness
+bug_summary: Synchronous finalization and QA input observations can block the service event loop.
+classification: pattern
+bug_path:
+  file: polaris/cells/roles/runtime/public/engineering_service.py
+  method: _review_qa
+  symptom: Health and cancellation starve before QA admission while large input trees are observed.
+assumptions:
+  - id: A1
+    statement: QA admission observation runs synchronously on the event loop.
+    status: verified
+    evidence: Source-bound100ms gated binding prevents call_soon heartbeat; live exact stack unavailable.
+  - id: A2
+    statement: KFS recursively waits on the same IO pool.
+    status: rejected
+    evidence: LocalFileSystemAdapter.read_bytes directly uses Path.read_bytes.
+pre_mortem:
+  failure_point: Offloaded work loses authority context or outlives cancelled owner.
+  risk_zone: [context propagation, cancellation drain, current-candidate freshness]
+verification_plan:
+  unit_tests:
+    - file: polaris/cells/roles/runtime/tests/test_engineering_observation_liveness.py
+      description: Event-loop liveness, context propagation and owned cancellation drain.
+      expected: Heartbeat proceeds, context preserved, caller remains pending until observation ends.
+      status: new
+  integration_tests:
+    - description: Existing QA and current candidate semantics.
+      command: pytest targeted QA/event selection gates
+      status: new
+  manual_check: [Recover original runtime only through safe cancellation/drain; retain original deadline.]
+related_adrs: []
+sign_off:
+  completed_by: Codex
+  completed_at: 2026-11-05
+  verified_by: Codex-and-independent-review
+  verified_at: 2026-11-05
