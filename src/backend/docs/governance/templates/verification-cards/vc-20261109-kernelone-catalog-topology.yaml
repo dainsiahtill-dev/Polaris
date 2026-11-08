@@ -1,0 +1,51 @@
+card_id: vc-20261109-kernelone-catalog-topology
+bug_summary: KernelOne release admission fails because the capability catalog lists nine deliberately retired directories.
+classification: pattern
+bug_path:
+  file: docs/graph/catalog/kernelone_capabilities.yaml
+  method: entries
+  symptom: Two unchanged admission tests report nine catalog-only paths; disk has 47 directories and catalog has 56 entries.
+assumptions:
+  - id: A1
+    statement: I assume the nine paths were deliberately retired rather than accidentally missing from this checkout.
+    status: verified_true
+    evidence: Git deletions d46e5bff1 and 11dbb8f93 on 2026-06-07 state retirement rationale; HEAD tracks no files under any of the nine paths.
+  - id: A2
+    statement: I assume the catalog incorrectly admitted already-retired paths when introduced.
+    status: verified_true
+    evidence: Catalog introduction 45b7fc15f on 2026-08-14 already tracks the same 47 directories as HEAD while the catalog lists 56.
+  - id: A3
+    statement: I assume the local filesystem contained residual empty directories when the catalog was created.
+    status: uncertain
+    evidence: Eight entries describe tests-only shells and ws describes an empty subtree, but Git cannot prove historical untracked directory presence.
+  - id: A4
+    statement: I assume removing only those nine entries preserves the current admission boundary.
+    status: verified_true
+    evidence: Retired paths have no current absolute Python references; retained entries equal the tracked and disk directory sets. Metadata and policy remain unchanged.
+pre_mortem:
+  failure_point: Removing a real capability or altering admission policy would hide missing implementation instead of correcting stale metadata.
+  risk_zone:
+    - kernelone-foundation catalog topology
+    - unchanged top-level admission tests
+    - release gate integrity
+verification_plan:
+  unit_tests:
+    - file: polaris/tests/architecture/test_kernelone_toplevel_admission.py
+      description: Reuse all eight unchanged YAML, policy, ghost-path and exact directory-set checks.
+      expected: All eight pass after removing only the nine stale rows; pre-edit baseline was two failures and six passes.
+      status: existing_fix
+  integration_tests:
+    - description: Parent independently reruns the existing full KernelOne release gate.
+      command: rtk proxy python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all
+      status: existing_fix
+  manual_check:
+    - This card and the linked blueprint were written after diagnosis and before the catalog edit; they do not claim to precede the historical defect or the unrelated bootstrap patch.
+    - Blueprint is docs/blueprints/KERNELONE_CATALOG_TOPOLOGY_SYNC_20261109.md.
+    - Exact RED is retained in /home/dains/.polaris/bench_runs/qwen38-all120-20261105/k1-ghost-catalog-red-20261109.txt.
+    - Compare all 47 retained entries and all metadata/policy fields against the pre-edit document; preserve the admission test hash.
+    - Validate this card with the existing scoped schema checker; check git diff --check.
+    - No dummy directories, restored modules, services, generated target changes, model calls or commit.
+related_adrs: []
+sign_off:
+  completed_by: K1-GHOST-CATALOG diagnosis and implementation agent; plan recorded before catalog edit
+  completed_at: "2026-11-09"
