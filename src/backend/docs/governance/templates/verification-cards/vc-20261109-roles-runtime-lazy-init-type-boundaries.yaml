@@ -1,0 +1,49 @@
+card_id: vc-20261109-roles-runtime-lazy-init-type-boundaries
+bug_summary: Lazy-init dependency fields assigned None without annotation are inferred as None-typed, producing false mypy unreachable and assignment errors in the roles.runtime internal engine.
+classification: pattern
+bug_path:
+  files:
+    - polaris/cells/roles/runtime/internal/sequential_engine.py
+    - polaris/cells/roles/runtime/internal/agent_runtime_base.py
+  fields:
+    - SequentialEngine._llm_caller / _tool_gateway
+    - AgentRuntimeBase._backend_tool_runtime
+  symptom: mypy unreachable (sequential_engine 759/808, agent_runtime_base 919/922) and assignment (agent_runtime_base 929)
+assumptions:
+  - id: A1
+    statement: The injected dependencies are Any (setters already declare llm_caller/tool_gateway as Any), so Any is the faithful static type.
+    status: verified
+    evidence: set_dependencies(llm_caller: Any = None, tool_gateway: Any = None)
+  - id: A2
+    statement: Reading the field into a local before the fast-path check is behavior-identical and only stops mypy narrowing across the double-checked lock.
+    status: verified
+    evidence: single reference read under the GIL; test_backend_tool_allowlist and test_agent_runtime_base_backoff pass unchanged
+  - id: A3
+    statement: No public contract, graph, state owner, effect, descriptor, or cell boundary changes.
+    status: verified
+    evidence: internal-only annotations and one local read; import boundary gate stays clean
+pre_mortem:
+  failure_point: Changing the lock-protected construction order or a fail-closed return None branch in the shared base class.
+  risk_zone:
+    - agent_runtime_base is consumed by many roles
+    - double-checked locking must retain its fast path
+verification:
+  - mypy on sequential_engine.py and agent_runtime_base.py: 5 errors to 0
+  - ruff check and ruff format --check on both files
+  - test_sequential_engine.py direct covering suite
+  - test_agent_runtime_base_backoff.py and test_backend_tool_allowlist.py
+  - test_kernelone_runtime_executor.py
+  - test_hr_advisor.py, test_cfo_advisor.py, test_agent_bus_proxy_peek.py subclass regression
+  - import sanity of both modules
+results:
+  red: 5 mypy errors reproduced on pristine HEAD
+  green: mypy clean on both files; ruff check/format pass; import OK
+  regression: 88 passed / 1 skipped across direct and subclass suites
+  limitations: static-shape correction only; full repository pytest and native execution not run in this increment
+related_adrs: []
+related_blueprint: docs/blueprints/ROLES_RUNTIME_LAZY_INIT_TYPE_BOUNDARIES_20261109.md
+sign_off:
+  completed_by: roles.runtime lazy-init type-boundary convergence
+  completed_at: "2026-11-09"
+  verified_by: mypy + ruff + direct and subclass pytest suites
+  verified_at: "2026-11-09"

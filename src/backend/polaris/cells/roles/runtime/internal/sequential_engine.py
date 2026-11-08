@@ -563,8 +563,8 @@ class SequentialEngine:
             progress_info_incremental=self.budget.progress_info_incremental,
             max_no_progress_steps=self.budget.max_no_progress_steps,
         )
-        self._llm_caller = None  # 延迟初始化
-        self._tool_gateway = None  # 延迟初始化
+        self._llm_caller: Any = None  # 延迟初始化
+        self._tool_gateway: Any = None  # 延迟初始化
         self._last_llm_digest: str | None = None
 
         # 当前执行上下文

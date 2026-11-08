@@ -744,7 +744,7 @@ class RoleAgent(ABC):
         self._storage: StorageRoots | None = None
         self._memory: AgentMemory | None = None
         self._toolbox: Toolbox | None = None
-        self._backend_tool_runtime = None
+        self._backend_tool_runtime: Any | None = None
         self._message_queue: AgentBusProxy | None = None
         self._state: AgentState | None = None
 
@@ -915,8 +915,9 @@ class RoleAgent(ABC):
 
     def _get_backend_tool_runtime(self) -> Any | None:
         """Get shared backend tool runtime (lazy init)."""
-        if self._backend_tool_runtime is not None:
-            return self._backend_tool_runtime
+        cached = self._backend_tool_runtime
+        if cached is not None:
+            return cached
         with self._lock:
             if self._backend_tool_runtime is not None:
                 return self._backend_tool_runtime
