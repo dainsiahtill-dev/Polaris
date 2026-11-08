@@ -898,6 +898,8 @@ class EngineeringRunService:
             command_cache="disabled" if permitted.command_cache == "disabled" else "read_only",
         )
         if "revisit_call_ids" in arguments:
+            if permitted.browser.observation_mode == "dom":
+                raise ValueError("historical image revisit is unavailable in DOM-only browser mode")
             from polaris.cells.roles.runtime.internal.engineering_visual import original_visual_capture
 
             identities = arguments["revisit_call_ids"]
@@ -992,7 +994,11 @@ class EngineeringRunService:
                 )
             elif cancel.is_set():
                 observed = replace(observed, ok=False, images=(), interrupted=True)
-            elif not observed.ok or observed.interrupted or not observed.images:
+            elif (
+                not observed.ok
+                or observed.interrupted
+                or (permitted.browser.observation_mode == "images" and not observed.images)
+            ):
                 observed = replace(observed, ok=False, images=())
         except subprocess.TimeoutExpired:
             observed = ToolObservation(
@@ -1010,17 +1016,18 @@ class EngineeringRunService:
             )
         # Cancellation and unknown physical drains propagate; the already
         # dispatched tool remains pending until its original owner reconciles it.
-        self.store.append_event(
-            command.session_id,
-            kind="visual_observation_completed",
-            role=role,
-            payload={
-                "ok": observed.ok,
-                "requested_by": [turn_seq, call_id],
-                "input_binding": binding,
-                "image_sha256": [image.sha256 for image in observed.images],
-            },
-        )
+        if permitted.browser.observation_mode == "images":
+            self.store.append_event(
+                command.session_id,
+                kind="visual_observation_completed",
+                role=role,
+                payload={
+                    "ok": observed.ok,
+                    "requested_by": [turn_seq, call_id],
+                    "input_binding": binding,
+                    "image_sha256": [image.sha256 for image in observed.images],
+                },
+            )
         return observed
 
     def _require_visual_input(

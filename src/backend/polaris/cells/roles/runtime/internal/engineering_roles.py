@@ -56,10 +56,28 @@ _PROMPTS = {
 
 
 def role_instruction(
-    role: str, *, visual: bool = False, require_visual_review: bool = False, require_qa: bool = False
+    role: str,
+    *,
+    visual: bool = False,
+    require_visual_review: bool = False,
+    require_qa: bool = False,
+    observation_mode: Literal["images", "dom"] = "images",
 ) -> str:
     """Choose only the current role's fixed identity."""
     text = _PROMPTS[role] + _COMMON
+    if visual and observation_mode == "dom" and role in {"director", "qa"}:
+        return text + (
+            " The host selected DOM-only browser_observe: actual offline Chromium execution returns no images. "
+            "Inspect the returned final DOM text, rendered control values, console, page_errors, blocked requests "
+            "and static_resources. Capture success only means observation succeeded; page errors and failed "
+            "controls remain application failures. DOM checks do not establish visual correctness, layout or motion. "
+            "Use workspace-local entry and optional web_root containing it for absolute assets, ES modules and CSS. "
+            "Controls support click, keypress, fill and select_option; values preserve literal spaces and empty text. "
+            "Each call uses a fresh read-only context, so put the complete action sequence in one call. "
+            "frame_times_ms controls bounded waits after actions; only the final DOM is returned, not temporal "
+            "snapshots. Re-observe after changes. Historical image revisit_call_ids is unavailable in DOM-only mode. "
+            "Report unresolved visual limitations; do not claim screenshot inspection or visual acceptance."
+        )
     if visual and role in {"director", "qa"}:
         text += (
             " You can use browser_observe to render a workspace-local HTML/SVG page and receive actual images. "
@@ -148,21 +166,25 @@ def register_browser_observation_tool() -> None:
             "arg_aliases": {"path": "entry", "file": "entry", "filename": "entry"},
             "category": "read",
             "description": (
-                "Render a workspace-local HTML or SVG entry in a fresh read-only offline browser and return actual images. "
+                "Render a workspace-local HTML or SVG entry in a fresh read-only offline browser. "
+                "The host selects images or DOM-only mode, stated in your role instructions; the model cannot change it. "
+                "Both modes return final actual DOM, controls, console, page errors and blocked requests. "
+                "DOM-only mode returns no images and cannot establish visual correctness; capture success is not app success. "
                 "Or supply artifact_ref to render exact saved self-contained SVG/HTML/PNG/JPEG bytes from a command in this run; exclusive with entry/web_root/revisit_call_ids. "
-                "Alternatively supply only revisit_call_ids to inspect exact saved same-session same-role captures; "
+                "In images mode only, supply only revisit_call_ids to inspect exact saved same-session same-role captures; "
                 "no browser is launched and old bindings stay unchanged. Original capture IDs/frames remain in tool results. "
                 "Use optional web_root for built-page absolute assets, ES modules and CSS: it is an authorized workspace "
                 "directory containing entry, served under a contained offline static origin without a server or target rewrites. "
                 "Omitting web_root retains file mode. Static mode accepts only same-origin GET/HEAD regular files, "
                 "blocks hidden paths and links, and limits snapshot reads to 16 MiB each/64 MiB total. "
-                "No workspace writes or remote resources. Frames are captured at absolute milliseconds after load, "
-                "after optional bounded actions. Maximum four JPEG frames, 1 MiB total; excess fails explicitly. "
+                "No workspace writes or remote resources. In images mode, frames are captured at absolute milliseconds "
+                "after optional bounded actions following load. Maximum four JPEG frames, 1 MiB total; excess fails explicitly. "
+                "DOM-only mode uses the final offset to wait before observing final DOM; no intermediate snapshots. "
                 "Use click/keypress or literal fill/select_option(value) actions; values retain exact text including empty strings and spaces. "
                 "Complete sequences run in one context within the host deadline and existing total wait budget. "
                 "Each call starts and closes a fresh context; no state carries between calls and no download artifact is returned. "
                 "DOM observations include at most 32 rendered standard controls and 512 UTF-16 units per value, with explicit truncation flags and lengths; password/file values are not exposed. "
-                "Inspect the images in your next turn before making a visual judgment."
+                "In images mode inspect returned images before making a visual judgment; DOM-only mode makes no visual claim."
             ),
             "parameter_any_of": [
                 {
@@ -224,7 +246,7 @@ def register_browser_observation_tool() -> None:
                     "items": {"type": "integer", "minimum": 0, "maximum": 10000},
                     "minItems": 1,
                     "maxItems": 4,
-                    "description": "Strictly increasing absolute capture times, default [0, 400]. Actions plus final frame wait must total at most 10000ms.",
+                    "description": "Ordered absolute image capture times after actions, default [0, 400]. In DOM-only mode only the final offset determines final DOM observation; no intermediate snapshots. Actions plus final wait must total at most 10000ms.",
                 },
                 {
                     "name": "actions",

@@ -7,6 +7,7 @@ import base64
 import hashlib
 import io
 import json
+import os
 import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -14,11 +15,22 @@ from tempfile import TemporaryDirectory
 import pytest
 
 EVIDENCE_ROOT = Path(__file__).resolve().parents[7] / ".polaris/test-workspaces/browser"
-BROWSER = (
-    Path.home()
-    / ".cache/ms-playwright/chromium_headless_shell-1223/chrome-headless-shell-linux64/chrome-headless-shell"
+BROWSER = Path(
+    os.environ.get(
+        "POLARIS_TEST_BROWSER_EXECUTABLE",
+        str(
+            Path.home()
+            / ".cache/ms-playwright/chromium_headless_shell-1223/chrome-headless-shell-linux64/chrome-headless-shell"
+        ),
+    )
 )
-PACKAGES = Path.home() / ".pyenv/versions/3.12.3/lib/python3.12/site-packages"
+PACKAGES = Path(
+    os.environ.get(
+        "POLARIS_TEST_BROWSER_PACKAGES", str(Path.home() / ".pyenv/versions/3.12.3/lib/python3.12/site-packages")
+    )
+)
+PYTHON = Path(os.environ.get("POLARIS_TEST_BROWSER_PYTHON", "/usr/bin/python3")).resolve()
+PYTHON_READS = () if PYTHON.is_relative_to("/usr") else (PYTHON.parent.parent,)
 
 
 def _capture():
@@ -34,12 +46,19 @@ def _scope(workspace: Path, **overrides):
     from polaris.cells.roles.runtime.public.contracts.engineering_run import BrowserObservationConfig, PermissionScope
 
     values = {
-        "read_roots": (workspace, PACKAGES / "playwright", PACKAGES / "pyee", PACKAGES / "greenlet", BROWSER.parent),
+        "read_roots": (
+            workspace,
+            PACKAGES / "playwright",
+            PACKAGES / "pyee",
+            PACKAGES / "greenlet",
+            BROWSER.parent,
+            *PYTHON_READS,
+        ),
         "write_roots": (workspace,),
         "enabled_tools": frozenset({"browser_observe"}),
         "network_allowed": True,
         "browser": BrowserObservationConfig(
-            executable=str(BROWSER), python_executable="/usr/bin/python3", python_paths=(str(PACKAGES),)
+            executable=str(BROWSER), python_executable=str(PYTHON), python_paths=(str(PACKAGES),)
         ),
     }
     values.update(overrides)
@@ -316,7 +335,9 @@ def test_total_image_bytes_are_bounded_without_silent_frame_truncation(workspace
     }
 
     async def oversized(argv, _timeout):
-        return subprocess.CompletedProcess(argv, 0, stdout=json.dumps({"images": [image] * 4}), stderr="")
+        return subprocess.CompletedProcess(
+            argv, 0, stdout=json.dumps({"observation_mode": "images", "images": [image] * 4}), stderr=""
+        )
 
     result = asyncio.run(
         capture(
@@ -347,7 +368,7 @@ def _live_capture_processes(workspace):
     browser_pids = []
     token = str(workspace).encode("utf-8")
     for pid, (_parent, argv) in processes.items():
-        if not argv or Path(argv[0].decode("utf-8", errors="replace")).name != "chrome-headless-shell":
+        if not argv or Path(argv[0].decode("utf-8", errors="replace")).name != BROWSER.name:
             continue
         parent = pid
         seen = set()
@@ -411,5 +432,9 @@ def test_actual_cancel_and_timeout_drain_an_observed_browser_tree(workspace, end
 
     asyncio.run(run_case())
     assert observed
-    assert all(not Path("/proc", str(pid)).exists() for pid in observed)
+    assert all(not Path("/proc", str(pid)).exists() for pid in observed), {
+        pid: Path("/proc", str(pid), "stat").read_text(encoding="utf-8")
+        for pid in observed
+        if Path("/proc", str(pid), "stat").exists()
+    }
     assert not _live_capture_processes(workspace)

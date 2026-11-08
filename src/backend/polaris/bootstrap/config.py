@@ -306,9 +306,12 @@ class EngineeringBrowserObservationConfig(BaseModel):
     python_executable: str
     python_paths: tuple[str, ...]
     require_visual_review: bool = Field(default=False, strict=True)
+    observation_mode: Literal["images", "dom"] = "images"
 
     @model_validator(mode="after")
     def validate_runtime_paths(self) -> EngineeringBrowserObservationConfig:
+        if self.observation_mode == "dom" and self.require_visual_review:
+            raise ValueError("DOM-only browser observation cannot satisfy required visual review")
         for value in (self.executable, self.python_executable, *self.python_paths):
             if not value or "\0" in value or not Path(value).is_absolute():
                 raise ValueError("browser runtime paths must be absolute non-empty strings")

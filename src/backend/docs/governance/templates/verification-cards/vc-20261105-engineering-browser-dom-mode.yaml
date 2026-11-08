@@ -1,0 +1,26 @@
+task_id: DOM-BROWSER-TEXT-MODE
+classification: pattern
+status: component_verified_native_acceptance_pending
+owner: roles.runtime
+blueprint: docs/blueprints/ENGINEERING_BROWSER_DOM_MODE_20261105.md
+assumptions:
+  - Existing actual DOM summary is sufficient for text-only inspection.
+  - Saved scope and dataclass equality already preserve optional browser configuration.
+  - DOM evidence cannot establish visual correctness.
+pre_mortem:
+  - Shared schema or role prompt could incorrectly demand images from DOM mode.
+  - Historical image revisit could bypass no-image boundary.
+  - Saved historical grants could lose default images compatibility.
+verification:
+  - test_engineering_browser_dom_mode.py real sandboxed Chromium and saved scope
+  - Existing image/browser/static-origin/visual persistence regressions
+  - Ruff check and format; mypy touched source
+remaining_acceptance: Fresh native model project delivery belongs to parent task.
+results:
+  focused: 43 passed
+  new_dom: 11 passed with real OS-sandboxed Chromium and actual scripted native HTTP
+  existing_cold_image_reinspection: passed in56.73s with original Python3.12 and headless1248;90s deadline unchanged
+  headless_failed_case_rerun: cancel, timeout physical drain, static16MiB HEAD passed
+  ruff: 12 touched Python files passed check and format
+  mypy: 2 pristine-HEAD baseline errors reproduced; no new errors
+  limitations: full Chromium1248 lifecycle/timing and expanded Python3.13 cold-fixture deadline failures preserved

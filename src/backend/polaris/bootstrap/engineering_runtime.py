@@ -81,6 +81,7 @@ def resolve_engineering_profile(settings: Settings, workspace: Path, profile_id:
             profile.browser.python_executable,
             profile.browser.python_paths,
             profile.browser.require_visual_review,
+            observation_mode=profile.browser.observation_mode,
         )
         if profile.browser is not None
         else None,

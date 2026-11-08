@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -30,21 +31,39 @@ from polaris.kernelone.fs import get_default_adapter, guarded_create_directory
 
 _ROOT = Path(__file__).resolve().parents[7]
 _ARTIFACT = ".polaris/audits/director-qa-handoff-20261023/implementation"
-_BROWSER = (
-    Path.home()
-    / ".cache/ms-playwright/chromium_headless_shell-1223/chrome-headless-shell-linux64/chrome-headless-shell"
+_BROWSER = Path(
+    os.environ.get(
+        "POLARIS_TEST_BROWSER_EXECUTABLE",
+        str(
+            Path.home()
+            / ".cache/ms-playwright/chromium_headless_shell-1223/chrome-headless-shell-linux64/chrome-headless-shell"
+        ),
+    )
 )
-_PACKAGES = Path.home() / ".pyenv/versions/3.12.3/lib/python3.12/site-packages"
+_PACKAGES = Path(
+    os.environ.get(
+        "POLARIS_TEST_BROWSER_PACKAGES", str(Path.home() / ".pyenv/versions/3.12.3/lib/python3.12/site-packages")
+    )
+)
+_PYTHON = Path(os.environ.get("POLARIS_TEST_BROWSER_PYTHON", "/usr/bin/python3")).resolve()
+_PYTHON_READS = () if _PYTHON.is_relative_to("/usr") else (_PYTHON.parent.parent,)
 _HTML = '<!doctype html><meta charset="utf-8"><style>body{background:#fff;color:#123;font:32px sans-serif}</style><h1>Verified fixture</h1>'
 
 
 def _scope(workspace: Path) -> PermissionScope:
     return PermissionScope(
-        (workspace, _PACKAGES / "playwright", _PACKAGES / "pyee", _PACKAGES / "greenlet", _BROWSER.parent),
+        (
+            workspace,
+            _PACKAGES / "playwright",
+            _PACKAGES / "pyee",
+            _PACKAGES / "greenlet",
+            _BROWSER.parent,
+            *_PYTHON_READS,
+        ),
         (workspace,),
         frozenset({"read_file", "browser_observe", "verify_project", "execute_command", "report_review"}),
         False,
-        BrowserObservationConfig(str(_BROWSER), "/usr/bin/python3", (str(_PACKAGES),), True),
+        BrowserObservationConfig(str(_BROWSER), str(_PYTHON), (str(_PACKAGES),), True),
     )
 
 

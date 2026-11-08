@@ -29,6 +29,7 @@ class BrowserObservationConfig:
     python_executable: str
     python_paths: tuple[str, ...]
     require_visual_review: bool = False
+    observation_mode: Literal["images", "dom"] = "images"
 
     def __post_init__(self) -> None:
         for value in (self.executable, self.python_executable, *self.python_paths):
@@ -36,6 +37,10 @@ class BrowserObservationConfig:
                 raise ValueError("browser runtime paths must be absolute non-empty strings")
         if type(self.require_visual_review) is not bool:
             raise ValueError("visual review requirement must be a boolean")
+        if self.observation_mode not in ("images", "dom"):
+            raise ValueError("browser observation mode must be images or dom")
+        if self.observation_mode == "dom" and self.require_visual_review:
+            raise ValueError("DOM-only browser observation cannot satisfy required visual review")
 
 
 @dataclass(frozen=True)

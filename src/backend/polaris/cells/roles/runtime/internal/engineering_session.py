@@ -225,7 +225,17 @@ class EngineeringSessionStore:
                     "write_roots": [str(Path(p).expanduser().resolve()) for p in scope.write_roots],
                     "enabled_tools": sorted(scope.enabled_tools),
                     "network_allowed": scope.network_allowed,
-                    **({"browser": asdict(scope.browser)} if scope.browser is not None else {}),
+                    **(
+                        {
+                            "browser": {
+                                key: value
+                                for key, value in asdict(scope.browser).items()
+                                if key != "observation_mode" or value != "images"
+                            }
+                        }
+                        if scope.browser is not None
+                        else {}
+                    ),
                     **({"toolchain_bin_dirs": [str(path) for path in bins]} if bins else {}),
                     **({"command_cache": scope.command_cache} if scope.command_cache != "disabled" else {}),
                 }

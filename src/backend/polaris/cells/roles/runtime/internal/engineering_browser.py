@@ -199,6 +199,8 @@ try:
                     page.wait_for_timeout(remaining)
                 if resource_budget_error:
                     raise ValueError(resource_budget_error)
+                if settings['observation_mode'] == 'dom':
+                    continue
                 captured_ms = round((time.monotonic() - started) * 1000)
                 data = page.screenshot(type='jpeg', quality=75, full_page=False, timeout=3000)
                 total += len(data)
@@ -212,6 +214,7 @@ try:
                     'sha256': hashlib.sha256(data).hexdigest(),
                     'label': 'frame %d at %d ms (requested %d ms)' % (number + 1, captured_ms, offset),
                 })
+            dom_observed_ms = round((time.monotonic() - started) * 1000)
             body = page.locator('body')
             summary = {
                 'title': page.title()[:200],
@@ -268,6 +271,10 @@ try:
         raise ValueError(resource_budget_error)
     result = {
         'images': images,
+        'observation_mode': settings['observation_mode'],
+        'visual_evidence': settings['observation_mode'] == 'images',
+        'dom_observation': {'timing': 'final_after_actions_and_wait',
+            'requested_offset_ms': settings['frame_times_ms'][-1], 'observed_offset_ms': dom_observed_ms},
         'entry': settings['relative_entry'],
         'web_root': settings.get('relative_web_root'),
         'origin_mode': 'saved_artifact' if saved_bytes is not None else 'static' if settings.get('web_root') is not None else 'file',
@@ -471,6 +478,7 @@ def _settings(
         }
         if saved_artifact is not None
         else None,
+        "observation_mode": scope.browser.observation_mode,
         "workspace": str(workspace),
         "entry": str(target),
         "relative_entry": target.relative_to(workspace).as_posix(),
@@ -532,7 +540,7 @@ async def capture_browser_observation(
     run_process: Callable[[list[str], float], Awaitable[subprocess.CompletedProcess[str]]],
     saved_artifact: ArtifactObservation | None = None,
 ) -> ToolObservation:
-    """Capture actual local pixels; the caller retains the physical effect owner.
+    """Observe actual local DOM and optional pixels under the same physical effect owner.
 
     Cancellation and uncertain drain propagate to that existing owner. A normal
     child failure or invalid input is an explicit negative observation. A caller
@@ -568,9 +576,12 @@ async def capture_browser_observation(
             raise ValueError("browser result exceeds the bounded wire output limit")
         payload = json.loads(completed.stdout)
         if not isinstance(payload, dict) or not isinstance(payload.get("images"), list):
-            raise ValueError("browser did not return an image observation payload")
+            raise ValueError("browser did not return an observation payload")
+        if payload.get("observation_mode") != settings["observation_mode"]:
+            raise ValueError("browser observation mode does not match host configuration")
         supplied_images = payload.pop("images")
-        if len(supplied_images) != len(settings["frame_times_ms"]):
+        expected_frames = len(settings["frame_times_ms"]) if settings["observation_mode"] == "images" else 0
+        if len(supplied_images) != expected_frames:
             raise ValueError("browser returned an unexpected number of frames")
         images: list[ImageObservation] = []
         total = 0

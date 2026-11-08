@@ -38,11 +38,22 @@ from polaris.kernelone.process.process_tree import ProcessTreeDrainError
 from polaris.kernelone.tool_execution.contracts import frozen_node_to_value
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
-BROWSER = (
-    Path.home()
-    / ".cache/ms-playwright/chromium_headless_shell-1223/chrome-headless-shell-linux64/chrome-headless-shell"
+BROWSER = Path(
+    os.environ.get(
+        "POLARIS_TEST_BROWSER_EXECUTABLE",
+        str(
+            Path.home()
+            / ".cache/ms-playwright/chromium_headless_shell-1223/chrome-headless-shell-linux64/chrome-headless-shell"
+        ),
+    )
 )
-PACKAGES = Path.home() / ".pyenv/versions/3.12.3/lib/python3.12/site-packages"
+PACKAGES = Path(
+    os.environ.get(
+        "POLARIS_TEST_BROWSER_PACKAGES", str(Path.home() / ".pyenv/versions/3.12.3/lib/python3.12/site-packages")
+    )
+)
+PYTHON = Path(os.environ.get("POLARIS_TEST_BROWSER_PYTHON", "/usr/bin/python3")).resolve()
+PYTHON_READS = () if PYTHON.is_relative_to("/usr") else (PYTHON.parent.parent,)
 _HTML = """<!doctype html><meta charset="utf-8"><title>Synthetic form</title>
 <style>body{font:18px sans-serif}label,input,select,button{padding:8px;margin:8px}output{display:block;white-space:pre-wrap}</style>
 <label>姓名<input id="name"></label><select id="plan"><option value="">请选择</option><option value=" 细节方案 ">细节方案</option></select><button id="prepare">准备</button>
@@ -76,11 +87,18 @@ def form_workspace(tmp_path: Path) -> Path:
 
 def _scope(workspace: Path) -> PermissionScope:
     return PermissionScope(
-        (workspace / "public", PACKAGES / "playwright", PACKAGES / "pyee", PACKAGES / "greenlet", BROWSER.parent),
+        (
+            workspace / "public",
+            PACKAGES / "playwright",
+            PACKAGES / "pyee",
+            PACKAGES / "greenlet",
+            BROWSER.parent,
+            *PYTHON_READS,
+        ),
         (),
         frozenset({"browser_observe"}),
         False,
-        BrowserObservationConfig(str(BROWSER), "/usr/bin/python3", (str(PACKAGES),), False),
+        BrowserObservationConfig(str(BROWSER), str(PYTHON), (str(PACKAGES),), False),
     )
 
 
