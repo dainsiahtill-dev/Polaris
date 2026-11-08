@@ -51,9 +51,9 @@ from polaris.kernelone.events.typed import (
     init_default_adapter as init_typed_event_adapter,
 )
 from polaris.kernelone.fs.registry import set_default_adapter
-from polaris.kernelone.llm.embedding import set_default_embedding_port
+from polaris.kernelone.llm.embedding import KernelEmbeddingPort, set_default_embedding_port
 from polaris.kernelone.process.ollama_utils import set_default_ollama_adapter
-from polaris.kernelone.storage import register_business_roots_resolver
+from polaris.kernelone.storage import StorageRoots, register_business_roots_resolver
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +111,28 @@ def ensure_minimal_kernelone_bindings() -> None:
     if not has_audit_store_factory():
         set_audit_store_factory(AuditStoreAdapter)
 
-    register_business_roots_resolver(resolve_polaris_roots)
+    def business_roots(workspace_abs: str, ramdisk_root: str | None) -> StorageRoots:
+        roots = resolve_polaris_roots(workspace_abs, ramdisk_root)
+        return StorageRoots(
+            workspace_abs=roots.workspace_abs,
+            workspace_key=roots.workspace_key,
+            storage_layout_mode=roots.storage_layout_mode,
+            home_root=roots.home_root,
+            global_root=roots.global_root,
+            config_root=roots.config_root,
+            projects_root=roots.projects_root,
+            project_root=roots.project_root,
+            project_persistent_root=roots.project_persistent_root,
+            runtime_projects_root=roots.runtime_projects_root,
+            runtime_project_root=roots.runtime_project_root,
+            workspace_persistent_root=roots.workspace_persistent_root,
+            runtime_base=roots.runtime_base,
+            runtime_root=roots.runtime_root,
+            runtime_mode=roots.runtime_mode,
+            history_root=roots.history_root,
+        )
+
+    register_business_roots_resolver(business_roots)
 
     _install_slm_binding()
 
@@ -127,6 +148,7 @@ def _inject_embedding_port(settings: Settings) -> None:
     set_default_ollama_adapter(None)
 
     # 1. Try Local GPU Transformer
+    port: KernelEmbeddingPort
     torch_module: ModuleType | None = None
     try:
         import torch as torch_import
@@ -181,17 +203,15 @@ def _inject_provider_manager_port() -> None:
     improving testability and following the port/adapter pattern.
 
     Runtime contract:
-        Bootstrap owns the provider registry adapter. KernelOne consumers read
+        Bootstrap injects the existing provider registry. KernelOne consumers read
         it through get_provider_manager_port() and must not import the
         infrastructure provider manager directly.
     """
     try:
-        from polaris.infrastructure.llm.provider_bootstrap import ProviderAdapter
         from polaris.infrastructure.llm.providers.provider_registry import provider_manager
         from polaris.kernelone.llm.providers.provider_injection import set_provider_manager_port
 
-        provider_adapter = ProviderAdapter(provider_manager)
-        set_provider_manager_port(provider_adapter)
+        set_provider_manager_port(provider_manager)
         logger.info("Wired IProviderRegistryPort into KernelOne")
     except ImportError as exc:
         logger.debug("Provider port injection unavailable (missing dependencies): %s", exc)

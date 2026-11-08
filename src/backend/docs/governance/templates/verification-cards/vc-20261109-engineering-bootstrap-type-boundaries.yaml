@@ -1,0 +1,112 @@
+card_id: vc-20261109-engineering-bootstrap-type-boundaries
+bug_summary: 'Engineering and container bootstrap inject a generation adapter into the provider registry port, causing
+  the same public contract mismatch in both startup paths.
+
+  '
+classification: pattern
+bug_path:
+  file: polaris/bootstrap/engineering_runtime.py
+  method: _prepare_model_runtime
+  symptom: Strict mypy rejects ProviderAdapter as IProviderRegistryPort; runtime protocol checks fail because the
+    injected generation adapter has no registry lookup or configuration methods. The same defect occurs in polaris/bootstrap/assembly.py::_inject_provider_manager_port.
+assumptions:
+- id: A1
+  statement: The generation adapter and provider registry implement different public responsibilities.
+  status: verified_true
+  evidence: 'ProviderAdapter exposes generate/generate_stream; IProviderRegistryPort requires registry methods.
+    Both startup-path regressions failed isinstance(IProviderRegistryPort) before fixes.
+
+    '
+- id: A2
+  statement: The existing provider_manager is the correct registry owner for both startup paths.
+  status: verified_true
+  evidence: 'Strict structural-conformance check passed. Runtime tests assert manager identity and list/class/config
+    methods while ServiceLocator retains ProviderAdapter backed by the same manager.
+
+    '
+- id: A3
+  statement: A public Literal must retain strict validation of arbitrary runtime cache-mode values.
+  status: verified_true
+  evidence: 'Exact str check and allowed values remain unchanged. Ten invalid values, including a str subclass,
+    are rejected; all three Literal values are accepted; existing cache-authority tests pass.
+
+    '
+- id: A4
+  statement: A representation-only storage adapter can satisfy K1 without changing path ownership or values.
+  status: verified_true
+  evidence: 'RED confirmed the registered callback returned _PolarisStorageRootsImpl. GREEN confirms one original
+    resolver call, equality of all 16 fields, canonical workspace/runtime/config values, and frozen K1 StorageRoots.
+    No coercion or recomputation is used.
+
+    '
+- id: A5
+  statement: The storage adaptation does not make cold read-only queries invoke a writer or create absent paths.
+  status: verified_true
+  evidence: 'The new registered-storage test observes no additional resolver call and identical filesystem state
+    around resolve_storage_roots_read_only for an absent workspace; public storage-policy tests pass.
+
+    '
+pre_mortem:
+  failure_point: 'Retrospective risk analysis, written after implementation: Confusing the two provider ports could
+    replace generation behavior or hide missing methods behind a cast. Storage adaptation could accidentally recompute
+    paths, invoke the writer twice or introduce fallback. A superficial typing fix could weaken runtime permission
+    validation.'
+  risk_zone:
+  - engineering and container registry injection
+  - ServiceLocator generation adapter identity
+  - PermissionScope exact runtime cache-mode validation
+  - storage Cell values and K1 frozen DTO boundary
+  - cold read-only path resolution
+verification_plan:
+  unit_tests:
+  - file: polaris/tests/test_engineering_runtime_type_boundaries.py
+    description: Both provider ports, invalid cache values, storage DTO identity/value preservation and read-only
+      behavior.
+    expected: Correct shared registry identity; unchanged generation adapter; invalid modes rejected; exact immutable
+      storage projection.
+    status: new
+  - file: polaris/tests/test_provider_bootstrap.py
+    description: Container bootstrap registers a callback returning actual K1 StorageRoots with canonical project
+      paths.
+    expected: Registered callback satisfies the public result contract rather than relying on callback-object identity.
+    status: existing_fix
+  integration_tests:
+  - description: Bootstrap, cache authority and public Cell/K1 storage boundaries.
+    command: rtk proxy env PYTHONPATH=src/backend .venv/bin/python -m pytest src/backend/polaris/tests/test_engineering_runtime_type_boundaries.py
+      src/backend/polaris/cells/roles/runtime/tests/test_engineering_command_cache_authority.py src/backend/polaris/tests/test_provider_bootstrap.py
+      src/backend/polaris/cells/storage/layout/tests/test_storage_layout_cell.py src/backend/polaris/kernelone/storage/tests/test_project_storage_root_policy.py
+      src/backend/polaris/kernelone/storage/tests/test_layout_no_cell_import.py -q -rs
+    status: existing_pass
+  manual_check:
+  - 'Record provenance: baseline main6a75e53f7. Recorded after implementation; no pre-fix card existed. This card
+    was added after implementation and component verification. It records the actual baseline, decisions and RED/GREEN
+    evidence retrospectively; it does not claim the card or this written pre-mortem preceded the fixes. The regressions
+    themselves ran RED before their fixes.'
+  - No live provider/model or embedding request was made.
+  - No service restart, generated-target edit or commit was performed by this task.
+  - 'Design document: docs/blueprints/ENGINEERING_DOM_TYPE_BOUNDARIES_20261109.md'
+  - 'RED evidence: Original mypy reproduced cache unreachable-validation and engineering registry-port type errors.'
+  - 'RED evidence: Engineering startup regression failed runtime registry protocol check before its fix.'
+  - 'RED evidence: Container startup regression failed runtime registry protocol check before its fix.'
+  - 'RED evidence: Storage regression failed registered callback K1 StorageRoots identity before its fix.'
+  - 'RED evidence: Pristine HEAD assembly shadow check showed storage callback, two embedding assignments and registry-port
+    errors.'
+  - 'GREEN evidence: Strict mypy passed three changed production files and the new typed regression file.'
+  - 'GREEN evidence: Ruff check/format passed five changed Python files; git diff --check passed.'
+  - 'GREEN evidence: 158 targeted tests passed; one Windows-specific test skipped at test_storage_layout_cell.py:447.'
+  - 'GREEN evidence: Root independently repeated the same test and static gates successfully.'
+  - 'Component evidence report: /home/dains/.polaris/bench_runs/qwen38-all120-20261105/dom-type-closure-20261109.json'
+  - 'Evidence limitation: Windows-specific behavior was not executed on this Linux environment.'
+  - 'Evidence limitation: No fresh live-model acceptance or model reachability evidence.'
+  - 'Evidence limitation: Full repository release gate not run by this subtask.'
+  - 'Evidence limitation: Root full release gate found two separate catalog-directory admission failures; 371 passed
+    and 2 skipped.'
+  - 'Independent review: No changed-code defects found; 17 narrow regression tests passed.'
+  - 'Independent review evidence report: /home/dains/.polaris/bench_runs/qwen38-all120-20261105/type-boundary-independent-review-20261109.json'
+  - 'Root follow-up release gate after catalog correction: all 12 stages passed; 373 tests passed and 2 skipped. Evidence: root-kernelone-release-20261109-r2.json in the external evidence directory.'
+related_adrs: []
+sign_off:
+  completed_by: DOM type boundary implementation agent
+  completed_at: '2026-11-09'
+  verified_by: Implementation agent, root gate rerun and independent source review
+  verified_at: '2026-11-09'

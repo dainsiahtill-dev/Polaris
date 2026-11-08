@@ -245,8 +245,10 @@ def test_assemble_core_services_injects_provider_runtime(monkeypatch: pytest.Mon
 
 
 def test_assemble_core_services_registers_business_storage_resolver(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    from polaris.kernelone.storage import StorageRoots
+
     assembly_module = _import_assembly_module()
     _, _, di_container = _import_backend_bootstrapper()
     registered: list[object] = []
@@ -256,11 +258,17 @@ def test_assemble_core_services_registers_business_storage_resolver(
     monkeypatch.setattr(assembly_module, "register_business_roots_resolver", registered.append)
 
     container = di_container()
-    settings = Settings()
+    settings = Settings(workspace=tmp_path)
 
     assembly_module.assemble_core_services(container, settings=settings)
 
-    assert registered == [assembly_module.resolve_polaris_roots]
+    assert len(registered) == 1
+    resolver = registered[0]
+    assert callable(resolver)
+    roots = resolver(str(tmp_path), None)
+    assert isinstance(roots, StorageRoots)
+    assert roots.workspace_abs == str(tmp_path)
+    assert roots.runtime_root == str(tmp_path / ".polaris" / "runtime")
 
 
 def test_assemble_core_services_rebinds_explicit_settings_and_storage(
