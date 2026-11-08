@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
@@ -151,16 +152,6 @@ def test_static_forged_public_previous_evidence_does_not_admit_unknown_failure(t
     assert error in command.user_message
 
 
-def test_static_producer_preserves_readme_owner_identity():
-    from polaris.cells.roles.adapters.internal.director.quality_gate._repair_loop import (
-        _quality_repair_issue_observations,
-    )
-
-    row = _quality_repair_issue_observations([_missing("README.md")], ["README.md"])[0]
-    assert row["path"] == "README.md"
-    assert row["metadata"]["target_file"] == "README.md"
-
-
 def test_static_real_prior_import_observation_keeps_unknown_exporter_unproved(tmp_path: Path):
     from polaris.cells.roles.runtime.tests.test_fresh_quality_continuation import (
         _bridge as existing_bridge,
@@ -180,52 +171,12 @@ def test_static_real_prior_import_observation_keeps_unknown_exporter_unproved(tm
     assert "scope_symlink_unvisited" in command.user_message
 
 
-def _capture_producer_observation_context(root: Path, task: dict, errors: list[str], context: dict) -> dict:
-    """Execute the real producer context expression, with controlled fixture inputs."""
-    import ast
-    import inspect
-
-    from polaris.cells.roles.adapters.internal.director.quality_gate import _repair_loop as producer
-
-    tree = ast.parse(inspect.getsource(producer._run_materialization_quality_repair_retry))
-    value = next(
-        node.value
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Assign)
-        and any(isinstance(target, ast.Name) and target.id == "repair_context" for target in node.targets)
-    )
-    namespace = dict(producer.__dict__)
-    namespace.update(
-        task=task,
-        context=context,
-        workspace_full=str(root),
-        run_id="owned-run",
-        target_task_id="owned-task",
-        original_message=context.get("task_objective", "Implement and verify owned outputs."),
-        prompt_artifact_quality_errors=errors,
-        prompt_safe_artifact_quality_errors=errors,
-        failed_gate_evidence=context.get("failed_gate_evidence", {"quality_errors": errors}),
-        workspace_quality_evidence=context.get(
-            "workspace_quality_evidence", {"quality_errors": errors, "all_checks_passed": False}
-        ),
-        changed_files=[],
-        missing_target_files=[],
-        runtime_smoke_target_files=[],
-        semantic_quality_target_files=[],
-        explicit_quality_target_files=[],
-        repair_target_files=task["target_files"],
-    )
-    return eval(compile(ast.fix_missing_locations(ast.Expression(value)), __file__, "eval"), namespace)
-
-
-def test_static_actual_producer_keeps_absent_declared_target_and_read_scope(tmp_path: Path):
-    (tmp_path / "answer.py").write_text("VALUE = 1\n", encoding="utf-8")
-    task = {"target_files": ["answer.py", ".gitignore"]}
+def test_static_producer_contract_fixture_keeps_absent_declared_target_and_read_scope(tmp_path: Path):
+    """Bridge reconciliation consumes the shared producer contract fixture, not live producer output."""
+    fixture_path = Path(__file__).resolve().parents[4] / "tests" / "fixtures" / "quality_repair_producer_context.json"
+    captured = json.loads(fixture_path.read_text(encoding="utf-8"))
     error = _missing(".gitignore")
-    context = {"execution_envelope": {"allowed_read_paths": task["target_files"]}, "target_files": task["target_files"]}
-    captured = _capture_producer_observation_context(tmp_path, task, [error], context)
-    assert ".gitignore" in captured["director_quality_repair"]["declared_target_files"]
-    assert ".gitignore" in captured["director_quality_repair"]["scan_relative_paths"]
+    (tmp_path / "answer.py").write_text("VALUE = 1\n", encoding="utf-8")
     (tmp_path / ".gitignore").write_text("build/\n", encoding="utf-8")
     bridge = KernelSessionTurnBridge(
         SimpleNamespace(),

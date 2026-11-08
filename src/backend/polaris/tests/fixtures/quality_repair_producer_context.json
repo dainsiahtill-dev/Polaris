@@ -1,0 +1,84 @@
+{
+  "execution_envelope": {
+    "allowed_read_paths": [
+      "answer.py",
+      ".gitignore"
+    ]
+  },
+  "target_files": [
+    "answer.py",
+    ".gitignore"
+  ],
+  "run_id": "owned-run",
+  "task_id": "owned-task",
+  "task": {
+    "target_files": [
+      "answer.py",
+      ".gitignore"
+    ]
+  },
+  "delivery_mode": "materialize_changes",
+  "task_objective": "Implement and verify owned outputs.",
+  "failed_gate_evidence": {
+    "quality_errors": [
+      "Artifact quality scan failed: declared target file missing '.gitignore'"
+    ]
+  },
+  "failure_evidence": {
+    "quality_errors": [
+      "Artifact quality scan failed: declared target file missing '.gitignore'"
+    ]
+  },
+  "workspace_quality_evidence": {
+    "quality_errors": [
+      "Artifact quality scan failed: declared target file missing '.gitignore'"
+    ],
+    "all_checks_passed": false
+  },
+  "director_quality_repair": {
+    "artifact_quality_errors": [
+      "Artifact quality scan failed: declared target file missing '.gitignore'"
+    ],
+    "artifact_quality_issues": [
+      {
+        "code": "declared_target_missing",
+        "message": "declared target file missing '.gitignore'",
+        "path": ".gitignore",
+        "severity": "error",
+        "source": "artifact_quality",
+        "metadata": {
+          "raw": "Artifact quality scan failed: declared target file missing '.gitignore'",
+          "target_file": ".gitignore"
+        }
+      }
+    ],
+    "declared_target_files": [
+      "answer.py",
+      ".gitignore"
+    ],
+    "scan_relative_paths": [
+      "answer.py",
+      ".gitignore"
+    ],
+    "changed_files": [],
+    "missing_target_files": [],
+    "runtime_smoke_target_files": [],
+    "semantic_quality_target_files": [],
+    "explicit_quality_target_files": [],
+    "repair_target_files": [
+      "answer.py",
+      ".gitignore"
+    ],
+    "failed_gate_evidence": {
+      "quality_errors": [
+        "Artifact quality scan failed: declared target file missing '.gitignore'"
+      ]
+    },
+    "workspace_quality_evidence": {
+      "quality_errors": [
+        "Artifact quality scan failed: declared target file missing '.gitignore'"
+      ],
+      "all_checks_passed": false
+    }
+  }
+}

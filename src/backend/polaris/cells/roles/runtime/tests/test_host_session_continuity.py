@@ -17,8 +17,7 @@ from polaris.cells.roles.runtime.public.contracts import (
     RoleExecutionResultV1,
 )
 from polaris.cells.roles.runtime.public.service import RoleRuntimeService
-from polaris.cells.roles.session.internal.conversation import Base
-from polaris.cells.roles.session.internal.role_session_service import RoleSessionService
+from polaris.cells.roles.session.public import Conversation, RoleSessionService
 from polaris.cells.runtime.task_runtime.public import (
     SettleTaskRuntimeExecutionAttemptCommandV1,
     TaskRuntimeExecutionAttemptIdentityV1,
@@ -86,20 +85,18 @@ class TestRoleRuntimeServiceHostContinuity:
 @pytest.mark.asyncio
 async def test_execute_role_session_persists_transcript_and_context_os(monkeypatch) -> None:
     engine = create_engine("sqlite:///:memory:", echo=False)
-    Base.metadata.create_all(bind=engine)
+    Conversation.metadata.create_all(bind=engine)
     session_factory = sessionmaker(bind=engine)
     db = session_factory()
     try:
         role_session_service = RoleSessionService(db=db)
         session = role_session_service.create_session(role="director", context_config={})
 
-        import polaris.cells.roles.session.internal.role_session_service as session_service_module
         import polaris.cells.roles.session.public as session_public_module
 
         def _session_factory():
             return role_session_service
 
-        monkeypatch.setattr(session_service_module, "RoleSessionService", _session_factory)
         monkeypatch.setattr(session_public_module, "RoleSessionService", _session_factory)
 
         class _FakeKernel:
@@ -209,7 +206,7 @@ async def test_execute_role_session_persists_transcript_and_context_os(monkeypat
 @pytest.mark.asyncio
 async def test_persist_session_turn_state_uses_session_continuity_engine_policy(monkeypatch) -> None:
     engine = create_engine("sqlite:///:memory:", echo=False)
-    Base.metadata.create_all(bind=engine)
+    Conversation.metadata.create_all(bind=engine)
     session_factory = sessionmaker(bind=engine)
     db = session_factory()
     try:
@@ -219,13 +216,11 @@ async def test_persist_session_turn_state_uses_session_continuity_engine_policy(
             context_config={"session_continuity": {"recent_window_messages": "invalid"}},
         )
 
-        import polaris.cells.roles.session.internal.role_session_service as session_service_module
         import polaris.cells.roles.session.public as session_public_module
 
         def _session_factory():
             return role_session_service
 
-        monkeypatch.setattr(session_service_module, "RoleSessionService", _session_factory)
         monkeypatch.setattr(session_public_module, "RoleSessionService", _session_factory)
 
         await RoleRuntimeService._persist_session_turn_state(
