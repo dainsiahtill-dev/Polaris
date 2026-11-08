@@ -1,0 +1,40 @@
+card_id: vc-20261109-engineering-tools-sandbox-argv-kwargs
+bug_summary: _process passed capture_output_root via a conditional dict unpack, which mypy types as dict[str, Path] and cannot match to the capture_output_root parameter, producing a false arg-type error.
+classification: one_off
+bug_path:
+  file: polaris/cells/roles/runtime/internal/engineering_tools.py
+  method: EngineeringCommandRuntime._process
+  symptom: mypy Argument 8 incompatible type "**dict[str, Path]"; expected "CommandCacheMount | None"
+assumptions:
+  - id: A1
+    statement: build_workspace_sandbox_argv declares capture_output_root: Path | None = None, so passing it directly is identical to the conditional unpack.
+    status: verified
+    evidence: kernelone/process/sandbox.py:190 signature; builder branches on capture_output_root is not None
+  - id: A2
+    statement: The command-cache branch keeps command_cache=command_cache unchanged; only capture_output_root passing style changes.
+    status: verified
+    evidence: test_engineering_command_cache_authority passes unchanged
+pre_mortem:
+  failure_point: Accidentally dropping command_cache in the second branch.
+  risk_zone:
+    - command-cache branch call site
+verification:
+  - mypy on engineering_tools.py: 1 error to 0
+  - ruff check and ruff format --check
+  - test_engineering_command_cache.py
+  - test_engineering_command_cache_authority.py
+  - test_engineering_command_contract.py
+  - test_engineering_command_timeout.py
+  - test_engineering_primitives.py
+results:
+  red: engineering_tools.py:471 mypy false positive reproduced on pristine HEAD
+  green: mypy clean on the file; ruff check/format pass
+  regression: 63 passed across the command-execution suites (both call sites)
+  limitations: static-shape correction only; full repository pytest not run here
+related_adrs: []
+related_blueprint: docs/blueprints/ENGINEERING_TOOLS_SANDBOX_ARGV_KWARGS_20261109.md
+sign_off:
+  completed_by: roles.runtime engineering-tools type-boundary convergence
+  completed_at: "2026-11-09"
+  verified_by: mypy + ruff + command-execution pytest suites
+  verified_at: "2026-11-09"

@@ -468,7 +468,7 @@ class EngineeringTools:
             write_roots=writes,
             network_allowed=self.scope.network_allowed,
             toolchain_bin_dirs=self.scope.toolchain_bin_dirs,
-            **({"capture_output_root": capture_output_root} if capture_output_root is not None else {}),
+            capture_output_root=capture_output_root,
         )
         command_cache = resolve_command_cache(
             self.workspace, cache_mode, create=command_cache_write and cache_mode == "read_write"
@@ -483,7 +483,7 @@ class EngineeringTools:
                 network_allowed=self.scope.network_allowed,
                 toolchain_bin_dirs=self.scope.toolchain_bin_dirs,
                 command_cache=command_cache,
-                **({"capture_output_root": capture_output_root} if capture_output_root is not None else {}),
+                capture_output_root=capture_output_root,
             )
         control = ProcessTreeRunControl()
         worker = asyncio.create_task(
