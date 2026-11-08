@@ -1,0 +1,54 @@
+card_id: vc-20261105-nats-cold-loopback-readiness
+bug_summary: Cold loopback connect timeout exhausts startup budget before canonical shared NATS admission.
+classification: pattern
+bug_path:
+  file: polaris/infrastructure/messaging/nats/server_runtime.py
+  method: ensure_local_nats_runtime / _observe_existing_endpoint / _probe_nats_endpoint
+  symptom: startup_deadline_exceeded on a free local port
+assumptions:
+  - id: A1
+    statement: The initial readiness probe can consume the entire deadline before coordinator entry.
+    status: verified
+    evidence: CodeGraph CLI source and three RED native regressions confirmed deadline exhaustion.
+  - id: A2
+    statement: Timeout is not ownership proof; real exclusive bind availability only permits canonical admission.
+    status: verified
+    evidence: shared_service_runtime._ensure retains writer, process and store identity fences.
+  - id: A3
+    statement: Existing slow listeners need the original INFO readiness budget.
+    status: verified
+    evidence: test_slow_existing_greeting_uses_remaining_startup_budget
+pre_mortem:
+  failure_point: Treating a silent existing listener as absent, or capping INFO rather than only connect.
+  risk_zone:
+    - native socket family and exclusive bind
+    - autostart credentials and policy
+    - shared writer and store incarnation admission
+verification_plan:
+  unit_tests:
+    - file: polaris/tests/test_nats_cold_loopback.py
+      description: Native cold startup, occupied socket, slow INFO, policy and incarnation fences.
+      expected: Cold bindable endpoint starts through canonical coordinator; all protected paths stay closed.
+      status: passed
+  integration_tests:
+    - description: Existing native shared lifecycle and startup regressions
+      command: rtk proxy python -m pytest -q src/backend/polaris/tests/test_managed_nats_startup.py src/backend/polaris/tests/test_shared_nats_lifecycle.py src/backend/polaris/tests/test_nats_cold_loopback.py
+      status: passed
+  manual_check:
+    - Current shared service and production endpoints remain untouched.
+related_adrs: []
+related_blueprint: docs/blueprints/NATS_COLD_LOOPBACK_READINESS_20261105.md
+sign_off:
+  completed_by: NATS-COLD-START implementation agent
+  completed_at: "2026-11-05"
+  verified_by: NATS-COLD-START component verification; independent parent review pending
+  verified_at: "2026-11-05"
+testing_evidence:
+  red: 3 expected failures before implementation
+  green: 66 passed in 25.08 seconds with private KERNELONE_HOME
+  architecture: 18 passed in 13.48 seconds
+  static: Ruff check, format check and strict source mypy passed
+  initial_environment_failures: 61 passed / 2 failed with inherited home; private-home rerun passed
+  limitations: Full repository pytest and native Windows execution not run
+  release_tests: 373 passed / 2 skipped in 193.26 seconds
+  release_overall: failed; 6 existing cross-Cell imports in unchanged role test files outside scope

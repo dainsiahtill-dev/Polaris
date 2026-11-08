@@ -103,10 +103,35 @@ def _startup_budget(value: float) -> float:
     return budget
 
 
+def _loopback_address_is_bindable(
+    family: int,
+    kind: int,
+    protocol: int,
+    address: tuple[str, int] | tuple[str, int, int, int],
+) -> bool:
+    """Observe exclusive address availability, never ownership or readiness."""
+    if address[0] not in {"127.0.0.1", "::1"}:
+        return False
+    try:
+        with socket.socket(family, kind, protocol) as reservation:
+            if os.name == "nt":
+                exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+                if not isinstance(exclusive, int):
+                    return False
+                reservation.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+            # No SO_REUSEADDR/SO_REUSEPORT: an occupied address must stay pending.
+            reservation.bind(address)
+        return True
+    except OSError:
+        return False
+
+
 async def _probe_nats_endpoint(
     host: str,
     port: int,
     timeout: float,
+    *,
+    allow_autostart: bool = False,
 ) -> Literal["ready", "absent", "pending", "incompatible"]:
     """Distinguish absent service, pending readiness and explicit wrong protocol."""
 
@@ -114,10 +139,22 @@ async def _probe_nats_endpoint(
         # Resolve explicitly rather than parsing multi-address exception text
         # or introducing Python-3.12-only all_errors/ExceptionGroup behavior.
         addresses = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
-        for _family, _kind, _protocol, _name, address in addresses:
+        for family, kind, protocol, _name, address in addresses:
             writer: asyncio.StreamWriter | None = None
             try:
-                reader, writer = await asyncio.open_connection(address[0], address[1], limit=8192)
+                if allow_autostart:
+                    try:
+                        reader, writer = await asyncio.wait_for(
+                            asyncio.open_connection(address[0], address[1], limit=8192),
+                            timeout=min(0.25, timeout / 2),
+                        )
+                    except asyncio.TimeoutError:
+                        if _loopback_address_is_bindable(family, kind, protocol, address):
+                            continue
+                        raise
+                else:
+                    reader, writer = await asyncio.open_connection(address[0], address[1], limit=8192)
+                # Once connected, INFO keeps the original outer readiness deadline.
                 greeting = await reader.readuntil(b"\r\n")
                 if not greeting.startswith(b"INFO "):
                     return "incompatible"
@@ -146,10 +183,12 @@ async def _observe_existing_endpoint(
     host: str,
     port: int,
     deadline: float,
+    *,
+    allow_autostart: bool = False,
 ) -> Literal["ready", "absent", "pending", "incompatible"]:
     loop = asyncio.get_running_loop()
     while (remaining := deadline - loop.time()) > 0.0:
-        state = await _probe_nats_endpoint(host, port, remaining)
+        state = await _probe_nats_endpoint(host, port, remaining, allow_autostart=allow_autostart)
         if state != "pending":
             return state
         await asyncio.sleep(min(0.1, max(0.0, deadline - loop.time())))
@@ -321,7 +360,15 @@ async def ensure_local_nats_runtime(
     host, port = endpoint
     budget = _startup_budget(startup_timeout_seconds)
     deadline = asyncio.get_running_loop().time() + budget
-    state = await _observe_existing_endpoint(host, port, deadline)
+    parsed = urlparse(_first_nats_server_url(nats_url))
+    autostart_allowed = (
+        allow_autostart
+        and parsed.username is None
+        and parsed.password is None
+        and not os.environ.get("KERNELONE_NATS_USER")
+        and not os.environ.get("KERNELONE_NATS_PASSWORD")
+    )
+    state = await _observe_existing_endpoint(host, port, deadline, allow_autostart=autostart_allowed)
     from .shared_service_runtime import ensure_shared_nats_runtime, ready_endpoint_is_external
 
     if state == "ready" and await ready_endpoint_is_external(host, port, deadline):
@@ -331,14 +378,7 @@ async def ensure_local_nats_runtime(
     if state == "pending":
         raise RuntimeError("Managed NATS startup_deadline_exceeded while awaiting existing service readiness")
 
-    parsed = urlparse(_first_nats_server_url(nats_url))
-    if (
-        not allow_autostart
-        or parsed.username is not None
-        or parsed.password is not None
-        or os.environ.get("KERNELONE_NATS_USER")
-        or os.environ.get("KERNELONE_NATS_PASSWORD")
-    ):
+    if not autostart_allowed:
         if state == "ready":
             return
         raise RuntimeError("shared_nats_external_service_unavailable: credentialed endpoint cannot autostart")
