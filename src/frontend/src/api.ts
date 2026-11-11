@@ -33,7 +33,31 @@ const INSTANCE_STORAGE_PREFIX = "polaris.instances";
 
 let cachedInfo: BackendInfo | null = null;
 
+function isBackendOriginPermitted(value: string): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  try {
+    const url = new URL(value);
+    if (url.origin === window.location.origin) {
+      return true;
+    }
+    // The shipped connect-src policy permits loopback origins only, so a
+    // remembered backend on any other address could never be reached.
+    return url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  } catch {
+    return false;
+  }
+}
+
 function getDefaultBackendUrl(): string {
+  // A Vite dev page talks to its own origin and lets the dev proxy reach the
+  // backend, so the API and the runtime WebSocket stay same-origin. The
+  // shipped connect-src policy permits only loopback origins, so an absolute
+  // cross-origin backend is refused by the browser even when it is reachable.
+  if (isViteWebDevMode && typeof window !== "undefined") {
+    return window.location.origin;
+  }
   // Allow port override via environment variable in development
   const port = import.meta.env.VITE_BACKEND_PORT || DEFAULT_BACKEND_PORT;
   const host = import.meta.env.VITE_BACKEND_HOST || DEFAULT_BACKEND_HOST;
@@ -196,7 +220,12 @@ export async function getBackendInfo(options: BackendInfoOptions = {}): Promise<
   if (!window.polaris?.getBackendInfo) {
     const devBackend = (window as WindowWithDevBackend).__DEV_BACKEND__;
     const storedBase = options.ignoreStoredBase ? null : localStorage.getItem(storageKey(STORED_BASE_URL_KEY));
-    const explicitBase = getUrlBackendUrl() || devBackend?.baseUrl || getEnvBackendUrl() || storedBase;
+    // A remembered cross-origin base would be refused by the shipped
+    // connect-src policy, so a dev page only reuses a same-origin one and
+    // otherwise falls back to its own origin.
+    const storedBaseForMode =
+      isViteWebDevMode && storedBase && !isBackendOriginPermitted(storedBase) ? null : storedBase;
+    const explicitBase = getUrlBackendUrl() || devBackend?.baseUrl || getEnvBackendUrl() || storedBaseForMode;
     const fallbackBase = explicitBase || getDefaultBackendUrl();
     const fallbackToken =
       getUrlBackendToken() ||

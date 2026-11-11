@@ -102,7 +102,7 @@ def get_git_status(workspace: str) -> dict[str, Any]:
 def get_lancedb_status() -> dict[str, Any]:
     try:
         import lancedb
-    except (RuntimeError, ValueError) as exc:
+    except (ImportError, RuntimeError, ValueError) as exc:
         return {
             "ok": False,
             "error": str(exc),

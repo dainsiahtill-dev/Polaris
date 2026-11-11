@@ -21,12 +21,12 @@ describe('getBackendInfo web fallback', () => {
     vi.unstubAllGlobals();
   });
 
-  it('uses the local Polaris backend by default in Vite web mode', async () => {
+  it('uses the page origin as the default backend in Vite web mode', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { getBackendInfo } = await import('./api');
 
     await expect(getBackendInfo()).resolves.toMatchObject({
-      baseUrl: 'http://127.0.0.1:49977',
+      baseUrl: window.location.origin,
       token: 'polaris-local-dev',
       port: null,
     });
@@ -43,12 +43,26 @@ describe('getBackendInfo web fallback', () => {
     const { getBackendInfo } = await import('./api');
 
     await expect(getBackendInfo()).resolves.toMatchObject({
-      baseUrl: 'http://127.0.0.1:49977',
+      baseUrl: window.location.origin,
       token: 'custom-token',
     });
 
     expect(warnSpy).not.toHaveBeenCalled();
     warnSpy.mockRestore();
+  });
+
+  it('ignores a remembered cross-origin backend in Vite web mode', async () => {
+    // The shipped connect-src policy permits only loopback origins, so a
+    // remembered backend on any other address could never be reached. A dev
+    // page therefore uses its own origin and lets the dev proxy forward.
+    localStorage.setItem('polaris.baseUrl', 'http://192.168.10.2:51000');
+    localStorage.setItem('polaris.token', 'custom-token');
+    const { getBackendInfo } = await import('./api');
+
+    await expect(getBackendInfo()).resolves.toMatchObject({
+      baseUrl: window.location.origin,
+      token: 'custom-token',
+    });
   });
 
   it('honors persisted backend overrides', async () => {
@@ -107,7 +121,7 @@ describe('getBackendInfo web fallback', () => {
     expect(response.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0][0]).toBe('http://127.0.0.1:49988/v2/settings');
-    expect(fetchMock.mock.calls[1][0]).toBe('http://127.0.0.1:49977/v2/settings');
+    expect(fetchMock.mock.calls[1][0]).toBe(`${window.location.origin}/v2/settings`);
     expect(localStorage.getItem('polaris.baseUrl')).toBeNull();
     expect(localStorage.getItem('polaris.token')).toBeNull();
   });
@@ -136,9 +150,9 @@ describe('getBackendInfo web fallback', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0][0]).toBe('http://127.0.0.1:49988/health');
-    expect(fetchMock.mock.calls[1][0]).toBe('http://127.0.0.1:49977/health');
+    expect(fetchMock.mock.calls[1][0]).toBe(`${window.location.origin}/health`);
     expect((socket as unknown as MockWebSocket).url).toBe(
-      'ws://127.0.0.1:49977/v2/ws/runtime?protocol=runtime.v2&token=polaris-local-dev'
+      `${window.location.origin.replace(/^http/, 'ws')}/v2/ws/runtime?protocol=runtime.v2&token=polaris-local-dev`
     );
     expect(localStorage.getItem('polaris.baseUrl')).toBeNull();
     expect(localStorage.getItem('polaris.token')).toBeNull();
@@ -255,7 +269,7 @@ describe('apiFetch auth token discovery', () => {
     expect(response.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://127.0.0.1:49977/v2/settings');
+    expect(url).toBe(`${window.location.origin}/v2/settings`);
     const headers = init.headers as Headers;
     expect(headers.get('Authorization')).toBe('Bearer polaris-local-dev');
   });
@@ -287,7 +301,7 @@ describe('apiFetch auth token discovery', () => {
 
     expect(response.status).toBe(200);
     const calledUrls = fetchMock.mock.calls.map((c: unknown[]) => c[0] as string);
-    expect(calledUrls).toContain('http://127.0.0.1:49977/v2/auth/token');
+    expect(calledUrls).toContain(`${window.location.origin}/v2/auth/token`);
   });
 
   it('does not leak token in URL query when discovery returns 404', async () => {

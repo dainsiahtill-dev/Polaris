@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 def get_lancedb_status() -> dict[str, Any]:
     try:
         import lancedb
-    except (RuntimeError, TypeError, ValueError) as exc:
+    except (ImportError, RuntimeError, TypeError, ValueError) as exc:
         return {
             "ok": False,
             "error": str(exc),
