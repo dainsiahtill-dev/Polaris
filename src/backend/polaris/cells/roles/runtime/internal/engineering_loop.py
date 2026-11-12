@@ -244,7 +244,11 @@ def _bounded_request_messages(
     from polaris.kernelone.llm.engine.prompt_budget import compress_native_tool_history
 
     text_budget = max(2048, allowance - int(cost["image_serialization_proxy_tokens"]))
-    bounded = compress_native_tool_history(built, text_budget)
+    # The compression works on the raw history. The visual projection moves
+    # the image bytes out of the tool content into attachment blocks, so
+    # compressing an already projected history and projecting it again would
+    # read image blocks without their bytes.
+    bounded = compress_native_tool_history(messages, text_budget)
     if bounded is None:
         return built
     return build(bounded)
