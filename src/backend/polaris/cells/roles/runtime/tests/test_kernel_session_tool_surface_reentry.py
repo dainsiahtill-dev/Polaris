@@ -18,6 +18,9 @@ from polaris.cells.roles.profile.public.service import RoleTurnResult, profile_f
 from polaris.cells.roles.runtime.internal.kernel_session_turn import KernelSessionTurnBridge
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
 from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+from polaris.cells.roles.runtime.tests.engineering_support import (
+    isolated_workspace as isolated_workspace,
+)
 
 
 def _profile(whitelist: list[str] | None = None) -> Any:
@@ -366,7 +369,7 @@ async def test_permanent_forced_scope_cannot_reintroduce_denied_native_tool(
 
 @pytest.mark.asyncio
 async def test_real_quality_repair_producer_reenters_original_registry_after_commit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    isolated_workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import hashlib
 
@@ -381,7 +384,7 @@ async def test_real_quality_repair_producer_reenters_original_registry_after_com
 
     # Only upstream diagnosis/model decisions are synthetic. Current source,
     # engineering tool effects, denied write and verifier results are actual.
-    seed_quality_repair_inputs(tmp_path, fixture.OWNED, fixture.REFERENCE)
+    seed_quality_repair_inputs(isolated_workspace, fixture.OWNED, fixture.REFERENCE)
     context = fixture._context()
     context["director_execution_envelope"]["allowed_read_paths"] = [*fixture.OWNED, fixture.REFERENCE]
     context["director_interface_discrepancy_retry"] = {
@@ -390,7 +393,7 @@ async def test_real_quality_repair_producer_reenters_original_registry_after_com
         "recommended_owner": "director",
         "recommended_route": "director_retry_with_interface_discrepancy_context",
     }
-    adapter = fixture._RepairBoundaryAdapter(tmp_path)
+    adapter = fixture._RepairBoundaryAdapter(isolated_workspace)
     await fixture._repair(
         adapter,
         fixture._task(reference_in_targets=True),
@@ -399,7 +402,7 @@ async def test_real_quality_repair_producer_reenters_original_registry_after_com
     )
     assert len(adapter.calls) == 1
     produced = adapter.calls[0]["context"]
-    command = _command(tmp_path, {**produced, "execution_envelope": produced["director_execution_envelope"]})
+    command = _command(isolated_workspace, {**produced, "execution_envelope": produced["director_execution_envelope"]})
     original = deepcopy(command.context)
     bridge = KernelSessionTurnBridge(SimpleNamespace(), command)
     initial_command = bridge._turn_command("turn-1", "Repair the current source.")
@@ -407,7 +410,11 @@ async def test_real_quality_repair_producer_reenters_original_registry_after_com
     assert {tool["name"] for tool in initial["tools"]} == AUTHORIZED_TOOLS
     assert initial.get("tool_choice") in (None, {"type": "auto"})
     actual = await run_actual_authorized_repair(
-        tmp_path, monkeypatch, owned=fixture.OWNED, reference=fixture.REFERENCE, instruction=adapter.calls[0]["message"]
+        isolated_workspace,
+        monkeypatch,
+        owned=fixture.OWNED,
+        reference=fixture.REFERENCE,
+        instruction=adapter.calls[0]["message"],
     )
     assert actual["result_status"] == "completed", actual["snapshot"]
     assert actual["verification"] == "passed"
@@ -432,12 +439,12 @@ async def test_real_quality_repair_producer_reenters_original_registry_after_com
     assert (
         binding["workspace_revision"] == verification["workspace_revision"] == actual["snapshot"]["workspace_revision"]
     )
-    source_path = str(tmp_path / fixture.OWNED[1])
+    source_path = str(isolated_workspace / fixture.OWNED[1])
     expected_source_hash = hashlib.sha256(REPAIRED_SOURCE.encode("utf-8")).hexdigest()
     assert binding["source_manifest"][source_path]["sha256"] == expected_source_hash
     assert binding["result_manifest"][source_path]["sha256"] == expected_source_hash
     assert (
-        binding["result_manifest"][str(tmp_path / fixture.REFERENCE)]["sha256"]
+        binding["result_manifest"][str(isolated_workspace / fixture.REFERENCE)]["sha256"]
         == hashlib.sha256(READ_ONLY_REFERENCE.encode("utf-8")).hexdigest()
     )
     assert by_id["before-check"]["exit_code"] != 0

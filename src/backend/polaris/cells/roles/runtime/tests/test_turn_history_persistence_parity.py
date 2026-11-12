@@ -24,29 +24,19 @@ class TestPersistSessionTurnStateSignatures:
             f"turn_history must be required; got default: {turn_history_param.default!r}"
         )
 
-    def test_all_call_sites_pass_turn_history(self) -> None:
-        """All callers of _persist_session_turn_state must pass turn_history."""
+    def test_retired_session_turn_state_has_no_live_call_site(self) -> None:
+        """The retired session turn state must not be written by a live path.
+
+        The legacy role execution kernel that persisted the session turn
+        state is retired, so the method stays only as a historical contract.
+        A live call site would mean a retired path still writes session turn
+        state.
+        """
         from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 
         source = inspect.getsource(RoleRuntimeService)
 
-        call_marker = "self._persist_session_turn_state("
-        pos = 0
-        call_sites = []
-        while True:
-            idx = source.find(call_marker, pos)
-            if idx == -1:
-                break
-            window = source[idx : idx + 600]
-            call_sites.append(window)
-            pos = idx + len(call_marker)
-
-        assert len(call_sites) >= 4, f"Expected at least 4 call sites, found {len(call_sites)}"
-
-        for i, window in enumerate(call_sites):
-            assert "turn_history=" in window, (
-                f"Call site {i} missing turn_history= within 600 chars of call. Call starts: {window[:100]}"
-            )
+        assert "self._persist_session_turn_state(" not in source
 
     def test_no_turn_history_fallback_else_branch(self) -> None:
         """_persist_session_turn_state must not have 'else' fallback for turn_history."""

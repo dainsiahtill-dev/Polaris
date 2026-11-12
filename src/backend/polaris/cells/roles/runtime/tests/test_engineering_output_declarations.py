@@ -36,7 +36,8 @@ def _scope(workspace: Path) -> PermissionScope:
 
 
 def _limits() -> RunLimits:
-    return RunLimits(time.time() + 30, 1_000_000, 64_000)
+    # The capture runs a real browser; the budget has to survive a loaded host.
+    return RunLimits(time.time() + 120, 1_000_000, 64_000)
 
 
 def _write(path: Path, content: str) -> None:
