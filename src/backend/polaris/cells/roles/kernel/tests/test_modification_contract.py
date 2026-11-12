@@ -31,15 +31,14 @@ from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, Tu
 from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchId,
     FinalizeMode,
-    ToolBatch,
     ToolCallId,
-    ToolEffectType,
-    ToolExecutionMode,
     ToolInvocation,
     TurnDecision,
     TurnDecisionKind,
     TurnId,
+    classify_tool_invocation,
 )
+from polaris.cells.roles.kernel.tests.tool_batch_fixtures import tool_batch_model_with_groups
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -106,16 +105,15 @@ def _make_tool_batch_decision(
     tool_name: str,
     arguments: dict[str, Any] | None = None,
 ) -> TurnDecision:
+    # The platform registry owns the classification, so the declared effect
+    # and mode stay in lockstep with it even for an alias.
+    classification = classify_tool_invocation(tool_name)
     invocation = ToolInvocation(
         call_id=ToolCallId(f"call_{tool_name}"),
         tool_name=tool_name,
         arguments=arguments or {},
-        effect_type=ToolEffectType.READ if tool_name in {"read_file", "glob", "repo_rg"} else ToolEffectType.WRITE,
-        execution_mode=(
-            ToolExecutionMode.READONLY_PARALLEL
-            if tool_name in {"read_file", "glob", "repo_rg"}
-            else ToolExecutionMode.WRITE_SERIAL
-        ),
+        effect_type=classification.effect_type,
+        execution_mode=classification.execution_mode,
     )
     return TurnDecision(
         turn_id=TurnId(turn_id),
@@ -124,9 +122,9 @@ def _make_tool_batch_decision(
         finalize_mode=FinalizeMode.NONE,
         domain="code",
         metadata={"workspace": "."},
-        tool_batch=ToolBatch(
-            batch_id=BatchId(batch_id),
-            invocations=[invocation],
+        tool_batch=tool_batch_model_with_groups(
+            BatchId(batch_id),
+            [invocation],
         ),
     )
 
@@ -339,16 +337,17 @@ class TestPreExecutionGateIntegration:
     async def test_allowed_tool_names_match_hyphenated_native_tool_alias(
         self, mock_emit_event: Any, mock_guard_assert: Any
     ) -> None:
+        """A hyphenated name resolves to the same tool the registry owns."""
         executor = _make_executor(mock_emit_event, mock_guard_assert)
         decision = _make_tool_batch_decision(
             "turn_alias_1",
             "batch_alias_1",
-            "project-scaffold",
-            {"files": []},
+            "read_file",
+            {"file": "README.md"},
         )
         sm = _make_state_machine("turn_alias_1")
         ledger = TurnLedger(turn_id="turn_alias_1")
-        context = [{"role": "user", "content": "Create the project scaffold."}]
+        context = [{"role": "user", "content": "Read the README."}]
 
         result = await executor.execute_tool_batch(
             decision,
@@ -356,25 +355,26 @@ class TestPreExecutionGateIntegration:
             ledger,
             context,
             stream=False,
-            allowed_tool_names={"project_scaffold"},
+            allowed_tool_names={"read-file"},
         )
 
         assert result.get("turn_id") == "turn_alias_1"
 
     @pytest.mark.asyncio
-    async def test_allowed_tool_names_match_project_scaffolding_synonym(
+    async def test_allowed_tool_names_match_registered_alias_synonym(
         self, mock_emit_event: Any, mock_guard_assert: Any
     ) -> None:
+        """A registered synonym resolves to the same tool the registry owns."""
         executor = _make_executor(mock_emit_event, mock_guard_assert)
         decision = _make_tool_batch_decision(
             "turn_alias_2",
             "batch_alias_2",
-            "project-scaffolding",
-            {"files": []},
+            "cat",
+            {"file": "README.md"},
         )
         sm = _make_state_machine("turn_alias_2")
         ledger = TurnLedger(turn_id="turn_alias_2")
-        context = [{"role": "user", "content": "Create the project scaffold."}]
+        context = [{"role": "user", "content": "Read the README."}]
 
         result = await executor.execute_tool_batch(
             decision,
@@ -382,7 +382,7 @@ class TestPreExecutionGateIntegration:
             ledger,
             context,
             stream=False,
-            allowed_tool_names={"project_scaffold"},
+            allowed_tool_names={"read_file"},
         )
 
         assert result.get("turn_id") == "turn_alias_2"

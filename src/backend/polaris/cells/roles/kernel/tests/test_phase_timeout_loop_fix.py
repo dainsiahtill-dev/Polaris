@@ -27,7 +27,6 @@ from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, Tu
 from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchId,
     FinalizeMode,
-    ToolBatch,
     ToolCallId,
     ToolEffectType,
     ToolExecutionMode,
@@ -37,6 +36,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnId,
 )
 from polaris.cells.roles.kernel.public.turn_events import ErrorEvent
+from polaris.cells.roles.kernel.tests.tool_batch_fixtures import tool_batch_model_with_groups
 
 
 @pytest.fixture
@@ -131,9 +131,9 @@ def _make_tool_batch_decision(
         finalize_mode=FinalizeMode.NONE,
         domain="code",
         metadata={"workspace": "."},
-        tool_batch=ToolBatch(
-            batch_id=BatchId(batch_id),
-            invocations=[invocation],
+        tool_batch=tool_batch_model_with_groups(
+            BatchId(batch_id),
+            [invocation],
         ),
     )
 

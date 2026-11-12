@@ -47,6 +47,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     ToolExecutionMode,
     ToolInvocation,
     _infer_effect_type,
+    classify_tool_invocation,
 )
 from polaris.kernelone.llm.toolkit.tool_normalization import (
     looks_like_patch_like_write_content,
@@ -278,10 +279,6 @@ def _is_mutation_for_speculative_routing(
 # 路径辅助
 # ---------------------------------------------------------------------------
 
-_TOOL_NAME_CANONICAL_ALIASES = {
-    "project_scaffolding": "project_scaffold",
-}
-
 _NO_WRITE_STRUCTURED_ROLES = frozenset({"pm", "chief_engineer", "architect", "qa"})
 _NO_WRITE_STRUCTURED_FLAG = "DELIVERY_CONTRACT_ROLE_NO_WRITE_STRUCTURED_OUTPUT"
 
@@ -334,8 +331,22 @@ def _recent_edit_failure_in_context(context: Any, lookback: int = 8) -> bool:
 
 
 def _normalize_allowed_tool_name_alias(name: str) -> str:
+    """Resolve a tool name to the owner the platform registry knows.
+
+    The registry owns the alias bindings, so the narrowed set and the called
+    tool have to be compared in one canonical space. A name the registry does
+    not own keeps its literal form and stays denied by the tool surface.
+    """
     normalized = str(name or "").strip().lower().replace("-", "_")
-    return _TOOL_NAME_CANONICAL_ALIASES.get(normalized, normalized)
+    if not normalized:
+        return ""
+    try:
+        classification = classify_tool_invocation(normalized)
+    except ValueError:
+        return normalized
+    if not classification.registered:
+        return normalized
+    return str(classification.canonical_tool_name)
 
 
 def _tool_name_allowed_by_alias(tool_name: str, allowed_tool_names: set[str]) -> bool:

@@ -147,11 +147,7 @@ def test_compress_native_tool_history_drops_whole_old_turns() -> None:
     assert compressed[0]["role"] == "user" and compressed[0]["content"] == "deliver the artifact"
     assert compressed[-1]["role"] == "tool" and compressed[-1]["tool_call_id"] == "call-11"
     # Every kept tool result still answers a kept assistant tool call.
-    answered = {
-        call["id"]
-        for message in compressed
-        for call in (message.get("tool_calls") or [])
-    }
+    answered = {call["id"] for message in compressed for call in (message.get("tool_calls") or [])}
     for message in compressed:
         if message.get("role") == "tool":
             assert message["tool_call_id"] in answered

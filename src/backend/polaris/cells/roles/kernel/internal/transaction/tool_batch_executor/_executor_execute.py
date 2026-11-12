@@ -63,6 +63,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnDecision,
     TurnDecisionKind,
     TurnId,
+    classify_tool_invocation,
 )
 from polaris.cells.roles.kernel.public.turn_events import TurnPhaseEvent
 from polaris.kernelone.tool_execution.contracts import tool_batch_inventory_error
@@ -222,6 +223,69 @@ def _terminal_feedback_class(receipts: list[dict[str, Any]]) -> str | None:
     return None
 
 
+_EXECUTION_GROUP_BY_MODE: dict[str, str] = {
+    ToolExecutionMode.READONLY_PARALLEL.value: "parallel_readonly",
+    ToolExecutionMode.READONLY_SERIAL.value: "readonly_serial",
+    ToolExecutionMode.WRITE_SERIAL.value: "serial_writes",
+    ToolExecutionMode.ASYNC_RECEIPT.value: "async_receipts",
+}
+
+
+def _declared_execution_mode(invocation: Any) -> str:
+    """Read the execution mode of a declared invocation.
+
+    A decoded call can arrive before the classifier has run, so the mode is
+    taken from the declared field when it is present and from the platform
+    classifier otherwise.
+    """
+    if isinstance(invocation, Mapping):
+        declared = str(invocation.get("execution_mode") or "")
+        if declared:
+            return declared
+        raw_tool_name = str(invocation.get("raw_tool_name") or invocation.get("tool_name") or "")
+    else:
+        mode = getattr(invocation, "execution_mode", None)
+        declared = str(getattr(mode, "value", mode or ""))
+        if declared:
+            return declared
+        raw_tool_name = str(getattr(invocation, "raw_tool_name", "") or getattr(invocation, "tool_name", "") or "")
+    try:
+        classification = classify_tool_invocation(raw_tool_name)
+    except ValueError:
+        # A synthetic tool name stays a mutation candidate until it is denied.
+        return ToolExecutionMode.WRITE_SERIAL.value
+    return str(classification.execution_mode.value)
+
+
+def _canonical_tool_batch_wire(tool_batch: Any) -> Any:
+    """Bind a declared batch to the executable form the inventory gate reads.
+
+    A decision can carry the decoded calls before the classifier has run. The
+    inventory gate compares the declared calls with their execution groups, so
+    the calls have to be normalized and grouped first: normalization precedes
+    the gate, and the gate then sees the executable form that every caller
+    has to satisfy. A batch that already declares its groups keeps them, so
+    the gate still rejects an inconsistent declaration.
+    """
+    if isinstance(tool_batch, ToolBatch):
+        return tool_batch.model_dump(mode="json")
+    if not isinstance(tool_batch, Mapping):
+        return tool_batch
+    declared = list(tool_batch.get("invocations", []) or [])
+    if any(tool_batch.get(name) for name in _EXECUTION_GROUP_BY_MODE.values()):
+        return tool_batch
+    groups: dict[str, list[Any]] = {name: [] for name in _EXECUTION_GROUP_BY_MODE.values()}
+    for invocation in declared:
+        group = _EXECUTION_GROUP_BY_MODE.get(_declared_execution_mode(invocation))
+        if group is not None:
+            groups[group].append(invocation)
+    return {
+        "batch_id": tool_batch.get("batch_id"),
+        "invocations": declared,
+        **groups,
+    }
+
+
 class _ToolBatchExecuteMixin:
     """Mixin providing ToolBatchExecutor.execute_tool_batch."""
 
@@ -245,7 +309,7 @@ class _ToolBatchExecuteMixin:
         tool_batch = deepcopy(decision.get("tool_batch"))
         if not tool_batch:
             raise ValueError("TOOL_BATCH decision missing tool_batch")
-        wire = tool_batch.model_dump(mode="json") if isinstance(tool_batch, ToolBatch) else tool_batch
+        wire = _canonical_tool_batch_wire(tool_batch)
         error = tool_batch_inventory_error(wire, require_execution_groups=True)
         if error is not None:
             raise RuntimeError(error)

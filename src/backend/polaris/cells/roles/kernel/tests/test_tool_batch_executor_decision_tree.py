@@ -63,6 +63,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     _infer_execution_mode,
 )
 from polaris.cells.roles.kernel.public.turn_events import CompletionEvent, ErrorEvent, TurnPhaseEvent
+from polaris.cells.roles.kernel.tests.tool_batch_fixtures import tool_batch_with_groups
 
 # ---------------------------------------------------------------------------
 # Shared fixtures / builders
@@ -264,6 +265,9 @@ def _decision(turn_id: str, batch_id: str, invocations: list[dict[str, Any]], *,
     call has explicit ``execution_mode`` and ``effect_type``. Tests that want
     to pin a specific routing can pass an invocation dict with those fields
     already set — :py:func:`_make_invocation` then preserves them.
+
+    The batch binds the declared invocations to their execution groups, which
+    is the executable form of the tool-batch inventory contract.
     """
     normalized: list[dict[str, Any]] = []
     for inv in invocations:
@@ -274,10 +278,7 @@ def _decision(turn_id: str, batch_id: str, invocations: list[dict[str, Any]], *,
             "turn_id": turn_id,
             "metadata": {"workspace": "."},
             "finalize_mode": finalize,
-            "tool_batch": {
-                "batch_id": batch_id,
-                "invocations": normalized,
-            },
+            "tool_batch": tool_batch_with_groups(batch_id, normalized),
         },
     )
 
@@ -348,15 +349,20 @@ async def test_allowed_tool_names_disallowed_raises_without_error_event() -> Non
 
 
 @pytest.mark.asyncio
-async def test_allowed_tool_names_alias_normalization_permits_scaffolding_alias() -> None:
-    """``project_scaffolding`` is allowed by alias when ``project_scaffold`` is narrowed."""
+async def test_allowed_tool_names_alias_normalization_permits_registered_alias() -> None:
+    """A registered alias narrows the same canonical tool.
+
+    The platform registry owns the alias bindings, so the narrowed name and
+    the canonical name have to resolve to the same tool. A name the registry
+    does not own is not a tool at all and stays denied by the tool surface.
+    """
     captured: list[Any] = []
     executor = _make_executor(captured_events=captured)
     turn_id = "turn_alias_ok"
     decision = _decision(
         turn_id,
         "b1",
-        [{"call_id": "c", "tool_name": "project_scaffolding", "arguments": {}}],
+        [{"call_id": "c", "tool_name": "read_file", "arguments": {"file": "README.md"}}],
     )
     # Must NOT raise the disallowed-tools error (alias matches).
     result = await executor.execute_tool_batch(
@@ -365,9 +371,32 @@ async def test_allowed_tool_names_alias_normalization_permits_scaffolding_alias(
         TurnLedger(turn_id=turn_id),
         [{"role": "user", "content": "go"}],
         stream=False,
-        allowed_tool_names={"project_scaffold"},
+        allowed_tool_names={"cat"},
     )
     assert result.get("turn_id") == turn_id
+
+
+@pytest.mark.asyncio
+async def test_unregistered_tool_name_stays_outside_the_offered_surface() -> None:
+    """A name the registry does not own is denied before any tool effect."""
+    captured: list[Any] = []
+    executor = _make_executor(captured_events=captured)
+    turn_id = "turn_unregistered_tool"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [{"call_id": "c", "tool_name": "project_scaffolding", "arguments": {}}],
+    )
+
+    with pytest.raises(RuntimeError, match="tool_surface_violation"):
+        await executor.execute_tool_batch(
+            decision,
+            _build_decoded_state_machine(turn_id),
+            TurnLedger(turn_id=turn_id),
+            [{"role": "user", "content": "go"}],
+            stream=False,
+            allowed_tool_names={"project_scaffolding"},
+        )
 
 
 @pytest.mark.asyncio

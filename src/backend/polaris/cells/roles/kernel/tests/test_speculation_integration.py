@@ -35,7 +35,6 @@ from polaris.cells.roles.kernel.internal.turn_transaction_controller import Turn
 from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchId,
     FinalizeMode,
-    ToolBatch,
     ToolCallId,
     ToolEffectType,
     ToolExecutionMode,
@@ -44,6 +43,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnDecisionKind,
     TurnId,
 )
+from polaris.cells.roles.kernel.tests.tool_batch_fixtures import tool_batch_model_with_groups
 
 
 def _make_policy(tool_name: str = "read_file") -> ToolSpecPolicy:
@@ -175,9 +175,9 @@ async def test_batch_adopts_completed_shadow_task(
         turn_id=TurnId("t_adopt"),
         kind=TurnDecisionKind.TOOL_BATCH,
         visible_message="",
-        tool_batch=ToolBatch(
-            batch_id=BatchId("batch_1"),
-            invocations=[
+        tool_batch=tool_batch_model_with_groups(
+            BatchId("batch_1"),
+            [
                 ToolInvocation(
                     call_id=ToolCallId("call_1"),
                     tool_name="read_file",
@@ -220,9 +220,9 @@ async def test_stream_write_tool_without_prepare_shadow_replays(
         turn_id=TurnId("t_write_prepare_required"),
         kind=TurnDecisionKind.TOOL_BATCH,
         visible_message="",
-        tool_batch=ToolBatch(
-            batch_id=BatchId("batch_prepare_required"),
-            invocations=[
+        tool_batch=tool_batch_model_with_groups(
+            BatchId("batch_prepare_required"),
+            [
                 ToolInvocation(
                     call_id=ToolCallId("call_missing_prepare"),
                     tool_name="write_file",
@@ -290,9 +290,9 @@ async def test_batch_joins_running_shadow_task(
         turn_id=TurnId("t_join"),
         kind=TurnDecisionKind.TOOL_BATCH,
         visible_message="",
-        tool_batch=ToolBatch(
-            batch_id=BatchId("batch_1"),
-            invocations=[
+        tool_batch=tool_batch_model_with_groups(
+            BatchId("batch_1"),
+            [
                 ToolInvocation(
                     call_id=ToolCallId("call_1"),
                     tool_name="read_file",
@@ -338,9 +338,9 @@ async def test_batch_replays_when_no_shadow_task(
         turn_id=TurnId("t_replay"),
         kind=TurnDecisionKind.TOOL_BATCH,
         visible_message="",
-        tool_batch=ToolBatch(
-            batch_id=BatchId("batch_1"),
-            invocations=[
+        tool_batch=tool_batch_model_with_groups(
+            BatchId("batch_1"),
+            [
                 ToolInvocation(
                     call_id=ToolCallId("call_1"),
                     tool_name="read_file",
@@ -393,9 +393,9 @@ async def test_batch_mixed_adopt_and_replay(
         turn_id=TurnId("t_mixed"),
         kind=TurnDecisionKind.TOOL_BATCH,
         visible_message="",
-        tool_batch=ToolBatch(
-            batch_id=BatchId("batch_1"),
-            invocations=[
+        tool_batch=tool_batch_model_with_groups(
+            BatchId("batch_1"),
+            [
                 ToolInvocation(
                     call_id=ToolCallId("call_adopt"),
                     tool_name="read_file",
@@ -509,9 +509,9 @@ async def test_param_drift_replay(
         turn_id=TurnId("t_drift"),
         kind=TurnDecisionKind.TOOL_BATCH,
         visible_message="",
-        tool_batch=ToolBatch(
-            batch_id=BatchId("batch_1"),
-            invocations=[
+        tool_batch=tool_batch_model_with_groups(
+            BatchId("batch_1"),
+            [
                 ToolInvocation(
                     call_id=ToolCallId("call_1"),
                     tool_name="read_file",
@@ -678,9 +678,9 @@ async def test_retrieval_chain_adopts_prefetch(
         turn_id=TurnId("t_chain_adopt"),
         kind=TurnDecisionKind.TOOL_BATCH,
         visible_message="",
-        tool_batch=ToolBatch(
-            batch_id=BatchId("batch_1"),
-            invocations=[
+        tool_batch=tool_batch_model_with_groups(
+            BatchId("batch_1"),
+            [
                 ToolInvocation(
                     call_id=ToolCallId("call_1"),
                     tool_name="read_file",
@@ -792,9 +792,9 @@ async def test_write_tool_commit_never_speculative(
         turn_id=TurnId("t_write_commit"),
         kind=TurnDecisionKind.TOOL_BATCH,
         visible_message="",
-        tool_batch=ToolBatch(
-            batch_id=BatchId("batch_1"),
-            invocations=[
+        tool_batch=tool_batch_model_with_groups(
+            BatchId("batch_1"),
+            [
                 ToolInvocation(
                     call_id=ToolCallId("call_1"),
                     tool_name="write_file",
