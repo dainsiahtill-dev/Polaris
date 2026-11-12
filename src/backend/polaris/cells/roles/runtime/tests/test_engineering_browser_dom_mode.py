@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -22,6 +21,11 @@ from polaris.cells.roles.runtime.public.contracts.engineering_run import (
     RunLimits,
 )
 from polaris.cells.roles.runtime.public.engineering_service import EngineeringRunService
+from polaris.cells.roles.runtime.tests.browser_support import (
+    browser_executable,
+    browser_packages,
+    browser_python,
+)
 from polaris.cells.roles.runtime.tests.engineering_support import (
     ScriptedProvider,
     isolated_workspace as isolated_workspace,
@@ -33,9 +37,9 @@ from polaris.kernelone.process.process_tree import ProcessTreeRunControl, run_pr
 from polaris.kernelone.process.sandbox import build_workspace_sandbox_argv
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
-BROWSER = Path.home() / ".cache/ms-playwright/chromium-1248/chrome-linux64/chrome"
-PYTHON = Path(sys.executable).resolve()
-PACKAGES = Path(__file__).resolve().parents[7] / ".venv/lib/python3.13/site-packages"
+BROWSER = browser_executable()
+PYTHON = browser_python()
+PACKAGES = browser_packages()
 
 
 def _scope(workspace: Path, mode: str = "dom") -> PermissionScope:

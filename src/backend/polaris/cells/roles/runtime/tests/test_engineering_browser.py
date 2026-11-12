@@ -7,30 +7,23 @@ import base64
 import hashlib
 import io
 import json
-import os
 import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import pytest
+from polaris.cells.roles.runtime.tests.browser_support import (
+    browser_executable,
+    browser_packages,
+    browser_python,
+    browser_python_reads,
+)
 
 EVIDENCE_ROOT = Path(__file__).resolve().parents[7] / ".polaris/test-workspaces/browser"
-BROWSER = Path(
-    os.environ.get(
-        "POLARIS_TEST_BROWSER_EXECUTABLE",
-        str(
-            Path.home()
-            / ".cache/ms-playwright/chromium_headless_shell-1223/chrome-headless-shell-linux64/chrome-headless-shell"
-        ),
-    )
-)
-PACKAGES = Path(
-    os.environ.get(
-        "POLARIS_TEST_BROWSER_PACKAGES", str(Path.home() / ".pyenv/versions/3.12.3/lib/python3.12/site-packages")
-    )
-)
-PYTHON = Path(os.environ.get("POLARIS_TEST_BROWSER_PYTHON", "/usr/bin/python3")).resolve()
-PYTHON_READS = () if PYTHON.is_relative_to("/usr") else (PYTHON.parent.parent,)
+BROWSER = browser_executable()
+PACKAGES = browser_packages()
+PYTHON = browser_python()
+PYTHON_READS = browser_python_reads(PYTHON)
 
 
 def _capture():
