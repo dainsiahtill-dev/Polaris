@@ -30,6 +30,23 @@ This file is a local hard gate for frontend work. It does not weaken the root
    and consumed through the shared transport. Components must not create a
    second realtime client.
 
+## Backend Origin and Same-Origin Proxy
+
+The shipped connect-src policy permits the page origin and loopback origins
+only. A backend on any other address can never be reached from the page, so
+the renderer must not address it directly:
+
+- a dev page uses its own origin and lets the dev proxy reach the backend;
+- an instance page reaches the backend of the instance that serves the page,
+  so an instance link carries `instance` / `workspace` / `token` and never an
+  absolute cross-origin `backend`;
+- an explicit backend binding that the policy does not permit is ignored
+  with a warning instead of being used, because the browser would block
+  every request and every runtime WebSocket frame sent to it.
+
+Any change to backend address resolution needs browser evidence that the
+runtime WebSocket stays connected and delivers frames.
+
 ## User Event Visibility
 
 - Successful high-frequency heartbeats are health telemetry, not user progress

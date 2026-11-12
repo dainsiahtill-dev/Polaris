@@ -92,6 +92,10 @@
 
 28. **目标项目 Runtime 单根制（强制）**：默认 runtime 唯一物理根必须是 `<workspace>/.polaris/runtime`，由 `storage.layout` 统一解析。Instance Registry、backend CLI、ContextOS、ReceiptStore、Run Ledger、Factory/内部 Bench launch receipt 必须记录并消费同一根；禁止新建 `<workspace>/runtime`、默认写 `~/.cache/kernelone/.polaris/projects/<workspace-key>/runtime`，或把 project runtime 同时设置为 `KERNELONE_RUNTIME_ROOT` 与 shared `KERNELONE_RUNTIME_CACHE_ROOT`。外部 cache/RAM-disk 只允许显式 opt-in，并继续按 workspace key 隔离。旧外部 namespace 只能只读发现，不得自动复制、双写或在活跃进程中切根。
 
+29. **实例端点双事实与渲染器同源代理（强制）**：一个实例同时携带两个地址事实，禁止用一个字段承载两种语义。`backend_url` / `frontend_url` 永远是**本机回环**端点，本地控制面、验收路径与 Bench runner 只允许触达回环来源，对外地址必须 fail-closed；`public_backend_url` / `public_frontend_url` 是**发布地址**，供另一台宿主机（例如 WSL2 的 Windows 宿主机）消费。绑定地址（`KERNELONE_INSTANCE_BIND_HOST`）与发布地址（`KERNELONE_INSTANCE_PUBLIC_HOST`）分开配置，通配绑定地址不是可拨通地址，未配置发布地址时回落回环。实例页面必须通过**自身来源的 dev proxy** 触达本实例后端（每个实例的 renderer 以 `KERNELONE_BACKEND_PORT` 指向自己的后端），因为随包发布的 connect-src 只允许页自身来源与回环来源；把发布地址写进实例页面 URL 会让浏览器逐个拒绝请求与 runtime WebSocket 帧，页面表现为"实时连接已断开"。Launcher 打开的实例链接只带 `instance` / `workspace` / `token`，不带绝对跨源 `backend`。
+
+30. **传输失败必须可重试且预算覆盖（强制）**：provider 请求超时是**传输类**失败，必须走平台既有重试契约（`RetryConfig.retryable_errors` 含 TIMEOUT / RATE_LIMIT / NETWORK_ERROR / SERVICE_UNAVAILABLE），禁止让一次上游挂死直接杀死整轮工程 run。三个环节必须同时成立：(a) 超时路径不得绕过重试判定；(b) client 的 fallback response 必须保留最后一次真实失败的 category，禁止把传输类失败降级成不透明的 `PROVIDER_ERROR`，5xx 必须标记 `SERVICE_UNAVAILABLE`；(c) request-local 总预算必须**覆盖配置的 attempts**，否则请求打满超时后连第二次尝试的余量都没有。工程循环对**仅传输类**失败由同一角色带着可恢复事实继续自己的目标（语义类失败仍 fail-closed），run deadline 兜底。
+
 #### 当前内部 Bench 入口
 
 当前 `run_factory_bench.py` 复用正式 `engineering_acceptance` 的启动、观察、取消与停止，默认 `--workflow direct`；显式 `--workflow collaborative` 才预先调用 PM／CE。执行必须显式提供冻结的 `--host-config-file`、`--llm-config-file`，以及正确的 `--registry-home`；权限来自该 host 配置，不从目录、模型或 catalog 重新推断。保留 `--timeout 5400 --overall-timeout 6000 --launcher-instance-mode isolated --bench-session-reporting off` 和外层 6000 秒守护预算。原始 120 项业务要求保持；空用户命令清单由模型选择实际验证，不能把 catalog 检查代码当作已经执行的命令。

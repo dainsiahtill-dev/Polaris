@@ -151,6 +151,42 @@ Cell 是最小自治边界。
 4. 如果 Director 所有 bindings 均不可用，Factory 必须 BLOCKED，不得继续运行。
 5. LLM route audit 必须以实际可达/可用 binding 为准，不得要求已跳过的坏 binding 产生 LLM 调用；也不得把跳过伪装为该 binding 成功运行。
 
+### 4.17 Instance Endpoint Dual Facts and Renderer Same-Origin Proxy
+
+An instance carries two address facts and they must never share one field.
+
+- `backend_url` / `frontend_url` stay loopback. The local control plane, the
+  acceptance path and the Bench runner may only reach a loopback endpoint and
+  fail closed on a foreign address.
+- `public_backend_url` / `public_frontend_url` are the published addresses a
+  consumer on another host can dial. The bind address
+  (`KERNELONE_INSTANCE_BIND_HOST`) and the published address
+  (`KERNELONE_INSTANCE_PUBLIC_HOST`) are separate settings; a wildcard bind
+  is not dialable, so it publishes loopback when no public address is set.
+- An instance page reaches its backend through its own origin's dev proxy,
+  which routes to the backend of the instance that serves the page. The
+  shipped connect-src permits the page origin and loopback origins only, so
+  an absolute cross-origin backend in an instance URL makes the browser
+  refuse every request and every runtime WebSocket frame, and the page
+  reports a disconnected realtime channel.
+
+### 4.18 Transport Failures Are Retryable and the Budget Must Cover the Attempts
+
+A provider request timeout is a transport failure and must use the existing
+platform retry contract. Three parts must hold together:
+
+- the timeout path must not bypass the retry decision;
+- the client fallback response must keep the category of the last real
+  failure instead of degrading a transport failure into an opaque
+  `PROVIDER_ERROR`, and a 5xx must carry `SERVICE_UNAVAILABLE`;
+- the request-local total deadline must cover the configured attempts, or a
+  request that stalls for the full request timeout leaves no room for the
+  attempt the transport contract allows.
+
+The engineering loop continues the same role with a recoverable fact for a
+transport category only; a semantic failure still ends the run, and the run
+deadline bounds the recovery.
+
 ### 4.16 Bench Is Internal Test/Dev/Audit Harness Only
 
 1. `Bench`、`Factory Bench`、`factory_bench`、`L1-L12 bench`、benchmark harness、压力测试脚本/API/UI 均只允许存在于内部测试/开发/审计模式，用来压测 Polaris、发现平台通用根因、生成审计样本。
