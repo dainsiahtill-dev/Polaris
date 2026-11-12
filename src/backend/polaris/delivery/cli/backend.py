@@ -60,6 +60,7 @@ def _register_instance(args: argparse.Namespace) -> None:
     from polaris.cells.instances.internal.service import (
         InstanceRecord,
         InstanceRegistry,
+        instance_public_host,
         sanitize_instance_id,
         utc_timestamp,
     )
@@ -69,6 +70,9 @@ def _register_instance(args: argparse.Namespace) -> None:
     runtime_root = _runtime_root_for_args(args)
     instance_id = sanitize_instance_id(args.instance_id or args.instance_name or Path(workspace).name)
     frontend_port = int(args.frontend_port or 0)
+    # The advertised address must be dialable. A wildcard bind is not, so the
+    # registry keeps the published address instead of the raw bind address.
+    public_host = instance_public_host(args.host)
     record = InstanceRecord(
         instance_id=instance_id,
         name=args.instance_name or Path(workspace).name or instance_id,
@@ -78,8 +82,8 @@ def _register_instance(args: argparse.Namespace) -> None:
         runtime_root=runtime_root,
         backend_port=int(args.port),
         frontend_port=frontend_port,
-        backend_url=f"http://{args.host}:{int(args.port)}",
-        frontend_url=f"http://{args.host}:{frontend_port}" if frontend_port > 0 else "",
+        backend_url=f"http://{public_host}:{int(args.port)}",
+        frontend_url=f"http://{public_host}:{frontend_port}" if frontend_port > 0 else "",
         token=args.token or os.environ.get("KERNELONE_TOKEN", ""),
         backend_reload=bool(args.reload),
         frontend_vite=False,
