@@ -18,6 +18,7 @@ import json
 import sqlite3
 from hashlib import sha256
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import pytest
 from polaris.cells.roles.session.internal.conversation import (
@@ -25,6 +26,7 @@ from polaris.cells.roles.session.internal.conversation import (
     Conversation,
 )
 from polaris.cells.roles.session.internal.role_session_service import RoleSessionService
+from polaris.kernelone.fs.guarded_directory import guarded_create_directory
 from polaris.kernelone.storage import resolve_runtime_path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session as DbSession, sessionmaker
@@ -173,8 +175,20 @@ def _reset_conversation_singleton():
         conv_mod._SessionLocal = orig_session_local
 
 
-def test_workspace_bound_services_use_isolated_conversation_databases(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("KERNELONE_RUNTIME_CACHE_ROOT", str(tmp_path / "kernelone-cache"))
+def test_workspace_bound_services_use_isolated_conversation_databases(monkeypatch) -> None:
+    # The managed storage layout refuses a reserved mount, so the disposable
+    # workspaces live below the repository owner.
+    owner = Path(__file__).resolve().parents[7]
+    root = owner / ".polaris/test-workspaces/role-session"
+    guarded_create_directory(str(owner), ".polaris/test-workspaces/role-session", parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix="conversation-", dir=root) as directory:
+        _workspace_bound_services_use_isolated_conversation_databases(monkeypatch, Path(directory))
+
+
+def _workspace_bound_services_use_isolated_conversation_databases(monkeypatch, tmp_path) -> None:
+    # The runtime root is the canonical project-local root, so the two
+    # workspaces own separate conversation databases without a cache redirect.
+    monkeypatch.delenv("KERNELONE_RUNTIME_CACHE_ROOT", raising=False)
     _reset_conversation_runtime_singletons()
     workspace_a = tmp_path / "workspace-a"
     workspace_b = tmp_path / "workspace-b"

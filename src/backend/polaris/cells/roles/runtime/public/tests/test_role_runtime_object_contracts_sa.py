@@ -1328,19 +1328,38 @@ def test_builtin_director_runtime_spec_mounts_execution_assets_and_execute_capab
     assert runtime_object.task_market_binding.work_item_ref == "runtime.task_market:pending_exec"
 
 
-def test_builtin_role_capability_effects_are_declared_in_roles_runtime_cell_yaml() -> None:
+def test_builtin_role_capability_effects_stay_outside_the_live_cell_boundary() -> None:
+    """The retained legacy role shapes are historical, not live admission.
+
+    The built-in role objects keep their historical capability surface so
+    that historical records stay readable. This cell owns the engineering
+    Agent loop, so the retired task-market chain is not a live effect of
+    this cell, and the engineering surface the live loop performs stays
+    declared.
+    """
     cell_yaml = Path(__file__).resolve().parents[2] / "cell.yaml"
     cell_payload = yaml.safe_load(cell_yaml.read_text(encoding="utf-8"))
     allowed_effects = tuple(str(effect) for effect in cell_payload["effects_allowed"])
 
-    undeclared_effects: list[str] = []
+    for effect in (
+        "fs.read:workspace/**",
+        "fs.write:workspace/**",
+        "llm.invoke:roles/*",
+        "process.spawn:engineering/*",
+        "ws.outbound:runtime/*",
+    ):
+        assert effect in allowed_effects
+
+    retired_chain: set[str] = set()
     for role_id in ("pm", "chief_engineer", "architect", "qa", "director"):
         spec = runtime_contracts.get_builtin_role_runtime_spec(role_id)
         for capability in spec.capability_ports.capabilities:
-            if not _role_runtime_effect_is_allowed(capability.effect, allowed_effects):
-                undeclared_effects.append(f"{role_id}.{capability.capability_id}:{capability.effect}")
+            if str(capability.effect).startswith("task_market."):
+                retired_chain.add(str(capability.effect))
 
-    assert undeclared_effects == []
+    assert retired_chain, "the retained legacy role shapes must keep their historical capability surface"
+    for effect in sorted(retired_chain):
+        assert not _role_runtime_effect_is_allowed(effect, allowed_effects)
 
 
 def test_runtime_spec_rejects_capability_asset_mount_dependency_that_is_not_mounted() -> None:

@@ -15,17 +15,12 @@ from polaris.cells.roles.kernel.public.structured_output_contracts import (
     STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY,
     RoleStructuredOutputContractV1,
 )
-from polaris.cells.roles.profile.public.service import RoleTurnResult
-from polaris.cells.roles.runtime.public import service as role_runtime_service_module
 from polaris.cells.roles.runtime.public.contracts import (
     ExecuteRoleTaskCommandV1,
-    RoleRuntimeError,
 )
 from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 from polaris.cells.runtime.task_runtime.public import (
-    SettleTaskRuntimeExecutionAttemptCommandV1,
     TaskRuntimeExecutionAttemptIdentityV1,
-    TaskRuntimeExecutionAttemptValidationVerdictV1,
 )
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 
@@ -71,6 +66,30 @@ def _command(tmp_path: Path, identity: TaskRuntimeExecutionAttemptIdentityV1) ->
         objective="implement the governed task",
         run_id="run-41",
         execution_attempt=identity,
+    )
+
+
+@pytest.mark.asyncio
+async def test_retired_legacy_role_scenarios_stay_closed(tmp_path: Path) -> None:
+    """The legacy role scenarios have no live subject after the retirement.
+
+    These scenarios drove the legacy role execution kernel, which is
+    retired: a new engineering run has exactly one owner, the engineering run
+    service. The scenarios are replaced by the retirement contract, so the
+    legacy write entry cannot silently come back.
+    """
+    from polaris.cells.roles.kernel.tests.legacy_engine_retirement import (
+        assert_legacy_session_entry_is_closed,
+        assert_legacy_task_execution_entry_is_closed,
+    )
+
+    await assert_legacy_session_entry_is_closed(
+        session_id="retired-legacy-role-scenarios",
+        workspace=str(tmp_path),
+    )
+    await assert_legacy_task_execution_entry_is_closed(
+        task_id="retired-legacy-role-scenarios",
+        workspace=str(tmp_path),
     )
 
 
@@ -155,229 +174,6 @@ def test_task_command_rejects_mismatched_session_before_kernel(tmp_path: Path) -
     assert kernel_calls == []
 
 
-@pytest.mark.asyncio
-async def test_task_execution_projects_result_and_evidence_from_canonical_session(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    identity = _claim_attempt(tmp_path)
-    command = _command(tmp_path, identity)
-    runtime = RoleRuntimeService()
-    request = RoleRuntimeService._build_task_request(command)
-    evidence_call: dict[str, object] = {}
-
-    class FakeKernel:
-        async def run(self, _role: str, _request: object) -> object:
-            return object()
-
-    async def fake_prepare(_command: ExecuteRoleTaskCommandV1) -> object:
-        return request
-
-    def fake_emit(**kwargs: object) -> tuple[object, ...]:
-        evidence_call.update(kwargs)
-        return ()
-
-    monkeypatch.setattr(runtime, "_get_kernel", lambda _workspace: FakeKernel())
-    monkeypatch.setattr(runtime, "_prepare_task_request", fake_prepare)
-    monkeypatch.setattr(runtime, "_emit_cognitive_runtime_shadow_artifacts", fake_emit)
-    monkeypatch.setattr(
-        role_runtime_service_module,
-        "_to_contract_result",
-        lambda **kwargs: dict(kwargs),
-    )
-    monkeypatch.setattr(
-        role_runtime_service_module,
-        "_cognitive_runtime_result_patch",
-        lambda **_kwargs: {},
-    )
-    monkeypatch.setattr(
-        role_runtime_service_module,
-        "_with_result_metadata_patch",
-        lambda result, _patch: result,
-    )
-
-    result = await runtime.execute_role_task(command)
-
-    assert result["session_id"] == identity.session_id
-    assert evidence_call["session_id"] == identity.session_id
-    assert request.metadata["task_runtime_session_id"] == identity.session_id
-
-
-@pytest.mark.asyncio
-async def test_streaming_task_command_uses_kernel_stream_and_preserves_result(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    identity = _claim_attempt(tmp_path)
-    command = replace(_command(tmp_path, identity), stream=True)
-    runtime = RoleRuntimeService()
-    request = RoleRuntimeService._build_task_request(command)
-    calls: list[str] = []
-
-    class FakeKernel:
-        async def run(self, _role: str, _request: object) -> object:
-            calls.append("run")
-            raise AssertionError("streaming task command must not use kernel.run")
-
-        async def run_stream(self, _role: str, _request: object):
-            calls.append("run_stream")
-            yield {
-                "type": "complete",
-                "metadata": {
-                    "context_snapshot_ref": "abcdef123456abcdef123456",
-                    "final_request_context_audit": {"final_request_token_estimate": 4873},
-                },
-                "result": RoleTurnResult(
-                    content='{"blueprints": []}',
-                    thinking="streamed reasoning",
-                    metadata={"structured_output": {"blueprints": []}},
-                ),
-            }
-
-    async def fake_prepare(_command: ExecuteRoleTaskCommandV1) -> object:
-        return request
-
-    monkeypatch.setattr(runtime, "_get_kernel", lambda _workspace: FakeKernel())
-    monkeypatch.setattr(runtime, "_prepare_task_request", fake_prepare)
-    monkeypatch.setattr(runtime, "_emit_cognitive_runtime_shadow_artifacts", lambda **_kwargs: ())
-
-    result = await runtime.execute_role_task(command)
-
-    assert calls == ["run_stream"]
-    assert result.ok is True
-    assert result.output == '{"blueprints": []}'
-    assert result.thinking == "streamed reasoning"
-    assert result.metadata["structured_output"] == {"blueprints": []}
-    assert result.metadata["context_snapshot_ref"] == "abcdef123456abcdef123456"
-    assert result.metadata["final_request_context_audit"] == {"final_request_token_estimate": 4873}
-    assert request.metadata["stream"] is True
-
-
-@pytest.mark.asyncio
-async def test_streaming_task_error_preserves_final_request_evidence(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    identity = _claim_attempt(tmp_path)
-    command = replace(_command(tmp_path, identity), stream=True)
-    runtime = RoleRuntimeService()
-    request = RoleRuntimeService._build_task_request(command)
-
-    class FakeKernel:
-        async def run_stream(self, _role: str, _request: object):
-            yield {
-                "type": "error",
-                "error": "Request timeout",
-                "error_type": "output_validation_failed",
-                "metadata": {
-                    "context_snapshot_ref": "abcdef123456abcdef123456",
-                    "final_request_context_audit": {"final_request_token_estimate": 4873},
-                },
-            }
-
-    async def fake_prepare(_command: ExecuteRoleTaskCommandV1) -> object:
-        return request
-
-    monkeypatch.setattr(runtime, "_get_kernel", lambda _workspace: FakeKernel())
-    monkeypatch.setattr(runtime, "_prepare_task_request", fake_prepare)
-    monkeypatch.setattr(runtime, "_emit_cognitive_runtime_shadow_artifacts", lambda **_kwargs: ())
-
-    result = await runtime.execute_role_task(command)
-
-    assert result.ok is False
-    assert result.error_message == "Request timeout"
-    assert result.error_code == "output_validation_failed"
-    assert result.metadata["context_snapshot_ref"] == "abcdef123456abcdef123456"
-    assert result.metadata["final_request_context_audit"] == {"final_request_token_estimate": 4873}
-
-
-@pytest.mark.asyncio
-async def test_streaming_task_without_terminal_event_fails_closed(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    identity = _claim_attempt(tmp_path)
-    command = replace(_command(tmp_path, identity), stream=True)
-    runtime = RoleRuntimeService()
-    request = RoleRuntimeService._build_task_request(command)
-
-    class FakeKernel:
-        async def run_stream(self, _role: str, _request: object):
-            yield {"type": "content_chunk", "content": "partial"}
-
-    async def fake_prepare(_command: ExecuteRoleTaskCommandV1) -> object:
-        return request
-
-    monkeypatch.setattr(runtime, "_get_kernel", lambda _workspace: FakeKernel())
-    monkeypatch.setattr(runtime, "_prepare_task_request", fake_prepare)
-    monkeypatch.setattr(runtime, "_emit_cognitive_runtime_shadow_artifacts", lambda **_kwargs: ())
-
-    result = await runtime.execute_role_task(command)
-
-    assert result.ok is False
-    assert result.status == "failed"
-    assert result.output == "partial"
-    assert result.error_code == "role_stream_incomplete"
-
-
-@pytest.mark.asyncio
-async def test_streaming_task_timeout_projects_failure(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    identity = _claim_attempt(tmp_path)
-    command = replace(_command(tmp_path, identity), stream=True)
-    runtime = RoleRuntimeService()
-    request = RoleRuntimeService._build_task_request(command)
-
-    class FakeKernel:
-        async def run_stream(self, _role: str, _request: object):
-            raise TimeoutError("provider stream timed out")
-            yield  # pragma: no cover - keeps this an async generator
-
-    async def fake_prepare(_command: ExecuteRoleTaskCommandV1) -> object:
-        return request
-
-    monkeypatch.setattr(runtime, "_get_kernel", lambda _workspace: FakeKernel())
-    monkeypatch.setattr(runtime, "_prepare_task_request", fake_prepare)
-    monkeypatch.setattr(runtime, "_emit_cognitive_runtime_shadow_artifacts", lambda **_kwargs: ())
-
-    result = await runtime.execute_role_task(command)
-
-    assert result.ok is False
-    assert result.status == "failed"
-    assert result.error_code == "role_runtime_error"
-    assert result.error_message == "provider stream timed out"
-
-
-@pytest.mark.asyncio
-async def test_streaming_task_preserves_first_physical_error(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    identity = _claim_attempt(tmp_path)
-    command = replace(_command(tmp_path, identity), stream=True)
-    runtime = RoleRuntimeService()
-    request = RoleRuntimeService._build_task_request(command)
-
-    class FakeKernel:
-        async def run_stream(self, _role: str, _request: object):
-            yield {"type": "error", "error": "provider_stream_timeout:125s"}
-            yield {"type": "error", "error": "No LLM response materialized from stream"}
-
-    async def fake_prepare(_command: ExecuteRoleTaskCommandV1) -> object:
-        return request
-
-    monkeypatch.setattr(runtime, "_get_kernel", lambda _workspace: FakeKernel())
-    monkeypatch.setattr(runtime, "_prepare_task_request", fake_prepare)
-    monkeypatch.setattr(runtime, "_emit_cognitive_runtime_shadow_artifacts", lambda **_kwargs: ())
-
-    result = await runtime.execute_role_task(command)
-
-    assert result.ok is False
-    assert result.error_message == "provider_stream_timeout:125s"
-
-
 def test_task_command_rejects_raw_execution_authority_metadata(tmp_path: Path) -> None:
     identity = _claim_attempt(tmp_path)
 
@@ -390,83 +186,3 @@ def test_task_command_rejects_raw_execution_authority_metadata(tmp_path: Path) -
             metadata={"task_runtime_session_id": identity.session_id},
             execution_attempt=identity,
         )
-
-
-@pytest.mark.asyncio
-async def test_execute_role_task_validates_persisted_attempt_before_kernel(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    identity = _claim_attempt(tmp_path)
-    runtime = RoleRuntimeService()
-    calls: list[object] = []
-
-    class FakeKernel:
-        async def run(self, _role: str, request: object) -> object:
-            calls.append(request)
-            raise RuntimeError("kernel reached")
-
-    monkeypatch.setattr(runtime, "_get_kernel", lambda _workspace: FakeKernel())
-
-    with pytest.raises(RuntimeError, match="kernel reached"):
-        await runtime.execute_role_task(_command(tmp_path, identity))
-    assert len(calls) == 1
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("case", ["forged", "stale", "expired", "misaligned"])
-async def test_invalid_execution_attempt_never_creates_kernel(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    case: str,
-) -> None:
-    identity = _claim_attempt(tmp_path)
-    command = _command(tmp_path, identity)
-    runtime = RoleRuntimeService()
-    kernel_calls: list[str] = []
-    monkeypatch.setattr(runtime, "_get_kernel", lambda _workspace: kernel_calls.append("called"))
-
-    if case == "forged":
-        command = _command(tmp_path, replace(identity, session_id="tx-forged"))
-    elif case == "stale":
-        suspended = TaskRuntimeService(str(tmp_path)).settle_execution_attempt(
-            SettleTaskRuntimeExecutionAttemptCommandV1(
-                workspace=str(tmp_path),
-                identity=identity,
-                outcome="suspended",
-                summary="make the attempt stale",
-                lock_timeout_seconds=5.0,
-            )
-        )
-        assert suspended["success"] is True
-    elif case == "expired":
-        monkeypatch.setattr(
-            "polaris.cells.roles.runtime.public.service.validate_task_runtime_execution_attempt",
-            lambda query: TaskRuntimeExecutionAttemptValidationVerdictV1(
-                valid=False,
-                code="session_lease_expired",
-                workspace=query.workspace,
-                identity=query.identity,
-                evidence={"reason": "test expired persisted session verdict"},
-            ),
-        )
-    else:
-        command = ExecuteRoleTaskCommandV1(
-            role="director",
-            task_id="TASK-OTHER",
-            workspace=str(tmp_path),
-            objective="implement the governed task",
-            run_id="run-41",
-            execution_attempt=identity,
-        )
-
-    with pytest.raises(RoleRuntimeError) as error:
-        await runtime.execute_role_task(command)
-
-    expected_code = (
-        "task_runtime_execution_attempt_command_mismatch"
-        if case == "misaligned"
-        else "task_runtime_execution_attempt_invalid"
-    )
-    assert error.value.code == expected_code
-    assert kernel_calls == []

@@ -321,23 +321,29 @@ async def test_full_prior_draft_requirements_feedback_and_60000_final_body(
 
 @pytest.mark.parametrize("role", ["pm", "chief_engineer"])
 @pytest.mark.parametrize(
-    "window,output_cap,large_input,diagnostic",
+    "window,output_cap,large_input",
     [
-        (1000000, 32768, False, "planning_output_budget_model_limit_exceeded"),
-        (60032, 65536, False, "planning_output_budget_context_window_exceeded"),
-        (130000, 65536, True, "planning_output_budget"),
+        (1000000, 32768, False),
+        (60032, 65536, False),
+        (130000, 65536, True),
     ],
 )
-async def test_output_tools_safety_and_mandatory_input_reject_before_transport(
+async def test_planning_output_budget_is_clamped_and_the_pinned_input_survives(
     role: str,
     window: int,
     output_cap: int,
     large_input: bool,
-    diagnostic: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     isolated_binding: dict[str, Any],
 ) -> None:
+    """The planning output budget is clamped to the window, never refused.
+
+    The platform preserves the planning input and the declared model bounds.
+    A declared output that does not fit the window is clamped so the provider
+    still receives the pinned requirement context, instead of failing the
+    planning request over a token reservation the model never had.
+    """
     limits = isolated_binding["providers"]["capacity-provider"]["model_specific"]["capacity-model"]
     limits.update(max_context_tokens=window, max_output_tokens=output_cap)
     current = (
@@ -349,8 +355,10 @@ async def test_output_tools_safety_and_mandatory_input_reject_before_transport(
     original_messages = copy.deepcopy(prepared.ai_request.context["chat_messages"])
     wires = _fake_http(monkeypatch)
     response = await AIExecutor(workspace=str(tmp_path))._execute_invoke(prepared.ai_request, "negative-capacity")
-    assert not response.ok and diagnostic in str(response.error)
-    assert wires == []
+    assert response.ok, response.error
+    assert len(wires) == 1
+    requested_output = int(wires[0]["max_tokens"])
+    assert 0 < requested_output <= min(output_cap, window)
     assert prepared.ai_request.context["chat_messages"] == original_messages
     assert prepared.ai_request.context["chat_messages"][-1]["content"] == current
     assert prepared.ai_request.options["max_tokens"] == 60000

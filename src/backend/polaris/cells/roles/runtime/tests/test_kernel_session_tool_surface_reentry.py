@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
@@ -368,114 +367,25 @@ async def test_permanent_forced_scope_cannot_reintroduce_denied_native_tool(
 
 
 @pytest.mark.asyncio
-async def test_real_quality_repair_producer_reenters_original_registry_after_commit(
-    isolated_workspace: Path, monkeypatch: pytest.MonkeyPatch
+async def test_retired_legacy_repair_producer_stays_out_of_the_runtime_cell(
+    tmp_path: Path,
 ) -> None:
-    import hashlib
+    """The legacy repair producer has no live subject inside the runtime cell.
 
-    from polaris.cells.roles.adapters.tests import test_quality_repair_authorized_scope as fixture
-    from polaris.cells.roles.runtime.tests.quality_repair_reentry_fixture import (
-        AUTHORIZED_TOOLS,
-        READ_ONLY_REFERENCE,
-        REPAIRED_SOURCE,
-        run_actual_authorized_repair,
-        seed_quality_repair_inputs,
+    The scenario it drove joined two legacy hosts across a cell boundary: the
+    legacy adapter repair loop produced the context and the retired kernel
+    session bridge consumed it. The runtime cell must not depend on the
+    adapter cell, and the retired bridge has no live subject, so the scenario
+    is replaced by the retirement contract.
+    """
+    from polaris.cells.roles.kernel.tests.legacy_engine_retirement import (
+        assert_legacy_session_entry_is_closed,
     )
 
-    # Only upstream diagnosis/model decisions are synthetic. Current source,
-    # engineering tool effects, denied write and verifier results are actual.
-    seed_quality_repair_inputs(isolated_workspace, fixture.OWNED, fixture.REFERENCE)
-    context = fixture._context()
-    context["director_execution_envelope"]["allowed_read_paths"] = [*fixture.OWNED, fixture.REFERENCE]
-    context["director_interface_discrepancy_retry"] = {
-        "authorized": True,
-        "reason": "coverage_matched_but_unplannable",
-        "recommended_owner": "director",
-        "recommended_route": "director_retry_with_interface_discrepancy_context",
-    }
-    adapter = fixture._RepairBoundaryAdapter(isolated_workspace)
-    await fixture._repair(
-        adapter,
-        fixture._task(reference_in_targets=True),
-        context,
-        ["src/entry/browser-main.ts(1,24): error TS2307: Cannot find module '../engine/renderer.js'."],
+    await assert_legacy_session_entry_is_closed(
+        session_id="retired-kernel-session-tool-surface-reentry",
+        workspace=str(tmp_path),
     )
-    assert len(adapter.calls) == 1
-    produced = adapter.calls[0]["context"]
-    command = _command(isolated_workspace, {**produced, "execution_envelope": produced["director_execution_envelope"]})
-    original = deepcopy(command.context)
-    bridge = KernelSessionTurnBridge(SimpleNamespace(), command)
-    initial_command = bridge._turn_command("turn-1", "Repair the current source.")
-    initial = await _physical_body(initial_command, _profile(), monkeypatch)
-    assert {tool["name"] for tool in initial["tools"]} == AUTHORIZED_TOOLS
-    assert initial.get("tool_choice") in (None, {"type": "auto"})
-    actual = await run_actual_authorized_repair(
-        isolated_workspace,
-        monkeypatch,
-        owned=fixture.OWNED,
-        reference=fixture.REFERENCE,
-        instruction=adapter.calls[0]["message"],
-    )
-    assert actual["result_status"] == "completed", actual["snapshot"]
-    assert actual["verification"] == "passed"
-    assert actual["current_source"] == REPAIRED_SOURCE
-    assert actual["reference_before"] == actual["reference_after"] == READ_ONLY_REFERENCE
-    observations = [event["payload"] for event in actual["snapshot"]["events"] if event["kind"] == "tool_observed"]
-    by_id = {row["call_id"]: row for row in observations}
-    assert [row["call_id"] for row in observations] == [
-        "before-check",
-        "read-owned",
-        "deny-reference-write",
-        "repair-owned",
-        "read-after-commit",
-        "after-check",
-        actual["snapshot"]["checks"][0]["call_id"],
-    ]
-    assert observations[-1]["exit_code"] == actual["snapshot"]["checks"][0]["exit_code"] == 0
-    verification = next(
-        event["payload"] for event in actual["snapshot"]["events"] if event["kind"] == "verification_completed"
-    )
-    binding = verification["input_binding"]
-    assert (
-        binding["workspace_revision"] == verification["workspace_revision"] == actual["snapshot"]["workspace_revision"]
-    )
-    source_path = str(isolated_workspace / fixture.OWNED[1])
-    expected_source_hash = hashlib.sha256(REPAIRED_SOURCE.encode("utf-8")).hexdigest()
-    assert binding["source_manifest"][source_path]["sha256"] == expected_source_hash
-    assert binding["result_manifest"][source_path]["sha256"] == expected_source_hash
-    assert (
-        binding["result_manifest"][str(isolated_workspace / fixture.REFERENCE)]["sha256"]
-        == hashlib.sha256(READ_ONLY_REFERENCE.encode("utf-8")).hexdigest()
-    )
-    assert by_id["before-check"]["exit_code"] != 0
-    assert "TS2305" in by_id["before-check"]["content"]
-    assert not by_id["deny-reference-write"]["ok"]
-    assert "write path outside permission scope" in by_id["deny-reference-write"]["content"]
-    assert by_id["repair-owned"]["ok"]
-    assert REPAIRED_SOURCE.strip() in by_id["read-after-commit"]["content"]
-    assert by_id["after-check"]["exit_code"] == 0
-    assert actual["snapshot"]["checks"][0]["exit_code"] == 0
-    assert actual["snapshot"]["scope"]["write_roots"] == actual["declared_writes"]
-    assert actual["snapshot"]["scope"]["read_roots"] == actual["declared_reads"]
-    assert len(actual["native_requests"]) == 7
-    assert "TS2305" in json.dumps(actual["native_requests"][1])
-    assert "write path outside permission scope" in json.dumps(actual["native_requests"][3])
-    for request in actual["native_requests"]:
-        assert {tool["function"]["name"] for tool in request["tools"]} == AUTHORIZED_TOOLS
-    # New-owner SQLite observations remain new-owner facts. No fabricated old
-    # Kernel commit receipt is appended to the historical projection bridge.
-    assert bridge.results == []
-    followup = bridge._turn_command("turn-2", "Read the actual edit and verify.")
-    body = await _physical_body(followup, _profile(), monkeypatch)
-    assert (
-        followup.context["director_quality_repair"]["input_hash"]
-        != initial_command.context["director_quality_repair"]["input_hash"]
-    )
-    assert {tool["name"] for tool in body["tools"]} >= {"read_file", "execute_command"}
-    assert body.get("tool_choice") in (None, {"type": "auto"})
-    assert followup.context["execution_envelope"] == original["execution_envelope"]
-    assert "_roles_kernel_owned_one_call_policy" not in json.dumps(body)
-    assert command.context == original
 
 
 @pytest.mark.asyncio

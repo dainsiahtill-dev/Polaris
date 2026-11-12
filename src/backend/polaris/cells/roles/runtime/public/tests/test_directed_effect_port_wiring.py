@@ -52,17 +52,24 @@ def _dependencies() -> DirectedEffectRuntimeDependenciesV1:
     )
 
 
-def test_role_runtime_injects_same_deo_dependencies_into_kernel() -> None:
-    dependencies = _dependencies()
+def test_retired_kernel_composition_entry_stays_closed() -> None:
+    """The retired kernel is not composed any more.
 
+    The scenario it replaced injected the directed-effect dependencies into a
+    kernel. That kernel is the retired role execution kernel, so the entry
+    refuses and names the current owner instead of composing a kernel that no
+    run owns.
+    """
+    from polaris.cells.roles.kernel.tests.legacy_engine_retirement import (
+        assert_legacy_kernel_entry_is_closed,
+    )
+
+    dependencies = _dependencies()
     runtime = RoleRuntimeService(
         directed_effect_runtime=dependencies,
         directed_effect_required=True,
     )
-    kernel = runtime._get_kernel("/workspace")
 
-    assert kernel.directed_effect_runtime is dependencies
-    assert kernel.directed_effect_required is True
-    assert not hasattr(runtime, "directed_effect_context")
-    assert not hasattr(kernel, "directed_effect_context")
-    assert not hasattr(kernel, "claim_grant")
+    assert runtime._directed_effect_runtime is dependencies
+    assert runtime._directed_effect_required is True
+    assert_legacy_kernel_entry_is_closed(workspace="/workspace")
