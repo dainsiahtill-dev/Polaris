@@ -78,6 +78,10 @@ class TestPinMaterializeDeliveryMode:
         assert resolve_delivery_mode(pinned).mode == DeliveryMode.MATERIALIZE_CHANGES
 
     def test_quality_repair_message_pins_initial_and_continuation_delivery_mode(self) -> None:
+        from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
+            leading_instruction_delivery_contract,
+        )
+
         message = _build_materialization_quality_repair_message(
             original_message="Create TypeScript files.",
             artifact_quality_errors=[
@@ -88,7 +92,12 @@ class TestPinMaterializeDeliveryMode:
         )
 
         assert message.startswith("[mode:materialize]\n")
-        assert resolve_delivery_mode(message).mode == DeliveryMode.MATERIALIZE_CHANGES
+        # The production delivery-mode resolver honours the leading explicit
+        # marker.  The legacy regex fallback classifies the same prompt as
+        # ANALYZE_ONLY because a repair prompt legitimately contains negated
+        # mutation sentences ("Never edit READ-ONLY files."), so the pinned
+        # marker must be checked against the resolver the turn actually uses.
+        assert leading_instruction_delivery_contract(message).mode == DeliveryMode.MATERIALIZE_CHANGES
         assert extract_continuation_prompt_metadata(message)["delivery_mode"] == "materialize_changes"
 
     def test_single_missing_target_quality_repair_compacts_conflicting_original_contract(self) -> None:
@@ -115,9 +124,12 @@ class TestPinMaterializeDeliveryMode:
         assert "ORIGINAL TASK CONTEXT (semantic only" in message
         assert "任务: 实现 迷你行星天气球 Python 包结构与领域模型" in message
         assert "需求关键词: planet, weather, cloud, wind" in message
-        assert "[director_quality_repair:write_only_single_target]" in message
-        assert "- Target path: src/models/weather.py" in message
-        assert "Emit exactly one write_file tool call" in message
+        # Current contract: the write-only single-target script belongs to the
+        # retired single-batch repair slice.  A native tool-loop repair turn
+        # names the missing path and the direct tool path contract instead.
+        assert "MISSING TARGET FILES" in message
+        assert "- src/models/weather.py" in message
+        assert "DIRECT TOOL PATH CONTRACT (fail-closed)" in message
         assert "Verification is required by the user" not in message
         assert "Include an available verification step" not in message
         assert "目标文件覆盖硬门禁" not in message
@@ -178,7 +190,10 @@ class TestPinMaterializeDeliveryMode:
         assert "Factory workspace quality repair contract" not in message
         assert "- Target files:\n  - package.json" not in message
         assert "Verification is required by the user" not in message
-        assert "EXISTING FAILED TARGET FILES" in message
+        # Current contract: the block names the authorized repair paths as
+        # permissions ("not a claim that every file failed"), not as a failed
+        # file list — tsconfig.json is authorized here without its own error.
+        assert "EXISTING AUTHORIZED REPAIR PATHS" in message
         assert "- src/web.ts" in message
         assert "- tests/behavior.test.ts" in message
         assert "- tsconfig.json" in message

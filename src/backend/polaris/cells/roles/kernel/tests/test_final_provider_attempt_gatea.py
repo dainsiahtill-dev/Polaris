@@ -258,7 +258,11 @@ async def test_owned_factory_snapshot_qualifies_real_persistence_and_native_disp
         "project_structure",
         "repo_identity",
     }
-    assert active == prepared.messages
+    # The provider transport carries the role/content projection of the owned
+    # source: gateway segment names identify owned projection sources inside the
+    # platform and never reach the provider wire, while the owned source
+    # (snapshot + frozen payload above) retains them.
+    assert active == [{"role": item["role"], "content": item["content"]} for item in prepared.messages]
     assert prepared.ai_request.context["chat_messages"] == active
     assert payload["max_tokens"] == prepared.ai_request.options["max_tokens"] == 60000
     assert snapshot["provider_request"][
