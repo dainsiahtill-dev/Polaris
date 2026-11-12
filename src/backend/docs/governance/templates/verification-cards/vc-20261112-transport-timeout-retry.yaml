@@ -1,0 +1,92 @@
+card_id: "vc-20261112-transport-timeout-retry"
+bug_summary: >
+  A request timeout is a transport failure, and the platform contract says
+  transport failures are retried inside the attempt budget. The timeout
+  path returned a failure response immediately, so the retry decision never
+  saw it: one stalled upstream request ended the whole engineering run. The
+  retry also had no budget, because the request-local total deadline
+  equalled the provider request timeout.
+
+classification: pattern
+
+bug_path:
+  file: "polaris/kernelone/llm/engine/resilience.py"
+  method: "ResilienceManager.execute_with_resilience"
+  symptom: >
+    A bench run failed with "All providers exhausted. Last error: All 1
+    attempts failed. Last: Request timeout (300.0s)" although the call
+    policy declared two attempts and a retryable timeout category.
+
+assumptions:
+  - id: "A1"
+    statement: "I assume a timeout belongs to the same retry decision as the other transport failures."
+    status: verified_true
+    evidence: >
+      RetryConfig.retryable_errors contains TIMEOUT, RATE_LIMIT and
+      NETWORK_ERROR, and the class docstring states that the platform layer
+      retries transport errors.
+  - id: "A2"
+    statement: "I assume the immediate return existed to avoid a stale response, not to forbid the retry."
+    status: verified_true
+    evidence: >
+      The original comment says "Return a fresh failure response immediately;
+      do NOT fall through with a stale response from a previous iteration",
+      and the stale response is the response of the previous attempt, not
+      the retry decision.
+  - id: "A3"
+    statement: "I assume the attempt budget must fit inside the total deadline, otherwise the retry can never start."
+    status: verified_true
+    evidence: >
+      execute_with_resilience checks elapsed >= total_timeout before every
+      attempt, and TimeoutConfig.from_options defaults the total deadline to
+      DEFAULT_OPERATION_TIMEOUT_SECONDS, which equalled the provider
+      timeout.
+  - id: "A4"
+    statement: "I assume the engineering run deadline stays the outer bound and must not grow with the retry."
+    status: verified_true
+    evidence: >
+      The engineering client wraps the executor call with
+      TimeoutConfig(request_timeout=remaining, total_timeout=remaining),
+      where remaining is the run deadline, and it keeps one attempt so no
+      second retry layer exists.
+
+pre_mortem:
+  failure_point: >
+    If the total deadline grows with the attempts, one LLM call could
+    outlast the run deadline and the run would report an unknown outcome
+    instead of a bounded failure.
+  risk_zone:
+    - "polaris/kernelone/llm/engine/resilience.py"
+    - "polaris/kernelone/llm/engine/executor.py"
+    - "polaris/cells/roles/runtime/public/engineering_service.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/kernelone/llm/engine/tests/test_transport_timeout_retry.py"
+      description: "A timed-out attempt is retried, a recovered attempt returns its response, and the request-local budget covers the attempts."
+      expected: "Two attempts, a timeout category on exhaustion, and a total deadline of at least two request timeouts."
+      status: new
+    - file: "polaris/kernelone/llm/engine/tests/test_provider_retry_delegation.py"
+      description: "The request-local retry policy stays task local and keeps the host category restrictions."
+      expected: "Unchanged host restrictions, two attempts for a request without an explicit override."
+      status: existing_fix
+  integration_tests:
+    - description: "LLM engine resilience regression"
+      command: "pytest polaris/kernelone/llm/engine/tests/ -q"
+      status: passed
+    - description: "Engineering run survives a stalled provider request"
+      command: "python src/backend/scripts/factory_bench/run_factory_bench.py --project-ids L1-01 --host-config-file ... --llm-config-file ... --work-dir ... --launcher-instance-mode isolated --bench-session-reporting off --timeout 5400 --overall-timeout 6000"
+      status: passed
+  manual_check:
+    - >
+      Read the engineering SQLite of a bench run and confirm that a request
+      timeout is recorded as a retried transport failure instead of ending
+      the role.
+
+related_adrs: []
+
+sign_off:
+  completed_by: "opencode"
+  completed_at: "2026-11-12"
+  verified_by: "opencode"
+  verified_at: "2026-11-12"

@@ -1,0 +1,104 @@
+card_id: "vc-20261112-instance-published-address"
+bug_summary: >
+  An instance advertised one address per endpoint. Publishing it for a
+  consumer on another host therefore replaced the local endpoint, and the
+  local control plane and the acceptance path require a loopback endpoint:
+  they refuse a foreign address and failed closed on a published one. The
+  renderer also carried that published address into the instance page, and
+  the shipped connect-src policy refuses it, so every request and every
+  runtime WebSocket frame from that origin was blocked by the browser.
+
+classification: structural
+
+bug_path:
+  file: "polaris/cells/instances/internal/service.py"
+  method: "InstanceRecord / _build_record / _start_backend / _start_frontend"
+  symptom: >
+    A bench instance published as http://192.168.10.2:49980 made the
+    acceptance path raise "instance endpoint is missing, foreign or
+    reserved", and the instance page reported a disconnected realtime
+    channel because the browser blocked the cross-origin backend.
+
+assumptions:
+  - id: "A1"
+    statement: "I assume the local control plane and the acceptance path must only reach an instance on this host."
+    status: verified_true
+    evidence: >
+      polaris/delivery/cli/engineering_acceptance.py validates both instance
+      endpoints against {"127.0.0.1", "localhost", "::1"} and raises
+      "instance endpoint is missing, foreign or reserved" otherwise; the
+      bench runner dials the instance backend over the same address.
+  - id: "A2"
+    statement: "I assume a consumer on another host needs a second, explicit address rather than a replaced one."
+    status: verified_true
+    evidence: >
+      The launcher and the instance page are consumed from a different host
+      than the one that hosts the process, and the wildcard bind address is
+      not dialable at all.
+  - id: "A3"
+    statement: "I assume the renderer can reach an instance backend through the same-origin dev proxy of that instance."
+    status: verified_true
+    evidence: >
+      Each instance starts its own renderer with KERNELONE_BACKEND_PORT
+      pointing at its own backend, and the Vite proxy forwards /v2 with
+      ws: true, so the page origin reaches its backend without a
+      cross-origin request.
+  - id: "A4"
+    statement: "I assume the shipped connect-src policy permits the page origin and loopback origins only."
+    status: verified_true
+    evidence: >
+      src/frontend/index.html declares connect-src 'self' http://localhost:*
+      ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:*, and the browser
+      console showed the refusal of the published backend origin.
+
+pre_mortem:
+  failure_point: >
+    If the local endpoint is replaced instead of extended, the acceptance
+    path and the bench runner fail closed on a published address and no run
+    can start.
+  risk_zone:
+    - "polaris/cells/instances/internal/service.py"
+    - "polaris/delivery/cli/backend.py"
+    - "polaris/delivery/cli/engineering_acceptance.py"
+    - "src/frontend/src/api.ts"
+    - "src/frontend/src/services/instances.ts"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/instances/tests/test_instance_bind_host.py"
+      description: "Bind address, published address and the same-origin proxy of a spawned instance."
+      expected: "The local endpoints stay loopback, the published endpoints name the reachable host, and a published instance keeps no absolute backend address."
+      status: new
+    - file: "polaris/delivery/cli/tests/test_backend_instance_publication.py"
+      description: "A registered backend publishes a dialable address and keeps its local endpoints."
+      expected: "Public endpoints carry the configured host, local endpoints stay loopback."
+      status: new
+    - file: "src/frontend/src/api.test.ts"
+      description: "The renderer ignores a refused cross-origin backend binding and opens the runtime WebSocket against the page origin."
+      expected: "The API and the WebSocket use the page origin for a published instance."
+      status: new
+  integration_tests:
+    - description: "Instance service regression"
+      command: "pytest polaris/cells/instances/tests/ -q"
+      status: passed
+    - description: "Backend CLI registration regression"
+      command: "pytest polaris/delivery/cli/tests/test_backend_instance_publication.py polaris/delivery/cli/tests/test_backend_runtime_root.py -q"
+      status: passed
+    - description: "Renderer regression"
+      command: "npx vitest run --config src/frontend/vitest.config.ts src/frontend/src/api.test.ts src/frontend/src/app/launcher"
+      status: passed
+  manual_check:
+    - >
+      Open http://192.168.10.2:5174/?instance=...&workspace=...&token=... from
+      another host and record the browser evidence: zero Content Security
+      Policy violations, zero failed requests, and a live runtime WebSocket
+      that delivers frames.
+
+related_adrs:
+  - "adr-20261112-instance-published-address"
+
+sign_off:
+  completed_by: "opencode"
+  completed_at: "2026-11-12"
+  verified_by: "opencode"
+  verified_at: "2026-11-12"
