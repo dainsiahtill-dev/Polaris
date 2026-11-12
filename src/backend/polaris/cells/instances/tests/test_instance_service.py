@@ -3291,6 +3291,29 @@ def test_automatic_settlement_missing_pids_confirm_free_ports(tmp_path: Path, mo
     assert signals == []
 
 
+def test_a_zombie_child_is_not_a_live_process(tmp_path: Path) -> None:
+    """A child that already exited only waits for its parent.
+
+    Treating a zombie as alive keeps a confirmed termination unproven: the
+    stop cannot prove that the process is gone, so the run's resource
+    closure stays unknown.
+    """
+    import subprocess
+
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    pid = child.pid
+    try:
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            if instance_service._process_is_zombie(pid):
+                break
+            time.sleep(0.05)
+        assert instance_service._process_is_zombie(pid), "the child never became a zombie"
+        assert instance_service.is_process_alive(pid) is False
+    finally:
+        child.wait(timeout=5)
+
+
 def test_automatic_settlement_disabled_frontend_ignores_reserved_unowned_port(tmp_path: Path, monkeypatch: Any) -> None:
     """A disabled, explicitly PID-less frontend owns no reserved listener."""
     supervisor, registry, record, _, settlement = _settlement_fixture(tmp_path)

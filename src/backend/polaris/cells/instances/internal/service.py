@@ -234,7 +234,27 @@ def is_process_alive(pid: int | None) -> bool:
         return False
     except PermissionError:
         return True
-    return True
+    # A zombie has already released its resources; only its exit status is
+    # still pending with its parent. Treating it as alive would keep a
+    # confirmed termination unproven and leave the run's resource closure
+    # unknown.
+    return not _process_is_zombie(pid)
+
+
+def _process_is_zombie(pid: int) -> bool:
+    """Report whether the process already exited and only awaits its parent."""
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as handle:
+            data = handle.read()
+    except OSError:
+        return False
+    # The state field follows the parenthesised comm field, which may itself
+    # contain spaces and parentheses.
+    marker = data.rfind(b")")
+    if marker < 0:
+        return False
+    fields = data[marker + 2 :].split()
+    return bool(fields) and fields[0] == b"Z"
 
 
 def is_port_free(port: int, host: str | None = None) -> bool:
@@ -1269,16 +1289,19 @@ class InstanceSupervisor:
             # can explain an original PID becoming None. No None wildcard.
             kind = key.removesuffix("_pid")
             closure = progress["closed_children"].get(kind) if progress_bound else None
+            confirmed = (
+                isinstance(closure, dict)
+                and closure.get("original_pid") == original[key]
+                and closure.get("port") == original.get(kind + "_port")
+                and closure.get("confirmed") is True
+                and isinstance(closure.get("confirmed_at"), str)
+            )
             if (
                 key not in {"backend_pid", "frontend_pid"}
                 or getattr(record, key) is not None
                 or type(original.get(key)) is not int
                 or original[key] <= 0
-                or not isinstance(closure, dict)
-                or closure.get("original_pid") != original[key]
-                or closure.get("port") != original.get(kind + "_port")
-                or closure.get("confirmed") is not True
-                or not isinstance(closure.get("confirmed_at"), str)
+                or not confirmed
             ):
                 raise RuntimeError("engineering settlement original instance identity changed")
             # A recorded earlier drain does not waive current resource checks.
