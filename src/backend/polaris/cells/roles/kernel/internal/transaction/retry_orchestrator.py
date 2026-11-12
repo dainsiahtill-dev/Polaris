@@ -143,6 +143,25 @@ def _bootstrap_tool_names(decision: Any) -> set[str]:
     return names
 
 
+def _clamped_bootstrap_allowed_tools(
+    attempt_allowed_tool_names: set[str],
+    bootstrap_decision: Any,
+    original_allowed_tool_names: frozenset[str] | set[str],
+) -> set[str]:
+    """Admissible bootstrap tools, clamped to the caller's offered surface.
+
+    The bootstrap-read path may switch in after attempts were narrowed to the
+    strict write surface, so the emitted (safety-validated) read invocations
+    must stay admissible even when the attempt no longer offers them. But the
+    union can never exceed the tools the turn's caller actually offered: a
+    native call to an unoffered tool must never execute, including through the
+    bootstrap recovery path. Intersecting with the original offered surface
+    keeps offered reads admissible while failing closed on unoffered tools.
+    """
+    union = set(attempt_allowed_tool_names) | _bootstrap_tool_names(bootstrap_decision)
+    return union & set(original_allowed_tool_names)
+
+
 def _is_transient_llm_provider_exception(exc: BaseException) -> bool:
     if isinstance(exc, (ConnectionError, TimeoutError)):
         return True
@@ -1002,8 +1021,10 @@ class RetryOrchestrator:
                             attempt_index + 1,
                         )
                         candidate_bootstrap_decision = bootstrap_decision
-                        candidate_bootstrap_allowed_tools = set(attempt_allowed_tool_names) | _bootstrap_tool_names(
-                            candidate_bootstrap_decision
+                        candidate_bootstrap_allowed_tools = _clamped_bootstrap_allowed_tools(
+                            attempt_allowed_tool_names,
+                            candidate_bootstrap_decision,
+                            original_allowed_tool_names,
                         )
                         break
                 if not is_mutation_contract_violation(retry_exc):
@@ -1021,8 +1042,10 @@ class RetryOrchestrator:
                         attempt_index + 1,
                     )
                     candidate_bootstrap_decision = retry_decision
-                    candidate_bootstrap_allowed_tools = set(attempt_allowed_tool_names) | _bootstrap_tool_names(
-                        candidate_bootstrap_decision
+                    candidate_bootstrap_allowed_tools = _clamped_bootstrap_allowed_tools(
+                        attempt_allowed_tool_names,
+                        candidate_bootstrap_decision,
+                        original_allowed_tool_names,
                     )
                     break
                 if escalated_definitions is not None and not any(
