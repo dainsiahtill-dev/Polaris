@@ -14,7 +14,6 @@ import base64
 import hashlib
 import io
 import json
-import time
 from pathlib import Path
 from typing import Any
 
@@ -128,43 +127,3 @@ async def test_bounded_working_set_keeps_the_visual_evidence_projectable(tmp_pat
     assert image_sets, audit
     blocks = [block for message in bounded if isinstance(message.get("content"), list) for block in message["content"]]
     assert any(isinstance(block, dict) and block.get("type") == "image" for block in blocks)
-
-
-@pytest.mark.asyncio
-async def test_review_budget_reserve_hands_a_verified_candidate_to_the_review(tmp_path: Path) -> None:
-    """The mandatory review needs budget of its own.
-
-    A Director that spends the whole run budget would leave the independent
-    QA review nothing to run in, and the run could never be accepted.
-    """
-    from polaris.cells.roles.runtime.internal.engineering_loop import _review_budget_reached
-    from polaris.cells.roles.runtime.public.contracts.engineering_run import RunLimits
-
-    workspace = tmp_path / "review-reserve"
-    store = create(workspace)
-    session_id = "run-1"
-    store.update_run(session_id, status="running", verification="passed")
-
-    # The budget is nearly spent: the reserve applies to a verified candidate
-    # that no review has seen yet.
-    limits = RunLimits(time.time() + 5.0, 1_000_000, 64_000)
-    assert _review_budget_reached(limits, store=store, session_id=session_id, workspace=workspace) is True
-
-    # A budget that is not yet spent does not interrupt the work.
-    generous = RunLimits(time.time() + 5400.0, 1_000_000, 64_000)
-    assert _review_budget_reached(generous, store=store, session_id=session_id, workspace=workspace) is False
-
-    # A candidate that is not verified still needs the budget for the work.
-    store.update_run(session_id, status="running", verification="failed")
-    assert _review_budget_reached(limits, store=store, session_id=session_id, workspace=workspace) is False
-
-    # A reviewed candidate continues with the same Director, without a second
-    # reserved hand-over.
-    store.update_run(session_id, status="running", verification="passed")
-    store.append_event(
-        session_id,
-        kind="qa_review_completed",
-        role="qa",
-        payload={"verdict": "rejected", "feedback": "not yet"},
-    )
-    assert _review_budget_reached(limits, store=store, session_id=session_id, workspace=workspace) is False

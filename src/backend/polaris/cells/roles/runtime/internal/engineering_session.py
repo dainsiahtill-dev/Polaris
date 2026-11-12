@@ -43,13 +43,6 @@ class WorkspaceBusyError(BlockingIOError):
     """Another live writer owns the workspace OS lock."""
 
 
-_CONTINUATION_HISTORY_NOTE = (
-    "The earlier messages above are this same run's earlier turns. Their tool observations describe the state at "
-    "the time they ran, not the current state. Re-read the current files and run the current checks before you "
-    "rely on any earlier observation, and do not restart work that those earlier turns already completed."
-)
-
-
 class EngineeringSessionStore:
     """Persist exactly one workspace's engineering runs; never write legacy state."""
 
@@ -1065,17 +1058,6 @@ class EngineeringSessionStore:
                 kind="message",
                 role=role,
                 payload={"message": {"role": "user", "content": feedback}},
-            )
-            # The replayed history carries the observations of its own turns.
-            # A model that reads an earlier observation as the current state
-            # restarts work that is already done, so the frame states when
-            # the replayed observations were true.
-            self._append_event(
-                connection,
-                session_id,
-                kind="message",
-                role=role,
-                payload={"message": {"role": "user", "content": _CONTINUATION_HISTORY_NOTE}},
             )
 
     def record_write_reconciliation(

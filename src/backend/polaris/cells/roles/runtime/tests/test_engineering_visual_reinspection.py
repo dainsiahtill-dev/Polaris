@@ -61,11 +61,13 @@ def _physical_images(body: dict[str, Any]) -> list[bytes]:
 
 
 async def test_actual_native_optional_omission_and_three_state_reinspection_survive_cold_restore(
-    tmp_path: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
+    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Only model replies/config are scripted; service/SQLite/browser/sandbox/body stay real."""
-    workspace = tmp_path / "visual-fixture"
-    guarded_create_directory(str(tmp_path), "visual-fixture", parents=True, exist_ok=True)
+    # The sandbox refuses a reserved mount, and /tmp is reserved, so the
+    # visual fixture lives below the repository owner.
+    workspace = isolated_workspace / "visual-fixture"
+    guarded_create_directory(str(isolated_workspace), "visual-fixture", parents=True, exist_ok=True)
     fs = get_default_adapter()
     for state in "abcde":
         fs.write_text(

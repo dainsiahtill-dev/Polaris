@@ -254,38 +254,11 @@ def _bounded_request_messages(
     return build(bounded)
 
 
-_REVIEW_BUDGET_RESERVE_RATIO = 0.12
-_REVIEW_BUDGET_RESERVE_MIN_SECONDS = 60.0
-
-
-def _review_budget_reached(
-    limits: RunLimits,
-    *,
-    store: EngineeringSessionStore,
-    session_id: str,
-    workspace: Path,
-) -> bool:
-    """Report whether the run budget has to be handed to the mandatory review.
-
-    The independent QA review is part of the deliverable, and the platform
-    finalizes the verification itself. A Director that spends the whole
-    budget would leave the review nothing to run in, so the review gets a
-    reserved share of the budget. The reservation only applies to a verified
-    candidate that no review has seen yet: work that is not verified still
-    needs the budget, and a rejected candidate continues with the same
-    Director.
-    """
-    if limits.deadline is None:
-        return False
-    run = store.load_run(session_id, workspace=workspace)
-    created_at = float(run.get("created_at") or 0.0)
-    total = max(0.0, float(limits.deadline) - created_at) if created_at > 0 else 0.0
-    reserve = max(_REVIEW_BUDGET_RESERVE_MIN_SECONDS, total * _REVIEW_BUDGET_RESERVE_RATIO)
-    if time.time() < float(limits.deadline) - reserve:
-        return False
-    if run.get("verification") != "passed":
-        return False
-    return not store.load_events(session_id, kinds=("qa_review_completed",))
+_CONTINUATION_HISTORY_NOTE = (
+    "The earlier messages above are this same run's earlier turns. Their tool observations describe the state at "
+    "the time they ran, not the current state. Re-read the current files and run the current checks before you "
+    "rely on any earlier observation, and do not restart work that those earlier turns already completed."
+)
 
 
 async def run_engineering_loop(
@@ -410,6 +383,11 @@ async def run_engineering_loop(
             payload={"instruction": command.instruction, "purpose": purpose},
         )
         messages = []
+    # A continued frame replays the earlier turns of the same run. Their
+    # observations describe the state at the time they ran, and a model that
+    # reads one as the current state restarts work that is already done.
+    resumed_history = bool(messages)
+    history_notice_sent = False
     if not messages:
         messages = [
             {
@@ -476,18 +454,6 @@ async def run_engineering_loop(
                 return finish("cancelled", "Engineering role cancelled; no further tools dispatched.")
             if limits.deadline is not None and time.time() >= limits.deadline:
                 return finish("failed", "Engineering run deadline exceeded.")
-            if _review_budget_reached(
-                limits,
-                store=store,
-                session_id=command.session_id,
-                workspace=Path(command.workspace),
-            ):
-                # The verified candidate is handed to the finalization and the
-                # independent review, which need budget of their own.
-                return finish(
-                    "completed",
-                    "The run budget is reserved for the final verification and the independent review.",
-                )
             turn_seq = store.append_event(command.session_id, kind="turn_started", role=command.role, payload={})
             visual_projection: dict[str, Any] = {}
             request_messages = _bounded_request_messages(
@@ -545,6 +511,12 @@ async def run_engineering_loop(
                         ),
                     }
                 )
+            if resumed_history and not history_notice_sent:
+                # The note belongs to the end of the request, after the host
+                # messages, so it never merges into the platform feedback the
+                # provider already received.
+                history_notice_sent = True
+                options["messages"].append({"role": "user", "content": _CONTINUATION_HISTORY_NOTE})
             if command.role == "qa":
                 from polaris.cells.roles.runtime.internal.engineering_working_state import (
                     QA_WORKING_STATE_EVENT_KINDS,
