@@ -16,6 +16,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
+from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.roles.kernel.public.llm_caller_contracts import director_uses_legacy_tool_slices
 from polaris.cells.runtime.task_runtime.public import (
     TaskRuntimeExecutionAttemptIdentityV1,
@@ -645,7 +646,7 @@ def _annotate_quality_repair_progress(
                     "quality_repair_semantic_noop" if semantic_noop else "quality_repair_no_net_progress"
                 ),
                 "error_code": "director_quality_repair_stalled",
-                "failure_class": "model_ceiling",
+                "failure_class": FailureClassV1.PROGRESS_STALLED.value,
                 "responsible_layer": "director",
                 "retry_scope": "same_director_task_only",
                 "pm_ce_restart_allowed": False,

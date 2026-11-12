@@ -12,6 +12,7 @@ import subprocess as subprocess
 import sys as sys
 from typing import Any
 
+from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.director.runtime.public.service import (
     AttachDirectorRepairRevalidationEvidenceV1,
     project_director_repair_revalidation_evidence,
@@ -615,7 +616,7 @@ def _phase_existing_scope_preflight(
                     "task_id": target_task_id,
                     "error": "director_task_boundary_receipt_projection_failed",
                     "error_code": "director.task_boundary_receipt_projection_failed",
-                    "failure_class": "TASK_BOUNDARY_FAILED",
+                    "failure_class": FailureClassV1.TASK_BOUNDARY_FAILED.value,
                     "root_cause_hint": str(exc),
                     "retry_scope": "same_director_task_only",
                     "pm_ce_restart_allowed": False,

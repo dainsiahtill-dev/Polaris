@@ -662,6 +662,16 @@ class AIExecutor:
             # options contains invalid/unexpected values; fall back to default resilience manager
             return self.resilience
 
+        # A retry needs budget. Without it a request that stalls for the full
+        # request timeout leaves no room for the attempt the transport
+        # contract allows, and one stalled upstream request ends the run.
+        required_total = timeout_config.request_timeout * max(1, retry_config.max_attempts)
+        if timeout_config.total_timeout < required_total:
+            timeout_config = replace(
+                timeout_config,
+                total_timeout=required_total,
+            )
+
         # Only this freshly constructed request policy accepts the helper's
         # typed delegation. Explicit host category restrictions remain binding.
         categories = list(

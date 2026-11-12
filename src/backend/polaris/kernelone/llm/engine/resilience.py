@@ -799,18 +799,14 @@ class ResilienceManager:
                 retry_after = e.retry_after or recovery_timeout
                 await asyncio.sleep(min(retry_after, self.timeout_config.total_timeout / 2))
             except asyncio.TimeoutError:
-                # TimeoutError means the operation did not complete.
-                # Return a fresh failure response immediately; do NOT fall through
-                # with a stale response from a previous iteration.
-                elapsed = time.monotonic() - start_time
-                return AIResponse.failure(
-                    error=f"Request timeout ({self.timeout_config.request_timeout}s)",
-                    category=ErrorCategory.TIMEOUT,
-                    latency_ms=int(elapsed * 1000),
-                    platform_retry_count=attempt - 1,
-                    platform_retry_exhausted=True,
-                    last_transport_error=f"Request timeout ({self.timeout_config.request_timeout}s)",
-                )
+                # A request timeout is a transport failure, and the platform
+                # retries transport failures within its attempt budget. The
+                # response stays fresh: nothing from a previous iteration is
+                # reused, only the timeout is recorded as the last error so
+                # the retry decision can classify it.
+                last_error = f"Request timeout ({self.timeout_config.request_timeout}s)"
+                last_category = ErrorCategory.TIMEOUT
+                platform_retry_count = attempt - 1
             except (RuntimeError, ConnectionError) as exc:
                 # All other exceptions: classify and decide whether to retry.
                 # Return a FRESH failure response rather than a stale `response`

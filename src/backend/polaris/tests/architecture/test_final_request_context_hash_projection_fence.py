@@ -11,7 +11,7 @@ POLARIS_ROOT = BACKEND_ROOT / "polaris"
 
 OWNED_CONTEXT_HASH_REGEXES = {
     (
-        "polaris/kernelone/events/final_request_evidence.py",
+        "polaris/kernelone/events/final_request_evidence/_constants.py",
         "_CONTEXT_SNAPSHOT_HASH_RE",
     ): "(?<![0-9A-Fa-f])([0-9A-Fa-f]{24})(?![0-9A-Fa-f])",
     (

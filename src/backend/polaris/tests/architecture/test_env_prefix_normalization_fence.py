@@ -11,6 +11,11 @@ import pytest
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
 POLARIS_ROOT = BACKEND_ROOT / "polaris"
 POLARIS_ENV_TOKEN_RE = re.compile(r"(?<!VITE_)POLARIS_[A-Z0-9_]+")
+# The sandbox declares the environment of the isolated child process. Those
+# names are the tool contract of a sandboxed command, not the deprecated host
+# environment of the Polaris process, so they are owned by the sandbox module
+# and may be referenced by the tool schema that documents them.
+SANDBOX_CHILD_ENV_TOKENS = frozenset({"POLARIS_SANDBOX_OUTPUT", "POLARIS_COMMAND_CACHE"})
 
 
 def _read_text(path: Path) -> str:
@@ -38,6 +43,8 @@ def test_backend_product_code_reads_canonical_kernelone_env_prefix() -> None:
 
     allowed_files = {
         POLARIS_ROOT / "env_prefix_normalization.py",
+        # The sandbox owns the child process environment contract.
+        POLARIS_ROOT / "kernelone/process/sandbox.py",
     }
     findings: list[str] = []
 
@@ -49,7 +56,7 @@ def test_backend_product_code_reads_canonical_kernelone_env_prefix() -> None:
         if path in allowed_files:
             continue
         text = _read_text(path)
-        tokens = sorted(set(POLARIS_ENV_TOKEN_RE.findall(text)))
+        tokens = sorted(set(POLARIS_ENV_TOKEN_RE.findall(text)) - SANDBOX_CHILD_ENV_TOKENS)
         if tokens:
             findings.append(f"{path.relative_to(BACKEND_ROOT)} contains deprecated env tokens: {tokens}")
 
