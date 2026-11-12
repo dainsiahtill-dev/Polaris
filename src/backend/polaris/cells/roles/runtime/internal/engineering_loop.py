@@ -695,17 +695,16 @@ async def run_engineering_loop(
             )
             if verification_passed and command.role == "director":
                 # A passing verification is the durable fact that hands the
-                # candidate to independent QA. The Director has no decision
-                # left to make, so the turn ends here: a Director that keeps
-                # polishing an already verified candidate never reaches its
-                # review and burns the whole run budget. A later change to the
-                # outputs invalidates the passing evidence, and the platform
-                # asks for a new verification instead of accepting this one.
-                return finish(
-                    "completed",
-                    "Current project verification passed for the prepared candidate. The candidate is handed to "
-                    "independent review.",
+                # candidate to independent QA. Without this the same Director
+                # can keep polishing a candidate that is already verified and
+                # the run never reaches its review.
+                from polaris.cells.roles.runtime.internal.engineering_roles import (
+                    _VERIFICATION_PASSED_GUIDANCE,
                 )
+
+                message = {"role": "user", "content": _VERIFICATION_PASSED_GUIDANCE}
+                messages.append(message)
+                store.append_message(command.session_id, role=command.role, message=message)
             if review_reports:
                 _verdict, feedback, _call_id = interpret_review_reports(review_reports)
                 return finish("completed", feedback)

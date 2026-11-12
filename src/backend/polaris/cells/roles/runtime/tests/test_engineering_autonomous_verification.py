@@ -125,7 +125,7 @@ async def test_text_completion_without_checks_returns_feedback_to_same_director(
     assert roles == ["director", "director", "qa"]
 
 
-async def test_passing_verification_hands_the_candidate_to_the_review(
+async def test_passing_verification_asks_the_director_to_conclude(
     isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A verified candidate has to reach its review instead of endless polishing.
@@ -142,6 +142,7 @@ async def test_passing_verification_hands_the_candidate_to_the_review(
     )
     for response in (
         _response(("verify", "verify_project", {"commands": [command_text]})),
+        _response(text="The candidate is verified; independent QA reviews it now."),
         _response(("read", "read_file", {"file": "artifact.txt"})),
         _response(("review", "report_review", {"approved": True, "feedback": "Read actual value2 and check output."})),
     ):
@@ -153,23 +154,16 @@ async def test_passing_verification_hands_the_candidate_to_the_review(
     )
     await service.wait(command.session_id, workspace=isolated_workspace)
 
+    second_request = scripted_provider.requests[1]["body"]
+    guidance = [
+        message
+        for message in second_request["messages"]
+        if "Independent QA has to review this same candidate" in str(message.get("content", ""))
+    ]
+    assert guidance, json.dumps(second_request["messages"], ensure_ascii=False)[:900]
     row = service.snapshot(command.session_id, workspace=isolated_workspace)
     assert row["verification"] == "passed" and row["qa_verdict"] == "approved"
     assert row["project_outcome"] == "accepted", row
-    roles = [
-        event["role"] for event in service.store.load_events(command.session_id) if event["kind"] == "role_started"
-    ]
-    # The Director hands the verified candidate over instead of polishing it
-    # again, and the independent review follows.
-    assert roles == ["director", "qa"], roles
-    director_requests = [
-        request
-        for request in scripted_provider.requests
-        if "You are Director" in json.dumps(request["body"]["messages"], ensure_ascii=False)
-    ]
-    # The Director asked for the verification and nothing else: the verified
-    # candidate is handed over instead of being polished again.
-    assert len(director_requests) == 1, len(director_requests)
 
 
 async def test_unanswered_provider_continues_the_same_director(
@@ -192,6 +186,7 @@ async def test_unanswered_provider_continues_the_same_director(
     scripted_provider.enqueue_hang(4.0)
     for response in (
         _response(("verify", "verify_project", {"commands": [command_text]})),
+        _response(text="The candidate is verified; independent QA reviews it now."),
         _response(("read", "read_file", {"file": "artifact.txt"})),
         _response(("review", "report_review", {"approved": True, "feedback": "Read actual value2 and check output."})),
     ):
