@@ -11,13 +11,16 @@ import pytest
 from fastapi._compat.v2 import ModelField
 from fastapi.responses import JSONResponse, PlainTextResponse
 from polaris.cells.roles.runtime.internal.engineering_verification import EngineeringVerification
+from polaris.cells.roles.runtime.tests.engineering_support import isolated_workspace as isolated_workspace
 from polaris.cells.roles.runtime.tests.test_engineering_observation import database_dump, seed_current_candidate
 from polaris.delivery.http.tests.test_engineering_runs import _request_lookup_app
 
 
 @pytest.mark.parametrize("path", ["runs/observation", "runs/current", "requests/observation-key"])
-async def test_http_query_observes_inputs_once_without_repeating_identity_resolution(tmp_path, monkeypatch, path):
-    service, _scope = await seed_current_candidate(tmp_path)
+async def test_http_query_observes_inputs_once_without_repeating_identity_resolution(
+    isolated_workspace: Path, monkeypatch, path
+):
+    service, _scope = await seed_current_candidate(isolated_workspace)
     app = _request_lookup_app(service.workspace)
     app.state.engineering_run_service = service
     captures = []
@@ -109,8 +112,8 @@ async def test_asgi_control_can_respond_during_observation_and_encoding(tmp_path
     assert result.status_code == 200 and result.json()["session_id"] == "probe"
 
 
-async def test_cancelled_http_query_finishes_readonly_and_next_query_reobserves(tmp_path, monkeypatch):
-    service, _scope = await seed_current_candidate(tmp_path)
+async def test_cancelled_http_query_finishes_readonly_and_next_query_reobserves(isolated_workspace: Path, monkeypatch):
+    service, _scope = await seed_current_candidate(isolated_workspace)
     app = _request_lookup_app(service.workspace)
     app.state.engineering_run_service = service
     before = database_dump(service)

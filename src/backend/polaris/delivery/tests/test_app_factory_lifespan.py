@@ -1,3 +1,12 @@
+"""Application lifespan: startup order, shutdown order and failure cleanup.
+
+The factory settlement runtime is retired, so the lifespan owns the managed
+NATS runtime, the file-event publisher, the context receipt lookup and the
+workspace fact stream. These scenarios pin that order: the managed runtime is
+ready before the application admits requests, every cleanup callback runs even
+when one of them fails, and a failed startup releases what it acquired.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -37,7 +46,6 @@ def _install_lifespan_fakes(
 ) -> dict[str, Any]:
     import polaris.bootstrap.assembly as assembly
     import polaris.cells.events.fact_stream.public as fact_stream_public
-    import polaris.cells.factory.pipeline.public as factory_public
     import polaris.cells.instances.public.service as instance_service
     import polaris.cells.resident.autonomy.public.service as resident_service
     import polaris.delivery.http.resident_autotick as resident_autotick
@@ -45,10 +53,11 @@ def _install_lifespan_fakes(
     import polaris.infrastructure.di.container as container_module
     import polaris.infrastructure.log_pipeline.jetstream_publisher as log_publisher
     import polaris.infrastructure.messaging as messaging
+    import polaris.infrastructure.messaging.nats.jetstream_admin as jetstream_admin
     import polaris.infrastructure.messaging.nats.server_runtime as nats_runtime
     import polaris.kernelone.process as process
 
-    settlement_options: dict[str, Any] = {}
+    startup_options: dict[str, Any] = {}
 
     async def get_container() -> object:
         events.append("container.get")
@@ -73,41 +82,21 @@ def _install_lifespan_fakes(
     async def close_default_client() -> None:
         events.append("nats.client.stop")
 
-    async def start_factory_settlement_runtime(
-        workspace: str,
-        *,
-        enable_wake_bridge: bool,
-        wake_bridge_required: bool,
-    ) -> object:
-        settlement_options.update(
-            {
-                "workspace": workspace,
-                "enable_wake_bridge": enable_wake_bridge,
-                "wake_bridge_required": wake_bridge_required,
-            }
-        )
-        events.append("settlement.start")
-        return object()
+    async def get_default_client() -> object:
+        events.append("nats.client.connect")
+        return SimpleNamespace(is_connected=True)
+
+    async def ensure_stream_exists(_admin: object) -> bool:
+        events.append("nats.stream.ensure")
+        return True
 
     def bootstrap_fact_stream_workspace(
         command: BootstrapFactStreamWorkspaceCommandV1,
     ) -> None:
         assert command.maintenance_reason == "http_app_lifespan_startup"
-        assert command.streams == (
-            "execution.control_plane",
-            "factory.settlement",
-            "resident.cycle.events",
-            "roles.kernel.turn_outcomes",
-            "task_market.events",
-            "task_runtime.execution",
-            "taskboard.terminal.events",
-        )
+        startup_options["fact_stream_workspace"] = command.workspace
+        startup_options["fact_stream_streams"] = command.streams
         events.append("fact_stream.bootstrap")
-
-    async def stop_factory_settlement_runtime(workspace: str) -> bool:
-        settlement_options["stopped_workspace"] = workspace
-        events.append("settlement.stop")
-        return True
 
     monkeypatch.setattr(container_module, "get_container", get_container)
     monkeypatch.setattr(container_module, "reset_container", reset_container)
@@ -115,16 +104,8 @@ def _install_lifespan_fakes(
     monkeypatch.setattr(nats_runtime, "ensure_local_nats_runtime", ensure_local_nats_runtime)
     monkeypatch.setattr(nats_runtime, "shutdown_local_nats_runtime", shutdown_local_nats_runtime)
     monkeypatch.setattr(messaging, "close_default_client", close_default_client)
-    monkeypatch.setattr(
-        factory_public,
-        "start_factory_settlement_runtime",
-        start_factory_settlement_runtime,
-    )
-    monkeypatch.setattr(
-        factory_public,
-        "stop_factory_settlement_runtime",
-        stop_factory_settlement_runtime,
-    )
+    monkeypatch.setattr(messaging, "get_default_client", get_default_client)
+    monkeypatch.setattr(jetstream_admin.JetStreamAdmin, "ensure_stream_exists", ensure_stream_exists)
     monkeypatch.setattr(
         fact_stream_public,
         "bootstrap_fact_stream_workspace",
@@ -172,38 +153,32 @@ def _install_lifespan_fakes(
     )
     monkeypatch.setattr(process, "terminate_external_loop_pm_processes", lambda workspace: [])
     monkeypatch.setenv("KERNELONE_TOKEN", "test-token")
-    return settlement_options
+    return startup_options
 
 
 @pytest.mark.asyncio
-async def test_lifespan_starts_after_nats_and_stops_before_nats(
+async def test_lifespan_starts_nats_before_the_app_runs_and_stops_the_client_first(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     events: list[str] = []
-    options = _install_lifespan_fakes(monkeypatch, events)
+    _install_lifespan_fakes(monkeypatch, events)
     app = _app(tmp_path)
 
     async with lifespan(app):
         events.append("app.running")
 
-    workspace = str(tmp_path.resolve())
-    assert options == {
-        "workspace": workspace,
-        "enable_wake_bridge": True,
-        "wake_bridge_required": True,
-        "stopped_workspace": workspace,
-    }
-    assert events.index("nats.server.start") < events.index("settlement.start")
-    assert events.index("fact_stream.bootstrap") < events.index("settlement.start")
-    assert events.index("settlement.start") < events.index("app.running")
-    assert events.index("app.running") < events.index("settlement.stop")
-    assert events.index("settlement.stop") < events.index("nats.client.stop")
+    assert events.index("nats.server.start") < events.index("fact_stream.bootstrap")
+    assert events.index("fact_stream.bootstrap") < events.index("app.running")
+    assert events.index("app.running") < events.index("receipt.clear")
+    assert events.index("receipt.clear") < events.index("publisher.clear")
+    assert events.index("publisher.clear") < events.index("publisher.stop")
+    assert events.index("publisher.stop") < events.index("nats.client.stop")
     assert events.index("nats.client.stop") < events.index("nats.server.stop")
 
 
 @pytest.mark.asyncio
-async def test_lifespan_exception_still_stops_settlement_before_nats(
+async def test_lifespan_exception_still_stops_the_client_before_the_server(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -215,38 +190,7 @@ async def test_lifespan_exception_still_stops_settlement_before_nats(
         async with lifespan(app):
             raise ExpectedLifespanError("request loop failed")
 
-    assert events.index("settlement.stop") < events.index("nats.client.stop")
-    assert events.index("nats.client.stop") < events.index("nats.server.stop")
-
-
-@pytest.mark.asyncio
-async def test_lifespan_settlement_shutdown_oserror_preserves_body_error_and_runs_cleanup(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    import polaris.cells.factory.pipeline.public as factory_public
-
-    events: list[str] = []
-    _install_lifespan_fakes(monkeypatch, events)
-
-    async def fail_stop_factory_settlement_runtime(workspace: str) -> bool:
-        assert workspace == str(tmp_path.resolve())
-        events.append("settlement.stop.oserror")
-        raise OSError("settlement socket is unavailable")
-
-    monkeypatch.setattr(
-        factory_public,
-        "stop_factory_settlement_runtime",
-        fail_stop_factory_settlement_runtime,
-    )
-
-    with pytest.raises(ExpectedLifespanError, match="request loop failed"):
-        async with lifespan(_app(tmp_path)):
-            raise ExpectedLifespanError("request loop failed")
-
-    assert events.index("settlement.stop.oserror") < events.index("receipt.clear")
-    assert events.index("receipt.clear") < events.index("publisher.clear")
-    assert events.index("publisher.clear") < events.index("nats.client.stop")
+    assert events.index("receipt.clear") < events.index("nats.client.stop")
     assert events.index("nats.client.stop") < events.index("nats.server.stop")
 
 
@@ -326,39 +270,36 @@ async def test_lifespan_cleanup_oserrors_preserve_application_error(
 
 
 @pytest.mark.asyncio
-async def test_lifespan_disabled_nats_keeps_startup_replay_without_bridge(
+async def test_lifespan_disabled_nats_keeps_startup_without_a_managed_runtime(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     events: list[str] = []
-    options = _install_lifespan_fakes(monkeypatch, events)
+    _install_lifespan_fakes(monkeypatch, events)
     app = _app(tmp_path, nats_enabled=False, nats_required=True)
 
     async with lifespan(app):
         events.append("app.running")
 
     assert "nats.server.start" not in events
-    assert options["enable_wake_bridge"] is False
-    assert options["wake_bridge_required"] is False
-    assert events.index("settlement.start") < events.index("app.running")
-    assert events.index("settlement.stop") < events.index("nats.server.stop")
+    assert events.index("fact_stream.bootstrap") < events.index("app.running")
+    assert events.index("app.running") < events.index("nats.client.stop")
+    assert events.index("nats.client.stop") < events.index("nats.server.stop")
 
 
 @pytest.mark.asyncio
-async def test_lifespan_empty_workspace_does_not_create_settlement_runtime(
+async def test_lifespan_empty_workspace_does_not_bootstrap_the_fact_stream(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     events: list[str] = []
-    options = _install_lifespan_fakes(monkeypatch, events)
+    _install_lifespan_fakes(monkeypatch, events)
     app = _app(None)
 
     async with lifespan(app):
         events.append("app.running")
 
-    assert options == {}
-    assert "settlement.start" not in events
-    assert "settlement.stop" not in events
     assert "fact_stream.bootstrap" not in events
+    assert events.index("app.running") < events.index("nats.client.stop")
 
 
 @pytest.mark.asyncio
@@ -376,11 +317,11 @@ async def test_lifespan_repeats_explicit_provision_for_each_startup(
         pass
 
     assert events.count("fact_stream.bootstrap") == 2
-    assert events.count("settlement.start") == 2
+    assert events.count("nats.server.start") == 2
 
 
 @pytest.mark.asyncio
-async def test_lifespan_fails_closed_before_settlement_when_authority_is_unsafe(
+async def test_lifespan_fails_closed_before_admission_when_authority_is_unsafe(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -407,7 +348,7 @@ async def test_lifespan_fails_closed_before_settlement_when_authority_is_unsafe(
             pass
 
     assert exc_info.value.code == "lock_anchor_binding_mismatch"
-    assert "settlement.start" not in events
+    assert "app.running" not in events
 
 
 @pytest.mark.asyncio
