@@ -1616,13 +1616,25 @@ class EngineeringRunService:
                 }
                 for actual, check in zip(commands, checks, strict=False)
             ]
+            read_only_failure = any(
+                "read-only file system" in str(check.content or "") or "EROFS" in str(check.content or "")
+                for check in checks
+            )
+            read_only_note = (
+                "\nThe verification scope keeps the workspace inputs read-only and writes only the declared "
+                "output roots. A check that installs or updates dependencies fails on the read-only workspace: "
+                "run that preparation with execute_command first, then verify the prepared candidate.\n"
+                if read_only_failure
+                else ""
+            )
             feedback = (
                 "Current selected checks failed. Continue the original goal using actual results. "
                 "You may revise your selected recipe through verify_project; host-required commands remain "
                 "included. Successful current preparation through ordinary authorized tools is preparation "
-                "evidence and need not be repeated in read-only verification.\n"
+                "evidence and need not be repeated in read-only verification.\n" + read_only_note
                 if model_selected
                 else "Final required checks failed. Continue the same task using these actual results:\n"
+                + read_only_note
             ) + json.dumps(
                 {
                     "required_checks": current["required_checks"],
