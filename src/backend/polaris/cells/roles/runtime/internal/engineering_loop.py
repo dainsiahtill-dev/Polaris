@@ -30,6 +30,26 @@ from polaris.kernelone.llm.engine.invocation_budget import invoke_with_budget
 from polaris.kernelone.llm.toolkit.parsers.core import parse_tool_calls
 from polaris.kernelone.process.process_tree import ProcessTreeDrainError
 
+_TRANSPORT_FAILURE_CATEGORIES = frozenset({"timeout", "rate_limit", "network_error", "service_unavailable"})
+
+
+def _is_transport_failure(response: AIResponse) -> bool:
+    """A transport failure is recoverable by the same role.
+
+    A semantic failure, such as an invalid response or a broken contract,
+    is not a transport failure: the same request would fail the same way
+    again and must end the run instead of looping.
+    """
+    category = getattr(response.error_category, "value", None)
+    return isinstance(category, str) and category in _TRANSPORT_FAILURE_CATEGORIES
+
+
+def _has_remaining_budget(limits: RunLimits) -> bool:
+    """The run deadline still allows another attempt."""
+    if limits.deadline is None:
+        return True
+    return time.time() < limits.deadline
+
 
 class NativeTurnRejectedError(ValueError):
     """Correctable model output, rejected before any candidate is dispatched."""
@@ -454,6 +474,44 @@ async def run_engineering_loop(
             if cancel.is_set():
                 return finish("cancelled", "Engineering role cancelled before tool dispatch.")
             if not response.ok:
+                if _is_transport_failure(response) and _has_remaining_budget(limits):
+                    # A transport failure is not an engineering outcome. No
+                    # tool from this turn ran and the committed observations
+                    # stay valid, so the same role continues its own goal with
+                    # the recoverable fact instead of ending the run.
+                    message = {
+                        "role": "user",
+                        "content": (
+                            "The provider request failed before any tool from this turn ran: "
+                            f"{response.error or 'unspecified provider error'}. Earlier observed tool effects are "
+                            "unchanged and no candidate was accepted. Continue the original goal using the same "
+                            "available tools and permissions; do not repeat a rejected or already observed action."
+                        ),
+                    }
+                    store.append_event(
+                        command.session_id,
+                        kind="message",
+                        role=command.role,
+                        payload={
+                            "message": message,
+                            "provider_transport_failure": {
+                                "error": response.error,
+                                "error_category": getattr(response.error_category, "value", None),
+                            },
+                        },
+                    )
+                    messages.append(message)
+                    store.append_event(
+                        command.session_id,
+                        kind="turn_finished",
+                        role=command.role,
+                        payload={
+                            "turn_seq": turn_seq,
+                            "tools_dispatched": False,
+                            "provider_transport_failure": True,
+                        },
+                    )
+                    continue
                 return finish("failed", f"Native provider failed: {response.error or 'unspecified provider error'}")
             output_bytes += len(response.output.encode("utf-8"))
             if output_bytes > limits.max_output_bytes:
@@ -507,6 +565,7 @@ async def run_engineering_loop(
                 )
                 return finish("completed", response.output)
             review_reports: list[dict[str, Any]] = []
+            verification_passed = False
             for call in calls:
                 if cancel.is_set():
                     return finish(
@@ -610,6 +669,10 @@ async def run_engineering_loop(
                         raise
                 if observation.tool == "report_review" and observation.ok and not observation.interrupted:
                     review_reports.append(tool_observation_payload(observation))
+                if observation.tool == "verify_project" and observation.ok and not observation.interrupted:
+                    # The candidate has a passing current verification. QA has to
+                    # review that same candidate, so the turn has to conclude.
+                    verification_passed = True
                 message = {
                     "role": "tool",
                     "tool_call_id": call.id,
@@ -626,6 +689,18 @@ async def run_engineering_loop(
             store.append_event(
                 command.session_id, kind="turn_finished", role=command.role, payload={"turn_seq": turn_seq}
             )
+            if verification_passed and command.role == "director":
+                # A passing verification is the durable fact that hands the
+                # candidate to independent QA. Without this the same Director
+                # can keep polishing a candidate that is already verified and
+                # the run never reaches its review.
+                from polaris.cells.roles.runtime.internal.engineering_roles import (
+                    _VERIFICATION_PASSED_GUIDANCE,
+                )
+
+                message = {"role": "user", "content": _VERIFICATION_PASSED_GUIDANCE}
+                messages.append(message)
+                store.append_message(command.session_id, role=command.role, message=message)
             if review_reports:
                 _verdict, feedback, _call_id = interpret_review_reports(review_reports)
                 return finish("completed", feedback)

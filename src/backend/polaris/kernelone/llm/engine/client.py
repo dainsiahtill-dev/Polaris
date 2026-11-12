@@ -406,12 +406,19 @@ class MultiProviderFallbackManager:
     ) -> AIResponse:
         """Create a fallback response after all providers are exhausted."""
         last_error = getattr(last_response, "error", None) if last_response else None
+        last_category = getattr(last_response, "error_category", None) if last_response else None
 
         return AIResponse(
             ok=False,
             output="",
             error=f"All providers exhausted. Last error: {last_error}",
-            error_category=ErrorCategory.PROVIDER_ERROR,
+            # The fallback describes the last real failure. Dropping its
+            # category turns a transient transport failure into an opaque
+            # provider error, and the caller can no longer tell that the same
+            # request may still succeed.
+            error_category=(
+                last_category if isinstance(last_category, ErrorCategory) else ErrorCategory.PROVIDER_ERROR
+            ),
             provider_id=None,
             model=getattr(request, "model", None),
         )

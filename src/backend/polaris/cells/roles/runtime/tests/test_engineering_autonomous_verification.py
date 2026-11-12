@@ -125,6 +125,85 @@ async def test_text_completion_without_checks_returns_feedback_to_same_director(
     assert roles == ["director", "director", "qa"]
 
 
+async def test_passing_verification_asks_the_director_to_conclude(
+    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A verified candidate has to reach its review instead of endless polishing.
+
+    A passing verification is the durable fact that hands the candidate to
+    independent QA. Without that hand-off the same Director can keep
+    polishing an already verified candidate and the run never reaches its
+    review.
+    """
+    (isolated_workspace / "artifact.txt").write_text("2", encoding="utf-8")
+    command_text = (
+        'python3 -c "from pathlib import Path; '
+        "assert Path('artifact.txt').read_text(encoding='utf-8') == '2'; print('CHECKED_ARTIFACT2')\""
+    )
+    for response in (
+        _response(("verify", "verify_project", {"commands": [command_text]})),
+        _response(text="The candidate is verified; independent QA reviews it now."),
+        _response(("read", "read_file", {"file": "artifact.txt"})),
+        _response(("review", "report_review", {"approved": True, "feedback": "Read actual value2 and check output."})),
+    ):
+        scripted_provider.enqueue_json(response)
+    service = _service(isolated_workspace, scripted_provider, monkeypatch)
+    command = RoleRunCommand("converge", "director", "Deliver the artifact with value2.", isolated_workspace)
+    await service.start(
+        command, scope=_scope(isolated_workspace), limits=RunLimits(time.time() + 45, 1_000_000, 64_000)
+    )
+    await service.wait(command.session_id, workspace=isolated_workspace)
+
+    second_request = scripted_provider.requests[1]["body"]
+    guidance = [
+        message
+        for message in second_request["messages"]
+        if "Independent QA has to review this same candidate" in str(message.get("content", ""))
+    ]
+    assert guidance, json.dumps(second_request["messages"], ensure_ascii=False)[:900]
+    row = service.snapshot(command.session_id, workspace=isolated_workspace)
+    assert row["verification"] == "passed" and row["qa_verdict"] == "approved"
+    assert row["project_outcome"] == "accepted", row
+
+
+async def test_provider_transport_failure_continues_the_same_director(
+    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A provider transport failure is not an engineering outcome.
+
+    No tool from the failed turn ran and the committed observations stay
+    valid, so the same Director continues its own goal instead of the run
+    ending on an upstream hiccup.
+    """
+    (isolated_workspace / "artifact.txt").write_text("2", encoding="utf-8")
+    command_text = (
+        'python3 -c "from pathlib import Path; '
+        "assert Path('artifact.txt').read_text(encoding='utf-8') == '2'; print('CHECKED_ARTIFACT2')\""
+    )
+    scripted_provider.enqueue_json({"error": "upstream unavailable"}, status=503)
+    for response in (
+        _response(("verify", "verify_project", {"commands": [command_text]})),
+        _response(text="The candidate is verified; independent QA reviews it now."),
+        _response(("read", "read_file", {"file": "artifact.txt"})),
+        _response(("review", "report_review", {"approved": True, "feedback": "Read actual value2 and check output."})),
+    ):
+        scripted_provider.enqueue_json(response)
+    service = _service(isolated_workspace, scripted_provider, monkeypatch)
+    command = RoleRunCommand("transport", "director", "Deliver the artifact with value2.", isolated_workspace)
+    await service.start(
+        command, scope=_scope(isolated_workspace), limits=RunLimits(time.time() + 45, 1_000_000, 64_000)
+    )
+    await service.wait(command.session_id, workspace=isolated_workspace)
+
+    events = service.store.load_events(command.session_id)
+    transport_failures = [event for event in events if event["payload"].get("provider_transport_failure")]
+    assert transport_failures, [event["kind"] for event in events]
+    assert transport_failures[0]["role"] == "director"
+    row = service.snapshot(command.session_id, workspace=isolated_workspace)
+    assert row["verification"] == "passed" and row["qa_verdict"] == "approved"
+    assert row["project_outcome"] == "accepted", row
+
+
 async def test_cold_read_preserves_qa_binding_from_before_optional_check_selection(
     isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:

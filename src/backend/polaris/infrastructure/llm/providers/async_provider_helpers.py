@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 import httpx
 from polaris.kernelone.common.clock import ClockPort, RealClock
 from polaris.kernelone.constants import DEFAULT_OPERATION_TIMEOUT_SECONDS
+from polaris.kernelone.errors import ErrorCategory
 from polaris.kernelone.llm.engine.contracts import get_physical_provider_dispatch_port
 from polaris.kernelone.llm.response_parser import FinalizedResponse, LLMResponseParser
 from polaris.kernelone.llm.types import (
@@ -278,6 +279,10 @@ async def async_invoke_with_retry(
                                 f"{result.status_code} Server Error from {url}: "
                                 f"{error_body[:500] if error_body else '(empty)'}"
                             ),
+                            # A server error is a transient service failure. The
+                            # category has to say so, or the platform retry
+                            # treats it as a permanent provider error.
+                            error_category=ErrorCategory.SERVICE_UNAVAILABLE,
                         )
 
                     # Client errors are not retryable
