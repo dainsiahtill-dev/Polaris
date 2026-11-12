@@ -91,8 +91,12 @@ def test_instance_listens_on_loopback_by_default(tmp_path: Path, monkeypatch: py
     assert backend["command"][backend["command"].index("--host") + 1] == "127.0.0.1"
     frontend = _frontend_call(calls)
     assert frontend["command"][frontend["command"].index("--host") + 1] == "127.0.0.1"
+    # The local endpoints stay loopback: the local control plane and the
+    # acceptance path only reach an instance on this host.
     assert record["backend_url"] == "http://127.0.0.1:59911"
     assert record["frontend_url"] == "http://127.0.0.1:59912"
+    assert record["public_backend_url"] == "http://127.0.0.1:59911"
+    assert record["public_frontend_url"] == "http://127.0.0.1:59912"
     # A loopback instance may address its backend directly.
     assert frontend["env"]["VITE_BACKEND_URL"] == "http://127.0.0.1:59911"
 
@@ -110,6 +114,8 @@ def test_configured_bind_address_is_used_for_both_processes(tmp_path: Path, monk
     # A wildcard bind is not a dialable address, so it publishes loopback.
     assert record["backend_url"] == "http://127.0.0.1:59911"
     assert record["frontend_url"] == "http://127.0.0.1:59912"
+    assert record["public_backend_url"] == "http://127.0.0.1:59911"
+    assert record["public_frontend_url"] == "http://127.0.0.1:59912"
     # The dev proxy must reach this instance's backend, not the main one.
     assert frontend["env"]["KERNELONE_BACKEND_PORT"] == "59911"
     assert frontend["env"]["VITE_BACKEND_PORT"] == "59911"
@@ -123,8 +129,11 @@ def test_published_address_is_advertised_and_keeps_the_instance_binding(
 
     record, calls = _start(tmp_path, monkeypatch)
 
-    assert record["backend_url"] == "http://192.168.10.2:59911"
-    assert record["frontend_url"] == "http://192.168.10.2:59912"
+    assert record["public_backend_url"] == "http://192.168.10.2:59911"
+    assert record["public_frontend_url"] == "http://192.168.10.2:59912"
+    # The local endpoints stay loopback.
+    assert record["backend_url"] == "http://127.0.0.1:59911"
+    assert record["frontend_url"] == "http://127.0.0.1:59912"
     frontend = _frontend_call(calls)
     # A published instance keeps the same-origin dev proxy: the connect-src
     # policy permits only loopback origins and the page origin.

@@ -52,6 +52,8 @@ def _register(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, host: str) -> 
     return {
         "backend_url": record.backend_url,
         "frontend_url": record.frontend_url,
+        "public_backend_url": record.public_backend_url,
+        "public_frontend_url": record.public_frontend_url,
     }
 
 
@@ -64,6 +66,8 @@ def test_register_instance_publishes_loopback_for_a_wildcard_bind(
 
     assert published["backend_url"] == "http://127.0.0.1:51000"
     assert published["frontend_url"] == "http://127.0.0.1:5173"
+    assert published["public_backend_url"] == "http://127.0.0.1:51000"
+    assert published["public_frontend_url"] == "http://127.0.0.1:5173"
 
 
 def test_register_instance_publishes_the_configured_public_address(
@@ -73,8 +77,12 @@ def test_register_instance_publishes_the_configured_public_address(
 
     published = _register(tmp_path, monkeypatch, host="0.0.0.0")
 
-    assert published["backend_url"] == "http://192.168.10.2:51000"
-    assert published["frontend_url"] == "http://192.168.10.2:5173"
+    assert published["public_backend_url"] == "http://192.168.10.2:51000"
+    assert published["public_frontend_url"] == "http://192.168.10.2:5173"
+    # The local endpoints stay loopback, so the local control plane and the
+    # acceptance path only reach the instance on this host.
+    assert published["backend_url"] == "http://127.0.0.1:51000"
+    assert published["frontend_url"] == "http://127.0.0.1:5173"
 
 
 def test_register_instance_without_a_registration_is_a_no_op(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

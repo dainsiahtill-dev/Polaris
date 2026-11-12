@@ -92,6 +92,30 @@ describe('getBackendInfo web fallback', () => {
     });
   });
 
+  it('ignores an explicit cross-origin backend binding in Vite web mode', async () => {
+    // The shipped connect-src policy refuses a published instance backend, so
+    // the browser would block every request and every runtime WebSocket
+    // frame sent to it. The page uses its own origin and the dev proxy
+    // forwards to the backend of the instance that serves the page.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    window.history.pushState(
+      {},
+      '',
+      '/?instance=bench-l1-01&backend=http://192.168.10.2:49980&token=instance-token&workspace=%2Ftmp%2FL1-01',
+    );
+    const { getBackendInfo } = await import('./api');
+
+    await expect(getBackendInfo()).resolves.toMatchObject({
+      baseUrl: window.location.origin,
+      token: 'instance-token',
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Ignoring the backend origin http://192.168.10.2:49980')
+    );
+    warnSpy.mockRestore();
+  });
+
   it('uses instance-scoped persisted backend overrides when instance is present', async () => {
     localStorage.setItem('polaris.baseUrl', 'http://127.0.0.1:49988');
     localStorage.setItem('polaris.token', 'global-token');
@@ -201,6 +225,38 @@ describe('getBackendInfo web fallback', () => {
       'ws://127.0.0.1:50017/v2/ws/runtime?protocol=runtime.v2&token=instance-token&workspace=%2Ftmp%2FL1-01'
     );
   });
+
+  it('opens the runtime WebSocket against the page origin for a published instance', async () => {
+    // The shipped connect-src policy refuses the published instance backend,
+    // so a runtime WebSocket addressed to it would be blocked by the browser
+    // and the page would report a disconnected realtime channel.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    window.history.pushState(
+      {},
+      '',
+      '/?instance=bench-l1-01&backend=http://192.168.10.2:49980&token=instance-token&workspace=%2Ftmp%2FL1-01',
+    );
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    class MockWebSocket {
+      readonly url: string;
+
+      constructor(url: string) {
+        this.url = url;
+      }
+    }
+
+    vi.stubGlobal('WebSocket', MockWebSocket);
+    const { connectWebSocket } = await import('./api');
+
+    const socket = await connectWebSocket();
+
+    expect((socket as unknown as MockWebSocket).url).toBe(
+      `ws://${window.location.host}/v2/ws/runtime?protocol=runtime.v2&token=instance-token&workspace=%2Ftmp%2FL1-01`
+    );
+    warnSpy.mockRestore();
+  });
 });
 
 describe('instance workspace URLs', () => {
@@ -239,6 +295,51 @@ describe('instance workspace URLs', () => {
     expect(parsed.origin).toBe('http://127.0.0.1:5178');
     expect(parsed.searchParams.get('instance')).toBe('bench-l1-01');
     expect(parsed.searchParams.get('backend')).toBe('http://127.0.0.1:50017');
+    expect(parsed.searchParams.get('workspace')).toBe('/tmp/factory/L1-01');
+    expect(parsed.searchParams.get('token')).toBe('instance-token');
+  });
+
+  it('omits a refused cross-origin backend from a published instance page', async () => {
+    // A published instance is served from an address the shipped connect-src
+    // policy does not permit. Carrying its absolute backend would make every
+    // request and the runtime WebSocket unusable, so the page keeps its own
+    // origin and the dev proxy forwards to the instance backend.
+    const { buildInstanceWorkspaceUrl } = await import('./services/instances');
+    const url = buildInstanceWorkspaceUrl({
+      schema_version: 1,
+      instance_id: 'bench-l1-01',
+      name: 'L1-01',
+      kind: 'bench_project',
+      polaris_root: '/repo',
+      workspace: '/tmp/factory/L1-01',
+      runtime_root: '/tmp/factory/L1-01/runtime',
+      backend_port: 49980,
+      frontend_port: 5174,
+      backend_url: 'http://127.0.0.1:49980',
+      frontend_url: 'http://127.0.0.1:5174',
+      public_backend_url: 'http://192.168.10.2:49980',
+      public_frontend_url: 'http://192.168.10.2:5174',
+      token: 'instance-token',
+      backend_reload: false,
+      frontend_vite: true,
+      start_frontend: true,
+      status: 'running',
+      backend_pid: 101,
+      frontend_pid: 102,
+      backend_alive: true,
+      frontend_alive: true,
+      created_at: '',
+      updated_at: '',
+      last_started_at: '',
+      last_stopped_at: '',
+      bench: {},
+      metadata: {},
+    });
+
+    const parsed = new URL(url);
+    expect(parsed.origin).toBe('http://192.168.10.2:5174');
+    expect(parsed.searchParams.get('backend')).toBeNull();
+    expect(parsed.searchParams.get('instance')).toBe('bench-l1-01');
     expect(parsed.searchParams.get('workspace')).toBe('/tmp/factory/L1-01');
     expect(parsed.searchParams.get('token')).toBe('instance-token');
   });

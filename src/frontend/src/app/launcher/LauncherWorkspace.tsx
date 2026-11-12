@@ -696,8 +696,14 @@ function LauncherInstanceWorkspace({ onOpenFoundation }: { onOpenFoundation: () 
               {[
                 ['workspace', selectedInstance.workspace],
                 ['runtime_root', selectedInstance.runtime_root],
-                ['backend_url', selectedInstance.backend_url],
-                ['frontend_url', selectedInstance.frontend_url || '(backend-only)'],
+                [
+                  'backend_url',
+                  selectedInstance.public_backend_url || selectedInstance.backend_url,
+                ],
+                [
+                  'frontend_url',
+                  selectedInstance.public_frontend_url || selectedInstance.frontend_url || '(backend-only)',
+                ],
                 ['open_url', buildInstanceWorkspaceUrl(selectedInstance)],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-md border border-white/10 bg-slate-900/80 p-3">

@@ -1,3 +1,5 @@
+import { isBackendOriginPermitted } from './services/backendOrigin';
+
 export type BackendInfo = {
   port: number | null;
   token: string | null;
@@ -33,21 +35,13 @@ const INSTANCE_STORAGE_PREFIX = "polaris.instances";
 
 let cachedInfo: BackendInfo | null = null;
 
-function isBackendOriginPermitted(value: string): boolean {
+function isBackendOriginPermittedForPage(value: string): boolean {
   if (typeof window === "undefined") {
     return false;
   }
-  try {
-    const url = new URL(value);
-    if (url.origin === window.location.origin) {
-      return true;
-    }
-    // The shipped connect-src policy permits loopback origins only, so a
-    // remembered backend on any other address could never be reached.
-    return url.hostname === "localhost" || url.hostname === "127.0.0.1";
-  } catch {
-    return false;
-  }
+  // The shipped connect-src policy permits loopback origins only, so a
+  // remembered backend on any other address could never be reached.
+  return isBackendOriginPermitted(value, window.location.origin);
 }
 
 function getDefaultBackendUrl(): string {
@@ -92,6 +86,23 @@ function normalizeBackendUrl(value: string | null): string | null {
 
 function getUrlBackendUrl(): string | null {
   return normalizeBackendUrl(getQueryParam(["backend", "backendUrl", "polarisBackend"]));
+}
+
+function getUsableUrlBackendUrl(): string | null {
+  const explicit = getUrlBackendUrl();
+  if (!explicit || !isViteWebDevMode) {
+    return explicit;
+  }
+  if (isBackendOriginPermittedForPage(explicit)) {
+    return explicit;
+  }
+  // The shipped connect-src policy refuses this origin, so the browser would
+  // block every request and every WebSocket frame from it. The same-origin
+  // dev proxy reaches the backend of the instance that serves this page.
+  console.warn(
+    `[Polaris] Ignoring the backend origin ${explicit}: the shipped connect-src policy does not permit it.`
+  );
+  return null;
 }
 
 function getUrlBackendToken(): string | null {
@@ -224,8 +235,9 @@ export async function getBackendInfo(options: BackendInfoOptions = {}): Promise<
     // connect-src policy, so a dev page only reuses a same-origin one and
     // otherwise falls back to its own origin.
     const storedBaseForMode =
-      isViteWebDevMode && storedBase && !isBackendOriginPermitted(storedBase) ? null : storedBase;
-    const explicitBase = getUrlBackendUrl() || devBackend?.baseUrl || getEnvBackendUrl() || storedBaseForMode;
+      isViteWebDevMode && storedBase && !isBackendOriginPermittedForPage(storedBase) ? null : storedBase;
+    const explicitBase =
+      getUsableUrlBackendUrl() || devBackend?.baseUrl || getEnvBackendUrl() || storedBaseForMode;
     const fallbackBase = explicitBase || getDefaultBackendUrl();
     const fallbackToken =
       getUrlBackendToken() ||

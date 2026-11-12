@@ -1,5 +1,6 @@
 import { apiDelete, apiGet, apiPost } from './apiClient';
 import type { ApiResult } from './api.types';
+import { isBackendOriginPermitted } from './backendOrigin';
 
 export type PolarisInstanceKind = 'project' | 'bench_project' | 'internal_test' | string;
 
@@ -15,6 +16,10 @@ export interface PolarisInstance {
   frontend_port: number;
   backend_url: string;
   frontend_url: string;
+  // The published addresses are the ones a consumer on another host can
+  // dial. The local addresses stay loopback.
+  public_backend_url?: string;
+  public_frontend_url?: string;
   token: string;
   backend_reload: boolean;
   frontend_vite: boolean;
@@ -106,10 +111,20 @@ export async function getInstanceLogs(
 }
 
 export function buildInstanceWorkspaceUrl(instance: PolarisInstance): string {
-  const base = instance.frontend_url || window.location.origin;
+  // A published instance is reachable from another host, so its page is
+  // opened on the published address.
+  const base = instance.public_frontend_url || instance.frontend_url || window.location.origin;
   const url = new URL(base);
   url.searchParams.set('instance', instance.instance_id);
-  url.searchParams.set('backend', instance.backend_url);
+  // The instance page reaches its backend through the same-origin dev proxy,
+  // which routes to the backend of the instance that serves the page. An
+  // absolute cross-origin backend is carried only when the shipped
+  // connect-src policy permits it, because the browser would refuse every
+  // request and every runtime WebSocket frame sent to a refused origin.
+  const backendUrl = instance.public_backend_url || instance.backend_url;
+  if (backendUrl && isBackendOriginPermitted(backendUrl, url.origin)) {
+    url.searchParams.set('backend', backendUrl);
+  }
   if (instance.workspace) {
     url.searchParams.set('workspace', instance.workspace);
   }

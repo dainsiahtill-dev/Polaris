@@ -385,6 +385,12 @@ class InstanceRecord:
     backend_url: str
     frontend_url: str
     token: str
+    # The published addresses are the ones a consumer on another host can
+    # dial. The local addresses above stay loopback, because the local
+    # control plane and the acceptance path must only reach an instance on
+    # this host.
+    public_backend_url: str = ""
+    public_frontend_url: str = ""
     backend_reload: bool = True
     frontend_vite: bool = True
     start_frontend: bool = True
@@ -420,6 +426,8 @@ class InstanceRecord:
         payload.setdefault("backend_reload", True)
         payload.setdefault("frontend_vite", True)
         payload.setdefault("start_frontend", True)
+        payload.setdefault("public_backend_url", "")
+        payload.setdefault("public_frontend_url", "")
         return cls(**payload)
 
 
@@ -1517,8 +1525,10 @@ class InstanceSupervisor:
             runtime_root=str(runtime_root),
             backend_port=backend_port,
             frontend_port=frontend_port,
-            backend_url=f"http://{public_host}:{backend_port}",
-            frontend_url=f"http://{public_host}:{frontend_port}",
+            backend_url=f"http://{DEFAULT_HOST}:{backend_port}",
+            frontend_url=f"http://{DEFAULT_HOST}:{frontend_port}",
+            public_backend_url=f"http://{public_host}:{backend_port}",
+            public_frontend_url=f"http://{public_host}:{frontend_port}",
             token=token,
             backend_reload=bool(request.get("backend_reload", True)),
             frontend_vite=bool(request.get("frontend_vite", True)),
@@ -1590,6 +1600,7 @@ class InstanceSupervisor:
             env.setdefault(INSTANCE_WATCHDOG_ENABLED_ENV, "0")
         env["KERNELONE_CORS_ORIGINS"] = ",".join(
             [
+                record.public_frontend_url,
                 record.frontend_url,
                 f"http://{public_host}:{DEFAULT_FRONTEND_PORT}",
                 "http://localhost:5173",
