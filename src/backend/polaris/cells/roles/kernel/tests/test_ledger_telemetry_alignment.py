@@ -374,7 +374,7 @@ class TestLedgerTelemetryAlignment:
         assert "TOOL_BATCH_EXECUTED" in result["state_trajectory"]
 
     @pytest.mark.asyncio
-    async def test_handoff_ledger_records_zero_tools(self) -> None:
+    async def test_handoff_ledger_records_the_pending_async_dispatch(self) -> None:
         with _registered_async_tool() as async_tool:
             llm = AsyncMock(
                 return_value={
@@ -400,6 +400,12 @@ class TestLedgerTelemetryAlignment:
             result = await controller.execute("turn_6", [{"role": "user", "content": "queue"}], [{"name": async_tool}])
 
         assert result["kind"] == "handoff_workflow"
-        assert result["metrics"]["tool_calls"] == 0
+        # The async tool was dispatched and produced a pending receipt, so the
+        # ledger records that dispatch and the turn metric counts it. The
+        # workflow handoff validation requires exactly that pending ledger row
+        # to exist, so a dispatched call must not report zero tools.
+        assert result["metrics"]["tool_calls"] == 1
+        executions = result["ledger"].tool_executions
+        assert [(row["tool_name"], row["status"]) for row in executions] == [(async_tool, "pending")]
         assert "HANDOFF_WORKFLOW" in result["state_trajectory"]
         assert "COMPLETED" in result["state_trajectory"]

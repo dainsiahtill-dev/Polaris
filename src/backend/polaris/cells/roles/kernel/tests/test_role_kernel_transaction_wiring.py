@@ -953,9 +953,12 @@ class TestExecuteTransactionKernelTurn:
     @pytest.mark.asyncio
     async def test_transaction_turn_executor_injects_write_file_for_missing_from_scratch_target(self, tmp_path) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=str(tmp_path))
+        # The tool surface planner never grants a tool the role policy does not
+        # authorize, so the Director profile has to authorize ``write_file``
+        # before the first-call write-only scope can inject it.
         profile = _MockProfile(
             role_id="director",
-            tool_policy=MagicMock(policy_id="tp1", whitelist=["read_file", "repo_rg"]),
+            tool_policy=MagicMock(policy_id="tp1", whitelist=["read_file", "repo_rg", "write_file"]),
         )
         request = _MockRequest(
             message="[mode:materialize]\nCreate the declared test target.",
@@ -965,6 +968,10 @@ class TestExecuteTransactionKernelTurn:
                 "context_os_snapshot": {},
                 "delivery_mode": "materialize_changes",
                 "construction_step": {"target_file": "tests/test_product.py"},
+                # The one-call write-only heuristics are opt-in: without an
+                # explicit controller opt-in the turn keeps the full authorized
+                # tool surface (normal persistent execution).
+                "director_first_call_write_only": True,
             },
         )
         fingerprint = _MockFingerprint()
@@ -1130,6 +1137,10 @@ class TestExecuteTransactionKernelTurn:
             context_override={
                 "context_os_snapshot": {},
                 "delivery_mode": "materialize_changes",
+                # The slim tool schema is opt-in: without an explicit
+                # controller opt-in the turn keeps the full authorized tool
+                # surface (normal persistent execution).
+                "director_slim_tool_schema": True,
             },
         )
         fingerprint = _MockFingerprint()
@@ -1781,10 +1792,24 @@ class TestExecuteTransactionKernelTurn:
             "turn_id": "turn_tools",
             "kind": "tool_batch_with_receipt",
             "visible_content": "Tool results",
+            # A dispatched call carries its sealed arguments on the receipt
+            # row; the projection never guesses them.
             "batch_receipt": {
                 "results": [
-                    {"tool_name": "read_file", "call_id": "c1", "status": "success", "result": "file content"},
-                    {"tool_name": "grep", "call_id": "c2", "status": "error", "result": None},
+                    {
+                        "tool_name": "read_file",
+                        "call_id": "c1",
+                        "status": "success",
+                        "result": "file content",
+                        "arguments": {"file": "main.py"},
+                    },
+                    {
+                        "tool_name": "grep",
+                        "call_id": "c2",
+                        "status": "error",
+                        "result": None,
+                        "arguments": {"pattern": "needle"},
+                    },
                 ],
             },
             "metrics": {"duration_ms": 200, "llm_calls": 1, "tool_calls": 2},
@@ -1837,7 +1862,13 @@ class TestExecuteTransactionKernelTurn:
             "visible_content": "[MUTATION_CONTINUE] no write receipt",
             "batch_receipt": {
                 "results": [
-                    {"tool_name": "read_file", "call_id": "c1", "status": "success", "result": "file content"},
+                    {
+                        "tool_name": "read_file",
+                        "call_id": "c1",
+                        "status": "success",
+                        "result": "file content",
+                        "arguments": {"file": "main.py"},
+                    },
                 ],
             },
             "finalization": {

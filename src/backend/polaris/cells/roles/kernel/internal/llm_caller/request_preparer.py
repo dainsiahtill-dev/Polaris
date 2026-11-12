@@ -644,6 +644,30 @@ def _inject_factory_evidence_block(
     return injected
 
 
+def _transport_projection_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Project the provider transport messages: role and content only.
+
+    Gateway segment names identify owned projection sources inside the
+    platform. They are not participant names, so they must not reach the
+    provider transport. The owned source stays available through
+    ``prepared.messages`` and the frozen Factory request.
+
+    Complexity:
+        O(m) time and memory where ``m`` is the message count.
+    """
+    projected: list[dict[str, Any]] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        projected.append(
+            {
+                "role": str(message.get("role", "")),
+                "content": deepcopy(message.get("content", "")),
+            }
+        )
+    return projected
+
+
 def _strip_factory_evidence_block_for_retry(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Remove the one runtime-injected evidence frame before a fresh cutoff."""
 
@@ -1457,7 +1481,12 @@ class LLMRequestPreparer:
                 # flattened input so OpenAI-compatible providers can preserve real
                 # chat-template role anchoring (weak local models lose system/user
                 # structure when the whole transcript rides in one user message).
-                "chat_messages": deepcopy(messages),
+                # The transport projection carries role and content only: gateway
+                # segment names identify owned projection sources inside the
+                # platform, they are not participant names and must not reach the
+                # provider wire. The owned source stays available through
+                # ``prepared.messages`` and the frozen Factory request.
+                "chat_messages": _transport_projection_messages(messages),
             },
         )
         frozen_factory_request: FactoryRoleFrozenSemanticRequestV1 | None = None
@@ -1640,7 +1669,7 @@ class LLMRequestPreparer:
         context_metadata["projection_id"] = final_prompt_digest
         context_metadata["context_result_id"] = fresh_context_result_id
         context_result = replace(context_result, metadata=context_metadata)
-        request_context["chat_messages"] = messages
+        request_context["chat_messages"] = _transport_projection_messages(messages)
         request_context["context_os_audit"] = context_os_audit
         request_context["context_projection_id"] = final_prompt_digest
         request_context["context_result_id"] = fresh_context_result_id

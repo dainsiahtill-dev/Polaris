@@ -31,6 +31,7 @@ from polaris.cells.roles.kernel.internal.transaction.retry_escalation_policy imp
 )
 from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import RetryOrchestrator
 from polaris.cells.roles.kernel.public.turn_contracts import RawLLMResponse
+from polaris.cells.roles.profile.public.service import RoleTurnRequest
 from polaris.cells.runtime.task_runtime.public import (
     HeartbeatTaskRuntimeExecutionAttemptCommandV1,
     TaskRuntimeExecutionAttemptHeartbeatVerdictV1,
@@ -362,7 +363,7 @@ class TestTransactionKernelTemperatureChannel:
 
         kernel = RoleExecutionKernel.create_default(workspace=".", llm_invoker=SimpleNamespace(call=_fake_call))
         profile = SimpleNamespace(role_id="director", version="1.0", model="test-model", provider_id="openai")
-        request = SimpleNamespace(
+        request = RoleTurnRequest(
             message="hello",
             run_id="run_123",
             task_id=None,
@@ -390,7 +391,7 @@ class TestTransactionKernelTemperatureChannel:
     async def test_absent_payload_temperature_leaves_channel_clean(self) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=".")
         profile = SimpleNamespace(role_id="director", version="1.0", model="test-model", provider_id="openai")
-        request = SimpleNamespace(
+        request = RoleTurnRequest(
             message="hello",
             run_id="run_123",
             task_id=None,
@@ -430,7 +431,7 @@ class TestTransactionKernelTemperatureChannel:
 
         kernel = RoleExecutionKernel.create_default(workspace=".", llm_invoker=SimpleNamespace(call=_fake_call))
         profile = SimpleNamespace(role_id="director", version="1.0", model="test-model", provider_id="openai")
-        request = SimpleNamespace(
+        request = RoleTurnRequest(
             message="repair existing targets",
             run_id="run_123",
             task_id=None,
@@ -470,7 +471,7 @@ class TestTransactionKernelTemperatureChannel:
 
         kernel = RoleExecutionKernel.create_default(workspace=".", llm_invoker=SimpleNamespace(call=_fake_call))
         profile = SimpleNamespace(role_id="director", version="1.0", model="test-model", provider_id="openai")
-        request = SimpleNamespace(
+        request = RoleTurnRequest(
             message="repair existing targets",
             run_id="run_123",
             task_id=None,
@@ -537,7 +538,7 @@ class TestTransactionKernelTaskRuntimeGuard:
                 renewed_identity=attempt,
             )
 
-        request = SimpleNamespace(
+        request = RoleTurnRequest(
             message="hello",
             run_id="run_123",
             task_id="1",
@@ -605,7 +606,7 @@ class TestTransactionKernelTaskRuntimeGuard:
                 identity=attempt,
             )
 
-        request = SimpleNamespace(
+        request = RoleTurnRequest(
             message="hello",
             run_id="run_123",
             task_id="1",

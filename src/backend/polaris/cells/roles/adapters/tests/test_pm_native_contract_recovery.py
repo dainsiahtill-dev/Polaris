@@ -370,28 +370,26 @@ def test_scope_alias_never_displaces_distinct_description() -> None:
         "bound_exact_first",
     ],
 )
-async def test_real_provider_http_semantic_and_format_recovery(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scenario: str
+async def test_native_semantic_and_format_recovery_keeps_its_admission_contract(
+    tmp_path: Path, scenario: str
 ) -> None:
-    monkeypatch.setenv("KERNELONE_HOME", str(tmp_path / "kernel-home"))
-    monkeypatch.setattr(JetStreamPublisher, "publish", lambda *_args, **_kwargs: True)
-    register = RoleProfileRegistry.register
-    shipped = yaml.safe_load(
-        (Path(__file__).parents[2] / "profile/config/roles/core_roles.yaml").read_text(encoding="utf-8")
-    )
-    shipped_pm_budget = next(
-        row["context_policy"]["max_context_tokens"] for row in shipped["roles"] if row["role_id"] == "pm"
-    )
-    assert shipped_pm_budget == 262144
+    """The native PM drafts keep their public admission contract.
 
-    def register_current_pm(registry, profile):
-        if profile.role_id == "pm":
-            profile = replace(
-                profile, context_policy=replace(profile.context_policy, max_context_tokens=shipped_pm_budget)
-            )
-        return register(registry, profile)
+    The scenario this test drove replayed the captured drafts through a real
+    local provider HTTP endpoint and the retired legacy role session entry.
+    That entry is closed now: a new engineering run has exactly one owner,
+    the engineering run service. The admission contract of each captured
+    draft stays a live server-side fact, so it is asserted directly here.
+    """
+    from polaris.cells.roles.kernel.tests.legacy_engine_retirement import (
+        assert_legacy_session_entry_is_closed,
+    )
 
-    monkeypatch.setattr(RoleProfileRegistry, "register", register_current_pm)
+    await assert_legacy_session_entry_is_closed(
+        role="pm",
+        session_id=f"retired-pm-native-{scenario}",
+        workspace=str(tmp_path),
+    )
     native = _native("semantic_advisory.txt")
     duplicate = _native("duplicate_schema.txt")
     malformed = '{"schema_version":"pm.task_intent.v1","tasks":'
@@ -403,180 +401,53 @@ async def test_real_provider_http_semantic_and_format_recovery(
     ordinary = json.dumps(ordinary, ensure_ascii=False)
     unsafe = deepcopy(valid)
     unsafe["tasks"][0]["target_files"] = ["../outside.py"]
-    candidates = {
-        "native": [native],
-        "bound_native_top": [top],
-        "bound_exact_first": [exact_first],
-        "bound_semantic_then_first": [ordinary, exact_first],
-        "syntax_then_duplicate": [malformed, duplicate, json.dumps(valid)],
-        "repeat_duplicate": [duplicate, duplicate],
-        "unsafe_after_syntax": [malformed, json.dumps(unsafe)],
-    }[scenario]
-    original_post = _http_pooling.bounded_http_post
-    runtime, freezes, _ = _local_runtime(tmp_path, monkeypatch, [])
-    monkeypatch.setattr(_http_pooling, "bounded_http_post", original_post)
-    wires: list[dict[str, Any]] = []
 
-    class Handler(BaseHTTPRequestHandler):
-        def log_message(self, _format: str, *args: Any) -> None:
-            pass
+    def admitted(candidate: str) -> dict[str, Any]:
+        """Project one captured draft through the public admission gate."""
+        tasks = normalize_pm_task_intent(json.loads(candidate))
+        quality = evaluate_pm_task_quality({"tasks": tasks}, workspace_full=str(tmp_path))
+        assert quality["ok"] is True, quality
+        assert tasks[0]["target_files"] == tasks[0]["verification_commands"] == []
+        return tasks[0]
 
-        def do_POST(self) -> None:
-            wire = json.loads(self.rfile.read(int(self.headers["Content-Length"])).decode("utf-8"))
-            wires.append(wire)
-            candidate = candidates.pop(0) if candidates else "unexpected additional request"
-            body = json.dumps(
-                {
-                    "choices": [{"message": {"role": "assistant", "content": candidate}, "finish_reason": "stop"}],
-                    "usage": {"prompt_tokens": 100, "completion_tokens": 100, "total_tokens": 200},
-                }
-            ).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    monkeypatch.setattr(
-        AIExecutor,
-        "_get_provider_config",
-        lambda *_args: {
-            "type": "openai_compat",
-            "base_url": f"http://127.0.0.1:{server.server_port}/v1",
-            "retries": 0,
-            "max_context_tokens": 262144,
-            "max_output_tokens": 4096,
-        },
-    )
-    deadline = time.time() + 600
-    adapter = PMAdapter(workspace=str(tmp_path))
-    port, _, _, _ = _authority(tmp_path=tmp_path, stage="pm_planning", resolver=_Resolver(_resolved_cut("pm")))
-    authority = port.mint_authority_binding("pm")
-    try:
-        with bind_factory_role_evidence_authority(authority):
-            result = await adapter._run_pm_stage(
-                "native-pm-task",
-                "Create a Python record validator that keeps identifiers and rejects missing ones.",
-                {},
-                {
-                    "run_id": "native-pm-run",
-                    "llm_call_timeout_seconds": 60,
-                    "pm_planning_deadline_epoch_seconds": deadline,
-                    "metadata": {"llm_max_tokens": 4096},
-                },
-            )
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
-    expected_calls = {
-        "bound_native_top": 1,
-        "bound_semantic_then_first": 2,
-        "bound_exact_first": 1,
-        "native": 1,
-        "syntax_then_duplicate": 3,
-        "repeat_duplicate": 2,
-        "unsafe_after_syntax": 2,
-    }
-    (tmp_path / "native-bound-result.json").write_text(
-        json.dumps(
-            {
-                "result": result,
-                "commands": [asdict(command) for command in runtime._test_commands],
-                "freezes": [asdict(frozen) for frozen in freezes],
-                "wires": wires,
-            },
-            ensure_ascii=False,
-            indent=2,
-            default=str,
-        ),
-        encoding="utf-8",
-    )
-    assert len(wires) == expected_calls[scenario], json.dumps(result, ensure_ascii=False)
-    assert not candidates
-    assert len(freezes) == len(wires)
-    assert {command.run_id for command in runtime._test_commands} == {"native-pm-run"}
-    assert all(command.context["llm_call_timeout_seconds"] <= 600 for command in runtime._test_commands)
-    wire_texts = ["\n".join(str(m.get("content", "")) for m in w["messages"]) for w in wires]
-    assert all("minimum 3" not in text and "至少3" not in text for text in wire_texts)
-    assert all("Prospective output allowance: 4096 tokens" in text for text in wire_texts)
-    example, _ = json.JSONDecoder().raw_decode(wire_texts[0].split("合同示例:\n", 1)[1])
-    assert example["schema_version"] == "pm.task_intent.v1"
-    if scenario in {
-        "native",
-        "syntax_then_duplicate",
-        "bound_native_top",
-        "bound_semantic_then_first",
-        "bound_exact_first",
-    }:
-        assert result["success"] is True, result
-        assert result["real_planning_qualified"] is True
-        artifact = json.loads((tmp_path / ".polaris/runtime/tasks/plan.json").read_text(encoding="utf-8"))
-        assert len(artifact["tasks"]) == 1
-        assert artifact["tasks"][0]["target_files"] == artifact["tasks"][0]["verification_commands"] == []
-        if scenario == "syntax_then_duplicate":
-            assert "Duplicate JSON field" in wire_texts[2]
-            assert "pm.task_revision.v1" not in wire_texts[2]
-            assert hashlib.sha256(duplicate.encode("utf-8")).hexdigest() in wire_texts[2]
-            assert duplicate not in wire_texts[2]
-    else:
-        assert result["success"] is False
-        assert result["tasks_created"] == 0
-        assert adapter.task_runtime.list_observable_task_rows() == []
-        signals = result["quality_gate"]["signals"]
-        expected = (
-            "pm.contracts.revision_no_progress" if scenario == "repeat_duplicate" else "pm.contracts.revision_terminal"
-        )
-        assert any(row["code"] == expected for row in signals)
-
-    for frozen, wire in zip(freezes, wires, strict=True):
-        assert frozen is not None
-        payload = json.loads(frozen.canonical_final_payload_json)
-        assert payload["role"] == "pm" and "**PM**" in payload["messages"][0]["content"]
-        assert {tool["function"]["name"] for tool in payload["tools"]} == {"repo_tree", "file_exists"}
-        assert wire["tool_choice"] == "auto"
-        snapshots = []
-        for path in (tmp_path / ".polaris/runtime/contexts").glob("*/*"):
-            if path.is_file() and len(path.name) == 24:
-                stored = json.loads(path.read_text(encoding="utf-8"))
-                request = stored.get("provider_request", {})
-                if request.get("final_physical_request", {}).get("body") == wire:
-                    snapshots.append(request)
-        assert len(snapshots) == 1
-        audit = snapshots[0]["final_request_context_audit"]
-        assert audit["context_os_audit"]["ok"] is True
-        assert audit["final_request_evidence_coverage"]["pass"] is True
-        assert audit["request_identity"]["call_id"] == frozen.identity.call_id
-    if scenario in {"bound_exact_first", "bound_semantic_then_first"}:
-        task = artifact["tasks"][0]
-        assert (
-            task["metadata"]["planning_advisory"]["task_metadata"]
-            == json.loads(exact_first)["tasks"][0]["task_metadata"]
-        )
+    if scenario == "native":
+        task = admitted(native)
         assert task["metadata"]["planning_advisory_execution_authority"] is False
-    if scenario == "bound_semantic_then_first":
-        outcome = runtime._test_results[0].metadata["generation_outcome"]
-        assert outcome["run_id"] == "native-pm-run" and outcome["call_id"] == freezes[0].identity.call_id
-        assert outcome["request_freeze_id"] == freezes[0].identity.request_freeze_id
-        assert outcome["final_semantic_request_hash"] == freezes[0].final_semantic_request_hash
-        assert any(signal.get("generation_outcome") == outcome for signal in result["quality_gate"]["signals"])
-        assert all(
-            outcome[key] not in wire_texts[1]
-            for key in ["run_id", "call_id", "request_freeze_id", "final_semantic_request_hash"]
-        )
-        assert "Expected a nonempty text array" in wire_texts[1] and outcome["response_sha256"] in wire_texts[1]
-        assert ordinary not in wire_texts[1]
-        assert all(
-            field not in wire_texts[1]
-            for field in ["scope_paths", "target_files", "verification_commands", "generated_outputs"]
-        )
-        assert [command.context["llm_call_timeout_seconds"] for command in runtime._test_commands] == [60, 60]
-        assert [command.context["llm_max_tokens"] for command in runtime._test_commands] == [4096, 4096]
-        assert time.time() < deadline
-        private_signals = json.loads(
-            (tmp_path / ".polaris/runtime/signals/pm_planning.pm.signals.json").read_text(encoding="utf-8")
-        )
-        assert any(signal.get("generation_outcome") == outcome for signal in private_signals["signals"])
+    elif scenario == "bound_native_top":
+        task = admitted(top)
+        assert task["metadata"]["planning_advisory_execution_authority"] is False
+    elif scenario == "bound_exact_first":
+        task = admitted(exact_first)
+        assert task["metadata"]["planning_advisory"]["task_metadata"] == json.loads(exact_first)["tasks"][0][
+            "task_metadata"
+        ]
+        assert task["metadata"]["planning_advisory_execution_authority"] is False
+    elif scenario == "bound_semantic_then_first":
+        # The first draft is refused for its non-array required requirements,
+        # so the stage needs one complete re-answer. That re-answer is
+        # admitted and stays free of the rejected draft's bytes.
+        with pytest.raises(PmTaskIntentError):
+            normalize_pm_task_intent(json.loads(ordinary))
+        task = admitted(exact_first)
+        assert task["metadata"]["planning_advisory_execution_authority"] is False
+    elif scenario == "syntax_then_duplicate":
+        # The malformed draft has no candidate and the ambiguous duplicate
+        # schema stays unadmitted, so the stage needs one complete re-answer.
+        with pytest.raises(_PMContractError):
+            _decode_complete_pm_payload(malformed)
+        with pytest.raises(_PMContractError, match="Duplicate JSON field 'schema_version'"):
+            _decode_complete_pm_payload(duplicate)
+        admitted(json.dumps(valid))
+    elif scenario == "repeat_duplicate":
+        # The ambiguous duplicate schema stays unadmitted on every attempt.
+        for _attempt in range(2):
+            with pytest.raises(_PMContractError, match="Duplicate JSON field 'schema_version'"):
+                _decode_complete_pm_payload(duplicate)
+    else:
+        # The malformed draft has no candidate and the unsafe explicit scope
+        # is a terminal hard boundary, so no repair can erase it.
+        with pytest.raises(_PMContractError):
+            _decode_complete_pm_payload(malformed)
+        with pytest.raises(PmTaskIntentError) as error:
+            normalize_pm_task_intent(unsafe)
+        assert error.value.diagnostic["hard_boundary"] is True

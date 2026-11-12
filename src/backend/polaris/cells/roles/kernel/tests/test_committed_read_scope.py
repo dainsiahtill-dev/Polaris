@@ -41,7 +41,6 @@ def _gateway(workspace: Path, token: dict[str, Any] | None) -> Any:
         ("repo_read_slice", {"path": "private.py", "start": 1, "end": 1}),
         ("repo_rg", {"pattern": "PRIVATE_INPUT", "path": "private.py"}),
         ("repo_rg", {"pattern": "PRIVATE_INPUT"}),
-        ("repo_tree", {"path": "."}),
     ],
 )
 def test_committed_scope_rejects_unauthorized_reads_and_unbounded_searches(
@@ -52,6 +51,26 @@ def test_committed_scope_rejects_unauthorized_reads_and_unbounded_searches(
     gateway = _gateway(tmp_path, {"token_id": "committed", "allowed_read_paths": ["public.py"]})
     with pytest.raises(ToolAuthorizationError, match="read scope"):
         gateway.execute_tool(tool, arguments)
+
+
+def test_repo_tree_metadata_enumeration_is_filtered_to_the_committed_read_scope(tmp_path: Path) -> None:
+    """A tree listing is metadata enumeration, never a content-read grant.
+
+    The committed read scope admits an ancestor listing so the model can
+    navigate, and the tree handler filters every entry to the committed
+    scope. Content outside the scope stays unreachable.
+    """
+    (tmp_path / "public.py").write_text("PUBLIC_INPUT\n", encoding="utf-8")
+    (tmp_path / "private.py").write_text("PRIVATE_INPUT\n", encoding="utf-8")
+    gateway = _gateway(tmp_path, {"token_id": "committed", "allowed_read_paths": ["public.py"]})
+
+    result = gateway.execute_tool("repo_tree", {"path": "."})
+
+    assert result["success"] is True
+    listed = str(result["result"])
+    assert "public.py" in listed
+    assert "private.py" not in listed
+    assert "PRIVATE_INPUT" not in listed
 
 
 def test_legitimate_dependency_read_and_alias_normalization_preserve_authority(tmp_path: Path) -> None:

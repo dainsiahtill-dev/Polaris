@@ -1533,12 +1533,12 @@ class TestQualityRepairMissingTargetContractA:
 
         assert summary["semantic_quality_target_files"] == ["package.json"]
         assert summary["repair_target_files"] == ["package.json"]
-        assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == ["package.json"]
-        assert adapter.repair_context["_transaction_kernel_forced_tool_choice"] == {
-            "type": "function",
-            "function": {"name": "edit_file"},
-        }
-        assert adapter.repair_context["_transaction_kernel_force_exact_tools"] is True
+        # Current contract: the repair turn carries its own target scope
+        # (``authorized_tool_target_files`` + ``tool_path_contract``).  The
+        # retired transaction-kernel tool-forcing keys are gone.
+        assert adapter.repair_context["director_quality_repair"]["authorized_tool_target_files"] == ["package.json"]
+        assert adapter.repair_context["repair_target_files"] == ["package.json"]
+        assert adapter.repair_context["metadata"]["tool_path_contract"]["allowed_target_files"] == ["package.json"]
         assert "NPM PACKAGE MANIFEST REPAIR" in adapter.repair_message
 
     def test_package_script_entrypoint_outside_task_scope_is_deferred(
@@ -2600,32 +2600,39 @@ class TestQualityRepairMissingTargetContractA:
         assert missing == []
 
     @pytest.mark.asyncio
-    async def test_single_missing_target_repair_sets_forced_write_context(self, tmp_path) -> None:
+    async def test_single_missing_target_repair_scopes_the_write_to_that_target(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _run_materialization_quality_repair_retry,
         )
 
         class _Execution:
+            def __init__(self) -> None:
+                self.allowed_tool_names: set[str] | None = None
+                self.allow_patch_fallback: bool | None = None
+
             @staticmethod
             def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
                 return []
 
-            @staticmethod
             async def execute_tools(
+                self,
                 content: str,
                 target_task_id: str,
                 update_task_progress: Any,
-                **_: Any,
+                **kwargs: Any,
             ) -> list[dict[str, Any]]:
                 del content, target_task_id, update_task_progress
+                self.allowed_tool_names = kwargs.get("allowed_tool_names")
+                self.allow_patch_fallback = kwargs.get("allow_patch_fallback")
                 return []
 
         class _Adapter:
             workspace = str(tmp_path)
-            _execution = _Execution()
             _update_task_progress = staticmethod(lambda *args, **kwargs: None)
 
             def __init__(self) -> None:
+                self._execution = _Execution()
+                self.repair_message = ""
                 self.repair_context: dict[str, Any] = {}
 
             async def _invoke_role_dialogue_with_timeout(
@@ -2636,7 +2643,8 @@ class TestQualityRepairMissingTargetContractA:
                 timeout_seconds: float,
                 stage_label: str,
             ) -> dict[str, Any]:
-                del message, timeout_seconds, stage_label
+                del timeout_seconds, stage_label
+                self.repair_message = message
                 self.repair_context = context
                 return {"content": ""}
 
@@ -2658,21 +2666,20 @@ class TestQualityRepairMissingTargetContractA:
         )
 
         assert summary["missing_target_files"] == ["services/product_service/app.py"]
-        assert adapter.repair_context["_transaction_kernel_forced_tool_choice"] == {
-            "type": "function",
-            "function": {"name": "write_file"},
-        }
-        assert (
-            adapter.repair_context["_transaction_kernel_forced_tool_definitions"][0]["function"]["name"] == "write_file"
-        )
-        assert adapter.repair_context["_transaction_kernel_forced_tool_definitions"][0]["function"]["parameters"][
-            "required"
-        ] == ["file", "content"]
-        assert adapter.repair_context["_transaction_kernel_force_exact_tools"] is True
-        assert adapter.repair_context["director_quality_repair"]["write_only_single_target"] == {
-            "tool": "write_file",
-            "target_file": "services/product_service/app.py",
-        }
+        # Current contract: a create-only repair scopes the turn to the single
+        # missing path through the repair context and the tool path contract.
+        # The retired transaction-kernel forced-tool keys are gone.
+        repair = adapter.repair_context["director_quality_repair"]
+        assert repair["missing_target_files"] == ["services/product_service/app.py"]
+        assert repair["authorized_tool_target_files"] == ["services/product_service/app.py"]
+        assert adapter.repair_context["repair_target_files"] == ["services/product_service/app.py"]
+        path_contract = adapter.repair_context["metadata"]["tool_path_contract"]
+        assert path_contract["allowed_target_files"] == ["services/product_service/app.py"]
+        assert path_contract["workspace_relative_only"] is True
+        assert adapter._execution.allowed_tool_names == {"write_file"}
+        assert adapter._execution.allow_patch_fallback is False
+        assert "MISSING TARGET FILES" in adapter.repair_message
+        assert "services/product_service/app.py" in adapter.repair_message
 
     @pytest.mark.asyncio
     async def test_existing_compile_target_repair_prefers_edit_file_not_forced_write_only(self, tmp_path) -> None:
@@ -2754,16 +2761,16 @@ class TestQualityRepairMissingTargetContractA:
             changed_files=["models/exhibit.go"],
         )
 
-        forced_defs = adapter.repair_context["_transaction_kernel_forced_tool_definitions"]
-        forced_names = [item["function"]["name"] for item in forced_defs]
-        assert forced_names == ["edit_file"]
-        assert adapter.repair_context["metadata"]["tool_contract"]["required_tools"] == ["edit_file"]
-        assert adapter.repair_context["_transaction_kernel_forced_tool_choice"] == {
-            "type": "function",
-            "function": {"name": "edit_file"},
-        }
-        assert adapter.repair_context["_transaction_kernel_force_exact_tools"] is True
-        assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == ["models/exhibit.go"]
+        forced_defs = adapter.repair_context.get("_transaction_kernel_forced_tool_definitions")
+        # Current contract: the repair turn is a native tool-loop turn, so the
+        # retired transaction-kernel tool-forcing keys are absent.  The
+        # surviving contract is the target scope plus the strict one-effect
+        # text-fallback dispatch.
+        assert forced_defs is None
+        repair = adapter.repair_context["director_quality_repair"]
+        assert repair["authorized_tool_target_files"] == ["models/exhibit.go"]
+        assert adapter.repair_context["repair_target_files"] == ["models/exhibit.go"]
+        assert adapter.repair_context["metadata"]["tool_path_contract"]["allowed_target_files"] == ["models/exhibit.go"]
         assert "edit_preferred_single_target" in adapter.repair_message
         assert "Do not call read_file" not in adapter.repair_message
         assert "call read_file for this target first" not in adapter.repair_message

@@ -2193,15 +2193,14 @@ async def test_existing_html_quality_fallback_requires_edit_not_read_or_command(
 
     repair = adapter.repair_context["director_quality_repair"]
     assert repair["repair_target_files"] == ["index.html"]
-    forced_names = [
-        item["function"]["name"] for item in adapter.repair_context["_transaction_kernel_forced_tool_definitions"]
-    ]
-    assert "read_file" not in forced_names
-    # A proven existing single target uses the strict one-effect surface: one
-    # edit, followed by platform-owned revalidation.  Wider write/command tools
-    # reintroduced the read/write ambiguity this regression is meant to block.
-    assert forced_names == ["edit_file"]
-    assert adapter.repair_context["metadata"]["tool_contract"]["required_tools"] == ["edit_file"]
+    # Current contract: the repair turn carries its own target scope; the
+    # retired transaction-kernel forced-tool keys are gone.  A proven existing
+    # single target is edited in place, never re-explored with read/command.
+    assert adapter.repair_context.get("_transaction_kernel_forced_tool_definitions") is None
+    assert repair["authorized_tool_target_files"] == ["index.html"]
+    assert adapter.repair_context["repair_target_files"] == ["index.html"]
+    assert adapter.repair_context["metadata"]["tool_path_contract"]["allowed_target_files"] == ["index.html"]
+    assert "[director_quality_repair:edit_preferred_single_target]" in adapter.repair_message
 
 
 class TestSyntaxRepairDirective:

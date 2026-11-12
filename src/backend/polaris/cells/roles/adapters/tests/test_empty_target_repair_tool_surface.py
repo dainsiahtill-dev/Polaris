@@ -52,15 +52,16 @@ async def test_empty_owned_target_recovery_offers_full_write_without_scope_expan
         return
     assert len(adapter.calls) == 1
     repair_context = adapter.calls[0]["context"]
-    definitions = repair_context["_transaction_kernel_forced_tool_definitions"]
-    assert [item["function"]["name"] for item in definitions] == ["write_file"]
-    assert repair_context["_transaction_kernel_forced_tool_choice"] == {
-        "type": "function",
-        "function": {"name": "write_file"},
-    }
+    # Current contract: the repair turn carries its own target scope (the
+    # retired transaction-kernel forced-tool keys are gone).  An empty required
+    # artifact is a CREATE, so the turn must name exactly that one path and
+    # must not expand the write scope.
+    assert repair_context.get("_transaction_kernel_forced_tool_definitions") is None
+    assert repair_context["director_quality_repair"]["authorized_tool_target_files"] == ["index.html"]
+    assert repair_context["repair_target_files"] == ["index.html"]
     assert repair_context["metadata"]["tool_path_contract"]["allowed_target_files"] == ["index.html"]
-    assert "complete non-empty file body" in adapter.calls[0]["message"]
-    assert "read_file its tail" not in adapter.calls[0]["message"]
+    assert "MISSING TARGET FILES" in adapter.calls[0]["message"]
+    assert "index.html" in adapter.calls[0]["message"]
     assert summary["repair_target_files"] == ["index.html"]
     assert summary["success"] is False  # No tool receipt or verifier success invented.
     assert results == []

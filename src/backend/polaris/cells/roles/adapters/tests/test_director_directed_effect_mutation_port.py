@@ -284,12 +284,19 @@ class _PhysicalSpy:
         *,
         task_id: str = "",
         repair_effect: DirectorRepairEffectV1 | None = None,
+        prewrite_operation_hash: str | None = None,
     ) -> dict[str, Any]:
+        # ``prewrite_operation_hash`` is the pre-commit operation identity the
+        # DEO physical port forwards to the tool executor.  The spy must accept
+        # it so the port reaches the physical executor instead of failing with
+        # an unexpected-keyword TypeError that hides the real effect.
         self.events.append("physical")
         self.calls += 1
         assert tool_name == self.expected_tool
         assert args == self.expected_args
         assert task_id
+        if prewrite_operation_hash is not None:
+            assert len(prewrite_operation_hash) == 64
         if repair_effect is not None:
             assert repair_effect.tool_name == tool_name
             assert dict(repair_effect.arguments) == args
@@ -1192,7 +1199,11 @@ async def test_declared_physical_failure_is_typed_and_spends_context(
     assert payload.get("physical_error") == "write failed"
     assert payload.get("failure_kind") == "physical_result_failed"
     recovery = dict(cast(DirectedEffectImmutableMapV1, payload.get("effect_recovery")).items)
-    assert recovery.get("state") == "DEAD_LETTER"
+    # Current contract: only a declared command exit code proves that no
+    # physical effect can still occur, and only that case is dead-lettered.
+    # A write tool that reports ``ok=False`` may already have touched disk, so
+    # the durable recovery stays RECOVERY_PENDING and the context is spent.
+    assert recovery.get("state") == "RECOVERY_PENDING"
     assert replay.error_code == "deo_context_replayed"
     assert physical.calls == 1
 

@@ -511,8 +511,11 @@ def test_prepare_role_dialogue_context_timeout_override_is_not_shadowed_by_ceili
 
 
 def test_prepare_role_dialogue_context_reclamps_at_provider_boundary() -> None:
+    # The deadline clamp lives in the canonical roles.kernel public contract
+    # (``clamp_role_execution_timeout_seconds_to_deadline``); the adapter only
+    # delegates to it, so the clock is patched at that public boundary.
     with patch(
-        "polaris.cells.roles.adapters.internal.director.execution.time.time",
+        "polaris.cells.roles.kernel.public.llm_caller_contracts.time.time",
         return_value=100.0,
     ):
         context, timeout = _prepare_role_dialogue_context(
@@ -530,7 +533,7 @@ def test_prepare_role_dialogue_context_reclamps_at_provider_boundary() -> None:
 def test_prepare_role_dialogue_context_rejects_expired_factory_deadline() -> None:
     with (
         patch(
-            "polaris.cells.roles.adapters.internal.director.execution.time.time",
+            "polaris.cells.roles.kernel.public.llm_caller_contracts.time.time",
             return_value=113.0,
         ),
         pytest.raises(RuntimeError, match="factory_director_execution_deadline_exhausted"),
@@ -1823,7 +1826,9 @@ async def test_phase_quality_repair_loop_stops_after_two_worsening_director_edit
     assert summary is quality_repair_attempts[-1]
     assert summary["convergence_status"] == "repair_stalled"
     assert summary["error_code"] == "director_quality_repair_stalled"
-    assert summary["failure_class"] == "model_ceiling"
+    # The canonical Run Ledger failure taxonomy owns this class; the former
+    # ad-hoc "model_ceiling" string is no longer a valid failure class.
+    assert summary["failure_class"] == "PROGRESS_STALLED"
     assert summary["retry_scope"] == "same_director_task_only"
     assert summary["pm_ce_restart_allowed"] is False
     assert summary["stagnant_attempts"] == 2

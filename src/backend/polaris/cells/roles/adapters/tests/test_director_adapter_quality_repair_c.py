@@ -194,7 +194,11 @@ class TestQualityRepairMissingTargetContractC:
         assert "src/engine/mapper.rs" in message
         assert "src/engine/palette_generator.rs" not in message
         assert "src/engine/plating_rules.rs" not in message
-        assert "SINGLE MISSING TARGET REPAIR" in message
+        # Current contract: the write-only single-missing script belongs to the
+        # retired single-batch repair slice.  A native tool-loop repair turn
+        # keeps observation tools, so it names the missing paths instead.
+        assert "MISSING TARGET FILES" in message
+        assert "SINGLE MISSING TARGET REPAIR" not in message
 
     def test_existing_quality_repair_keeps_full_verifier_diagnostics_context(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
@@ -223,7 +227,7 @@ class TestQualityRepairMissingTargetContractC:
         assert "FULL VERIFIER DIAGNOSTICS" in message
         assert "src/web.ts(52,11)" in message
         assert "TS2552" in message
-        assert "EXISTING FAILED TARGET FILES" in message
+        assert "EXISTING AUTHORIZED REPAIR PATHS" in message
         assert "Do NOT attempt to fix failures whose causal owner is outside" in message
         assert "Cover every target-scoped Quality error" in message
         assert "Cover every listed verifier diagnostic" not in message
@@ -243,7 +247,10 @@ class TestQualityRepairMissingTargetContractC:
             missing_target_files=["src/styles.css"],
         )
         assert "MISSING TARGET FILES" in message
-        assert "[director_quality_repair:write_only_single_target]" in message
+        # Current contract: the write-only single-target script belongs to the
+        # retired single-batch repair slice; a native tool-loop repair turn
+        # keeps observation tools and names the missing path instead.
+        assert "[director_quality_repair:write_only_single_target]" not in message
         assert "src/styles.css" in message
         # Changed files appear only as a count — path-shaped tokens seed the
         # retry target extractor with wrong targets.
@@ -313,7 +320,7 @@ class TestQualityRepairMissingTargetContractC:
         ]
         assert "target_files: tests/test_planet.py" not in message
 
-    def test_single_missing_target_repair_forces_one_write_without_reads(self) -> None:
+    def test_single_missing_target_repair_names_one_write_target(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _build_materialization_quality_repair_message,
         )
@@ -325,11 +332,16 @@ class TestQualityRepairMissingTargetContractC:
             missing_target_files=["src/styles.css"],
         )
 
-        assert "SINGLE MISSING TARGET REPAIR" in message
-        assert "exactly one write_file" in message
+        # Current contract: the "emit exactly one write_file, do not read"
+        # script belongs to the retired single-batch repair slice.  A native
+        # tool-loop repair turn keeps observation tools and names the single
+        # missing path plus the direct tool path contract.
+        assert "MISSING TARGET FILES" in message
+        assert "DIRECT TOOL PATH CONTRACT (fail-closed)" in message
         assert "src/styles.css" in message
-        assert "Do not read" in message
-        assert "Do not list" in message
+        assert "SINGLE MISSING TARGET REPAIR" not in message
+        assert "Do not read" not in message
+        assert "Do not list" not in message
 
     def test_unresolved_symbol_repair_targets_exporting_module(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

@@ -406,7 +406,16 @@ class TestValidateRelativePatchPath:
 
         assert error is None
 
-    def test_prose_placeholder_scaffold_still_rejected(self, tmp_path: Any) -> None:
+    def test_prose_placeholder_scaffold_defers_to_ce_verification(self, tmp_path: Any) -> None:
+        """Current contract: prose placeholders are a CE/QA verdict, not a write gate.
+
+        ``DirectorPatchExecutor.validate_generated_output`` only proves path
+        safety, readability and unapplied patch-protocol residue.  The retired
+        keyword scan rejected "placeholder" prose here, which produced false
+        failures for documentation that merely names the anti-pattern.  The
+        semantic "is this product finished?" question belongs to the CE
+        verification recipe and independent QA.
+        """
         target = tmp_path / "index.html"
         target.write_text(
             "<!DOCTYPE html>\n<html><body>\n"
@@ -426,8 +435,7 @@ class TestValidateRelativePatchPath:
             ["index.html"],
         )
 
-        assert error is not None
-        assert "placeholder" in error
+        assert error is None
 
     def test_css_placeholder_pseudo_element_is_not_low_quality(self, tmp_path: Any) -> None:
         """L2-10 r5 live regression: a real .editor::placeholder CSS rule was

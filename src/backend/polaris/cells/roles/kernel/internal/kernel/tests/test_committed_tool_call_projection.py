@@ -45,6 +45,47 @@ def test_receipt_without_args_or_sealed_invocation_cannot_guess_empty_args() -> 
         tool_calls_from_batch_receipt(receipt)
 
 
+def _committed_outcome_events(workspace: str, fact_stream: str) -> list[dict[str, Any]]:
+    """Read the committed turn outcome events from the stream the commit used.
+
+    The durable commit writes to the legacy fact stream only when that stream
+    already exists; otherwise it writes to the payload protocol. The test must
+    read the protocol the commit actually used instead of assuming one.
+    """
+    from polaris.cells.events.fact_stream.public import (
+        QueryFactEventsV1,
+        QueryPayloadFactEventsV1,
+        query_fact_events,
+        query_payload_fact_events,
+    )
+
+    if fact_stream == "roles.kernel.turn_outcomes":
+        page = query_fact_events(QueryFactEventsV1(workspace=workspace, stream=fact_stream, strict_integrity=True))
+        events = [
+            {"event_id": item.get("event_id"), "event_type": item.get("event_type"), "payload": item.get("payload")}
+            for item in page.events
+        ]
+    else:
+        page = query_payload_fact_events(
+            QueryPayloadFactEventsV1(workspace=workspace, logical_stream=fact_stream)
+        )
+        events = [
+            {
+                "event_id": item.get("event_id"),
+                "event_type": item.get("event_type"),
+                "payload": item.get("expanded_payload"),
+            }
+            for item in page.events
+        ]
+    return [
+        event
+        for event in events
+        if str(event.get("event_type") or "") == "turn_outcome_committed"
+        and isinstance(event.get("payload"), dict)
+        and str(event["payload"].get("schema_version") or "").startswith("roles.kernel.turn_outcome_fact.")
+    ]
+
+
 def test_durable_commit_retains_bootstrap_and_final_batch_invocations(tmp_path) -> None:
     from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
     from polaris.cells.roles.kernel.internal.transaction.outcome_commit import commit_turn_result
@@ -90,14 +131,12 @@ def test_durable_commit_retains_bootstrap_and_final_batch_invocations(tmp_path) 
         result={"kind": "continue_multi_turn", "batch_receipt": receipt},
         completion_status="success",
     )
-    from polaris.cells.events.fact_stream.public import QueryFactEventsV1, query_fact_events
     from polaris.cells.roles.kernel.public.turn_contracts import TurnOutcome
 
-    events = query_fact_events(
-        QueryFactEventsV1(workspace=str(tmp_path), stream="roles.kernel.turn_outcomes", strict_integrity=True)
-    )
-    assert events.events[0]["event_id"] == committed.receipt.fact_event_id
-    persisted = events.events[0]["payload"]["outcome"]
+    events = _committed_outcome_events(str(tmp_path), committed.receipt.fact_stream)
+    assert len(events) == 1
+    assert events[0]["event_id"] == committed.receipt.fact_event_id
+    persisted = events[0]["payload"]["outcome"]
     payload = TurnOutcome.model_validate(persisted).model_dump(mode="json")
     assert payload["execution"]["invocation_batches"][0]["invocations"][0]["call_id"] == "original-read"
     assert payload["execution"]["batch_id"] == "bootstrap"

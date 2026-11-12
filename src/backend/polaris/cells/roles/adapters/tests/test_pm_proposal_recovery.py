@@ -132,86 +132,58 @@ def test_narrow_manifest_path_field_denial_remains_terminal(field: str, operand:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("repeat_bad", [False, True])
-async def test_exact_r32_recovery_enters_real_runtime_http_then_original_quality_gate(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _isolated_external_delivery: None, repeat_bad: bool
+async def test_exact_r32_recovery_keeps_its_original_quality_gate(
+    tmp_path: Path, repeat_bad: bool
 ) -> None:
+    """The R32 recovery keeps the original quality gate.
+
+    The scenario this test drove reached the retired legacy role session
+    entry to observe the real provider turns and the runtime artifacts they
+    produced. That entry is closed now: a new engineering run has exactly
+    one owner, the engineering run service. The atomic rejection of the
+    illegal edit and the corrected merge stay live server-side contracts, so
+    they are asserted directly here.
+    """
+    from polaris.cells.roles.kernel.tests.legacy_engine_retirement import (
+        assert_legacy_session_entry_is_closed,
+    )
+
+    await assert_legacy_session_entry_is_closed(
+        role="pm",
+        session_id="retired-pm-r32-recovery",
+        workspace=str(tmp_path),
+    )
     base = _base()
     before = (base.response, base.tasks, base.view, base.identity)
-    outputs = [
-        {"role": "assistant", "content": text}
-        for text in [
-            base.response,
-            _REPLAY["revision_response"],
-            _REPLAY["revision_response"] if repeat_bad else _corrected(),
-        ]
-    ]
-    runtime: Any
-    runtime, freezes, wires = _local_runtime(tmp_path, monkeypatch, outputs)
-    registry = runtime._kernels[str(tmp_path)].registry
-    profile = registry.get_profile_or_raise("pm")
-    registry.register(replace(profile, context_policy=replace(profile.context_policy, max_context_tokens=1_000_000)))
-    # This historical request used 60k output policy; configure that capability
-    # on the fake endpoint rather than bypassing the real output-budget guard.
-    monkeypatch.setattr(
-        AIExecutor,
-        "_get_provider_config",
-        lambda *_args: {
-            "type": "openai_compat",
-            "base_url": "https://local-provider.example.test/v1",
-            "retries": 0,
-            "max_context_tokens": 1_000_000,
-            "max_output_tokens": 60000,
-        },
-    )
-    # Replay the original immutable, unqualified base; only actual stage artifacts
-    # and task records use pytest's fresh home sandbox, never the native workspace.
-    monkeypatch.setattr(module, "make_revision_base", lambda *args, **kwargs: base)
-    constructor: Callable[..., PMAdapter] = PMAdapter
-    adapter = constructor(workspace=str(tmp_path))
-    deadline = time.time() + 5400
-    result = await adapter._run_pm_stage(
-        base.identity["task_id"],
-        "Create and verify the TypeScript CLI",
-        {},
-        {
-            "run_id": base.identity["run_id"],
-            "metadata": {
-                "llm_max_tokens": 60000,
-                "llm_call_timeout_seconds": 750,
-                "pm_planning_deadline_epoch_seconds": deadline,
-            },
-        },
-    )
-    assert len(wires) == len(freezes) == 3
-    assert len(runtime._test_commands) == 3
-    assert all(command.workspace == str(tmp_path) for command in runtime._test_commands)
-    text = json.dumps(wires[2], ensure_ascii=False)
-    assert "$.updates[0].append.acceptance" in text
-    assert "not server-authorized for append" in text
-    wire_text = "\n".join(str(message.get("content", "")) for message in wires[2]["messages"])
-    assert base.base_hash in wire_text and _REPLAY["revision_response"] in wire_text
-    assert "generated_output_input_invalid" in json.dumps(wires[1], ensure_ascii=False)
+    # The captured illegal edit is rejected atomically and stays repairable.
+    with pytest.raises(_PMContractError) as error:
+        apply_revision(base, canonical_json(json.loads(_REPLAY["revision_response"])))
+    assert error.value.diagnostic["code"] == "pm_revision_invalid"
+    assert error.value.diagnostic["path"] == "$.updates[0].append.acceptance"
+    assert error.value.diagnostic["repairable"] is True
+    assert error.value.diagnostic["authorized_operations"] == []
     assert (base.response, base.tasks, base.view, base.identity) == before
-    artifacts = [
-        json.loads(p.read_text(encoding="utf-8"))
-        for p in (tmp_path / ".polaris/runtime/signals/pm_revision").glob("*.json")
-    ]
-    rows = [r for r in artifacts if r["schema_version"] == "pm.task_revision_derivation.v1"]
-    assert len(rows) == (1 if repeat_bad else 2)
-    assert all(r["base_hash"] == base.base_hash for r in rows)
-    bad = next(r for r in rows if r["revision_response"] == _REPLAY["revision_response"])
-    assert bad["raw_merged_candidate"] is None and bad["raw_merged_candidate_hash"] is None
-    assert bad["quality"]["contract_diagnostics"][0]["repairable"] is True
     if repeat_bad:
-        assert result["success"] is False
-        assert any(s["code"] == "pm.contracts.revision_no_progress" for s in result["quality_gate"]["signals"])
-        assert all(r["raw_merged_candidate"] is None for r in rows)
-    else:
-        assert result["success"] is True, result
-        assert result["quality_gate"]["score"] >= 80
-        good = next(r for r in rows if r["quality"]["ok"] is True)
-        assert good["revision"] == json.loads(_corrected())
-        assert good["raw_merged_candidate"] == apply_revision(base, _corrected())
-        for old, current in zip(base.tasks, good["raw_merged_candidate"]["tasks"], strict=True):
-            for field in ["id", "assigned_to", "execution_backend", "target_files", "steps", "acceptance"]:
-                assert current[field] == old[field]
+        # A repeated illegal proposal reaches the same diagnosis, so it never
+        # becomes a candidate.
+        with pytest.raises(_PMContractError) as repeated:
+            apply_revision(base, canonical_json(json.loads(_REPLAY["revision_response"])))
+        assert repeated.value.diagnostic == error.value.diagnostic
+        assert (base.response, base.tasks, base.view, base.identity) == before
+        return
+
+    corrected = _corrected()
+    merged = apply_revision(base, corrected)
+    adapter = PMAdapter(workspace=str(tmp_path))
+    contracts = adapter._extract_task_contracts(
+        canonical_json(merged), directive="Create and verify the TypeScript CLI"
+    )
+    _normalized, quality = adapter._evaluate_contract_quality(
+        contracts, directive="Create and verify the TypeScript CLI"
+    )
+    assert quality["ok"] is True, quality
+    assert quality["score"] >= 80
+    for old, current in zip(base.tasks, merged["tasks"], strict=True):
+        for field in ["id", "assigned_to", "execution_backend", "target_files", "steps", "acceptance"]:
+            assert current[field] == old[field]
+    assert (base.response, base.tasks, base.view, base.identity) == before

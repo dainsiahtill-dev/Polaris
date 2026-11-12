@@ -8,16 +8,12 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from polaris.cells.factory.pipeline.tests import test_effective_obligation_native_runtime as native
 from polaris.cells.roles.kernel.internal.context_gateway.gateway import RoleContextGateway
 from polaris.cells.roles.kernel.internal.context_gateway.security import SecuritySanitizer
 from polaris.cells.roles.kernel.internal.context_gateway.tests.test_build_context_impl_characterization import _profile
 from polaris.cells.roles.kernel.internal.services.context_assembler import ContextAssembler
 from polaris.kernelone.context.contracts import TurnEngineContextRequest as ContextRequest
 from polaris.kernelone.errors import BudgetExceededError
-
-effective_native_endpoint = native.effective_native_endpoint
-
 
 def _payload() -> str:
     return json.dumps({"body": "function body;\n" * 600, "tail": "完整尾部"}, ensure_ascii=False)
@@ -154,12 +150,16 @@ def test_old_history_keeps_existing_sanitization_and_character_cap() -> None:
     assert len(injection) < 300
 
 
-@pytest.mark.parametrize("effective_native_endpoint", ["accept"], indirect=True)
-def test_private_runtime_trace_preserves_current_payload(
+async def test_private_runtime_trace_preserves_current_payload(
     tmp_path: Path,
-    effective_native_endpoint: Any,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The live runtime trace must preserve the current payload byte for byte.
+
+    The retired Factory stage driver no longer has a live subject, so the live
+    gateway boundary is the subject: a long current instruction has to reach
+    the provider without truncation or escaping, and the retired assembler
+    service must not re-sanitize it on a second pass.
+    """
     trace: list[dict[str, Any]] = []
     original = SecuritySanitizer.sanitize_user_message
     original_gateway = RoleContextGateway.build_context
@@ -180,8 +180,6 @@ def test_private_runtime_trace_preserves_current_payload(
         )
         return output
 
-    monkeypatch.setattr(SecuritySanitizer, "sanitize_user_message", staticmethod(traced))
-
     async def traced_gateway(self: RoleContextGateway, request: ContextRequest, **kwargs: Any) -> Any:
         output = await original_gateway(self, request, **kwargs)
         current = next(message for message in reversed(output.messages) if message["role"] == "user")
@@ -201,20 +199,26 @@ def test_private_runtime_trace_preserves_current_payload(
 
     def traced_assembler(self: ContextAssembler, message: Any) -> str:
         output = original_assembler(self, message)
+        text = str(message or "")
         trace.append(
             {
                 "boundary": "ContextAssembler._sanitize_user_message",
-                "input_chars": len(message or ""),
+                "input_chars": len(text),
                 "output_chars": len(output),
             }
         )
         return output
 
-    monkeypatch.setattr(RoleContextGateway, "build_context", traced_gateway)
-    monkeypatch.setattr(ContextAssembler, "_sanitize_user_message", traced_assembler)
+    patcher = pytest.MonkeyPatch()
+    patcher.setattr(SecuritySanitizer, "sanitize_user_message", staticmethod(traced))
+    patcher.setattr(RoleContextGateway, "build_context", traced_gateway)
+    patcher.setattr(ContextAssembler, "_sanitize_user_message", traced_assembler)
     try:
-        native.test_real_semantic_repair_wire_uses_final_obligation_roster(tmp_path, effective_native_endpoint)
+        payload = _payload()
+        gateway = RoleContextGateway(_profile(max_context_tokens=12000), workspace=tmp_path)
+        result = await gateway.build_context(ContextRequest(message=payload), system_prompt="Role identity")
     finally:
+        patcher.undo()
         print("CURRENT_MESSAGE_TRACE=" + json.dumps(trace, ensure_ascii=False))
     assert not any(item["boundary"] == "ContextAssembler._sanitize_user_message" for item in trace)
     longest = max(
@@ -223,6 +227,8 @@ def test_private_runtime_trace_preserves_current_payload(
     )
     assert longest["input_chars"] > 4000
     assert longest["input_sha256"] == longest["output_sha256"]
+    current = [message["content"] for message in result.messages if message["role"] == "user"][-1]
+    assert current == payload
 
 
 @pytest.mark.parametrize("extra_tokens", [0, 1, 2])

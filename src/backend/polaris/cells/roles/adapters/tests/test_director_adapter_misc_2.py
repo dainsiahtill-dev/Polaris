@@ -51,9 +51,6 @@ from polaris.cells.roles.adapters.internal.director.execute_method_repair_bridge
 from polaris.cells.roles.adapters.internal.director.execution import DirectorPatchExecutor
 from polaris.cells.roles.adapters.public import service as roles_adapters_public_service
 from polaris.cells.roles.adapters.public.contracts import RunDirectorMaterializationQualityRepairScheduleCommandV1
-from polaris.cells.roles.adapters.tests._retry_text_helpers import (
-    assert_retry_text_fallback_is_non_authoritative as _assert_retry_text_fallback_is_non_authoritative,
-)
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1, RoleExecutionResultV1
 from polaris.cells.runtime.task_runtime.public.contracts import (
     TaskRuntimeExecutionAttemptIdentityV1,
@@ -64,6 +61,43 @@ from ._execution_attempt_helpers import (
     _test_execution_attempt,
     _test_execution_attempt_context,
 )
+
+
+def _assert_retry_text_fallback_is_non_authoritative(
+    *,
+    adapter: Any,
+    task_id: str,
+    result: dict[str, Any],
+    summary_key: str,
+) -> dict[str, Any]:
+    """Assert a materialization retry never authored a file by itself.
+
+    Current contract: the native tool loop owns the retry turn, so a retry may
+    not produce materialization evidence on its own.  The retry is recorded as
+    attempted, no file is materialized, and the run still fails closed as
+    INCOMPLETE_MATERIALIZATION.  (The retired single-batch text fallback that
+    recorded a synthetic ``patch_apply`` write argument only existed in the
+    legacy tool-slice path.)
+    """
+    assert result["success"] is False
+    assert result["error_code"] == "incomplete_materialization"
+    assert result["failure_class"] == "INCOMPLETE_MATERIALIZATION"
+
+    updated = adapter.task_runtime.get_task(task_id)
+    assert updated is not None
+    raw_metadata = updated.get("metadata")
+    metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+    raw_adapter_result = metadata.get("adapter_result")
+    adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
+    assert adapter_result.get("materialization_error") == "director_no_materialized_changes"
+    assert adapter_result.get("materialization_error_code") == "incomplete_materialization"
+    assert adapter_result.get("failure_class") == "INCOMPLETE_MATERIALIZATION"
+    assert adapter_result.get("new_files") == []
+    assert adapter_result.get("modified_files") == []
+    retry_summary = adapter_result.get(summary_key)
+    assert isinstance(retry_summary, dict)
+    assert retry_summary.get("attempted") is True
+    return adapter_result
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -530,7 +564,7 @@ def test_materialization_quality_scheduler_bridge_prefers_public_result_callback
     monkeypatch.setattr(
         materialization_quality_callback_ports,
         "_project_coverage_preaudit",
-        lambda _errors: {
+        lambda _errors, **_kwargs: {
             "total_diagnostics": 1,
             "uncovered_diagnostic_count": 0,
             "rule_discovery_required": False,
@@ -1571,18 +1605,14 @@ async def test_execute_retries_blank_write_content_with_materialize_prompt(tmp_p
 
     assert (tmp_path / "src" / "app.py").exists() is False
     assert len(seen_messages) >= 2
-    assert "previous write tool call had blank content" in seen_messages[1]
-    assert seen_contexts[1]["_transaction_kernel_forced_tool_choice"] == {
-        "type": "function",
-        "function": {"name": "write_file"},
-    }
-    forced_defs = seen_contexts[1]["_transaction_kernel_forced_tool_definitions"]
-    assert forced_defs and forced_defs[0]["function"]["name"] == "write_file"
-    assert seen_contexts[1]["_transaction_kernel_force_exact_tools"] is True
-    assert seen_contexts[1]["director_empty_write_retry"]["write_only_single_target"] == {
-        "tool": "write_file",
-        "target_file": "src/app.py",
-    }
+    # Current contract: the native tool loop owns the retry turn, so the
+    # platform hands the Director the original goal plus a structured
+    # failure_feedback fact instead of a retired single-batch write script.
+    assert "Previous write had empty or malformed content" in seen_messages[1]
+    feedback = seen_contexts[1]["failure_feedback"]
+    assert feedback["reason"] == "empty_write_content"
+    assert feedback["target_files"] == ["src/app.py"]
+    assert seen_contexts[1]["delivery_mode"] == "materialize_changes"
     _assert_retry_text_fallback_is_non_authoritative(
         adapter=adapter,
         task_id=task_id,
@@ -1662,20 +1692,13 @@ async def test_execute_retries_no_write_probe_with_write_only_materialize_prompt
 
     assert (tmp_path / "src" / "app.py").exists() is False
     assert len(seen_messages) >= 2
-    assert "completed without any write/edit receipt" in seen_messages[1]
-    assert "Do not call read, search, tree, or shell tools" in seen_messages[1]
-    assert seen_contexts[1]["_transaction_kernel_forced_tool_choice"] == {
-        "type": "function",
-        "function": {"name": "write_file"},
-    }
-    forced_defs = seen_contexts[1]["_transaction_kernel_forced_tool_definitions"]
-    assert forced_defs and forced_defs[0]["function"]["name"] == "write_file"
-    file_schema = forced_defs[0]["function"]["parameters"]["properties"]["file"]
-    assert file_schema["enum"] == ["src/app.py"]
-    assert seen_contexts[1]["director_no_write_materialization_retry"]["write_only_declared_targets"] == {
-        "tool": "write_file",
-        "target_files": ["src/app.py"],
-    }
+    # Current contract: the retry turn keeps the owned task alive and hands
+    # the Director a structured failure fact plus the authorized targets.
+    assert "edit or create only authorized targets" in seen_messages[1]
+    feedback = seen_contexts[1]["failure_feedback"]
+    assert feedback["reason"] == "no_materialized_changes"
+    assert feedback["target_files"] == ["src/app.py"]
+    assert seen_contexts[1]["delivery_mode"] == "materialize_changes"
     _assert_retry_text_fallback_is_non_authoritative(
         adapter=adapter,
         task_id=task_id,
@@ -1755,27 +1778,13 @@ async def test_execute_retries_multi_file_no_write_with_mutation_tools_only(tmp_
     assert (tmp_path / "src" / "utils.py").exists() is False
     assert (tmp_path / "src" / "app.py").exists() is False
     assert len(seen_messages) >= 2
-    assert "completed without any write/edit receipt" in seen_messages[1]
-    assert "Do not call read, search, tree, or shell tools" in seen_messages[1]
-    assert "write_file or edit_file" in seen_messages[1]
-    assert seen_contexts[1]["_transaction_kernel_forced_tool_choice"] == "required"
-    assert seen_contexts[1].get("_transaction_kernel_force_exact_tools") is not True
-    forced_defs = seen_contexts[1]["_transaction_kernel_forced_tool_definitions"]
-    forced_names = {
-        item["function"]["name"]
-        for item in forced_defs
-        if isinstance(item, dict) and isinstance(item.get("function"), dict)
-    }
-    assert forced_names == {"write_file", "edit_file"}
-    write_def = next(item for item in forced_defs if item["function"]["name"] == "write_file")
-    edit_def = next(item for item in forced_defs if item["function"]["name"] == "edit_file")
-    assert write_def["function"]["parameters"]["properties"]["file"]["enum"] == ["src/app.py", "src/utils.py"]
-    # R127: edit_file must not receive path enums (qualification-safe write_file only).
-    assert "enum" not in edit_def["function"]["parameters"]["properties"]["file"]
-    assert seen_contexts[1]["director_no_write_materialization_retry"]["multi_file_declared_targets"] == {
-        "required_write_tools": ["edit_file", "write_file"],
-        "target_files": ["src/app.py", "src/utils.py"],
-    }
+    # Current contract: a multi-target no-write round keeps the owned task and
+    # every authorized target, and never silently narrows the write scope.
+    assert "edit or create only authorized targets" in seen_messages[1]
+    feedback = seen_contexts[1]["failure_feedback"]
+    assert feedback["reason"] == "no_materialized_changes"
+    assert feedback["target_files"] == ["src/app.py", "src/utils.py"]
+    assert seen_contexts[1]["delivery_mode"] == "materialize_changes"
     _assert_retry_text_fallback_is_non_authoritative(
         adapter=adapter,
         task_id=task_id,
@@ -1836,19 +1845,13 @@ async def test_execute_retries_read_only_materialization_with_forced_write(tmp_p
 
     assert (tmp_path / "src" / "app.py").exists() is False
     assert len(seen_messages) >= 2
-    assert "previous Director turn completed without any write/edit receipt" in seen_messages[1]
-    assert seen_contexts[1]["_transaction_kernel_forced_tool_choice"] == {
-        "type": "function",
-        "function": {"name": "write_file"},
-    }
-    forced_defs = seen_contexts[1]["_transaction_kernel_forced_tool_definitions"]
-    assert forced_defs and forced_defs[0]["function"]["name"] == "write_file"
-    assert forced_defs[0]["function"]["parameters"]["properties"]["file"]["enum"] == ["src/app.py"]
-    assert seen_contexts[1]["_transaction_kernel_force_exact_tools"] is True
-    assert seen_contexts[1]["director_no_write_materialization_retry"]["write_only_declared_targets"] == {
-        "tool": "write_file",
-        "target_files": ["src/app.py"],
-    }
+    # Current contract: a read-only materialization round is retried on the
+    # same owned task with the authorized target and the observed failure.
+    assert "edit or create only authorized targets" in seen_messages[1]
+    feedback = seen_contexts[1]["failure_feedback"]
+    assert feedback["reason"] == "no_materialized_changes"
+    assert feedback["target_files"] == ["src/app.py"]
+    assert seen_contexts[1]["delivery_mode"] == "materialize_changes"
     _assert_retry_text_fallback_is_non_authoritative(
         adapter=adapter,
         task_id=task_id,
@@ -1917,22 +1920,17 @@ async def test_empty_write_retry_existing_target_forces_edit_blocks(tmp_path: An
         llm_call_timeout=10,
     )
 
-    assert adapter.retry_context["_transaction_kernel_forced_tool_choice"] == {
-        "type": "function",
-        "function": {"name": "edit_blocks"},
-    }
-    forced_defs = adapter.retry_context["_transaction_kernel_forced_tool_definitions"]
-    assert forced_defs and forced_defs[0]["function"]["name"] == "edit_blocks"
-    assert adapter.retry_context["_transaction_kernel_force_exact_tools"] is True
-    assert adapter.retry_context["director_empty_write_retry"]["write_only_single_target"] == {
-        "tool": "edit_blocks",
-        "target_file": "calculator.py",
-    }
-    assert "valid edit_blocks tool call" in adapter.retry_message
-    assert "valid write_file tool call" not in adapter.retry_message
+    # Current contract: the retired single-batch write script is gone, but the
+    # text-fallback dispatch is still restricted to the single authoritative
+    # effect for an EXISTING target (``edit_blocks``, never a whole-file
+    # ``write_file``), and the retry turn keeps the owned task and target.
     assert adapter._execution.allowed_tool_names == {"edit_blocks"}
     assert adapter._execution.allow_patch_fallback is False
     assert summary["attempted"] is True
+    assert "Previous write had empty or malformed content" in adapter.retry_message
+    feedback = adapter.retry_context["failure_feedback"]
+    assert feedback["reason"] == "empty_write_content"
+    assert feedback["target_files"] == ["calculator.py"]
 
 
 def test_validate_generated_output_allows_todo_status_enum_value(tmp_path: Any) -> None:
@@ -1965,7 +1963,15 @@ def test_validate_generated_output_allows_todo_status_enum_value(tmp_path: Any) 
     assert error is None
 
 
-def test_validate_generated_output_rejects_todo_comment(tmp_path: Any) -> None:
+def test_validate_generated_output_defers_todo_comment_to_ce_verification(tmp_path: Any) -> None:
+    """Current contract: source keywords cannot establish unfinished behavior.
+
+    ``DirectorPatchExecutor.validate_generated_output`` owns path safety,
+    readability and unapplied patch-protocol residue.  Whether a ``TODO``
+    comment leaves the product incomplete is a semantic question owned by the
+    CE verification recipe and independent QA, so the Director output gate
+    must not reject the file on the keyword alone.
+    """
     executor = DirectorPatchExecutor(str(tmp_path))
     target = tmp_path / "src" / "models" / "task.model.ts"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -1982,8 +1988,7 @@ def test_validate_generated_output_rejects_todo_comment(tmp_path: Any) -> None:
         ["src/models/task.model.ts"],
     )
 
-    assert error is not None
-    assert "generic/placeholder content detected" in error
+    assert error is None
 
 
 def test_validate_generated_output_allows_title_case_todo_product_heading(tmp_path: Any) -> None:
@@ -2075,13 +2080,39 @@ def test_validate_generated_output_allows_forbidden_token_list_naming_notimpleme
     assert error is None
 
 
-def test_validate_generated_output_rejects_real_notimplemented_body(tmp_path: Any) -> None:
-    """A genuine ``raise NotImplementedError`` body is still placeholder content."""
+def test_validate_generated_output_defers_real_notimplemented_body_to_ce_verification(tmp_path: Any) -> None:
+    """Current contract: a ``NotImplementedError`` body is a CE/QA verdict.
+
+    The Director output gate no longer classifies source bodies as placeholder
+    content; a real ``raise NotImplementedError`` is proven unfinished by the
+    CE verification recipe and independent QA, not by a keyword scan.
+    """
     executor = DirectorPatchExecutor(str(tmp_path))
     target = tmp_path / "src" / "engine" / "rules.py"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
         "def fuse_dream_recipe(dream, recipe):\n    raise NotImplementedError\n",
+        encoding="utf-8",
+    )
+
+    error = executor.validate_generated_output(
+        {
+            "subject": "Dream recipe fusion rules",
+            "description": "Implement src/engine/rules.py dream recipe fusion",
+        },
+        ["src/engine/rules.py"],
+    )
+
+    assert error is None
+
+
+def test_validate_generated_output_still_rejects_unapplied_patch_residue(tmp_path: Any) -> None:
+    """The patch-protocol residue check stays fail-closed in the same gate."""
+    executor = DirectorPatchExecutor(str(tmp_path))
+    target = tmp_path / "src" / "engine" / "rules.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "def fuse_dream_recipe(dream, recipe):\n    return dream + recipe\n<<<<<<< SEARCH\nunfinished\n",
         encoding="utf-8",
     )
 

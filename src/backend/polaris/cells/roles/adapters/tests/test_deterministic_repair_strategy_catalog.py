@@ -54,11 +54,26 @@ _EXECUTE_METHOD_FILE_MUTATING_REPAIR_WRAPPERS = frozenset(
 )
 
 
+def _execute_method_source_files() -> list[Path]:
+    """Return the current ``execute_method`` package sources.
+
+    ``execute_method`` is a package (``execute_method/__init__.py`` plus private
+    modules), not the former single module file.  The legacy-repair surface
+    fences must therefore inspect every module of the package.
+    """
+    package_root = Path(__file__).resolve().parents[1] / "internal" / "director" / "execute_method"
+    return sorted(
+        path
+        for path in package_root.rglob("*.py")
+        if "__pycache__" not in path.parts and not path.name.startswith("test_")
+    )
+
+
 def _implementation_files() -> list[Path]:
     root = Path(__file__).resolve().parents[1] / "internal" / "director"
     repair_root = root / "deterministic_repairs"
     files = [path for path in repair_root.glob("*.py") if path.name not in {"strategy_catalog.py", "__init__.py"}]
-    files.append(root / "execute_method.py")
+    files.extend(_execute_method_source_files())
     return files
 
 
@@ -166,11 +181,13 @@ def test_roles_adapter_production_code_never_imports_repair_kernel_internals() -
 
 
 def test_execute_method_uses_director_runtime_repair_kernel_only_via_public_service() -> None:
-    execute_method_path = _director_internal_root() / "execute_method.py"
+    # ``execute_method`` is a package now; every module of it must keep using
+    # the canonical director.runtime public surface for repair facts.
     director_runtime_imports = sorted(
         {
             module
-            for module in _imported_modules(execute_method_path)
+            for path in _execute_method_source_files()
+            for module in _imported_modules(path)
             if module == "polaris.cells.director.runtime" or module.startswith("polaris.cells.director.runtime.")
         }
     )
@@ -231,9 +248,7 @@ def test_materialization_python_import_uses_runtime_bridge_not_legacy_python_rep
 
 def test_execute_method_legacy_repair_helper_surface_is_removed() -> None:
     bridge_path = _director_internal_root() / "execute_method_repair_bridge.py"
-    execute_method_path = _director_internal_root() / "execute_method.py"
     tree = ast.parse(bridge_path.read_text(encoding="utf-8"))
-    execute_tree = ast.parse(execute_method_path.read_text(encoding="utf-8"))
 
     forbidden_bridge_names = {
         "_LEGACY_EXECUTE_METHOD_REPAIR_HELPER_ALLOWLIST",
@@ -255,9 +270,12 @@ def test_execute_method_legacy_repair_helper_surface_is_removed() -> None:
         )
         if isinstance(target, ast.Name)
     }
-    execute_defined_names = {
-        node.name for node in ast.walk(execute_tree) if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
-    }
+    execute_defined_names: set[str] = set()
+    for path in _execute_method_source_files():
+        execute_tree = ast.parse(path.read_text(encoding="utf-8"))
+        execute_defined_names.update(
+            node.name for node in ast.walk(execute_tree) if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+        )
 
     assert not forbidden_bridge_names & defined_bridge_names
     assert not forbidden_bridge_names & assigned_bridge_names

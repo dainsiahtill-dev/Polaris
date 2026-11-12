@@ -143,38 +143,46 @@ def test_legacy_metadata_alone_cannot_forge_semantic_admission(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-async def test_actual_pm_provider_accepts_semantic_one_task_plan_without_recipe_retry(
+async def test_semantic_one_task_plan_needs_no_recipe_retry(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from polaris.cells.roles.adapters.tests.test_pm_factory_controlled_identity import _local_runtime
-    from polaris.infrastructure.log_pipeline.jetstream_publisher import JetStreamPublisher
+    """A semantic one-task plan is admitted without a recipe retry.
 
-    monkeypatch.setenv("KERNELONE_HOME", str(tmp_path / "kernel-home"))
-    monkeypatch.setattr(JetStreamPublisher, "publish", lambda *_args, **_kwargs: True)
+    The scenario this test drove reached the retired legacy role session
+    entry to observe the provider turn and the plan artifact it produced.
+    That entry is closed now: a new engineering run has exactly one owner,
+    the engineering run service. The semantic admission stays a live
+    server-side contract, so it is asserted directly here.
+    """
+    from polaris.cells.roles.kernel.tests.legacy_engine_retirement import (
+        assert_legacy_session_entry_is_closed,
+    )
+
+    await assert_legacy_session_entry_is_closed(
+        role="pm",
+        session_id="retired-pm-intent-admission",
+        workspace=str(tmp_path),
+    )
     intent = _intent()
-    _runtime, _freezes, wires = _local_runtime(
-        tmp_path, monkeypatch, [{"role": "assistant", "content": json.dumps(intent)}]
-    )
     adapter = PMAdapter(workspace=str(tmp_path))
-    result = await adapter._run_pm_stage(
-        "pm-intent-task",
-        "Create a Python record validator",
-        {},
-        {"run_id": "pm-intent-run", "metadata": {"llm_max_tokens": 4096}},
+    tasks = adapter._extract_task_contracts(
+        json.dumps(intent), directive="Create a Python record validator"
     )
-    assert result["success"] is True, result
-    assert len(wires) == 1
-    artifact = json.loads((tmp_path / ".polaris/runtime/tasks/plan.json").read_text(encoding="utf-8"))
-    assert len(artifact["tasks"]) == 1
-    task = artifact["tasks"][0]
-    assert task["target_files"] == task["verification_commands"] == []
-    assert task["required_requirements"] == intent["required_requirements"]
-    assert task["optional_requirements"] == intent["optional_requirements"]
-    assert len(adapter.task_runtime.list_observable_task_rows()) == 1
-    wire_text = "\n".join(str(message.get("content", "")) for message in wires[0]["messages"])
-    assert "pm.task_intent.v1" in wire_text
-    assert "至少 3 个任务" not in wire_text and "minimum 3" not in wire_text
+    normalized, quality = adapter._evaluate_contract_quality(
+        tasks, directive="Create a Python record validator"
+    )
+    assert quality["ok"] is True, quality
+    assert quality["score"] == 100
+    assert len(normalized) == 1
+    # The semantic contract delegates the technical recipe, so the admitted
+    # plan carries no invented paths and no verifier commands.
+    assert normalized[0]["target_files"] == normalized[0]["verification_commands"] == []
+    assert normalized[0]["required_requirements"] == intent["required_requirements"]
+    assert normalized[0]["optional_requirements"] == intent["optional_requirements"]
+    # The request states the semantic contract and no legacy task-count rule.
+    message = adapter._build_pm_message([], "Create a Python record validator")
+    assert "pm.task_intent.v1" in message
+    assert "至少 3 个任务" not in message and "minimum 3" not in message
 
 
 def test_semantic_acceptance_revision_preserves_original_product_contract(tmp_path: Path) -> None:
@@ -221,84 +229,88 @@ def test_semantic_acceptance_revision_preserves_original_product_contract(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_actual_provider_revises_semantic_draft_under_the_original_manifest(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+async def test_semantic_draft_revision_keeps_the_original_manifest(
+    tmp_path: Path,
 ) -> None:
-    from polaris.cells.roles.adapters.tests.test_pm_factory_controlled_identity import _local_runtime
-    from polaris.infrastructure.log_pipeline.jetstream_publisher import JetStreamPublisher
+    """A semantic draft revision stays under the original manifest.
 
-    monkeypatch.setenv("KERNELONE_HOME", str(tmp_path / "kernel-home"))
-    monkeypatch.setattr(JetStreamPublisher, "publish", lambda *_args, **_kwargs: True)
+    The scenario this test drove reached the retired legacy role session
+    entry to observe the revision turn and its wire. That entry is closed
+    now: a new engineering run has exactly one owner, the engineering run
+    service. The manifest that answers the revision stays a live server-side
+    contract, so it is asserted directly here.
+    """
+    from polaris.cells.roles.adapters.internal.pm.revision import make_revision_base
+    from polaris.cells.roles.kernel.tests.legacy_engine_retirement import (
+        assert_legacy_session_entry_is_closed,
+    )
+
+    await assert_legacy_session_entry_is_closed(
+        role="pm",
+        session_id="retired-pm-intent-revision",
+        workspace=str(tmp_path),
+    )
     intent = _intent()
     intent["tasks"][0]["acceptance"] = []
-
-    def correction(wire: dict[str, Any]) -> dict[str, Any]:
-        messages = "\n".join(str(message.get("content", "")) for message in wire["messages"])
-        view, _ = json.JSONDecoder().raw_decode(messages.split("Revision base/view/manifest (server-owned):\n", 1)[1])
-        assert view["product_contract_readonly"]["required_requirements"] == intent["required_requirements"]
-        assert set(view["edit_manifest"]["tasks"]["TASK-1"]["set"]).isdisjoint(
-            {"target_files", "verification_commands", "phase"}
-        )
-        return {
-            "role": "assistant",
-            "content": json.dumps(
-                {
-                    "schema_version": "pm.task_revision.v1",
-                    "base_hash": view["base_hash"],
-                    "updates": [
-                        {"task_id": "TASK-1", "set": {"acceptance": ["A missing identifier produces a clear error"]}}
-                    ],
-                    "add_tasks": [],
-                    "remove_task_ids": [],
-                }
-            ),
-        }
-
-    _runtime, _freezes, wires = _local_runtime(
-        tmp_path, monkeypatch, [{"role": "assistant", "content": json.dumps(intent)}, correction]
-    )
     adapter = PMAdapter(workspace=str(tmp_path))
-    result = await adapter._run_pm_stage(
-        "pm-intent-revision-task",
-        "Create a Python record validator",
-        {},
-        {"run_id": "pm-intent-revision-run", "metadata": {"llm_max_tokens": 4096}},
+    raw = json.dumps(intent)
+    tasks = adapter._extract_task_contracts(raw, directive="Create a Python record validator")
+    _normalized, quality = adapter._evaluate_contract_quality(
+        tasks, directive="Create a Python record validator"
     )
-    assert result["success"] is True, result
-    assert len(wires) == 2
-    artifact = json.loads((tmp_path / ".polaris/runtime/tasks/plan.json").read_text(encoding="utf-8"))
-    assert artifact["tasks"][0]["target_files"] == artifact["tasks"][0]["verification_commands"] == []
-    assert artifact["tasks"][0]["required_requirements"] == intent["required_requirements"]
-    assert artifact["tasks"][0]["optional_requirements"] == intent["optional_requirements"]
+    assert quality["ok"] is False
+    base = make_revision_base(
+        raw,
+        workspace=str(tmp_path),
+        run_id="pm-intent-revision-run",
+        task_id="pm-intent-revision-task",
+        directive="Create a Python record validator",
+        quality=quality,
+    )
+    assert base is not None
+    # The product contract is read-only for the revision, and the technical
+    # fields stay outside the edit authority.
+    assert base.view["product_contract_readonly"]["required_requirements"] == intent["required_requirements"]
+    assert set(base.view["edit_manifest"]["tasks"]["TASK-1"]["set"]).isdisjoint(
+        {"target_files", "verification_commands", "phase"}
+    )
+    assert "acceptance" in base.view["edit_manifest"]["tasks"]["TASK-1"]["set"]
 
 
 @pytest.mark.asyncio
-async def test_unsafe_explicit_scope_is_terminal_before_pm_retry_or_task_creation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+async def test_unsafe_explicit_scope_is_terminal_before_any_retry(
+    tmp_path: Path,
 ) -> None:
-    from polaris.cells.roles.adapters.tests.test_pm_factory_controlled_identity import _local_runtime
-    from polaris.infrastructure.log_pipeline.jetstream_publisher import JetStreamPublisher
+    """An unsafe explicit scope is terminal for the planning stage.
 
-    monkeypatch.setenv("KERNELONE_HOME", str(tmp_path / "kernel-home"))
-    monkeypatch.setattr(JetStreamPublisher, "publish", lambda *_args, **_kwargs: True)
+    The scenario this test drove reached the retired legacy role session
+    entry to observe that the unsafe draft was not repaired by a second
+    provider turn. That entry is closed now: a new engineering run has
+    exactly one owner, the engineering run service. The terminal boundary
+    itself stays a live server-side fact, so it is asserted directly here.
+    """
+    from polaris.cells.roles.kernel.tests.legacy_engine_retirement import (
+        assert_legacy_session_entry_is_closed,
+    )
+
+    await assert_legacy_session_entry_is_closed(
+        role="pm",
+        session_id="retired-pm-unsafe-scope",
+        workspace=str(tmp_path),
+    )
     unsafe = _intent()
     unsafe["tasks"][0]["target_files"] = ["../outside.py"]
-    _, _, wires = _local_runtime(
-        tmp_path,
-        monkeypatch,
-        [{"role": "assistant", "content": json.dumps(unsafe)}, {"role": "assistant", "content": json.dumps(_intent())}],
-    )
     adapter = PMAdapter(workspace=str(tmp_path))
-    result = await adapter._run_pm_stage(
-        "pm-unsafe-task",
-        "Create a Python validator",
-        {},
-        {"run_id": "pm-unsafe-run", "metadata": {"llm_max_tokens": 4096}},
+    diagnostics: list[dict[str, Any]] = []
+    tasks = adapter._extract_task_contracts(
+        json.dumps(unsafe), directive="Create a Python validator", diagnostics=diagnostics
     )
-    assert result["success"] is False, "unsafe explicit scope cannot be erased by ordinary draft repair"
-    assert len(wires) == 1
-    assert result["tasks_created"] == 0
-    assert adapter.task_runtime.list_observable_task_rows() == []
+    # An unsafe explicit scope produces no task and a hard boundary fact, so
+    # the stage cannot admit or repair it.
+    assert tasks == []
+    assert diagnostics
+    assert diagnostics[0]["hard_boundary"] is True
+    assert diagnostics[0]["code"] == "pm_task_intent_invalid"
 
 
 @pytest.mark.parametrize("defect", ["unknown_dependency", "cycle"])

@@ -242,8 +242,14 @@ class TestL1CacheHitRate:
         assert "Effective Go" in role_block
         assert "你同时是一位**软件工程师**。" not in role_block
         assert "工作流程类型: contract_to_blueprint" in prompt
-        assert "任务类型: verification" in prompt
+        # The appendix task type reaches the prompt as its executable
+        # profession protocol: "verification" is normalized to "code_review",
+        # and only known profession protocols are accepted from request
+        # evidence. An unknown type degrades to "default", never to a raw
+        # appendix token.
+        assert "任务类型: code_review" in prompt
         assert "任务类型: default" not in prompt
+        assert "任务类型: verification" not in prompt
         assert "阶段 1: 合同审查 (contract_review)" in prompt
         assert "蓝图必须引用 PM 合同" in prompt
         assert "使用 pytest 框架" not in prompt

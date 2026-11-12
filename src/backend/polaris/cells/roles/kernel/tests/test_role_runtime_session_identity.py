@@ -15,7 +15,7 @@ from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import (
     TransactionIdentityError,
     _derive_invocation_identity,
 )
-from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1, RoleRuntimeError
+from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
 from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 
 
@@ -96,7 +96,16 @@ def test_invalid_explicit_scope_is_not_laundered_by_new_nonce(tmp_path: Path, me
 
 @pytest.mark.asyncio
 async def test_request_identity_does_not_authorize_guarded_execution(tmp_path: Path) -> None:
+    """A caller-supplied request identity cannot re-open the retired entry.
+
+    The legacy role execution kernel is retired and a new run has exactly one
+    owner, the engineering run service. The retired session write entry stays
+    closed for a guarded execution too: the refusal names the current owner
+    instead of running the guarded path.
+    """
     item = command(tmp_path, metadata={"task_runtime_guard": True}, turn_request_id="request-1")
-    with pytest.raises(RoleRuntimeError) as caught:
+    with pytest.raises(RuntimeError) as caught:
         await RoleRuntimeService().execute_role_session(item)
-    assert caught.value.code == "deo_execution_attempt_missing"
+    message = str(caught.value)
+    assert "legacy_engine_retired" in message
+    assert "engineering run service" in message

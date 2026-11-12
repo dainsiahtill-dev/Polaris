@@ -337,7 +337,18 @@ class TestStreamEventTranslationMatrix:
             kernel,
             [ErrorEvent(turn_id="t1", error_type="provider_error", message="nope")],
         )
-        assert out == [{"type": "error", "error": "nope", "error_type": "provider_error", "turn_id": "t1"}]
+        assert out == [
+            {
+                "type": "error",
+                "error": "nope",
+                "error_type": "provider_error",
+                "turn_id": "t1",
+                # The error event carries the typed event metadata so failure
+                # evidence can travel with it; it is empty when the source
+                # event carries none.
+                "metadata": {},
+            }
+        ]
 
 
 # ──────────────────────────────────────────────────────────────────────────

@@ -700,16 +700,15 @@ class TestQualityRepairMissingTargetContractB:
         assert summary["missing_target_files"] == []
         assert summary["runtime_smoke_target_files"] == ["calculator.py"]
         assert summary["repair_target_files"] == ["calculator.py"]
-        assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == ["calculator.py"]
-        assert adapter.repair_context["_transaction_kernel_forced_tool_choice"] == {
-            "type": "function",
-            "function": {"name": "edit_file"},
-        }
-        assert adapter.repair_context["_transaction_kernel_force_exact_tools"] is True
-        assert adapter.repair_context["metadata"]["tool_contract"]["required_tools"] == ["edit_file"]
+        # Current contract: the repair turn carries its own target scope; the
+        # retired transaction-kernel tool-forcing keys are gone.
+        repair = adapter.repair_context["director_quality_repair"]
+        assert repair["authorized_tool_target_files"] == ["calculator.py"]
+        assert adapter.repair_context["repair_target_files"] == ["calculator.py"]
+        assert adapter.repair_context["metadata"]["tool_path_contract"]["allowed_target_files"] == ["calculator.py"]
         assert adapter._execution.allowed_tool_names == {"edit_file"}
         assert adapter._execution.allow_patch_fallback is False
-        assert "EXISTING FAILED TARGET FILES" in adapter.repair_message
+        assert "EXISTING AUTHORIZED REPAIR PATHS" in adapter.repair_message
         assert "SINGLE FAILED TARGET REPAIR" in adapter.repair_message
         assert "MISSING TARGET FILES" not in adapter.repair_message
         assert "calculator.py" in adapter.repair_message
@@ -1456,13 +1455,12 @@ class TestQualityRepairMissingTargetContractB:
 
         assert summary["runtime_smoke_target_files"] == ["main.go"]
         assert summary["repair_target_files"] == ["main.go"]
-        assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == ["main.go"]
-        assert adapter.repair_context["_transaction_kernel_forced_tool_choice"] == {
-            "type": "function",
-            "function": {"name": "edit_file"},
-        }
-        assert adapter.repair_context["_transaction_kernel_force_exact_tools"] is True
-        assert adapter.repair_context["metadata"]["tool_contract"]["required_tools"] == ["edit_file"]
+        # Current contract: the repair turn carries its own target scope; the
+        # retired transaction-kernel tool-forcing keys are gone.
+        repair = adapter.repair_context["director_quality_repair"]
+        assert repair["authorized_tool_target_files"] == ["main.go"]
+        assert adapter.repair_context["repair_target_files"] == ["main.go"]
+        assert adapter.repair_context["metadata"]["tool_path_contract"]["allowed_target_files"] == ["main.go"]
         assert adapter._execution.allowed_tool_names == {"edit_file"}
         assert adapter._execution.allow_patch_fallback is False
         assert "SINGLE FAILED TARGET REPAIR" in adapter.repair_message
@@ -1561,7 +1559,12 @@ class TestQualityRepairMissingTargetContractB:
 
         assert summary["runtime_smoke_target_files"] == ["models/gallery.go"]
         assert summary["repair_target_files"] == ["models/gallery.go"]
-        assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == ["models/gallery.go"]
+        # Current contract: the repair turn carries its own target scope; the
+        # retired transaction-kernel tool-forcing keys are gone.
+        repair = adapter.repair_context["director_quality_repair"]
+        assert repair["authorized_tool_target_files"] == ["models/gallery.go"]
+        assert adapter.repair_context["repair_target_files"] == ["models/gallery.go"]
+        assert adapter.repair_context["metadata"]["tool_path_contract"]["allowed_target_files"] == ["models/gallery.go"]
         assert adapter._execution.allowed_tool_names == {"edit_file"}
         assert adapter._execution.allow_patch_fallback is False
         assert "models/gallery.go" in adapter.repair_message
@@ -2375,17 +2378,12 @@ class TestQualityRepairMissingTargetContractB:
         assert len(failure_errors) == 1
         assert len(workspace_errors) == 1
         assert "火焰" in failure_errors[0]
-        forced_tools = {
-            item["function"]["name"] for item in adapter.repair_context["_transaction_kernel_forced_tool_definitions"]
-        }
-        assert forced_tools == {"edit_file"}
-        assert adapter.repair_context["_transaction_kernel_forced_tool_choice"] == {
-            "type": "function",
-            "function": {"name": "edit_file"},
-        }
-        assert adapter.repair_context["_transaction_kernel_force_exact_tools"] is True
-        assert adapter.repair_context["metadata"]["tool_contract"]["required_tools"] == ["edit_file"]
-        assert adapter.repair_context["metadata"]["tool_contract"]["mutation_required"] is True
+        # Current contract: the repair turn carries its own target scope; the
+        # retired transaction-kernel tool-forcing keys are gone.
+        assert adapter.repair_context.get("_transaction_kernel_forced_tool_definitions") is None
+        repair = adapter.repair_context["director_quality_repair"]
+        assert repair["authorized_tool_target_files"] == ["src/dream.js"]
+        assert adapter.repair_context["metadata"]["tool_path_contract"]["allowed_target_files"] == ["src/dream.js"]
         assert adapter._execution.allowed_tool_names == {"edit_file"}
         assert "CURRENT UTF-8 CONTENT" in adapter.repair_message
         assert "assert.ok(keywords.includes('火焰'))" in adapter.repair_message
@@ -2476,13 +2474,13 @@ class TestQualityRepairMissingTargetContractB:
         )
 
         assert summary["repair_target_files"] == ["main_test.go"]
-        assert adapter.repair_context["_transaction_kernel_force_exact_tools"] is True
-        assert adapter.repair_context["_transaction_kernel_forced_tool_choice"] == {
-            "type": "function",
-            "function": {"name": "edit_file"},
-        }
-        assert adapter.repair_context["metadata"]["tool_contract"]["mutation_required"] is True
-        assert adapter.repair_context["metadata"]["tool_contract"]["mutation_reason"] == ("verifier_test_failure")
+        # Current contract: the repair turn carries its own target scope; the
+        # retired transaction-kernel tool-forcing keys are gone.
+        assert adapter.repair_context.get("_transaction_kernel_force_exact_tools") is None
+        repair = adapter.repair_context["director_quality_repair"]
+        assert repair["authorized_tool_target_files"] == ["main_test.go"]
+        assert adapter.repair_context["repair_target_files"] == ["main_test.go"]
+        assert adapter.repair_context["metadata"]["tool_path_contract"]["allowed_target_files"] == ["main_test.go"]
         assert adapter._execution.allowed_tool_names == {"edit_file"}
         assert adapter._execution.allow_patch_fallback is False
 
@@ -2571,19 +2569,18 @@ class TestQualityRepairMissingTargetContractB:
         )
 
         assert summary["repair_target_files"] == [missing, "tests/test_product.py"]
-        forced_tools = {
-            item["function"]["name"] for item in adapter.repair_context["_transaction_kernel_forced_tool_definitions"]
-        }
-        assert forced_tools == {"edit_file", "write_file"}
-        assert adapter.repair_context["_transaction_kernel_forced_tool_choice"] == "required"
-        assert adapter.repair_context["_transaction_kernel_force_exact_tools"] is True
-        tool_contract = adapter.repair_context["metadata"]["tool_contract"]
-        assert tool_contract["required_tools"] == ["edit_file", "write_file"]
-        assert tool_contract["mutation_required"] is True
-        assert tool_contract["mutation_reason"] == "mixed_create_modify_quality_repair"
-        quality_context = adapter.repair_context["director_quality_repair"]
-        assert quality_context["edit_preferred_target_files"] == ["tests/test_product.py"]
-        assert quality_context["write_required_target_files"] == [missing]
+        # Current contract: a mixed create/modify repair keeps every authorized
+        # path in the repair scope, and the text fallback is dispatched to
+        # exactly the two mutation effects.  The retired transaction-kernel
+        # forced-tool keys are gone.
+        assert adapter.repair_context.get("_transaction_kernel_forced_tool_definitions") is None
+        repair = adapter.repair_context["director_quality_repair"]
+        assert repair["authorized_tool_target_files"] == [missing, "tests/test_product.py"]
+        assert adapter.repair_context["repair_target_files"] == [missing, "tests/test_product.py"]
+        assert adapter.repair_context["metadata"]["tool_path_contract"]["allowed_target_files"] == [
+            missing,
+            "tests/test_product.py",
+        ]
         assert adapter._execution.allowed_tool_names == {"edit_file", "write_file"}
         assert adapter._execution.allow_patch_fallback is False
 
@@ -2697,12 +2694,17 @@ class TestQualityRepairMissingTargetContractB:
         assert summary["missing_target_files"] == []
         assert summary["semantic_quality_target_files"] == ["test_calculator.py"]
         assert summary["repair_target_files"] == ["test_calculator.py"]
-        assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == [
+        # Current contract: the repair turn carries its own target scope; the
+        # retired transaction-kernel tool-forcing keys are gone.
+        repair = adapter.repair_context["director_quality_repair"]
+        assert repair["authorized_tool_target_files"] == ["test_calculator.py"]
+        assert adapter.repair_context["repair_target_files"] == ["test_calculator.py"]
+        assert adapter.repair_context["metadata"]["tool_path_contract"]["allowed_target_files"] == [
             "test_calculator.py"
         ]
         assert adapter._execution.allowed_tool_names == {"edit_file"}
         assert adapter._execution.allow_patch_fallback is False
-        assert "EXISTING FAILED TARGET FILES" in adapter.repair_message
+        assert "EXISTING AUTHORIZED REPAIR PATHS" in adapter.repair_message
         assert "SINGLE FAILED TARGET REPAIR" in adapter.repair_message
         assert "test_calculator.py" in adapter.repair_message
 
@@ -3169,12 +3171,17 @@ class TestQualityRepairMissingTargetContractB:
 
         assert summary["explicit_quality_target_files"] == ["src/engine/simulation.ts"]
         assert summary["repair_target_files"] == ["src/engine/simulation.ts"]
-        assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == [
+        # Current contract: the repair turn carries its own target scope; the
+        # retired transaction-kernel tool-forcing keys are gone.
+        repair = adapter.repair_context["director_quality_repair"]
+        assert repair["authorized_tool_target_files"] == ["src/engine/simulation.ts"]
+        assert adapter.repair_context["repair_target_files"] == ["src/engine/simulation.ts"]
+        assert adapter.repair_context["metadata"]["tool_path_contract"]["allowed_target_files"] == [
             "src/engine/simulation.ts"
         ]
         assert adapter._execution.allowed_tool_names == {"edit_file"}
         assert adapter._execution.allow_patch_fallback is False
-        assert "EXISTING FAILED TARGET FILES" in adapter.repair_message
+        assert "EXISTING AUTHORIZED REPAIR PATHS" in adapter.repair_message
         assert "SINGLE FAILED TARGET REPAIR" in adapter.repair_message
         assert "src/engine/simulation.ts" in adapter.repair_message
 
@@ -3220,21 +3227,26 @@ class TestQualityRepairMissingTargetContractB:
         monkeypatch.delenv("KERNELONE_DIRECTOR_BUSINESS_CONTRACT_SYNTHESIS", raising=False)
 
         class _Execution:
+            def __init__(self) -> None:
+                self.allowed_tool_names: set[str] | None = None
+                self.allow_patch_fallback: bool | None = None
+
             @staticmethod
             def extract_kernel_tool_results(result) -> list:
                 return []
 
-            @staticmethod
-            async def execute_tools(content, target_task_id, update_task_progress, **_) -> list:
+            async def execute_tools(self, content, target_task_id, update_task_progress, **kwargs) -> list:
                 del content, target_task_id, update_task_progress
+                self.allowed_tool_names = kwargs.get("allowed_tool_names")
+                self.allow_patch_fallback = kwargs.get("allow_patch_fallback")
                 return []
 
         class _Adapter:
             workspace = str(tmp_path)
-            _execution = _Execution()
             _update_task_progress = staticmethod(lambda *a, **k: None)
 
             def __init__(self) -> None:
+                self._execution = _Execution()
                 self.repair_context: dict[str, Any] = {}
                 self.repair_message = ""
                 self.invocations = 0
@@ -3277,23 +3289,19 @@ class TestQualityRepairMissingTargetContractB:
         assert adapter.invocations == 1, summary
         assert adapter.repair_context["task_id"] == "PM-0001-1"
         assert adapter.repair_context["metadata"]["task_id"] == "PM-0001-1"
-        assert adapter.repair_context["_transaction_kernel_forced_tool_choice"] == {
-            "type": "function",
-            "function": {"name": "write_file"},
-        }, adapter.repair_context
-        forced_defs = adapter.repair_context["_transaction_kernel_forced_tool_definitions"]
-        assert forced_defs and forced_defs[0]["function"]["name"] == "write_file"
-        assert forced_defs[0]["function"]["parameters"]["required"] == [
-            "file",
-            "content",
-        ]
-        assert adapter.repair_context["_transaction_kernel_force_exact_tools"] is True
-        assert "SINGLE MISSING TARGET REPAIR" not in adapter.repair_message
-        assert "write_only_single_target" not in adapter.repair_context["director_quality_repair"]
-        assert adapter.repair_context["director_quality_repair"]["repair_target_files"] == missing_targets
+        # Current contract: a multi-target create repair scopes the turn to the
+        # declared missing paths through the repair context and the tool path
+        # contract.  The retired transaction-kernel forced-tool keys are gone.
+        assert adapter.repair_context.get("_transaction_kernel_forced_tool_definitions") is None
+        repair = adapter.repair_context["director_quality_repair"]
+        assert repair["authorized_tool_target_files"] == missing_targets
+        assert adapter.repair_context["repair_target_files"] == missing_targets
+        assert adapter.repair_context["metadata"]["tool_path_contract"]["allowed_target_files"] == missing_targets
+        assert adapter._execution.allowed_tool_names == {"write_file"}
+        assert adapter._execution.allow_patch_fallback is False
+        assert "MISSING TARGET FILES" in adapter.repair_message
         for missing_target in missing_targets:
             assert missing_target in adapter.repair_message
-        assert "MISSING TARGET FILES" in adapter.repair_message
         assert summary["missing_target_files"] == missing_targets
         assert summary["repair_target_files"] == missing_targets
 

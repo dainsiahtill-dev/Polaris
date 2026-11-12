@@ -137,15 +137,16 @@ def _receipt_rows_with_committed_arguments(
             ):
                 if row.get(key) != committed_row.get(key):
                     raise RuntimeError("committed_tool_receipt_invocation_mismatch")
-        if invocation is None:
-            raise RuntimeError("committed_tool_receipt_arguments_missing")
-        sealed_arguments = invocation.get("arguments")
-        if not isinstance(sealed_arguments, Mapping):
-            raise RuntimeError("committed_tool_receipt_arguments_missing")
-        if arguments is not None and arguments != sealed_arguments:
-            raise RuntimeError("committed_tool_receipt_invocation_mismatch")
-        arguments = dict(sealed_arguments)
+        if invocation is not None:
+            sealed_arguments = invocation.get("arguments")
+            if not isinstance(sealed_arguments, Mapping):
+                raise RuntimeError("committed_tool_receipt_arguments_missing")
+            if arguments is not None and arguments != sealed_arguments:
+                raise RuntimeError("committed_tool_receipt_invocation_mismatch")
+            arguments = dict(sealed_arguments)
         if not isinstance(arguments, Mapping):
+            # Neither a sealed invocation nor the receipt row states the
+            # dispatched arguments. Refuse instead of projecting empty args.
             raise RuntimeError("committed_tool_receipt_arguments_missing")
         projected.append({**row, "arguments": dict(arguments)})
     return projected
