@@ -19,7 +19,10 @@ from polaris.kernelone.llm.types import InvokeResult, Usage
     "rejected",
     [
         ["node", "--test", "--import", "ts-node/register", "tests/rules.test.ts"],
-        ["node", "--import", "tsx", "--test", "tests/rules.test.ts"],
+        # The current verifier grammar trusts the literal tsx preload, so this
+        # case keeps an unsupported preload in the same argument position to
+        # exercise the rejection operand and the accepted grammar feedback.
+        ["node", "--import", "ts-node/register", "--test", "tests/rules.test.ts"],
     ],
 )
 def test_actual_diagnosis_pm_revision_and_native_body_explain_rejected_loader(

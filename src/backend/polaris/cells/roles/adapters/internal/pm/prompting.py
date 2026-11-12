@@ -530,7 +530,9 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
                     "inputs 绑定自己/祖先手写文件，build argv/cwd 完整等于本任务 typed build verifier。"
                     "无需派生产物可省略或设 generated_outputs=[]，保留原 target_files；lint/test 只有同任务显式 build 绑定才可用。",
                     "版本/help/probe 不是交付证明。仅删除诊断指出且 manifest 允许编辑的不适用 probe，"
-                    "保留所有实际 environment_prep/build/test/lint/entrypoint/QA 命令；纯规划可设 verification_commands=[]。"
+                    "保留所有实际 environment_prep/build/test/lint/entrypoint/QA 命令；"
+                    "纯规划任务在 edit_manifest 允许该字段时使用 set.verification_commands=[]，"
+                    "这是完整数组替换，不删除任务，也不扩展编辑权限。"
                     "项目仍须真实 environment_prep、至少一个 build/test/lint 与适用入口；禁止以 doc_only 为由清空实质验证。"
                     "说明不扩展 manifest/工具权限，也不表示写入、构建或验收成功。",
                     "Original requirement (complete):",

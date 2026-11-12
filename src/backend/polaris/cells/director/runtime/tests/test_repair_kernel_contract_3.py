@@ -1358,8 +1358,10 @@ def test_public_npm_script_contract_covers_bench_missing_local_entrypoint_shape(
     assert planning["ok"] is True
     assert planning["planned"] is True
     content_after = planning["composition_summary"]["patches"][0]["content_after"]
+    # The loader option points at a file that does not exist, so the option is
+    # removed and the rest of the command still runs the tests.
     assert "register-ts.js" not in content_after
-    assert '"test": "npm run build"' in content_after
+    assert '"test": "npm run build && node --test tests/behavior.test.ts"' in content_after
 
 
 def test_public_npm_script_contract_python_command_diagnostic_is_covered_plannable() -> None:

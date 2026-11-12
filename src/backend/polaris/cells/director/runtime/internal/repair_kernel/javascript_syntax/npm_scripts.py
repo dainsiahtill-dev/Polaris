@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shlex
 from collections.abc import Mapping, Sequence
 from pathlib import PurePosixPath
@@ -32,6 +33,89 @@ from .constants import (
     _REPAIRABLE_TEST_SCRIPT_ISSUES,
     NPM_SCRIPT_CONTRACT_SOURCE_TOOL,
 )
+
+# A node loader option and the local file it references. The option cannot
+# work when the file does not exist, so the repair removes the option instead
+# of rewriting the whole script.
+_MISSING_LOADER_OPTION_RE = re.compile(
+    r"(?P<option>--require|--import|--loader|-r)(?P<separator>\s+)(?P<quote>['\"]?)(?P<value>[^\s'\"]+)(?P=quote)",
+    re.IGNORECASE,
+)
+
+# A require of a local module that the compiler never produced.
+_NODE_CANNOT_FIND_MODULE_SOURCE_RE = re.compile(
+    r"Cannot find module ['\"](?P<specifier>\.{1,2}/[^'\"]+)['\"]",
+    re.IGNORECASE,
+)
+
+
+def _script_without_missing_loader_option(script_text: str, entrypoint: str) -> str:
+    """Remove a loader option that points at a missing local file.
+
+    The option cannot work: the file it references does not exist. Removing
+    the option keeps the rest of the command intact, so the script still runs
+    the work it was written for.
+    """
+    script = str(script_text or "")
+    target = _normalize_repair_path(entrypoint)
+    if not script or not target:
+        return ""
+    for match in _MISSING_LOADER_OPTION_RE.finditer(script):
+        value = _normalize_repair_path(match.group("value"))
+        if value != target and value.removeprefix("./") != target.removeprefix("./"):
+            continue
+        start, end = match.span()
+        if start > 0 and script[start - 1] == " ":
+            start -= 1
+        elif end < len(script) and script[end] == " ":
+            end += 1
+        repaired = script[:start] + script[end:]
+        return repaired.strip()
+    return ""
+
+
+def _compiled_output_for_missing_require(
+    base_files: Mapping[str, str],
+    specifier: str,
+) -> str:
+    """Return the compiled output of a local require that has no runtime file.
+
+    A script that requires its own TypeScript source cannot run on Node. When
+    the compiler maps that source into the output directory, the require has to
+    name the compiled file instead.
+    """
+    reference = str(specifier or "").strip().replace("\\", "/")
+    if not reference.startswith("."):
+        return ""
+    if reference.startswith("../"):
+        prefix, relative = "../", reference[3:]
+    else:
+        prefix, relative = "./", reference.removeprefix("./")
+    if not relative:
+        return ""
+    candidates = [f"{relative}{suffix}" for suffix in (".ts", ".tsx")]
+    candidates.extend(f"{relative}/index{suffix}" for suffix in (".ts", ".tsx"))
+    for candidate in candidates:
+        if candidate in base_files:
+            compiled = _compiled_typescript_output_path(base_files, candidate)
+            return f"{prefix}{compiled}" if compiled else ""
+    return ""
+
+
+def _script_with_compiled_require(script_text: str, specifier: str, compiled: str) -> str:
+    """Rewrite a require of a source module to its compiled output."""
+    script = str(script_text or "")
+    target = str(specifier or "")
+    replacement = str(compiled or "")
+    if not script or not target or not replacement:
+        return ""
+    pattern = re.compile(r"(?P<prefix>\brequire\(\s*['\"])" + re.escape(target) + r"(?P<suffix>['\"]\s*\))")
+    rewritten, count = pattern.subn(
+        lambda match: f"{match.group('prefix')}{replacement}{match.group('suffix')}",
+        script,
+        count=1,
+    )
+    return rewritten if count else ""
 
 
 def build_npm_script_contract_plan(
@@ -65,6 +149,33 @@ def build_npm_script_contract_plan(
     has_node_test_runner_contract = _has_node_test_runner_contract_error(
         raw_errors
     ) or _has_node_test_runner_contract_diagnostic(matched_diagnostics)
+
+    # A script that loads a missing local file cannot run as written. The
+    # loader option is removed, so the rest of the command still does its
+    # work; the script itself is never replaced by a placeholder.
+    for script_name, entrypoint in missing_entrypoints.items():
+        script_text = str(scripts.get(script_name) or "")
+        if not script_text or not entrypoint:
+            continue
+        repaired = _script_without_missing_loader_option(script_text, entrypoint)
+        if repaired and repaired != script_text:
+            updates[("scripts", script_name)] = repaired
+
+    # A script that requires its own TypeScript source cannot run on Node.
+    # The require names the compiled output instead.
+    for raw_error in raw_errors:
+        for match in _NODE_CANNOT_FIND_MODULE_SOURCE_RE.finditer(raw_error):
+            specifier = str(match.group("specifier") or "")
+            compiled = _compiled_output_for_missing_require(normalized_base, specifier)
+            if not compiled:
+                continue
+            for script_name, script_value in scripts.items():
+                script_text = str(script_value or "")
+                if specifier not in script_text:
+                    continue
+                repaired = _script_with_compiled_require(script_text, specifier, compiled)
+                if repaired and repaired != script_text:
+                    updates[("scripts", script_name)] = repaired
 
     for script_name in _script_names_for_manifest_issue(
         matched_diagnostics,

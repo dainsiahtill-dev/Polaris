@@ -68,9 +68,17 @@ def test_product_change_changes_analysis_and_native_guidance():
     large = instance._analyze_directive_complexity(directive, {"pm_product_planning_input": bound})
     assert small["complexity"] != large["complexity"]
     factory_message = instance._build_pm_message([], directive, directive_analysis=large)
-    ordinary_message = instance._build_pm_message(
-        [], directive, directive_analysis=instance._analyze_directive_complexity(directive, {})
-    )
-    assert "原生 PM/Chief Engineer" in factory_message
-    assert "原生 PM/Chief Engineer" not in ordinary_message
+    ordinary_analysis = instance._analyze_directive_complexity(directive, {})
+    ordinary_message = instance._build_pm_message([], directive, directive_analysis=ordinary_analysis)
+    # The product intent request states the native stages for every directive:
+    # PM planning, the CE blueprint and QA review are native stages and do not
+    # create a duplicate document task.
+    assert "PM 规划、CE 蓝图、QA 审查是原生阶段" in factory_message
+    assert "PM 规划、CE 蓝图、QA 审查是原生阶段" in ordinary_message
+    # The factory-bound analysis reaches the model as the meta-planning
+    # advisory the stage applies to that same request.
+    factory_hint = instance._apply_meta_planning_hints(factory_message, large)
+    ordinary_hint = instance._apply_meta_planning_hints(ordinary_message, ordinary_analysis)
+    assert "[Meta-Planning Hint] Strategy: deep_decomposition" in factory_hint
+    assert "[Meta-Planning Hint] Strategy: minimal_decomposition" in ordinary_hint
     assert directive in factory_message and directive in ordinary_message

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Iterator
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -21,18 +23,33 @@ from polaris.cells.events.fact_stream.public.service import append_fact_event, p
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.domain.entities import Task, TaskPriority
 from polaris.kernelone.constants import DEFAULT_MAX_WORKERS
+from polaris.kernelone.fs.guarded_directory import guarded_create_directory
+
+
+@pytest.fixture
+def service_workspace() -> Iterator[Path]:
+    """A writable workspace below the repository owner.
+
+    The managed storage layout refuses a reserved mount, so the project-local
+    runtime root has to live below the repository owner.
+    """
+    owner = Path(__file__).resolve().parents[7]
+    relative_root = ".polaris/test-workspaces/director-execution"
+    guarded_create_directory(str(owner), relative_root, parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix="director-execution-", dir=owner / relative_root) as directory:
+        yield Path(directory)
 
 
 class TestDirectorService:
-    def test_init_basic(self):
-        config = DirectorConfig(workspace="/workspace")
+    def test_init_basic(self, service_workspace: Path):
+        config = DirectorConfig(workspace=str(service_workspace))
         service = DirectorService(config=config)
-        assert service.config.workspace == "/workspace"
+        assert service.config.workspace == str(service_workspace)
         assert service.config.max_workers == DEFAULT_MAX_WORKERS
         assert service.state == DirectorState.IDLE
 
-    def test_init_with_security(self):
-        config = DirectorConfig(workspace="/workspace")
+    def test_init_with_security(self, service_workspace: Path):
+        config = DirectorConfig(workspace=str(service_workspace))
         mock_security = Mock()
         service = DirectorService(config=config, security=mock_security)
         assert service.security is mock_security
@@ -108,10 +125,11 @@ class TestDirectorService:
     @pytest.mark.asyncio
     async def test_execute_task_work_without_stable_identity_fails_closed(
         self,
-        tmp_path: Path,
+        service_workspace: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setenv("KERNELONE_DIRECTOR_RUNTIME_CODEGEN", "1")
+        tmp_path = service_workspace
         config = DirectorConfig(workspace=str(tmp_path))
         service = DirectorService(config=config)
         task = Task(
@@ -127,8 +145,12 @@ class TestDirectorService:
 
         result = await service._execute_task_work(task)
 
+        # The worker code generation path is retired, so the task fails closed
+        # before any write and the refusal names the current owner of a run.
+        # The legacy transaction identity diagnostic belongs to that retired
+        # path and is no longer the reason the platform refuses the task.
         assert result.success is False
-        assert "transaction_identity_unbound" in str(result.error or result.output)
+        assert "legacy_engine_retired" in str(result.error or result.output)
         assert not (tmp_path / "pyproject.toml").exists()
         assert not (tmp_path / "README.md").exists()
 
@@ -145,7 +167,7 @@ class TestDirectorStateConcurrencyRegression:
     """Regression tests for M5: unguarded state transitions."""
 
     @pytest.mark.asyncio
-    async def test_concurrent_start_stop_does_not_corrupt_state(self) -> None:
+    async def test_concurrent_start_stop_does_not_corrupt_state(self, service_workspace: Path) -> None:
         """Verify concurrent start+stop does not leave state in an inconsistent intermediate value.
 
         Bug (M5): start() and stop() both read/write self.state without holding
@@ -165,7 +187,7 @@ class TestDirectorStateConcurrencyRegression:
         calls are serialized and the state machine never enters an impossible
         state (e.g., not IDLE/RUNNING/STOPPING/STOPPED/PAUSED).
         """
-        config = DirectorConfig(workspace="/workspace")
+        config = DirectorConfig(workspace=str(service_workspace))
         service = DirectorService(config=config)
 
         # Mock out heavy dependencies so we test only state machine behaviour

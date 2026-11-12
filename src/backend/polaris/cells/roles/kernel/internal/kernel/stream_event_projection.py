@@ -175,8 +175,20 @@ class StreamEventProjector:
         final_thinking = "".join(self.accumulated_thinking) or None
         batch_receipt = dict(event.batch_receipt) if isinstance(event.batch_receipt, dict) else None
         outcome = event.turn_outcome if isinstance(event.turn_outcome, dict) else None
-        tool_calls = tool_calls_from_batch_receipt(batch_receipt, turn_outcome=outcome) or self.stream_tool_calls
-        tool_results = tool_results_from_batch_receipt(batch_receipt, turn_outcome=outcome) or self.stream_tool_results
+        # A committed turn proves the dispatched arguments from its durable
+        # execution. A turn without a durable commit falls back to the turn's
+        # sealed invocation inventory, so a receipt row never guesses them.
+        sealed_invocations = list(event.sealed_invocations) if event.sealed_invocations else None
+        tool_calls = tool_calls_from_batch_receipt(
+            batch_receipt,
+            turn_outcome=outcome,
+            sealed_invocations=sealed_invocations,
+        ) or self.stream_tool_calls
+        tool_results = tool_results_from_batch_receipt(
+            batch_receipt,
+            turn_outcome=outcome,
+            sealed_invocations=sealed_invocations,
+        ) or self.stream_tool_results
 
         metadata = role_result_metadata_from_profile(
             profile=self.profile,

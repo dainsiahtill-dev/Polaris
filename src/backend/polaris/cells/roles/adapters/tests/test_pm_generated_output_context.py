@@ -84,10 +84,20 @@ def test_every_pm_request_explains_build_outputs_and_empty_optional_declaration(
             validated_candidate=True,
             revision_base=base,
         )
-    assert "构建命令产生的派生文件" in prompt
-    assert "所有任务的 target_files" in prompt
-    assert "generated_outputs=[]" in prompt
-    assert "src/input.py" in prompt if mode != "initial" else True
+    if mode == "bounded_retry":
+        # The typed revision is the request that may edit a generated-output
+        # declaration, so it carries the artifact contract and the empty
+        # optional declaration.
+        assert "构建命令产生的派生文件" in prompt
+        assert "所有任务的 target_files" in prompt
+        assert "generated_outputs=[]" in prompt
+        assert "src/input.py" in prompt
+    else:
+        # The product intent request does not declare build outputs at all:
+        # the technical recipe and the derived artifacts belong to the Chief
+        # Engineer, and the PM must not invent them.
+        assert "不猜路径、命令或生成产物" in prompt
+        assert "任务只需 id/title/goal/acceptance/depends_on" in prompt
 
 
 def test_bounded_retry_keeps_program_generated_collision_evidence(tmp_path: Path) -> None:

@@ -51,7 +51,7 @@ from polaris.cells.roles.kernel.internal.transaction.decode_corrective import (
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryContract, DeliveryMode
 from polaris.cells.roles.kernel.internal.transaction.handoff_handlers import HandoffHandler
 from polaris.cells.roles.kernel.internal.transaction.intent_classifier import leading_instruction_delivery_contract
-from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
+from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger, sealed_invocations_from_ledger
 from polaris.cells.roles.kernel.internal.transaction.phase_manager import (
     _READ_TOOLS,
     Phase,
@@ -1591,6 +1591,9 @@ class StreamOrchestrator:
             visible_content=visible_content,
             turn_kind=_kind,
             batch_receipt=batch_receipt or {},
+            # The sealed invocation inventory is the argument authority for a
+            # turn without a durable commit.
+            sealed_invocations=sealed_invocations_from_ledger(ledger),
             error=(
                 _finalization.get("suspended_reason") or _finalization.get("error")
                 if completion_status in {"failed", "suspended"}

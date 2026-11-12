@@ -521,3 +521,29 @@ class TurnLedger:
         if self.session_state_snapshots:
             audit["session_state_snapshots"] = self.session_state_snapshots
         return audit
+
+
+def sealed_invocations_from_ledger(ledger: Any) -> list[dict[str, Any]]:
+    """Return the turn's captured sealed invocation inventory.
+
+    The ledger captures every dispatched invocation with the arguments that
+    were sealed for it. This is the same inventory the durable turn commit
+    turns into ``execution.invocations``, so a committed turn and an ephemeral
+    turn resolve their dispatched arguments from one authority.
+
+    Complexity:
+        O(i) time and memory where ``i`` is the captured invocation count.
+    """
+    batches = getattr(ledger, "invocation_batches", None)
+    if not isinstance(batches, list):
+        return []
+    invocations: list[dict[str, Any]] = []
+    for batch in batches:
+        members = getattr(batch, "invocations", None)
+        if not isinstance(members, list):
+            continue
+        for invocation in members:
+            payload = invocation.to_dict() if hasattr(invocation, "to_dict") else invocation
+            if isinstance(payload, Mapping):
+                invocations.append(dict(payload))
+    return invocations

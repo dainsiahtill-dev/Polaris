@@ -68,10 +68,16 @@ def _synthesized_verifier_profile(language: str) -> dict[str, tuple[str, ...]]:
             "entrypoint": ("cargo", "run"),
         },
         "cpp": {
-            "environment_prep": ("cmake", "-S", ".", "-B", "build"),
+            # The platform verifier grammar has no native CMake configure
+            # profile, and the deterministic C++ plan declares its acceptance
+            # harness as tests/test_product.py.  The plan therefore prepares
+            # the harness environment with the trusted Python venv profile and
+            # proves the native build with the trusted CMake build profile.
+            # A command the policy cannot trust is never declared: an
+            # unverifiable plan is blocked by the PM quality gate.
+            "environment_prep": ("python", "-m", "venv", ".venv"),
             "build": ("cmake", "--build", "build"),
             "test": ("python", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"),
-            "entrypoint": ("./build/polaris_app",),
         },
         "java": {
             "environment_prep": ("mvn", "-q", "-DskipTests", "dependency:go-offline"),
@@ -156,12 +162,12 @@ def _attach_synthesized_verification_commands(
             "rust",
             "typescript",
             "javascript",
-            "cpp",
         }
-        if owns_entrypoint or (
+        entrypoint_argv = profile.get("entrypoint")
+        if entrypoint_argv and (owns_entrypoint or (
             ce_owns_topology and toolchain_generic_entrypoint and (owns_manifest or owns_build_input)
-        ):
-            commands.append({"modality": "entrypoint", "argv": list(profile["entrypoint"]), "cwd": "."})
+        )):
+            commands.append({"modality": "entrypoint", "argv": list(entrypoint_argv), "cwd": "."})
         item["verification_commands"] = commands
         finalized.append(item)
     return finalized

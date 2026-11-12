@@ -37,6 +37,7 @@ from polaris.cells.roles.kernel.internal.kernel.task_boundary import (
 from polaris.cells.roles.kernel.internal.kernel.tool_dispatch_projection import (
     append_tool_call_lifecycle_control_plane_event,
 )
+from polaris.cells.roles.kernel.internal.transaction.ledger import sealed_invocations_from_ledger
 from polaris.cells.roles.profile.public.service import RoleProfile, RoleTurnRequest, RoleTurnResult
 from polaris.kernelone.tools import is_write_tool_name, normalize_tool_name
 
@@ -151,8 +152,20 @@ def build_transaction_turn_completion_result(
     ledger = tk_result.get("ledger")
     committed_outcome = tk_result.get("turn_outcome")
     committed_outcome = committed_outcome if isinstance(committed_outcome, Mapping) else None
-    tool_calls = tool_calls_from_batch_receipt(normalized_batch_receipt, turn_outcome=committed_outcome)
-    tool_results = tool_results_from_batch_receipt(normalized_batch_receipt, turn_outcome=committed_outcome)
+    # A committed turn proves the dispatched arguments from its durable
+    # execution. An ephemeral turn has no durable record, so the turn's sealed
+    # invocation inventory is the only authority for them.
+    sealed_invocations = sealed_invocations_from_ledger(ledger)
+    tool_calls = tool_calls_from_batch_receipt(
+        normalized_batch_receipt,
+        turn_outcome=committed_outcome,
+        sealed_invocations=sealed_invocations,
+    )
+    tool_results = tool_results_from_batch_receipt(
+        normalized_batch_receipt,
+        turn_outcome=committed_outcome,
+        sealed_invocations=sealed_invocations,
+    )
     structured_output = _extract_structured_output(
         kernel=kernel,
         response_schema=response_schema,

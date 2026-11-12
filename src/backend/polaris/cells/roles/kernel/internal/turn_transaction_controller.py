@@ -973,6 +973,10 @@ class TurnTransactionController:
                 error=recovered.outcome.failure_reason,
                 turn_outcome=result["turn_outcome"],
                 commit_receipt=result["commit_receipt"],
+                sealed_invocations=[
+                    dict(item)
+                    for item in (recovered.outcome.execution.invocations if recovered.outcome.execution else [])
+                ],
                 turn_request_id=turn_request_id,
                 parent_span_id=parent_span_id,
             )

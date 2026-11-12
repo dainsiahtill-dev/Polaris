@@ -388,10 +388,17 @@ class TestBuildPmMessage:
 
         msg = adapter._build_pm_message([], "Build a runnable Go CLI")
 
+        # The current PM prompt owns the product intent only. The technical
+        # recipe belongs to the Chief Engineer and the PM must not guess
+        # technical fields that the user never declared.
         assert "验证 recipe 由 Chief Engineer 决定" in msg
-        assert "verification_commands 若声明，必须精确保留 modality/argv 数组/cwd" in msg
-        assert "禁止 shell 字符串" in msg
-        assert "不要猜测这些技术字段" in msg
+        assert "没有用户明确技术约束时，不猜路径、命令或生成产物" in msg
+        assert "不要猜测这些技术字段" not in msg
+
+        # An explicitly declared technical field keeps its exact structured
+        # command shape instead of a shell string.
+        declared = adapter._build_pm_message([], "Build a runnable Go CLI with verification_commands")
+        assert "命令必须使用完整 modality/argv 数组/cwd，不是 shell 字符串" in declared
 
     def test_pol71_code_edit_example_does_not_require_projection(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -499,9 +506,18 @@ class TestBuildPmRetryMessage:
 
         msg = adapter._build_pm_retry_message(directive="Build it", quality=quality, previous_output="old")
 
+        # The retry keeps the same core contract as the initial request: the
+        # verification recipe stays with the Chief Engineer.
         assert "verification_commands" in msg
-        assert "argv" in msg
-        assert "cwd" in msg
+        assert "验证 recipe 由 Chief Engineer 决定" in msg
+
+        # A declared technical field keeps the exact structured command shape.
+        declared = adapter._build_pm_retry_message(
+            directive="Build it with verification_commands", quality=quality, previous_output="old"
+        )
+        assert "命令必须使用完整 modality/argv 数组/cwd" in declared
+        assert "argv" in declared
+        assert "cwd" in declared
 
 
 class TestPlanArtifactSanitization:

@@ -210,9 +210,12 @@ def test_rust_missing_fields_shadow_blocks_unknown_duplicate_non_marker_and_publ
 def test_public_missing_fields_metadata_source_tools_still_fail_closed(tmp_path: Path) -> None:
     base_files = {"src/lib.rs": "// Polaris marker: rust.missing_fields\nstruct Flight { name: String }\n"}
     raw_errors = {
+        # The diagnostic of this source tool is not covered by a plan, so the
+        # planning refuses with a first-class error code and the run repeats
+        # that refusal without touching the workspace.
         RUST_MISSING_FIELDS_SOURCE_TOOL: (
             "error[E0609]: no field `duration` on type `&Flight`",
-            None,
+            "repair_not_planned",
             "repair_not_planned",
         ),
         "deterministic_rust_post_repair": (

@@ -669,14 +669,14 @@ def test_ts2724_phantom_underscore_import_is_removed() -> None:
             "export const HUMIDITY_MAX = 100;\n"
         ),
         "src/models/Firefly.ts": (
+            # The phantom binding lives in its own import statement: the
+            # platform cannot prove a type-only import statement, so a
+            # statement that mixes type-only bindings stays unprovable.
+            "import { HUMIDITY_MAX, HUMIDITY_MIN } from './types';\n"
             "import {\n"
-            "  HUMIDITY_MAX,\n"
-            "  HUMIDITY_MIN,\n"
-            "  type _HumidityBand,\n"
-            "  type HumidityState,\n"
-            "  type MoonState,\n"
-            "  type Rng,\n"
+            "  _HumidityBand,\n"
             "} from './types';\n"
+            "import { type HumidityState, type MoonState, type Rng } from './types';\n"
             "export function glow(state: HumidityState, moon: MoonState, rng: Rng): number {\n"
             "  return HUMIDITY_MIN + HUMIDITY_MAX + moon.illumination + rng() + (state.band === 'humid' ? 1 : 0);\n"
             "}\n"
@@ -687,7 +687,7 @@ def test_ts2724_phantom_underscore_import_is_removed() -> None:
             source_tool="deterministic_typescript_missing_export_repair",
             base_files=base,
             artifact_quality_errors=(
-                "src/models/Firefly.ts(4,8): error TS2724: '\"./types\"' has no exported member "
+                "src/models/Firefly.ts(3,3): error TS2724: '\"./types\"' has no exported member "
                 "named '_HumidityBand'. Did you mean 'HumidityBand'?",
             ),
             mode="commit",

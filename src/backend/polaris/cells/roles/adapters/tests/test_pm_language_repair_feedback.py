@@ -59,13 +59,26 @@ def test_language_diagnosis_has_exact_replacement_and_scope_evidence() -> None:
 def test_full_retry_explains_replacement_instead_of_retaining_bad_targets(tmp_path: Path) -> None:
     candidate = _candidate()
     diagnostics = list(validate_pm_artifact_contracts(candidate["tasks"], primary_language="typescript").diagnostics)
-    prompt = PMAdapter(workspace=str(tmp_path))._build_pm_retry_message(
+    adapter = PMAdapter(workspace=str(tmp_path))
+    quality = {"contract_diagnostics": diagnostics}
+    prompt = adapter._build_pm_retry_message(
         directive="Build a TypeScript model",
-        quality={"contract_diagnostics": diagnostics},
+        quality=quality,
         previous_output=json.dumps(candidate),
         validated_candidate=True,
     )
-    assert "替换或移除不合格路径" in prompt
-    assert "不要保留错误 target_files 后再追加" in prompt
+    # The complete-replacement retry carries the exact diagnosis facts, so the
+    # PM can repair its own declaration instead of keeping the bad targets.
     assert "foreign_scope_file_owners" in prompt
-    assert "context_files" in prompt
+    assert "wrong_authored_targets" in prompt
+    assert "allowed_source_suffixes" in prompt
+    projected = json.loads(
+        prompt.split(
+            "Correct the complete semantic draft using this quality evidence; "
+            "preserve the original user requirements and constraints:\n",
+            1,
+        )[1].split("\n", 1)[0]
+    )
+    # The optional technical topology belongs to the Chief Engineer, so the
+    # repair authority the product PM receives stays on the product fields.
+    assert projected["contract_diagnostics"][0]["repair_fields"] == ["goal", "description", "steps", "acceptance"]

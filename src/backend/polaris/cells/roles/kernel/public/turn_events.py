@@ -186,6 +186,10 @@ class CompletionEvent:
     # Canonical durable execution fact and its FactStream receipt.
     turn_outcome: dict[str, Any] = field(default_factory=dict)
     commit_receipt: dict[str, Any] = field(default_factory=dict)
+    # Sealed invocation inventory of this turn. It is the argument authority
+    # for a turn without a durable commit, so a receipt row never has to
+    # guess the arguments that were dispatched.
+    sealed_invocations: list[dict[str, Any]] = field(default_factory=list)
     turn_request_id: str | None = None
     span_id: str | None = None
     parent_span_id: str | None = None

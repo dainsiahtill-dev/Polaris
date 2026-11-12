@@ -7,7 +7,7 @@ into public RoleTurnResult values so result shape drift has one owner.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any, Protocol
 
 from polaris.cells.control_plane.run_ledger.public import (
@@ -62,8 +62,15 @@ def _result_items_from_batch_receipt(batch_receipt: dict[str, Any]) -> list[dict
 def _receipt_rows_with_committed_arguments(
     batch_receipt: dict[str, Any] | None,
     turn_outcome: Mapping[str, Any] | None,
+    sealed_invocations: Iterable[Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Join receipts to the exact sealed invocation; argument absence is not `{}`."""
+    """Join receipts to the exact sealed invocation; argument absence is not `{}`.
+
+    A committed turn proves the dispatched arguments from its durable
+    ``execution``. A turn without a durable commit has no such record, so the
+    caller supplies the turn's sealed invocation inventory; without either
+    authority the projection refuses instead of guessing empty arguments.
+    """
     if not isinstance(batch_receipt, dict):
         return []
     rows = _result_items_from_batch_receipt(batch_receipt)
@@ -72,7 +79,8 @@ def _receipt_rows_with_committed_arguments(
     execution = turn_outcome.get("execution") if isinstance(turn_outcome, Mapping) else None
     invocations: dict[str, Mapping[str, Any]] = {}
     committed_rows: dict[str, Mapping[str, Any]] = {}
-    if isinstance(execution, Mapping):
+    committed = isinstance(execution, Mapping)
+    if committed:
         for invocation in execution.get("invocations", []):
             if not isinstance(invocation, Mapping):
                 raise RuntimeError("committed_tool_receipt_invocation_mismatch")
@@ -86,29 +94,37 @@ def _receipt_rows_with_committed_arguments(
         ):
             raise RuntimeError("committed_tool_receipt_invocation_mismatch")
         committed_rows = {}
-        for committed in committed_receipt.get("results", []):
-            if not isinstance(committed, Mapping):
+        for committed_row in committed_receipt.get("results", []):
+            if not isinstance(committed_row, Mapping):
                 raise RuntimeError("committed_tool_receipt_invocation_mismatch")
-            call_id = str(committed.get("call_id") or "")
+            call_id = str(committed_row.get("call_id") or "")
             if not call_id or call_id in committed_rows:
                 raise RuntimeError("committed_tool_receipt_invocation_mismatch")
-            committed_rows[call_id] = committed
+            committed_rows[call_id] = committed_row
         row_ids = [str(row.get("call_id") or "") for row in rows]
         if len(set(row_ids)) != len(row_ids) or set(row_ids) != set(committed_rows):
             raise RuntimeError("committed_tool_receipt_invocation_mismatch")
+    else:
+        for invocation in sealed_invocations or ():
+            if not isinstance(invocation, Mapping):
+                raise RuntimeError("committed_tool_receipt_invocation_mismatch")
+            call_id = str(invocation.get("call_id") or "")
+            if not call_id or call_id in invocations:
+                raise RuntimeError("committed_tool_receipt_invocation_mismatch")
+            invocations[call_id] = invocation
     projected: list[dict[str, Any]] = []
     for row in rows:
         arguments = row.get("arguments")
-        if turn_outcome is not None:
-            call_id = str(row.get("call_id") or "")
-            invocation = invocations.get(call_id)
-            committed = committed_rows.get(call_id)
+        call_id = str(row.get("call_id") or "")
+        invocation = invocations.get(call_id)
+        if committed:
+            committed_row = committed_rows.get(call_id)
             if (
                 invocation is None
-                or committed is None
+                or committed_row is None
                 or row.get("tool_name") != invocation.get("tool_name")
-                or row.get("tool_name") != committed.get("tool_name")
-                or row.get("status") != committed.get("status")
+                or row.get("tool_name") != committed_row.get("tool_name")
+                or row.get("status") != committed_row.get("status")
             ):
                 raise RuntimeError("committed_tool_receipt_invocation_mismatch")
             for key in (
@@ -119,12 +135,16 @@ def _receipt_rows_with_committed_arguments(
                 "directed_effect_claim_status",
                 "directed_effect_mutation_status",
             ):
-                if row.get(key) != committed.get(key):
+                if row.get(key) != committed_row.get(key):
                     raise RuntimeError("committed_tool_receipt_invocation_mismatch")
-            sealed_arguments = invocation.get("arguments")
-            if not isinstance(sealed_arguments, Mapping) or (arguments is not None and arguments != sealed_arguments):
-                raise RuntimeError("committed_tool_receipt_invocation_mismatch")
-            arguments = dict(sealed_arguments)
+        if invocation is None:
+            raise RuntimeError("committed_tool_receipt_arguments_missing")
+        sealed_arguments = invocation.get("arguments")
+        if not isinstance(sealed_arguments, Mapping):
+            raise RuntimeError("committed_tool_receipt_arguments_missing")
+        if arguments is not None and arguments != sealed_arguments:
+            raise RuntimeError("committed_tool_receipt_invocation_mismatch")
+        arguments = dict(sealed_arguments)
         if not isinstance(arguments, Mapping):
             raise RuntimeError("committed_tool_receipt_arguments_missing")
         projected.append({**row, "arguments": dict(arguments)})
@@ -135,10 +155,11 @@ def tool_calls_from_batch_receipt(
     batch_receipt: dict[str, Any] | None,
     *,
     turn_outcome: Mapping[str, Any] | None = None,
+    sealed_invocations: Iterable[Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Project native calls from exact committed invocations or explicit legacy args."""
     tool_calls: list[dict[str, Any]] = []
-    for result in _receipt_rows_with_committed_arguments(batch_receipt, turn_outcome):
+    for result in _receipt_rows_with_committed_arguments(batch_receipt, turn_outcome, sealed_invocations):
         tool_calls.append(
             {
                 "tool": result.get("tool_name", ""),
@@ -153,16 +174,16 @@ def tool_results_from_batch_receipt(
     batch_receipt: dict[str, Any] | None,
     *,
     turn_outcome: Mapping[str, Any] | None = None,
+    sealed_invocations: Iterable[Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Project RoleTurnResult.tool_results from a TransactionKernel batch receipt."""
     if not isinstance(batch_receipt, dict):
         return []
     tool_results: list[dict[str, Any]] = []
-    rows = (
-        _receipt_rows_with_committed_arguments(batch_receipt, turn_outcome)
-        if turn_outcome is not None
-        else _result_items_from_batch_receipt(batch_receipt)
-    )
+    if turn_outcome is not None or sealed_invocations is not None:
+        rows = _receipt_rows_with_committed_arguments(batch_receipt, turn_outcome, sealed_invocations)
+    else:
+        rows = _result_items_from_batch_receipt(batch_receipt)
     for result in rows:
         tool_results.append(
             {
