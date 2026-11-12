@@ -6,8 +6,6 @@ from pathlib import Path
 
 import pytest
 from polaris.cells.roles.profile.public.service import RoleTurnResult
-from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
-from polaris.cells.roles.runtime.tests.test_kernel_session_continuation import _install_runtime_boundary
 
 
 class _ReadingKernel:
@@ -42,25 +40,19 @@ class _ReadingKernel:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("explicit_limit,expected", [(None, "ok"), (3, "failed")])
-async def test_budgeted_session_retains_explicit_limit_only(tmp_path, monkeypatch, explicit_limit, expected):
-    for index in range(1, 13):
-        (tmp_path / f"input{index}.txt").write_text(f"evidence-{index}", encoding="utf-8")
-    kernel = _ReadingKernel(tmp_path)
-    service = _install_runtime_boundary(monkeypatch, tmp_path, kernel)
-    policy = {"enabled": True}
-    if explicit_limit is not None:
-        policy["max_auto_turns"] = explicit_limit
-    command = ExecuteRoleSessionCommandV1(
-        role="director",
-        workspace=str(tmp_path),
-        session_id="budgeted-read",
-        host_kind="director_adapter",
-        task_id="TASK-READ",
-        user_message="Read each task evidence file to finish the task",
-        timeout_seconds=20,
-        context={"continuous_execution": policy},
+async def test_retired_legacy_role_scenarios_stay_closed(tmp_path: Path) -> None:
+    """The legacy role scenarios have no live subject after the retirement.
+
+    These scenarios drove the legacy role execution kernel, which is
+    retired: a new engineering run has exactly one owner, the engineering run
+    service. The scenarios are replaced by the retirement contract, so the
+    legacy write entry cannot silently come back.
+    """
+    from polaris.cells.roles.kernel.tests.legacy_engine_retirement import (
+        assert_legacy_session_entry_is_closed,
     )
-    result = await service.execute_role_session(command)
-    assert result.status == expected
-    assert len(kernel.requests) == (12 if explicit_limit is None else explicit_limit)
+
+    await assert_legacy_session_entry_is_closed(
+        session_id="retired-legacy-role-scenarios",
+        workspace=str(tmp_path),
+    )

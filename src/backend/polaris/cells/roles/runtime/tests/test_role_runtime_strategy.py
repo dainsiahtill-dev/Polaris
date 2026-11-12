@@ -18,6 +18,25 @@ from polaris.kernelone.context import ResolvedStrategy
 class TestRoleRuntimeServiceStrategy:
     """RoleRuntimeService strategy integration tests (no I/O)."""
 
+
+@pytest.mark.asyncio
+async def test_retired_legacy_role_scenarios_stay_closed(tmp_path: Path) -> None:
+    """The legacy role scenarios have no live subject after the retirement.
+
+    These scenarios drove the legacy role execution kernel, which is
+    retired: a new engineering run has exactly one owner, the engineering run
+    service. The scenarios are replaced by the retirement contract, so the
+    legacy write entry cannot silently come back.
+    """
+    from polaris.cells.roles.kernel.tests.legacy_engine_retirement import (
+        assert_legacy_session_entry_is_closed,
+    )
+
+    await assert_legacy_session_entry_is_closed(
+        session_id="retired-legacy-role-scenarios",
+        workspace=str(tmp_path),
+    )
+
     def test_resolve_strategy_profile_returns_resolved(self) -> None:
         from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 
@@ -892,132 +911,6 @@ class TestRoleRuntimeServiceStrategy:
         assert evidence["error_message"] == "receipt store unavailable"
 
     @pytest.mark.asyncio
-    async def test_execute_role_session_returns_cognitive_runtime_evidence_metadata(
-        self,
-        monkeypatch,
-        tmp_path: Path,
-    ) -> None:
-        from polaris.cells.factory.cognitive_runtime.public import service as cognitive_service
-        from polaris.cells.roles.profile.public.service import RoleTurnResult
-        from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
-        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
-
-        class FakeKernel:
-            async def run(self, _role, _request):
-                return RoleTurnResult(
-                    content="done",
-                    metadata={"turn_id": "turn-1"},
-                    turn_history=[("assistant", "done")],
-                )
-
-        class FakeCognitiveService:
-            def record_runtime_receipt(self, _command):
-                return SimpleNamespace(ok=True, receipt=SimpleNamespace(receipt_id="receipt-2"))
-
-            def export_handoff_pack(self, _command):
-                return SimpleNamespace(ok=True, handoff=SimpleNamespace(handoff_id="handoff-2"))
-
-            def close(self) -> None:
-                return None
-
-        async def fake_persist(*_args, **_kwargs) -> None:
-            return None
-
-        monkeypatch.setattr(
-            cognitive_service,
-            "get_cognitive_runtime_public_service",
-            lambda: FakeCognitiveService(),
-        )
-        service = RoleRuntimeService()
-        monkeypatch.setattr(service, "_get_kernel", lambda _workspace: FakeKernel())
-        monkeypatch.setattr(service, "_persist_session_turn_state", fake_persist)
-
-        result = await service.execute_role_session(
-            ExecuteRoleSessionCommandV1(
-                role="director",
-                session_id="session-2",
-                workspace=str(tmp_path),
-                user_message="write",
-                domain="code",
-                metadata={
-                    "cognitive_runtime_required": True,
-                    "context_os_expected": True,
-                },
-                stream=False,
-            )
-        )
-
-        assert result.ok is True
-        assert result.metadata["context_os_preflight"] == {
-            "expected": True,
-            "enabled": True,
-        }
-        assert result.metadata["cognitive_runtime_evidence"]["required"] is True
-        assert result.metadata["cognitive_runtime_evidence"]["receipt_id"] == "receipt-2"
-        assert result.metadata["cognitive_runtime_evidence"]["handoff_id"] == "handoff-2"
-
-    @pytest.mark.asyncio
-    async def test_execute_role_session_returns_tool_receipts_in_metadata(
-        self,
-        monkeypatch,
-        tmp_path: Path,
-    ) -> None:
-        from polaris.cells.roles.profile.public.service import RoleTurnResult
-        from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
-        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
-
-        receipt = {
-            "results": [
-                {
-                    "tool_name": "write_file",
-                    "status": "success",
-                    "result": {"path": "src/app.ts"},
-                }
-            ]
-        }
-        tool_results = [
-            {
-                "tool": "write_file",
-                "tool_name": "write_file",
-                "success": True,
-                "result": {"path": "src/app.ts"},
-            }
-        ]
-
-        class FakeKernel:
-            async def run(self, _role, _request):
-                return RoleTurnResult(
-                    content="done",
-                    tool_calls=[{"name": "write_file"}],
-                    tool_results=tool_results,
-                    batch_receipt=receipt,
-                    turn_history=[("assistant", "done")],
-                )
-
-        async def fake_persist(*_args, **_kwargs) -> None:
-            return None
-
-        service = RoleRuntimeService()
-        monkeypatch.setattr(service, "_get_kernel", lambda _workspace: FakeKernel())
-        monkeypatch.setattr(service, "_persist_session_turn_state", fake_persist)
-        monkeypatch.setattr(service, "_emit_cognitive_runtime_shadow_artifacts", lambda **_kwargs: {})
-
-        result = await service.execute_role_session(
-            ExecuteRoleSessionCommandV1(
-                role="director",
-                session_id="session-3",
-                workspace=str(tmp_path),
-                user_message="write",
-                domain="code",
-                stream=False,
-            )
-        )
-
-        assert result.ok is True
-        assert result.tool_calls == ("write_file",)
-        assert result.metadata["batch_receipt"] == receipt
-        assert result.metadata["tool_results"] == tool_results
-
     def test_build_session_request_injects_repo_intelligence_for_code_domain(
         self,
         monkeypatch,
