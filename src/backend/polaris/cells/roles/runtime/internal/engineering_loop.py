@@ -199,7 +199,7 @@ def _bounded_request_messages(
     store: EngineeringSessionStore,
     command: RoleRunCommand,
     role: str,
-    workspace: Path,
+    context_window_tokens: int,
     visual_binding: Callable[[], dict[str, Any]] | None,
     audit: dict[str, Any],
 ) -> list[dict[str, Any]]:
@@ -232,7 +232,7 @@ def _bounded_request_messages(
         )
 
     built = build(messages)
-    window = _model_context_window(workspace, role)
+    window = int(context_window_tokens or 0)
     if window <= 0:
         return built
     from polaris.kernelone.llm.engine.visual_working_set import visual_payload_cost
@@ -433,6 +433,7 @@ async def run_engineering_loop(
             )
         return result
 
+    context_window_tokens = _model_context_window(Path(command.workspace), command.role)
     try:
         if pending_calls():
             return finish("interrupted", "An earlier dispatch still requires reconciliation.")
@@ -448,7 +449,7 @@ async def run_engineering_loop(
                 store=store,
                 command=command,
                 role=command.role,
-                workspace=Path(command.workspace),
+                context_window_tokens=context_window_tokens,
                 visual_binding=visual_binding if scope.browser is not None else None,
                 audit=visual_projection,
             )

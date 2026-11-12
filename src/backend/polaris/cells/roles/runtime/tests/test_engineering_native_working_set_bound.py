@@ -115,7 +115,7 @@ async def test_bounded_working_set_keeps_the_visual_evidence_projectable(tmp_pat
         store=store,
         command=command,
         role="director",
-        workspace=workspace,
+        context_window_tokens=128_000,
         visual_binding=None,
         audit=audit,
     )
