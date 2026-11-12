@@ -210,7 +210,7 @@ async def test_causal_audit_consumes_same_projection_without_fallback(
         gate(tmp_path, "child", "child")
     service = SimpleNamespace(get_run=AsyncMock(return_value=current), get_run_events=AsyncMock(return_value=[]))
     monkeypatch.setattr(factory, "_resolve_workspace", lambda *_: str(tmp_path))
-    monkeypatch.setattr(factory, "_get_service", lambda *_: service)
+    monkeypatch.setattr(factory, "_get_service", lambda *_, **__: service)
     monkeypatch.setattr(factory, "_list_run_artifacts", lambda **_: [])
     causal = AsyncMock(return_value=SimpleNamespace(status="ok", payload={}, error_code=None, error_message=None))
     monkeypatch.setattr(factory, "query_exact_run_causal_audit", causal)
@@ -249,7 +249,7 @@ async def test_real_frozen_routes_require_pm_planning_at_http_boundary(
     }
     service = SimpleNamespace(get_run=AsyncMock(return_value=current), get_run_events=AsyncMock(return_value=[]))
     monkeypatch.setattr(factory, "_resolve_workspace", lambda *_: str(tmp_path))
-    monkeypatch.setattr(factory, "_get_service", lambda *_: service)
+    monkeypatch.setattr(factory, "_get_service", lambda *_, **__: service)
     monkeypatch.setattr(factory, "_list_run_artifacts", lambda **_: [])
     monkeypatch.setattr(
         factory,
@@ -284,7 +284,7 @@ async def test_http_route_obligations_use_server_reached_stages(
     }
     service = SimpleNamespace(get_run=AsyncMock(return_value=current), get_run_events=AsyncMock(return_value=[]))
     monkeypatch.setattr(factory, "_resolve_workspace", lambda *_: str(tmp_path))
-    monkeypatch.setattr(factory, "_get_service", lambda *_: service)
+    monkeypatch.setattr(factory, "_get_service", lambda *_, **__: service)
     monkeypatch.setattr(factory, "_list_run_artifacts", lambda **_: [])
     monkeypatch.setattr(
         factory,
@@ -361,7 +361,13 @@ def _diagnostic_control_plane(workspace: Path) -> None:
 def test_pol75_actual_declarations_do_not_poison_real_claim(tmp_path: Path, initially_bound: bool) -> None:
     runtime, row = _real_bound_task(tmp_path, initially_bound=initially_bound)
     declarations = _runtime_facts(tmp_path)
-    assert [fact["event_type"] for fact in declarations] == ["created", "materialized", "factory_run_bound"]
+    # A row that is materialized with its factory run already bound carries that
+    # binding in the materialization fact, so the explicit binding stays
+    # idempotent and records no second declaration.
+    expected = ["created", "materialized"]
+    if not initially_bound:
+        expected.append("factory_run_bound")
+    assert [fact["event_type"] for fact in declarations] == expected
     assert all(fact["payload"]["session_id"] == fact["payload"]["run_id"] == "" for fact in declarations)
     _real_claim(runtime, row)
     _diagnostic_control_plane(tmp_path)
@@ -475,7 +481,10 @@ def _append_diagnostic_fact(workspace: Path, payload: dict[str, Any], **override
     append_fact_event(AppendFactEventCommandV1(**arguments))
 
 
-@pytest.mark.parametrize("kind", ["created", "materialized", "factory_run_bound", "updated", "runtime_reset_removed"])
+# A task that is materialized with its factory run already bound carries that
+# binding in the materialization declaration, so the canonical lineage has no
+# separate binding declaration to corrupt.
+@pytest.mark.parametrize("kind", ["created", "materialized", "updated", "runtime_reset_removed"])
 @pytest.mark.parametrize("invalid_transition", ["missing", "empty", "whitespace", "integer", "null", "list", "boolean"])
 def test_pol75_native_declaration_requires_payload_transition_identity(
     tmp_path: Path, kind: str, invalid_transition: str
@@ -524,6 +533,17 @@ def test_pol75_native_declaration_requires_payload_transition_identity(
         read_run_ledger_projection(_canonical_query(tmp_path))
     assert _runtime_facts(tmp_path) == before
     assert {str(path): path.read_bytes() for path in event_root.rglob("*") if path.is_file()} == original_bytes
+
+
+def test_pol75_explicit_binding_is_the_first_binding_declaration(tmp_path: Path) -> None:
+    """A task bound after its creation records the binding as its own fact."""
+    _runtime, _row = _real_bound_task(tmp_path, initially_bound=False)
+    declarations = _runtime_facts(tmp_path)
+    assert [fact["event_type"] for fact in declarations] == ["created", "materialized", "factory_run_bound"]
+    binding = declarations[-1]
+    assert binding["payload"]["factory_run_id"] == "factory-own"
+    assert binding["payload"]["details"]["previous_factory_run_id"] == ""
+    assert binding["payload"]["session_id"] == binding["payload"]["run_id"] == ""
 
 
 @pytest.mark.parametrize(

@@ -216,6 +216,26 @@ def _factory_workspace_run_lease_fact_projection(
     return projection
 
 
+def _bind_snapshot_workflow_run_id(snapshot: dict[str, Any]) -> None:
+    """Make the workflow run identity explicit in a row snapshot.
+
+    The snapshot is the row evidence every declaration carries. The canonical
+    lineage reader compares the snapshot's workflow run identity with the
+    declaration's run identity, so an absent field reads as a different run
+    and rejects the whole projection. The identity is therefore always
+    explicit, and it is derived from the same sources the row projection uses.
+    """
+    current = snapshot.get("workflow_run_id")
+    if isinstance(current, str) and current.strip():
+        return
+    metadata = snapshot.get("metadata")
+    metadata_map = metadata if isinstance(metadata, dict) else {}
+    derived = str(
+        current or snapshot.get("run_id") or metadata_map.get("workflow_run_id") or metadata_map.get("run_id") or ""
+    ).strip()
+    snapshot["workflow_run_id"] = derived
+
+
 def build_task_row_snapshot(task_row: dict[str, Any]) -> dict[str, Any]:
     """Return the complete task-row snapshot stored in execution events.
 
@@ -229,6 +249,7 @@ def build_task_row_snapshot(task_row: dict[str, Any]) -> dict[str, Any]:
     """
 
     snapshot = cast(dict[str, Any], _json_compatible_copy(task_row))
+    _bind_snapshot_workflow_run_id(snapshot)
     metadata = snapshot.get("metadata")
     if not isinstance(metadata, dict):
         return snapshot
