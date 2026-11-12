@@ -114,72 +114,51 @@ def test_foreign_completion_projection_cannot_populate_authority(tmp_path: Path,
 
 
 @pytest.mark.asyncio
-async def test_actual_adapter_projection_reaches_persistent_http_effects(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+async def test_actual_adapter_projection_carries_ce_command_rows_to_the_runtime_context(
+    tmp_path: Path,
 ) -> None:
-    """Reuse sealed HTTP/effect fixture through the actual adapter call boundary."""
-    from polaris.cells.roles.kernel.tests.adapters_kernel_boundary_scenarios import (
-        run_persistent_director_http_projection,
+    """The CE verification command rows must survive into the Director context.
+
+    The legacy role execution kernel is retired, so the persistent session
+    refuses at the boundary. The projection is the subject: the adapter
+    still has to carry the CE command authority and its commands into the
+    runtime context it hands to a run owner.
+    """
+    authority = VerificationCommandAuthorityV1(task_id="TASK-1", modality="test", argv=("python", "verify.py"), cwd=".")
+    metadata = deepcopy(_context()["metadata"])
+    token = metadata["control_plane_job_token"]
+    token["gate_policy"]["project_completion_contract_hash"] = "c" * 64
+    token["gate_policy"]["command_authority_hashes"] = [authority.authority_hash]
+    token.pop("allowed_commands", None)
+    metadata["verification_authority"] = "chief_engineer"
+    metadata["verification_commands"] = []
+    metadata["task_completion_projection"] = {
+        "schema_version": "polaris.task_completion_projection.v1",
+        "task_id": "TASK-1",
+        "run_id": "factory-command-projection",
+        "project_contract_hash": "c" * 64,
+        "verification_command_authority": [authority.to_dict()],
+        "verification_execution_authority": [
+            {"command": "python verify.py", "command_authority_hash": authority.authority_hash}
+        ],
+    }
+    context: dict[str, Any] = {
+        "task_id": "TASK-1",
+        "run_id": "factory-command-projection",
+        "session_id": "factory-command-projection-session",
+        "metadata": metadata,
+    }
+
+    adapter = DirectorAdapter(str(tmp_path))
+    adapter._promote_task_contract_to_runtime_context(
+        task={"metadata": deepcopy(metadata)}, context=context, workspace=str(tmp_path)
     )
-    from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+    commands = adapter._ensure_director_verification_commands(
+        message="Verify the current candidate with the declared command.",
+        context=context,
+    )
 
-    original_execute = RoleRuntimeService.execute_role_session
-    original_init = RoleRuntimeService.__init__
-    inner = False
-    captured: dict[str, Any] = {}
-
-    async def through_adapter(runtime: Any, command: Any) -> Any:
-        nonlocal inner
-        if inner:
-            captured["command"] = command
-            result = await original_execute(runtime, command)
-            captured["result"] = result
-            return result
-        context = dict(command.context)
-        metadata = deepcopy(context["metadata"])
-        token = metadata["control_plane_job_token"]
-        authority = VerificationCommandAuthorityV1(
-            task_id=command.task_id, modality="test", argv=("python", "verify.py"), cwd="."
-        )
-        token["gate_policy"]["project_completion_contract_hash"] = "c" * 64
-        token["gate_policy"]["command_authority_hashes"] = [authority.authority_hash]
-        token.pop("allowed_commands", None)
-        context.pop("verification_commands", None)
-        context["task_id"] = str(context["task_runtime_execution_attempt_authority"].snapshot().identity.task_id)
-        context["pm_task_id"] = command.task_id
-        context["run_id"] = command.run_id
-        context["session_id"] = command.session_id
-        metadata["verification_authority"] = "chief_engineer"
-        metadata["verification_commands"] = []
-        metadata["task_completion_projection"] = {
-            "schema_version": "polaris.task_completion_projection.v1",
-            "task_id": command.task_id,
-            "run_id": command.run_id,
-            "project_contract_hash": "c" * 64,
-            "verification_command_authority": [authority.to_dict()],
-            "verification_execution_authority": [
-                {"command": "python verify.py", "command_authority_hash": authority.authority_hash}
-            ],
-        }
-        context["metadata"] = metadata
-        adapter = DirectorAdapter(str(tmp_path))
-        adapter._promote_task_contract_to_runtime_context(
-            task={"metadata": deepcopy(metadata)}, context=context, workspace=str(tmp_path)
-        )
-
-        def reuse_kernel(instance: Any, *args: Any, **kwargs: Any) -> None:
-            original_init(instance, *args, **kwargs)
-            instance._kernels[str(tmp_path)] = runtime._kernels[str(tmp_path)]
-
-        monkeypatch.setattr(RoleRuntimeService, "__init__", reuse_kernel)
-        inner = True
-        result = await adapter._invoke_role_runtime_session(command.user_message, context=context, max_retries=0)
-        captured["adapter_result"] = result
-        assert captured["command"].task_id == command.task_id
-        assert captured["command"].context["verification_command_authority"] == [authority.to_dict()]
-        assert captured["command"].context["verification_commands"] == ["python verify.py"]
-        return captured["result"]
-
-    monkeypatch.setattr(RoleRuntimeService, "execute_role_session", through_adapter)
-    await run_persistent_director_http_projection(tmp_path, monkeypatch)
-    assert captured["adapter_result"]["success"] is True
+    assert commands == ["python verify.py"]
+    assert context["verification_commands"] == ["python verify.py"]
+    assert context["metadata"]["verification_commands"] == ["python verify.py"]
+    assert context["metadata"]["verification_authority"] == "chief_engineer"

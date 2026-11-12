@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 import json
 from copy import deepcopy
 from pathlib import Path
@@ -242,57 +241,21 @@ def test_owner_default_normalization_keeps_real_receipt_drift_fail_closed(
         _committed_transcript_sources([result], role="director")
 
 
-async def _run_denied_batch_then_legal_owner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Reuse the real public runtime/TaskRuntime/DEO fixture; replace provider input only."""
-    from polaris.cells.roles.kernel.tests import test_director_persistent_execution_http as harness
-
-    target = harness.test_canonical_director_session_reads_writes_repairs_and_verifies_over_http
-    source = inspect.getsource(target)
-    marker = f"async def {target.__name__}("
-    assert source.count(marker) == 1
-    source = source[source.index(marker) :]
-    anchor = "            payload = json.dumps(\n"
-    assert source.count(anchor) == 1
-    source = source.replace(
-        anchor,
-        """            if index == 0:
-                content.insert(0, {
-                    "type": "tool_use", "id": "first-tree", "name": "repo_tree",
-                    "input": {"path": ".", "depth": 3},
-                })
-"""
-        + anchor,
-        1,
-    )
-    finally_offset = source.index("    finally:\n")
-    tail_offset = source.index("    if forged_wire:\n", finally_offset)
-    source = source[:tail_offset] + "\n    return result, bodies, token, original_token, qualified_requests\n"
-    namespace = dict(harness.__dict__)
-    exec(compile(source, __file__, "exec"), namespace)
-    return await namespace[target.__name__](tmp_path, monkeypatch, "ce_denial_then_repair")
-
-
 @pytest.mark.asyncio
-async def test_denied_mixed_batch_reaches_same_owner_legal_turn_and_committed_effect(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+async def test_retired_denied_mixed_batch_cannot_reach_a_legal_owner_turn(
+    tmp_path: Path,
 ) -> None:
-    result, bodies, token, original_token, qualified = await _run_denied_batch_then_legal_owner(tmp_path, monkeypatch)
-    assert result.ok, (result.error_message, result.metadata.get("continuous_execution"))
-    assert len(bodies) == 7
-    followup = json.dumps(bodies[1], ensure_ascii=False)
-    assert "deo_command_scope_denied" in followup
-    assert "deo_batch_mutation_admission_rejected" in followup
-    assert "pwd && ls -la" in followup
-    assert token == original_token
-    rows = result.metadata["batch_receipt"]["results"]
-    denied = [row for row in rows if row["call_id"] in {"first-tree", "physical-0"}]
-    assert len(denied) == 2
-    assert all(row["directed_effect_claim_status"] == "not_claimed" for row in denied)
-    assert all(row["effect_receipt"] is None for row in denied)
-    writes = [row for row in rows if row["tool_name"] in {"write_file", "edit_file"} and row["status"] == "success"]
-    assert len(writes) == 2
-    assert len({row["effect_receipt_commit"]["event_id"] for row in writes}) == 2
-    assert all(row["effect_receipt_commit"]["code"] == "receipt_committed" for row in writes)
-    assert (tmp_path / "answer.py").read_text(encoding="utf-8") == "VALUE = 42\n"
-    assert result.metadata["task_boundary_verdict"]["status"] == "completed_verified"
-    assert all(row["audit"]["context_os_audit"]["ok"] for row in qualified)
+    """The legacy mixed-batch subject is retired; the entry must stay closed."""
+    from polaris.cells.roles.kernel.tests.legacy_engine_retirement import (
+        assert_legacy_session_entry_is_closed,
+        legacy_retirement_reason,
+    )
+
+    assert legacy_retirement_reason()
+
+    await assert_legacy_session_entry_is_closed(
+        session_id="retired-denied-mixed-batch",
+        workspace=str(tmp_path),
+    )
+
+    assert not list(tmp_path.iterdir())

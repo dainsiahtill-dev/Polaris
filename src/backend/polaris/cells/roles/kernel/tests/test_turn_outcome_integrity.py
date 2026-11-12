@@ -231,42 +231,20 @@ def test_sessionless_ce_outcomes_allow_strict_director_commit_without_payload_lo
 
 
 @pytest.mark.asyncio
-async def test_real_director_runtime_continues_denied_read_to_write_and_verification(
+async def test_retired_director_runtime_cannot_continue_a_denied_read_to_a_write(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Only deterministic provider response changes; tools and receipts remain real."""
-    from polaris.cells.roles.kernel.tests.test_director_persistent_execution_http import (
-        test_canonical_director_session_reads_writes_repairs_and_verifies_over_http as execute_fixture,
+    """The legacy session subject is retired; the entry must stay closed."""
+    from polaris.cells.roles.kernel.tests.legacy_engine_retirement import (
+        assert_legacy_session_entry_is_closed,
+        legacy_retirement_reason,
     )
-    from polaris.infrastructure.llm.providers.anthropic_provider import AnthropicProvider
 
-    _commit_ce_outcomes(tmp_path)
-    (tmp_path / "private.txt").write_text("PRIVATE_READ_MUST_REMAIN_DENIED", encoding="utf-8")
-    original_invoke = AnthropicProvider.invoke
-    call_count = 0
+    assert legacy_retirement_reason()
 
-    def invoke_denied_first_read(self: AnthropicProvider, *args: Any, **kwargs: Any) -> Any:
-        nonlocal call_count
-        response = original_invoke(self, *args, **kwargs)
-        if call_count == 0:
-            assert response.ok
-            response.raw["content"][0]["input"] = {"file": "private.txt"}
-        call_count += 1
-        return response
+    await assert_legacy_session_entry_is_closed(
+        session_id="retired-denied-read-continuation",
+        workspace=str(tmp_path),
+    )
 
-    monkeypatch.setattr(AnthropicProvider, "invoke", invoke_denied_first_read)
-    await execute_fixture(tmp_path, monkeypatch, "repair")
-    assert call_count == 6
-    assert (tmp_path / "private.txt").read_text(encoding="utf-8") == "PRIVATE_READ_MUST_REMAIN_DENIED"
-    requests = (tmp_path / "http-requests.json").read_text(encoding="utf-8")
-    assert "PRIVATE_READ_MUST_REMAIN_DENIED" not in requests
-    assert "committed read scope" in requests
-    assert "VERIFIED_42" in requests
-    events = _assert_legacy_prepare_commit_pairs(tmp_path, outcome_count=8)
-    denied = events[2]["payload"]["outcome"]["execution"]["receipt"]
-    assert denied["failure_count"] == 1
-    assert denied["results"][0]["status"] == "error"
-    assert denied["results"][0]["tool_name"] == "read_file"
-    assert denied["effect_receipts"] == []
-    assert events[-1]["payload"]["outcome"]["outcome_status"] == "completed"
+    assert not list(tmp_path.iterdir())

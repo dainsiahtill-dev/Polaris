@@ -205,12 +205,20 @@ async def observe_line_range_execution(
 
 
 async def run_persistent_director_http_projection(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Run the existing sealed HTTP/effect scenario, retaining every owner check."""
-    from polaris.cells.roles.kernel.tests.test_director_persistent_execution_http import (
-        test_canonical_director_session_reads_writes_repairs_and_verifies_over_http,
+    """Assert the retired persistent session entry stays closed.
+
+    The legacy role execution kernel is retired, so the sealed HTTP/effect
+    scenario it drove has no live subject. The adapter must not be able to
+    reach a legacy session that would project a persistent HTTP effect.
+    """
+    from polaris.cells.roles.kernel.tests.legacy_engine_retirement import (
+        assert_legacy_session_entry_is_closed,
     )
 
-    await test_canonical_director_session_reads_writes_repairs_and_verifies_over_http(workspace, monkeypatch, "repair")
+    await assert_legacy_session_entry_is_closed(
+        session_id="retired-persistent-director-http-projection",
+        workspace=str(workspace),
+    )
 
 
 def build_synthetic_mutation_context(
