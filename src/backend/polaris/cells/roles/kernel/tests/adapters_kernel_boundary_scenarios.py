@@ -204,23 +204,6 @@ async def observe_line_range_execution(
     }
 
 
-async def run_persistent_director_http_projection(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Assert the retired persistent session entry stays closed.
-
-    The legacy role execution kernel is retired, so the sealed HTTP/effect
-    scenario it drove has no live subject. The adapter must not be able to
-    reach a legacy session that would project a persistent HTTP effect.
-    """
-    from polaris.cells.roles.kernel.tests.legacy_engine_retirement import (
-        assert_legacy_session_entry_is_closed,
-    )
-
-    await assert_legacy_session_entry_is_closed(
-        session_id="retired-persistent-director-http-projection",
-        workspace=str(workspace),
-    )
-
-
 def build_synthetic_mutation_context(
     *,
     workspace: str | None = None,
