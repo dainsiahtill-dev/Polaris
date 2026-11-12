@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 from polaris.cells.roles.kernel.tests import test_director_persistent_execution_http as harness
-from polaris.cells.roles.runtime.tests.test_fresh_quality_continuation import GOAL, _workspace
-from polaris.cells.roles.runtime.tests.test_static_quality_observation_reconciliation import (
+from polaris.cells.roles.adapters.tests.test_quality_repair_producer_context import (
     _capture_producer_observation_context,
 )
+from polaris.cells.roles.runtime.tests.test_fresh_quality_continuation import GOAL, _workspace
 from polaris.kernelone.quality import artifact_quality_issues_from_errors
 
 
