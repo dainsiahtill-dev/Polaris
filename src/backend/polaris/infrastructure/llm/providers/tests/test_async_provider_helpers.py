@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import time
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
 from pathlib import Path
 from types import SimpleNamespace
@@ -1540,6 +1541,74 @@ async def test_factory_governed_stream_deadline_does_not_cancel_terminal_replay_
     assert _terminal_statuses(lifecycle) == ["completed"]
     assert gate._physical_attempt_control_port.budget_state("f" * 64).inflight_count == 0
     assert events == ["post_enter", "response_exit", "session_close"]
+
+
+@pytest.mark.asyncio
+async def test_durable_attempt_registration_does_not_consume_the_provider_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The platform bookkeeping before the body must not eat the provider budget.
+
+    The gate registers the physical attempt durably before it opens the
+    provider body.  A slow durable write is platform work, so the provider
+    still gets its budget for the response; otherwise a slow disk fails the
+    attempt with ``provider_stream_timeout`` although the provider answered.
+    """
+    events: list[str] = []
+    response = _FakeResponse(
+        chunks=(
+            b'data: {"kind":"delta","value":"first"}\n\n',
+            b"data: [DONE]\n\n",
+        )
+    )
+    session = _FakeSession(response, events)
+    monkeypatch.setattr(
+        "polaris.infrastructure.llm.providers.provider_helpers._close_and_create_session",
+        AsyncMock(return_value=session),
+    )
+    final_gate_test._bootstrap(tmp_path)
+
+    def _one_second_wire(body: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "endpoint": "https://example.test/v1/chat/completions",
+            "headers": {},
+            "body": body,
+            "transport": {"kind": "aiohttp.ClientSession.post", "timeout_seconds": 1},
+        }
+
+    gate, lifecycle = final_gate_test._gate(
+        tmp_path,
+        semantic_options={"temperature": 0.1, "max_tokens": 128},
+        stream=True,
+        wire_factory=_one_second_wire,
+    )
+    qualified_wire = final_gate_test._wire_request(gate)
+
+    original_start = gate._start_attempt
+
+    def _slow_start(wire_request: Mapping[str, Any]) -> Any:
+        time.sleep(0.2)
+        return original_start(wire_request)
+
+    monkeypatch.setattr(gate, "_start_attempt", _slow_start)
+
+    items = [
+        item
+        async for item in invoke_stream_with_retry(
+            str(qualified_wire["endpoint"]),
+            dict(qualified_wire["headers"]),
+            dict(qualified_wire["body"]),
+            0.05,
+            max_attempts=1,
+            governance_mode="governed_required",
+            physical_dispatch_port=gate,
+        )
+    ]
+
+    assert items == [{"kind": "delta", "value": "first"}]
+    assert _terminal_statuses(lifecycle) == ["completed"]
+    assert gate._physical_attempt_control_port.budget_state("f" * 64).inflight_count == 0
 
 
 @pytest.mark.asyncio

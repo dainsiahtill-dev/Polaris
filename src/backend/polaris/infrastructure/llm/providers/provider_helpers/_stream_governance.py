@@ -379,6 +379,24 @@ def _stream_deadline_remaining_seconds(*, deadline: float, total_timeout_seconds
     return remaining
 
 
+def _physical_body_deadline(total_timeout_seconds: float) -> float:
+    """Return the deadline that bounds the physical provider body read.
+
+    The platform registers the physical attempt durably before it opens the
+    provider body, and it terminalizes the attempt durably after the body is
+    read.  Both are platform bookkeeping, not provider response time.  The
+    absolute attempt deadline starts before that bookkeeping, so a slow durable
+    write used to consume the provider budget and failed the attempt with
+    ``provider_stream_timeout`` although the provider never answered.
+
+    The provider budget therefore starts with the body read.  The absolute
+    attempt deadline still bounds the attempt loop, so the retries keep
+    sharing one budget.
+    """
+
+    return asyncio.get_running_loop().time() + total_timeout_seconds
+
+
 async def _iterate_physical_stream_under_deadline(
     stream: AsyncIterator[Any],
     *,
@@ -394,6 +412,10 @@ async def _iterate_physical_stream_under_deadline(
     consumer task after the physical attempt had already completed.  Keep the
     deadline around each physical ``anext`` only; downstream processing is not
     provider response time.
+
+    The deadline itself is the body deadline built by
+    ``_physical_body_deadline``: it starts with the body read, so the durable
+    bookkeeping that precedes the body does not consume the provider budget.
     """
 
     iterator = stream.__aiter__()
@@ -450,7 +472,7 @@ async def invoke_stream_with_retry(
                 physical_stream = _consume_data_line_response(response, url=url)
                 async for item in _iterate_physical_stream_under_deadline(
                     physical_stream,
-                    deadline=deadline,
+                    deadline=_physical_body_deadline(total_timeout_seconds),
                     total_timeout_seconds=total_timeout_seconds,
                 ):
                     yield item
@@ -539,7 +561,7 @@ async def invoke_stream_with_retry_and_handler(
                 physical_stream = stream_handler(response)
                 async for item in _iterate_physical_stream_under_deadline(
                     physical_stream,
-                    deadline=deadline,
+                    deadline=_physical_body_deadline(total_timeout_seconds),
                     total_timeout_seconds=total_timeout_seconds,
                 ):
                     consumed += 1
