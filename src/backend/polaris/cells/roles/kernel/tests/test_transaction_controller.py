@@ -1318,11 +1318,12 @@ class TestStreaming:
         }
         case_root = Path(__file__).resolve().parent / "_truthlog_stream_cases" / f"case_{uuid4().hex}"
         workspace_root = case_root / "workspace"
-        runtime_base = case_root / "runtime_base"
         workspace_root.mkdir(parents=True, exist_ok=True)
-        runtime_base.mkdir(parents=True, exist_ok=True)
         try:
-            monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_base))
+            # The runtime root is the canonical project-local root
+            # ``<workspace>/.polaris/runtime``; an external runtime root cannot
+            # redirect the truthlog writer.
+            monkeypatch.delenv("KERNELONE_RUNTIME_ROOT", raising=False)
             monkeypatch.setenv("KERNELONE_HOME", str(case_root / "home"))
             context = [
                 {

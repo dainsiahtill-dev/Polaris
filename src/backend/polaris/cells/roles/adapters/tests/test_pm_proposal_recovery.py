@@ -4,15 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import time
-from collections.abc import Callable
 from copy import deepcopy
-from dataclasses import replace
 from pathlib import Path
-from typing import Any
 
 import pytest
-from polaris.cells.roles.adapters.internal import pm_adapter as module
 from polaris.cells.roles.adapters.internal.pm.parsing import _PMContractError
 from polaris.cells.roles.adapters.internal.pm.revision import (
     PMRevisionBase,
@@ -23,9 +18,7 @@ from polaris.cells.roles.adapters.internal.pm.revision import (
 from polaris.cells.roles.adapters.public import PMAdapter
 from polaris.cells.roles.adapters.tests.test_pm_factory_controlled_identity import (
     _isolated_external_delivery as _isolated_external_delivery,
-    _local_runtime,
 )
-from polaris.kernelone.llm.engine.executor import AIExecutor
 
 # Exact native R32 model text is historical fixture data, not an execution grant.
 _REPLAY = json.loads(
@@ -132,9 +125,7 @@ def test_narrow_manifest_path_field_denial_remains_terminal(field: str, operand:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("repeat_bad", [False, True])
-async def test_exact_r32_recovery_keeps_its_original_quality_gate(
-    tmp_path: Path, repeat_bad: bool
-) -> None:
+async def test_exact_r32_recovery_keeps_its_original_quality_gate(tmp_path: Path, repeat_bad: bool) -> None:
     """The R32 recovery keeps the original quality gate.
 
     The scenario this test drove reached the retired legacy role session

@@ -1145,11 +1145,16 @@ async def test_official_cmake_lists_missing_forces_write_file(tmp_path: Path) ->
     assert summary.get("stage") != "task_boundary_repair_targets_deferred"
     assert "CMakeLists.txt" in summary["repair_target_files"]
     ctx = captured.get("context") or {}
-    choice = ctx.get("_transaction_kernel_forced_tool_choice") or {}
-    function = choice.get("function") if isinstance(choice, dict) else {}
-    assert function.get("name") == "write_file"
-    single = (ctx.get("director_quality_repair") or {}).get("write_only_single_target") or {}
-    assert single.get("target_file") == "CMakeLists.txt"
+    # Current contract: the repair turn carries its own target scope; the
+    # retired transaction-kernel forced-tool keys are gone.  The official
+    # basename must be part of that scope, so the repair can create it.
+    repair = ctx.get("director_quality_repair") or {}
+    authorized = list(repair.get("authorized_tool_target_files") or [])
+    assert "CMakeLists.txt" in authorized
+    assert "CMakeLists.txt" in list(ctx.get("repair_target_files") or [])
+    path_contract = (ctx.get("metadata") or {}).get("tool_path_contract") or {}
+    assert "CMakeLists.txt" in list(path_contract.get("allowed_target_files") or [])
+    assert "CMakeLists.txt" in (captured.get("message") or "")
 
 
 @pytest.mark.asyncio
@@ -1201,11 +1206,16 @@ async def test_official_java_public_type_missing_forces_write_file(tmp_path: Pat
     assert summary.get("stage") != "task_boundary_repair_targets_deferred"
     assert "src/main/java/polaris/factory/domain/Melody.java" in summary["repair_target_files"]
     ctx = captured.get("context") or {}
-    choice = ctx.get("_transaction_kernel_forced_tool_choice") or {}
-    function = choice.get("function") if isinstance(choice, dict) else {}
-    assert function.get("name") == "write_file"
-    single = (ctx.get("director_quality_repair") or {}).get("write_only_single_target") or {}
-    assert single.get("target_file") == "src/main/java/polaris/factory/domain/Melody.java"
+    # Current contract: the repair turn carries its own target scope; the
+    # retired transaction-kernel forced-tool keys are gone.  The official
+    # javac basename must be part of that scope, so the repair can create it.
+    repair = ctx.get("director_quality_repair") or {}
+    authorized = list(repair.get("authorized_tool_target_files") or [])
+    assert "src/main/java/polaris/factory/domain/Melody.java" in authorized
+    assert "src/main/java/polaris/factory/domain/Melody.java" in list(ctx.get("repair_target_files") or [])
+    path_contract = (ctx.get("metadata") or {}).get("tool_path_contract") or {}
+    assert "src/main/java/polaris/factory/domain/Melody.java" in list(path_contract.get("allowed_target_files") or [])
+    assert "src/main/java/polaris/factory/domain/Melody.java" in (captured.get("message") or "")
 
 
 @pytest.mark.asyncio

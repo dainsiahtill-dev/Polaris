@@ -267,7 +267,11 @@ def test_npm_test_script_repair_handles_ts_source_require_module_not_found(tmp_p
         if isinstance(item, dict)
     )
     payload = json.loads(package_path.read_text(encoding="utf-8"))
-    assert payload["scripts"]["test"] == "npm run build"
+    # Current contract: the repair keeps the author's own command and only
+    # rewrites the require to the compiled output of the referenced
+    # TypeScript source (the script itself is never replaced).
+    assert payload["scripts"]["test"] == "node -e \"require('./dist/models/firefly.js')\""
+    assert payload["scripts"]["build"] == "tsc"
 
 
 def test_typescript_comma_expected_repair_fixes_object_literal_semicolons(tmp_path: Any) -> None:
@@ -2153,17 +2157,19 @@ async def test_existing_html_quality_fallback_requires_edit_not_read_or_command(
         _update_task_progress = staticmethod(lambda *_args, **_kwargs: None)
 
         def __init__(self) -> None:
+            self.repair_message = ""
             self.repair_context: dict[str, Any] = {}
 
         async def _invoke_role_dialogue_with_timeout(
             self,
-            _message: str,
+            message: str,
             *,
             context: dict[str, Any],
             timeout_seconds: float,
             stage_label: str,
         ) -> dict[str, Any]:
             del timeout_seconds, stage_label
+            self.repair_message = message
             self.repair_context = context
             return {"content": ""}
 

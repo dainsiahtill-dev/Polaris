@@ -15,6 +15,7 @@ from polaris.cells.roles.kernel.internal.transaction.mutation_contract_guard imp
 from polaris.cells.roles.kernel.internal.transaction.retry_context_builders import build_contract_retry_context
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import TurnTransactionController
+from polaris.cells.roles.kernel.tests.tool_batch_fixtures import tool_batch_model_with_groups
 from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchId,
     FinalizeMode,
@@ -247,7 +248,9 @@ async def test_readonly_batch_cannot_finalize_current_task_that_requires_write()
         turn_id=TurnId(turn_id),
         kind=TurnDecisionKind.TOOL_BATCH,
         visible_message="",
-        tool_batch=ToolBatch(batch_id=BatchId("read-before-edit"), invocations=[invocation]),
+        # An executable batch declares its invocations and the same
+        # invocations in their execution groups.
+        tool_batch=tool_batch_model_with_groups(BatchId("read-before-edit"), [invocation]),
         finalize_mode=FinalizeMode.LLM_ONCE,
         domain="code",
         metadata={},

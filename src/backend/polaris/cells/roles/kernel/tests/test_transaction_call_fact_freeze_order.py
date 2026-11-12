@@ -63,6 +63,9 @@ async def test_actual_setup_budget_reaches_llm_snapshot_and_request_preparation(
             "context_os_snapshot": {},
             "target_files": ["main.go"],
             "delivery_mode": "materialize_changes",
+            # The first-call write-only budget is opt-in: without an explicit
+            # controller opt-in the turn keeps the caller's output budget.
+            "director_first_call_write_only": True,
             "llm_max_tokens": 128000,
             "max_output_tokens": 128000,
         },

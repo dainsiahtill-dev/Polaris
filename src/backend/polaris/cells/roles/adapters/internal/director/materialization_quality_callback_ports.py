@@ -55,6 +55,14 @@ _MATERIALIZATION_TARGET_RUNTIME_SUFFIXES = (
     ".toml",
 )
 
+# A Node ``require`` of a local module that the runtime cannot resolve.  The
+# module path is the only evidence of which local source the failing script
+# referenced.
+_MISSING_NODE_MODULE_RE = re.compile(
+    r"Cannot find module ['\"](?P<specifier>\.{1,2}/[^'\"]+)['\"]",
+    re.IGNORECASE,
+)
+
 
 def has_materialization_quality_runtime_repair_coverage(
     artifact_quality_errors: list[str],
@@ -793,6 +801,32 @@ def _add_compiled_node_entrypoint_inputs(
                 base_files, workspace_path, allowed_suffixes=(".ts", ".tsx"), max_files=512
             )
             return
+    # A Node script that requires its own TypeScript source can never run: the
+    # runtime rule rewrites that require to the compiled output, and it can
+    # only compute the compiled path from the referenced source plus the
+    # tsconfig.  Feed the exact referenced modules as read-only base files so
+    # the rule owns the decision instead of leaving the manifest unrepaired.
+    _add_missing_node_module_sources(base_files, workspace_path, artifact_quality_errors)
+
+
+def _add_missing_node_module_sources(
+    base_files: dict[str, str],
+    workspace_path: Path,
+    artifact_quality_errors: Sequence[str],
+) -> None:
+    """Add the local modules named by a ``Cannot find module`` diagnostic."""
+    for error in artifact_quality_errors:
+        for match in _MISSING_NODE_MODULE_RE.finditer(str(error or "")):
+            relative = str(match.group("specifier") or "").strip().replace("\\", "/").removeprefix("./")
+            if not relative:
+                continue
+            for candidate in (
+                f"{relative}.ts",
+                f"{relative}.tsx",
+                f"{relative}/index.ts",
+                f"{relative}/index.tsx",
+            ):
+                _add_existing_materialization_base_file(base_files, workspace_path, candidate)
 
 
 def _collect_materialization_target_runtime_base_files(

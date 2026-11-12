@@ -165,12 +165,8 @@ async def test_semantic_one_task_plan_needs_no_recipe_retry(
     )
     intent = _intent()
     adapter = PMAdapter(workspace=str(tmp_path))
-    tasks = adapter._extract_task_contracts(
-        json.dumps(intent), directive="Create a Python record validator"
-    )
-    normalized, quality = adapter._evaluate_contract_quality(
-        tasks, directive="Create a Python record validator"
-    )
+    tasks = adapter._extract_task_contracts(json.dumps(intent), directive="Create a Python record validator")
+    normalized, quality = adapter._evaluate_contract_quality(tasks, directive="Create a Python record validator")
     assert quality["ok"] is True, quality
     assert quality["score"] == 100
     assert len(normalized) == 1
@@ -255,9 +251,7 @@ async def test_semantic_draft_revision_keeps_the_original_manifest(
     adapter = PMAdapter(workspace=str(tmp_path))
     raw = json.dumps(intent)
     tasks = adapter._extract_task_contracts(raw, directive="Create a Python record validator")
-    _normalized, quality = adapter._evaluate_contract_quality(
-        tasks, directive="Create a Python record validator"
-    )
+    _normalized, quality = adapter._evaluate_contract_quality(tasks, directive="Create a Python record validator")
     assert quality["ok"] is False
     base = make_revision_base(
         raw,

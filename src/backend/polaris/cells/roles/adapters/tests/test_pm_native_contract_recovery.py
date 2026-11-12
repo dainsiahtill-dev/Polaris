@@ -4,21 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import threading
-import time
 from copy import deepcopy
-from dataclasses import asdict, replace
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
-from polaris.cells.factory.pipeline.tests.test_factory_role_evidence_authority_sa import (
-    _authority,
-    _resolved_cut,
-    _Resolver,
-)
 from polaris.cells.orchestration.pm_planning.public.service import evaluate_pm_task_quality
 from polaris.cells.orchestration.pm_planning.public.task_intent import (
     PmTaskIntentError,
@@ -27,15 +17,9 @@ from polaris.cells.orchestration.pm_planning.public.task_intent import (
 )
 from polaris.cells.roles.adapters.internal.pm.parsing import _decode_complete_pm_payload, _PMContractError
 from polaris.cells.roles.adapters.public import PMAdapter
-from polaris.cells.roles.adapters.tests.test_pm_factory_controlled_identity import _local_runtime
 from polaris.cells.roles.adapters.tests.test_pm_task_intent import _intent
-from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import bind_factory_role_evidence_authority
 from polaris.cells.roles.kernel.public.generation_outcome import GENERATION_OUTCOME_SCHEMA, RoleGenerationOutcomeV1
-from polaris.cells.roles.profile.public.service import RoleProfileRegistry
-from polaris.infrastructure.llm.providers.provider_helpers import _http_pooling
-from polaris.infrastructure.log_pipeline.jetstream_publisher import JetStreamPublisher
 from polaris.kernelone.audit.context_os_prompt import audit_context_os_prompt_messages
-from polaris.kernelone.llm.engine.executor import AIExecutor
 
 _FIXTURES = Path(__file__).parent / "fixtures/native_pm_contract"
 
@@ -370,9 +354,7 @@ def test_scope_alias_never_displaces_distinct_description() -> None:
         "bound_exact_first",
     ],
 )
-async def test_native_semantic_and_format_recovery_keeps_its_admission_contract(
-    tmp_path: Path, scenario: str
-) -> None:
+async def test_native_semantic_and_format_recovery_keeps_its_admission_contract(tmp_path: Path, scenario: str) -> None:
     """The native PM drafts keep their public admission contract.
 
     The scenario this test drove replayed the captured drafts through a real
@@ -418,9 +400,10 @@ async def test_native_semantic_and_format_recovery_keeps_its_admission_contract(
         assert task["metadata"]["planning_advisory_execution_authority"] is False
     elif scenario == "bound_exact_first":
         task = admitted(exact_first)
-        assert task["metadata"]["planning_advisory"]["task_metadata"] == json.loads(exact_first)["tasks"][0][
-            "task_metadata"
-        ]
+        assert (
+            task["metadata"]["planning_advisory"]["task_metadata"]
+            == json.loads(exact_first)["tasks"][0]["task_metadata"]
+        )
         assert task["metadata"]["planning_advisory_execution_authority"] is False
     elif scenario == "bound_semantic_then_first":
         # The first draft is refused for its non-array required requirements,

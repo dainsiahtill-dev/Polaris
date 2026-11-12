@@ -13,6 +13,7 @@ from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import (
 )
 from polaris.cells.roles.kernel.internal.llm_caller.finalization_caller import FinalizationCaller
 from polaris.cells.roles.kernel.internal.stream_shadow_engine import StreamShadowEngine
+from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryMode
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig, TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.retry_tool_definitions import (
     bootstrap_receipt_contains_whole_file_replacement_marker,
@@ -21,6 +22,7 @@ from polaris.cells.roles.kernel.internal.transaction.retry_tool_definitions impo
 from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnStateMachine
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import TurnTransactionController
+from polaris.cells.roles.kernel.tests.tool_batch_fixtures import tool_batch_model_with_groups
 from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchId,
     FinalizeMode,
@@ -67,10 +69,9 @@ def _canonical_decision(
 
     tool_batch = None
     if kind == TurnDecisionKind.TOOL_BATCH:
-        tool_batch = ToolBatch(
-            batch_id=BatchId(f"{turn_id}_batch"),
-            invocations=normalized_invocations,
-        )
+        # An executable batch declares its invocations and the same invocations
+        # in their execution groups.
+        tool_batch = tool_batch_model_with_groups(BatchId(f"{turn_id}_batch"), normalized_invocations)
 
     return TurnDecision(
         turn_id=TurnId(turn_id),
@@ -315,7 +316,18 @@ def test_build_finalization_context_keeps_latest_user_request() -> None:
     # 新提示词已移除鼓励贴代码的表述
     assert "一次性完成输出" not in content
     assert "直接给出完整答复" not in content
-    assert "不要贴出完整文件内容" in content
+    # 文本不得代替真实执行是收口阶段的硬纪律
+    assert "不得用文字代替实际执行" in content
+
+    # MATERIALIZE_CHANGES 额外声明不得以文本提案代替落盘效果
+    materialize_content = str(
+        FinalizationHandler._build_finalization_context(
+            context,
+            receipts,
+            SimpleNamespace(mode=DeliveryMode.MATERIALIZE_CHANGES),
+        )[0]["content"]
+    )
+    assert "不要贴出完整的可执行代码块或文件内容" in materialize_content
 
 
 class _StubFinalizationInvoker:

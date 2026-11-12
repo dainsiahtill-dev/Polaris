@@ -7,11 +7,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from polaris.cells.factory.pipeline.tests.test_factory_role_evidence_authority_sa import (
-    _authority,
-    _resolved_cut,
-    _Resolver,
-)
 from polaris.cells.roles.adapters.internal.pm.normalization import (
     _pm_typescript_factory_contract_missing,
     _pm_verification_command_contract_issues,
@@ -22,10 +17,8 @@ from polaris.cells.roles.adapters.internal.pm_adapter import PMAdapter
 from polaris.cells.roles.adapters.tests.test_pm_factory_controlled_identity import (
     _contracts,
     _isolated_external_delivery as _isolated_external_delivery,
-    _local_runtime,
     _verifier_revision_response,
 )
-from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import bind_factory_role_evidence_authority
 from polaris.cells.roles.kernel.tests.legacy_engine_retirement import (
     assert_legacy_session_entry_is_closed,
 )
@@ -199,9 +192,7 @@ def _revision_wire_view(wire: dict[str, Any]) -> dict[str, Any]:
         "nonfinite",
     ],
 )
-async def test_pol72_typed_config_revision_keeps_its_manifest_boundary(
-    tmp_path: Path, edit: str
-) -> None:
+async def test_pol72_typed_config_revision_keeps_its_manifest_boundary(tmp_path: Path, edit: str) -> None:
     """The typed revision manifest stays the server-owned boundary.
 
     The scenario this test drove reached the retired legacy role session
@@ -350,9 +341,7 @@ async def test_pol72_typed_config_revision_keeps_its_manifest_boundary(
     else:
         admitted = True
     if admitted:
-        _merged_contracts, merged_quality = adapter._evaluate_contract_quality(
-            merged["tasks"], directive=directive
-        )
+        _merged_contracts, merged_quality = adapter._evaluate_contract_quality(merged["tasks"], directive=directive)
         admitted = merged_quality["ok"] is True and int(merged_quality.get("score") or 0) >= 80
     assert admitted is (edit == "config"), (edit, captured["patch"], merged)
     if edit == "config":
@@ -372,9 +361,7 @@ def _task() -> dict[str, Any]:
 
 @pytest.mark.parametrize("field", ["acceptance", "acceptance_criteria"])
 @pytest.mark.parametrize("edit", ["replace", "noop", "append", "bad_set"])
-async def test_semantic_acceptance_revision_keeps_its_repair_authority(
-    tmp_path: Path, field: str, edit: str
-) -> None:
+async def test_semantic_acceptance_revision_keeps_its_repair_authority(tmp_path: Path, field: str, edit: str) -> None:
     """The acceptance repair authority stays with the server-owned manifest.
 
     The scenario this test drove reached the retired legacy role session
@@ -468,9 +455,7 @@ async def test_semantic_acceptance_revision_keeps_its_repair_authority(
         admitted = True
     qualified = False
     if admitted:
-        _merged_contracts, merged_quality = adapter._evaluate_contract_quality(
-            merged["tasks"], directive=directive
-        )
+        _merged_contracts, merged_quality = adapter._evaluate_contract_quality(merged["tasks"], directive=directive)
         qualified = merged_quality["ok"] is True and int(merged_quality.get("score") or 0) >= 80
     assert qualified is (edit == "replace"), (edit, captured["patch"], merged)
     if edit == "replace":
@@ -496,9 +481,7 @@ async def test_semantic_acceptance_revision_keeps_its_repair_authority(
 
 
 @pytest.mark.parametrize("context", [{}, {"run_id": None}, {"run_id": ""}, {"run_id": " \t"}])
-async def test_standalone_without_trusted_child_uses_complete_reanswer(
-    tmp_path: Path, context: dict[str, Any]
-) -> None:
+async def test_standalone_without_trusted_child_uses_complete_reanswer(tmp_path: Path, context: dict[str, Any]) -> None:
     """A standalone PM request keeps the complete re-answer protocol.
 
     The scenario this test drove reached the retired legacy role session
@@ -526,14 +509,17 @@ async def test_standalone_without_trusted_child_uses_complete_reanswer(
     # one complete replacement instead of a typed revision.
     assert "Revision base/view/manifest" not in standalone
     assert "Incomplete/unparseable candidate" in standalone
-    assert make_revision_base(
-        _contracts(valid=False),
-        workspace=str(workspace),
-        run_id=trusted_run_id,
-        task_id="pm-task",
-        directive="Create model",
-        quality=quality,
-    ) is None
+    assert (
+        make_revision_base(
+            _contracts(valid=False),
+            workspace=str(workspace),
+            run_id=trusted_run_id,
+            task_id="pm-task",
+            directive="Create model",
+            quality=quality,
+        )
+        is None
+    )
 
     # A trusted child run receives the server-owned revision view instead.
     trusted = make_revision_base(
@@ -663,9 +649,7 @@ async def test_boundary_failure_uses_one_revision_under_real_factory_authority(
         first = json.dumps(payload)
     adapter = PMAdapter(workspace=str(workspace))
     contract_diagnostics: list[dict[str, Any]] = []
-    contracts = adapter._extract_task_contracts(
-        first, directive="Create model", diagnostics=contract_diagnostics
-    )
+    contracts = adapter._extract_task_contracts(first, directive="Create model", diagnostics=contract_diagnostics)
     _normalized, quality = adapter._evaluate_contract_quality(contracts, directive="Create model")
     assert quality["ok"] is False
     if first_kind == "malformed":
@@ -735,18 +719,14 @@ async def test_boundary_failure_uses_one_revision_under_real_factory_authority(
     assert "environment_prep|build|test|lint|entrypoint" in retry
     if not revision_valid:
         # A revision that keeps the invalid verifier never clears the gate.
-        _rejected_contracts, rejected_quality = adapter._evaluate_contract_quality(
-            contracts, directive="Create model"
-        )
+        _rejected_contracts, rejected_quality = adapter._evaluate_contract_quality(contracts, directive="Create model")
         assert rejected_quality["ok"] is False
         assert "verification_commands_invalid" in rejected_quality["critical_issues"]
         return
     wire = {"messages": [{"content": "Revision base/view/manifest (server-owned):\n" + base.view_json}]}
     revision = _verifier_revision_response(wire)
     merged = apply_revision(base, revision["content"])
-    _merged_contracts, merged_quality = adapter._evaluate_contract_quality(
-        merged["tasks"], directive="Create model"
-    )
+    _merged_contracts, merged_quality = adapter._evaluate_contract_quality(merged["tasks"], directive="Create model")
     assert merged_quality["ok"] is True
 
 
@@ -1017,9 +997,7 @@ async def test_pol71_malformed_complete_prefix_never_becomes_revision_candidate(
     first = _pol71_input("PM_INITIAL_RESPONSE.txt") + ',"metadata":{}'
     adapter = PMAdapter(workspace=str(workspace))
     contract_diagnostics: list[dict[str, Any]] = []
-    contracts = adapter._extract_task_contracts(
-        first, directive=directive, diagnostics=contract_diagnostics
-    )
+    contracts = adapter._extract_task_contracts(first, directive=directive, diagnostics=contract_diagnostics)
     assert contracts == []
     assert contract_diagnostics[0]["code"] == "pm_contract_json_invalid"
     quality = {
@@ -1273,9 +1251,7 @@ async def test_pol88_captured_candidate_needs_no_full_reanswer(
     workspace = tmp_path / "workspace"
     candidate = _pol88_model_candidate()
     adapter = PMAdapter(workspace=str(workspace))
-    contracts = adapter._extract_task_contracts(
-        json.dumps(candidate, ensure_ascii=False), directive=_POL88_DIRECTIVE
-    )
+    contracts = adapter._extract_task_contracts(json.dumps(candidate, ensure_ascii=False), directive=_POL88_DIRECTIVE)
     _normalized, quality = adapter._evaluate_contract_quality(contracts, directive=_POL88_DIRECTIVE)
     assert quality["ok"] is True
     assert quality["critical_issues"] == []

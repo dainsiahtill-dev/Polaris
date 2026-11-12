@@ -164,9 +164,10 @@ def _attach_synthesized_verification_commands(
             "javascript",
         }
         entrypoint_argv = profile.get("entrypoint")
-        if entrypoint_argv and (owns_entrypoint or (
-            ce_owns_topology and toolchain_generic_entrypoint and (owns_manifest or owns_build_input)
-        )):
+        if entrypoint_argv and (
+            owns_entrypoint
+            or (ce_owns_topology and toolchain_generic_entrypoint and (owns_manifest or owns_build_input))
+        ):
             commands.append({"modality": "entrypoint", "argv": list(entrypoint_argv), "cwd": "."})
         item["verification_commands"] = commands
         finalized.append(item)

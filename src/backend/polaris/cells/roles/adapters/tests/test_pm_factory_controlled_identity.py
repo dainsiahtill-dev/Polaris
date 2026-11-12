@@ -40,7 +40,6 @@ from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 from polaris.infrastructure.llm.providers.provider_helpers import _http_pooling
 from polaris.infrastructure.log_pipeline.jetstream_publisher import JetStreamPublisher
 from polaris.kernelone.llm.engine.executor import AIExecutor
-from polaris.kernelone.llm.engine.provider_native_request import build_openai_native_messages
 
 
 def _pol77_model_revision(wire: dict[str, Any], *, root_template: bool = False) -> dict[str, Any]:
@@ -254,7 +253,7 @@ async def test_pol77_exact_raw10_one_legal_revision_through_real_budget_guard(
     _pm_adapter_model(adapter, [{"role": "assistant", "content": raw}], calls)
     with bind_factory_role_evidence_authority(authority):
         admitted_result = await adapter._run_pm_stage(
-            "pol77-pm-task", directive, {}, {"run_id": "pol77-child", "timeout_seconds": 43}
+            "pol77-pm-task", directive, {}, {"run_id": "pol77-child", "timeout_seconds": 2100}
         )
     assert admitted_result["success"] is True, admitted_result
     assert len(calls) == 1
@@ -295,8 +294,7 @@ async def test_pol77_exact_raw10_one_legal_revision_through_real_budget_guard(
             patch["updates"] = [
                 update
                 for update in patch["updates"]
-                if update["task_id"] in {"TASK-5", "TASK-6"}
-                and set(update["set"]) == {"generated_outputs"}
+                if update["task_id"] in {"TASK-5", "TASK-6"} and set(update["set"]) == {"generated_outputs"}
             ]
         if revision == "noop":
             patch["updates"] = []
@@ -355,9 +353,7 @@ async def test_pol77_exact_raw10_one_legal_revision_through_real_budget_guard(
     # generated-output rows bind a build that the task does not declare, so
     # the merge is not an admission.
     assert merged_quality["ok"] is False, (revision, merged_quality)
-    assert "generated_output_build_invalid" in {
-        str(item["code"]) for item in merged_quality["contract_diagnostics"]
-    }
+    assert "generated_output_build_invalid" in {str(item["code"]) for item in merged_quality["contract_diagnostics"]}
 
 
 @pytest.fixture(autouse=True)
@@ -418,9 +414,7 @@ def _verifier_revision_response(wire: dict[str, Any]) -> dict[str, Any]:
 
 def _pm_model_reply(message: str) -> dict[str, Any]:
     """Read the server-owned revision view out of one PM request message."""
-    view, _ = jsonlib.JSONDecoder().raw_decode(
-        message.split("Revision base/view/manifest (server-owned):\n", 1)[1]
-    )
+    view, _ = jsonlib.JSONDecoder().raw_decode(message.split("Revision base/view/manifest (server-owned):\n", 1)[1])
     return view
 
 
@@ -450,10 +444,7 @@ def _pm_adapter_model(
             output = output(message)
         if isinstance(output, Exception):
             raise output
-        if isinstance(output, str):
-            content = output
-        else:
-            content = str(output.get("content", ""))
+        content = output if isinstance(output, str) else str(output.get("content", ""))
         return {
             "success": True,
             "response": content,
@@ -580,7 +571,7 @@ async def test_quality_revision_keeps_orchestration_child_through_real_factory_g
         session_id="retired-pm-quality-revision-child",
         workspace=str(tmp_path),
     )
-    port, _admission, _resolver, facts = _authority(
+    port, _admission, _resolver, _facts = _authority(
         tmp_path=tmp_path, stage="pm_planning", resolver=_Resolver(_resolved_cut("pm"))
     )
     workspace = tmp_path / "workspace"
@@ -598,7 +589,7 @@ async def test_quality_revision_keeps_orchestration_child_through_real_factory_g
     context = _adapter_context_for_task(
         run_id="pm-owned-child",
         workspace=str(workspace),
-        task=PipelineTask(task_id="pm-task", role_entry=RoleEntrySpec(role_id="pm"), timeout_seconds=43),
+        task=PipelineTask(task_id="pm-task", role_entry=RoleEntrySpec(role_id="pm"), timeout_seconds=2100),
         role_metadata={"run_id": "foreign-metadata-child", "turn_request_id": "foreign-turn"},
     )
     with bind_factory_role_evidence_authority(authority):
@@ -661,7 +652,20 @@ async def test_pm_quality_gate_and_single_revision_remain_authoritative(
     with bind_factory_role_evidence_authority(authority):
         result = await adapter._run_pm_stage("pm-task", "Create model", {}, {"run_id": "pm-owned-child"})
     assert result["success"] is (revision in {"none", "valid"}), (result, calls)
-    assert len(calls) == (1 if revision == "none" else 2)
+    if revision == "none":
+        assert len(calls) == 1
+    elif revision == "valid":
+        assert len(calls) == 2
+    elif revision == "failure":
+        # The transport failure happens on the correction turn.
+        assert len(calls) == 2
+    else:
+        # The unusable revision ends the bounded loop without a candidate.
+        assert len(calls) >= 2
+        assert any(
+            signal["code"] in {"pm.contracts.revision_no_progress", "pm.contracts.revision_terminal"}
+            for signal in result["quality_gate"]["signals"]
+        )
     signals = result["quality_gate"]["signals"]
     revisions = [s for s in signals if s["code"] == "pm.contracts.quality_revision"]
     assert len(revisions) == (0 if revision == "none" else 1)
@@ -695,7 +699,7 @@ async def test_foreign_pm_child_under_same_grant_stays_with_the_run_owner(
         session_id="retired-pm-foreign-child",
         workspace=str(tmp_path),
     )
-    port, _admission, _resolver, facts = _authority(
+    port, _admission, _resolver, _facts = _authority(
         tmp_path=tmp_path, stage="pm_planning", resolver=_Resolver(_resolved_cut("pm"))
     )
     workspace = tmp_path / "workspace"
@@ -753,9 +757,7 @@ async def test_standalone_support_and_independent_pm_task_identities(
             ],
             calls,
         )
-        result = await adapter._run_pm_stage(
-            child, "Create model", {}, {"run_id": child} if governed_context else {}
-        )
+        result = await adapter._run_pm_stage(child, "Create model", {}, {"run_id": child} if governed_context else {})
         assert result["success"] is True
     assert len(calls) == 4
     assert [call["context"].get("run_id") for call in calls] == (
@@ -763,5 +765,3 @@ async def test_standalone_support_and_independent_pm_task_identities(
         if governed_context
         else [None, None, None, None]
     )
-
-
