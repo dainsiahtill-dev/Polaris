@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections import deque
 from collections.abc import AsyncGenerator, Callable, Iterator
 from dataclasses import dataclass, field
@@ -44,9 +45,14 @@ class ScriptedProvider:
     base_url: str = ""
     requests: list[dict[str, Any]] = field(default_factory=list)
     responses: deque[tuple[int, str, bytes]] = field(default_factory=deque)
+    hang_seconds: float = 4.0
 
     def enqueue_json(self, payload: dict[str, Any], *, status: int = 200) -> None:
         self.responses.append((status, "application/json", json.dumps(payload, ensure_ascii=False).encode("utf-8")))
+
+    def enqueue_hang(self, delay_seconds: float) -> None:
+        """Serve no answer until the provider's own timeout fires."""
+        self.responses.append((0, "application/json", b""))
 
     def enqueue_stream(self, events: list[dict[str, Any] | str]) -> None:
         body = "".join(
@@ -117,6 +123,10 @@ def scripted_provider(monkeypatch: pytest.MonkeyPatch) -> Iterator[ScriptedProvi
                 status, content_type, response = script.responses.popleft()
             else:
                 status, content_type, response = 500, "application/json", b'{"error":"script exhausted"}'
+            if status == 0:
+                # No answer at all: the provider's own timeout has to fire.
+                time.sleep(script.hang_seconds)
+                return
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(response)))

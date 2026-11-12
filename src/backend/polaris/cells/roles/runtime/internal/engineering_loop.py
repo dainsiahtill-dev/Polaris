@@ -30,18 +30,22 @@ from polaris.kernelone.llm.engine.invocation_budget import invoke_with_budget
 from polaris.kernelone.llm.toolkit.parsers.core import parse_tool_calls
 from polaris.kernelone.process.process_tree import ProcessTreeDrainError
 
-_TRANSPORT_FAILURE_CATEGORIES = frozenset({"timeout", "rate_limit", "network_error", "service_unavailable"})
+# Only a provider that did not answer at all is recoverable by the same
+# role. An explicit upstream error, such as a rate limit or a server error,
+# is the provider's own answer: the platform retry already owns it, and a
+# role-level retry would multiply the attempts.
+_UNANSWERED_PROVIDER_CATEGORIES = frozenset({"timeout", "network_error"})
 
 
 def _is_transport_failure(response: AIResponse) -> bool:
-    """A transport failure is recoverable by the same role.
+    """A provider that did not answer is recoverable by the same role.
 
     A semantic failure, such as an invalid response or a broken contract,
-    is not a transport failure: the same request would fail the same way
-    again and must end the run instead of looping.
+    is not recoverable: the same request would fail the same way again and
+    must end the run instead of looping.
     """
     category = getattr(response.error_category, "value", None)
-    return isinstance(category, str) and category in _TRANSPORT_FAILURE_CATEGORIES
+    return isinstance(category, str) and category in _UNANSWERED_PROVIDER_CATEGORIES
 
 
 def _has_remaining_budget(limits: RunLimits) -> bool:
@@ -691,16 +695,17 @@ async def run_engineering_loop(
             )
             if verification_passed and command.role == "director":
                 # A passing verification is the durable fact that hands the
-                # candidate to independent QA. Without this the same Director
-                # can keep polishing a candidate that is already verified and
-                # the run never reaches its review.
-                from polaris.cells.roles.runtime.internal.engineering_roles import (
-                    _VERIFICATION_PASSED_GUIDANCE,
+                # candidate to independent QA. The Director has no decision
+                # left to make, so the turn ends here: a Director that keeps
+                # polishing an already verified candidate never reaches its
+                # review and burns the whole run budget. A later change to the
+                # outputs invalidates the passing evidence, and the platform
+                # asks for a new verification instead of accepting this one.
+                return finish(
+                    "completed",
+                    "Current project verification passed for the prepared candidate. The candidate is handed to "
+                    "independent review.",
                 )
-
-                message = {"role": "user", "content": _VERIFICATION_PASSED_GUIDANCE}
-                messages.append(message)
-                store.append_message(command.session_id, role=command.role, message=message)
             if review_reports:
                 _verdict, feedback, _call_id = interpret_review_reports(review_reports)
                 return finish("completed", feedback)
