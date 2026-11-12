@@ -603,6 +603,7 @@ __all__ = [
     "TokenBudgetManager",
     "TokenEstimator",
     "compress_chat_messages_to_budget",
+    "compress_native_tool_history",
 ]
 
 
@@ -631,6 +632,136 @@ def _trim_content_to_tokens(content: str, target_tokens: int) -> str:
     head_chars = int(usable * 0.7)
     tail_chars = usable - head_chars
     return content[:head_chars] + marker + content[-tail_chars:]
+
+
+def _native_turn_groups(body: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Group a native tool history into indivisible turns.
+
+    A native turn is an assistant message with tool calls plus the tool
+    result messages that answer it. The pair is indivisible: a request that
+    keeps half of it is a protocol the provider rejects.
+    """
+    groups: list[list[dict[str, Any]]] = []
+    for message in body:
+        if message.get("role") == "tool" and groups:
+            groups[-1].append(message)
+            continue
+        groups.append([message])
+    return groups
+
+
+def compress_native_tool_history(
+    chat_messages: list[dict[str, object]] | None,
+    allowed_prompt_tokens: int,
+    *,
+    content_type: str = "general",
+) -> list[dict[str, Any]] | None:
+    """Drop the oldest complete native turns until the history fits.
+
+    The structured budget path refuses a native tool history, because
+    trimming text could erase a tool call id, an error status or one half
+    of a pair. A native working set therefore has no bound at all and grows
+    until the provider window refuses the whole request.
+
+    This keeps the protocol intact instead: a whole turn is dropped or
+    kept, the leading goal and the final turn survive, and the dropped span
+    is replaced by one marked turn so the model knows that context was
+    elided. The durable journal keeps every observation.
+    """
+    if allowed_prompt_tokens <= 0 or not isinstance(chat_messages, list):
+        return None
+    normalized: list[dict[str, Any]] = []
+    for item in chat_messages:
+        if opaque_not_isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip().lower() or "user"
+        content = item.get("content")
+        tool_calls = item.get("tool_calls")
+        native_envelope = bool(tool_calls) or (role == "tool" and bool(item.get("tool_call_id")))
+        if content is None:
+            content = ""
+        if not content and not native_envelope:
+            continue
+        message = deepcopy(item)
+        message.update(role=role, content=deepcopy(content))
+        normalized.append(message)
+    if not normalized:
+        return None
+
+    lead_end = 0
+    while lead_end < len(normalized) and normalized[lead_end]["role"] == "system":
+        lead_end += 1
+    lead = normalized[:lead_end]
+    body = normalized[lead_end:]
+    if not body:
+        return lead or None
+
+    groups = _native_turn_groups(body)
+    if not groups:
+        return None
+    # The leading goal survives: a working set without the original request
+    # would be a conversation about nothing.
+    goal: list[dict[str, Any]] = []
+    if groups[0] and groups[0][0].get("role") == "user" and not groups[0][0].get("tool_calls"):
+        goal = groups[0]
+        groups = groups[1:]
+    if not groups:
+        return [*lead, *goal] or None
+    final = groups[-1]
+    middle = groups[:-1]
+
+    def group_tokens(group: list[dict[str, Any]]) -> int:
+        return sum(
+            _estimate_message_tokens(
+                message["content"]
+                if isinstance(message["content"], str)
+                else json.dumps(message["content"], ensure_ascii=False),
+                content_type,
+            )
+            + (
+                TokenEstimator.estimate(
+                    json.dumps(message["tool_calls"], ensure_ascii=False), content_type=content_type
+                )
+                if message.get("tool_calls")
+                else 0
+            )
+            for message in group
+        )
+
+    lead_tokens = sum(_estimate_message_tokens(str(message["content"]), content_type) for message in lead)
+    goal_tokens = sum(_estimate_message_tokens(str(message["content"]), content_type) for message in goal)
+    budget = int(allowed_prompt_tokens) - lead_tokens - goal_tokens - _COMPRESSION_MARKER_RESERVE_TOKENS
+    if budget <= 0:
+        return None
+    final_tokens = group_tokens(final)
+    if final_tokens > budget:
+        return None
+
+    fill = budget - final_tokens
+    kept_reversed: list[list[dict[str, Any]]] = []
+    for group in reversed(middle):
+        tokens = group_tokens(group)
+        if tokens > fill:
+            break
+        kept_reversed.append(group)
+        fill -= tokens
+    dropped = len(middle) - len(kept_reversed)
+
+    result: list[dict[str, Any]] = [*lead, *goal]
+    if dropped > 0:
+        result.append(
+            {
+                "role": "user",
+                "content": (
+                    f"【上下文已压缩】为适配模型窗口，省略了 {dropped} 条较早的工具轮次；"
+                    "这些轮次的完整记录仍在工程运行日志中。以下保留最近的关键轮次。"
+                ),
+            }
+        )
+    for group in reversed(kept_reversed):
+        result.extend(group)
+    result.extend(final)
+    return result
 
 
 def compress_chat_messages_to_budget(

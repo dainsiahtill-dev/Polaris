@@ -17,6 +17,7 @@ from polaris.kernelone.llm.engine.executor import AIExecutor
 from polaris.kernelone.llm.engine.prompt_budget import (
     _estimate_message_tokens,
     compress_chat_messages_to_budget,
+    compress_native_tool_history,
 )
 
 
@@ -108,3 +109,60 @@ async def test_planning_budget_at_actual_http_boundary(tmp_path, monkeypatch, ro
         else:
             assert wires[0]["max_tokens"] == want
         assert requirement in "\n".join(message["content"] for message in wires[0]["messages"])
+
+
+def _native_turn(index: int, payload: str = "x" * 400) -> list[dict[str, Any]]:
+    return [
+        {
+            "role": "assistant",
+            "content": f"turn {index}",
+            "tool_calls": [
+                {
+                    "id": f"call-{index}",
+                    "type": "function",
+                    "function": {"name": "execute_command", "arguments": json.dumps({"command": payload})},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": f"call-{index}", "content": f"result {index} {payload}"},
+    ]
+
+
+def test_compress_native_tool_history_drops_whole_old_turns() -> None:
+    """A native working set is bounded by dropping whole turns.
+
+    The structured path refuses a native tool history, because trimming text
+    could erase a tool call id or one half of a pair. Without a bound the
+    native working set grows until the provider window refuses the request.
+    """
+    messages: list[dict[str, Any]] = [{"role": "user", "content": "deliver the artifact"}]
+    for index in range(12):
+        messages.extend(_native_turn(index))
+
+    compressed = compress_native_tool_history(messages, 600)
+
+    assert compressed is not None
+    assert len(compressed) < len(messages)
+    # The leading goal and the final turn survive.
+    assert compressed[0]["role"] == "user" and compressed[0]["content"] == "deliver the artifact"
+    assert compressed[-1]["role"] == "tool" and compressed[-1]["tool_call_id"] == "call-11"
+    # Every kept tool result still answers a kept assistant tool call.
+    answered = {
+        call["id"]
+        for message in compressed
+        for call in (message.get("tool_calls") or [])
+    }
+    for message in compressed:
+        if message.get("role") == "tool":
+            assert message["tool_call_id"] in answered
+    # The elided span is marked, not silently dropped.
+    assert any("【上下文已压缩】" in str(message.get("content") or "") for message in compressed)
+
+
+def test_compress_native_tool_history_keeps_a_history_that_fits() -> None:
+    messages: list[dict[str, Any]] = [{"role": "user", "content": "deliver the artifact"}]
+    messages.extend(_native_turn(0))
+
+    compressed = compress_native_tool_history(messages, 100_000)
+
+    assert compressed == messages

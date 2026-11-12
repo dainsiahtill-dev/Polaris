@@ -171,6 +171,85 @@ async def _invoke(
         await asyncio.gather(cancellation, return_exceptions=True)
 
 
+def _model_context_window(workspace: Path, role: str) -> int:
+    """Resolve the context window of the model this role will use.
+
+    The native tool loop has no budget of its own, so the working set has to
+    know the window of the model that will receive it. The provider
+    configuration is the same source the executor resolves the model from.
+    """
+    try:
+        from polaris.kernelone.llm import config_store as llm_config
+        from polaris.kernelone.llm.runtime_config import get_role_model
+
+        provider_id, _model = get_role_model(role)
+        cache_root = llm_config.resolve_workspace_cache_root_for_workspace(str(workspace))
+        config = llm_config.load_llm_config(str(workspace), cache_root, settings=None)
+        providers = config.get("providers")
+        provider = providers.get(provider_id) if isinstance(providers, dict) else None
+        window = int((provider or {}).get("max_context_tokens") or 0)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return 0
+    return window if window > 0 else 0
+
+
+def _bounded_request_messages(
+    messages: list[dict[str, Any]],
+    *,
+    store: EngineeringSessionStore,
+    command: RoleRunCommand,
+    role: str,
+    workspace: Path,
+    visual_binding: Callable[[], dict[str, Any]] | None,
+    audit: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Build the request messages inside the model's context window.
+
+    A native tool working set has no budget: it grows with every turn until
+    the provider window refuses the whole request. The history is therefore
+    bounded before the request is built, by dropping whole older turns. The
+    durable journal keeps every observation, so nothing is lost.
+    """
+    events = store.load_events(
+        command.session_id,
+        kinds=(
+            "message",
+            "tool_observed",
+            "tool_started",
+            "visual_observation_completed",
+            "llm_request_observed",
+        ),
+        role=role,
+    )
+
+    def build(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return build_visual_messages(
+            history,
+            events=events,
+            role=role,
+            binding_provider=visual_binding,
+            audit=audit,
+        )
+
+    built = build(messages)
+    window = _model_context_window(workspace, role)
+    if window <= 0:
+        return built
+    from polaris.kernelone.llm.engine.visual_working_set import visual_payload_cost
+
+    cost = visual_payload_cost(built)
+    allowance = int(window * 0.95) - 16384 - 8192
+    if cost["admission_proxy_tokens"] <= allowance:
+        return built
+    from polaris.kernelone.llm.engine.prompt_budget import compress_native_tool_history
+
+    text_budget = max(2048, allowance - int(cost["image_serialization_proxy_tokens"]))
+    bounded = compress_native_tool_history(built, text_budget)
+    if bounded is None:
+        return built
+    return build(bounded)
+
+
 async def run_engineering_loop(
     command: RoleRunCommand,
     *,
@@ -360,24 +439,17 @@ async def run_engineering_loop(
                 return finish("failed", "Engineering run deadline exceeded.")
             turn_seq = store.append_event(command.session_id, kind="turn_started", role=command.role, payload={})
             visual_projection: dict[str, Any] = {}
+            request_messages = _bounded_request_messages(
+                messages,
+                store=store,
+                command=command,
+                role=command.role,
+                workspace=Path(command.workspace),
+                visual_binding=visual_binding if scope.browser is not None else None,
+                audit=visual_projection,
+            )
             options: dict[str, Any] = {
-                "messages": build_visual_messages(
-                    messages,
-                    events=store.load_events(
-                        command.session_id,
-                        kinds=(
-                            "message",
-                            "tool_observed",
-                            "tool_started",
-                            "visual_observation_completed",
-                            "llm_request_observed",
-                        ),
-                        role=command.role,
-                    ),
-                    role=command.role,
-                    binding_provider=visual_binding if scope.browser is not None else None,
-                    audit=visual_projection,
-                ),
+                "messages": request_messages,
                 "tools": tools.schemas(),
             }
             if options["tools"]:
