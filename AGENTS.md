@@ -96,6 +96,8 @@
 
 30. **传输失败必须可重试且预算覆盖（强制）**：provider 请求超时是**传输类**失败，必须走平台既有重试契约（`RetryConfig.retryable_errors` 含 TIMEOUT / RATE_LIMIT / NETWORK_ERROR / SERVICE_UNAVAILABLE），禁止让一次上游挂死直接杀死整轮工程 run。三个环节必须同时成立：(a) 超时路径不得绕过重试判定；(b) client 的 fallback response 必须保留最后一次真实失败的 category，禁止把传输类失败降级成不透明的 `PROVIDER_ERROR`，5xx 必须标记 `SERVICE_UNAVAILABLE`；(c) request-local 总预算必须**覆盖配置的 attempts**，否则请求打满超时后连第二次尝试的余量都没有。工程循环对**仅传输类**失败由同一角色带着可恢复事实继续自己的目标（语义类失败仍 fail-closed），run deadline 兜底。
 
+31. **原生工具工作集必须有预算，视觉投影只跑一次（强制）**：原生工具循环的消息历史没有结构化预算路径（结构化路径对 native history 直接拒绝，因为截断文本会破坏 tool_call_id / 配对），因此它会随轮次无界增长，直到整个请求被模型窗口拒绝（实测 137,833 tokens vs 128k 窗口，报 `required_visual_input_budget_exceeded`）。工程循环必须在**构建请求前**按模型窗口（与 executor 同源的 provider 配置解析 `max_context_tokens`）裁剪历史：整轮丢弃、保留首个目标与末轮、保持 tool_call↔tool_result 配对完整、丢弃区间必须打标记。裁剪必须作用于**原始历史**，视觉投影只允许在裁剪后的历史上运行一次：投影会把图片字节从 tool content 剥离到 attachment blocks，对已投影历史再投影会读到无字节的图片块（报 `ImageObservation missing data_base64`）。完整日志保留全部事实，裁剪只影响请求。
+
 #### 当前内部 Bench 入口
 
 当前 `run_factory_bench.py` 复用正式 `engineering_acceptance` 的启动、观察、取消与停止，默认 `--workflow direct`；显式 `--workflow collaborative` 才预先调用 PM／CE。执行必须显式提供冻结的 `--host-config-file`、`--llm-config-file`，以及正确的 `--registry-home`；权限来自该 host 配置，不从目录、模型或 catalog 重新推断。保留 `--timeout 5400 --overall-timeout 6000 --launcher-instance-mode isolated --bench-session-reporting off` 和外层 6000 秒守护预算。原始 120 项业务要求保持；空用户命令清单由模型选择实际验证，不能把 catalog 检查代码当作已经执行的命令。

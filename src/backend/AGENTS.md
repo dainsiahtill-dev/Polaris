@@ -187,6 +187,24 @@ The engineering loop continues the same role with a recoverable fact for a
 transport category only; a semantic failure still ends the run, and the run
 deadline bounds the recovery.
 
+### 4.19 Native Working Set Budget and Single Visual Projection
+
+A native tool loop has no budget of its own: every turn appends its
+observations, so the request grows until the provider window refuses the
+whole run. The engineering loop therefore bounds the history before it
+builds a request, using the model window from the same provider
+configuration the executor resolves.
+
+The bound drops whole older turns. The leading goal and the final turn
+survive, the tool call and tool result pairs stay intact, and the elided
+span is marked so the model knows that context was dropped. The durable
+journal keeps every observation.
+
+The compression works on the raw history. The visual projection moves the
+image bytes out of the tool content into attachment blocks, so a history
+that was projected before the compression must not be projected again: the
+second projection reads image blocks without their bytes.
+
 ### 4.16 Bench Is Internal Test/Dev/Audit Harness Only
 
 1. `Bench`、`Factory Bench`、`factory_bench`、`L1-L12 bench`、benchmark harness、压力测试脚本/API/UI 均只允许存在于内部测试/开发/审计模式，用来压测 Polaris、发现平台通用根因、生成审计样本。
