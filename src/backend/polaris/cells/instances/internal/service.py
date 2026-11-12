@@ -44,6 +44,39 @@ SCHEMA_VERSION = 1
 DEFAULT_BACKEND_PORT = 49977
 DEFAULT_FRONTEND_PORT = 5173
 DEFAULT_HOST = "127.0.0.1"
+INSTANCE_BIND_HOST_ENV = "KERNELONE_INSTANCE_BIND_HOST"
+INSTANCE_PUBLIC_HOST_ENV = "KERNELONE_INSTANCE_PUBLIC_HOST"
+
+
+def instance_bind_host() -> str:
+    """Address an instance listens on.
+
+    Loopback by default, so an instance stays unreachable from outside the
+    host. ``KERNELONE_INSTANCE_BIND_HOST`` opens it up for a deployment whose
+    launcher is consumed from another host, for example the Windows host of a
+    WSL2 workspace.
+    """
+
+    configured = str(os.environ.get(INSTANCE_BIND_HOST_ENV) or "").strip()
+    return configured or DEFAULT_HOST
+
+
+def instance_public_host(bind_host: str) -> str:
+    """Address an instance advertises to its consumers.
+
+    ``0.0.0.0`` is not a dialable address, so a wildcard bind advertises
+    loopback unless ``KERNELONE_INSTANCE_PUBLIC_HOST`` names the address a
+    consumer can actually reach.
+    """
+
+    configured = str(os.environ.get(INSTANCE_PUBLIC_HOST_ENV) or "").strip()
+    if configured:
+        return configured
+    if bind_host in {"0.0.0.0", "::", "[::]"}:
+        return DEFAULT_HOST
+    return bind_host
+
+
 INSTANCE_HOME_ENV = "KERNELONE_INSTANCE_HOME"
 INSTANCE_WATCHDOG_ENABLED_ENV = "KERNELONE_INSTANCE_WATCHDOG_ENABLED"
 INSTANCE_WATCHDOG_INTERVAL_ENV = "KERNELONE_INSTANCE_WATCHDOG_INTERVAL_SECONDS"
@@ -204,9 +237,10 @@ def is_process_alive(pid: int | None) -> bool:
     return True
 
 
-def is_port_free(port: int, host: str = DEFAULT_HOST) -> bool:
+def is_port_free(port: int, host: str | None = None) -> bool:
     if port <= 0:
         return False
+    probe_host = instance_bind_host() if host is None else host
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         # Match the backend/frontend server restart semantics: a recently
         # stopped listener can leave a harmless TIME_WAIT tuple behind. Without
@@ -216,7 +250,7 @@ def is_port_free(port: int, host: str = DEFAULT_HOST) -> bool:
         # makes bind fail, so exclusive ownership remains fail-closed.
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
-            sock.bind((host, int(port)))
+            sock.bind((probe_host, int(port)))
         except OSError:
             return False
         return True
@@ -1470,6 +1504,7 @@ class InstanceSupervisor:
         ):
             raise RuntimeError(f"frontend port is already in use: {frontend_port}")
         token = str(request.get("token") or f"polaris-{secrets.token_urlsafe(18)}")
+        public_host = instance_public_host(instance_bind_host())
         bench = request.get("bench")
         bench_payload: dict[str, Any] = dict(bench) if isinstance(bench, dict) else {}
 
@@ -1482,8 +1517,8 @@ class InstanceSupervisor:
             runtime_root=str(runtime_root),
             backend_port=backend_port,
             frontend_port=frontend_port,
-            backend_url=f"http://{DEFAULT_HOST}:{backend_port}",
-            frontend_url=f"http://{DEFAULT_HOST}:{frontend_port}",
+            backend_url=f"http://{public_host}:{backend_port}",
+            frontend_url=f"http://{public_host}:{frontend_port}",
             token=token,
             backend_reload=bool(request.get("backend_reload", True)),
             frontend_vite=bool(request.get("frontend_vite", True)),
@@ -1521,6 +1556,8 @@ class InstanceSupervisor:
             "-m",
             "polaris.delivery.cli.backend",
             "serve",
+            "--host",
+            instance_bind_host(),
             "--workspace",
             record.workspace,
             "--port",
@@ -1548,12 +1585,13 @@ class InstanceSupervisor:
         env.pop("KERNELONE_RUNTIME_CACHE_ROOT", None)
         env["KERNELONE_INSTANCE_ID"] = record.instance_id
         env["KERNELONE_INSTANCE_KIND"] = record.kind
+        public_host = instance_public_host(instance_bind_host())
         if record.instance_id != "main":
             env.setdefault(INSTANCE_WATCHDOG_ENABLED_ENV, "0")
         env["KERNELONE_CORS_ORIGINS"] = ",".join(
             [
                 record.frontend_url,
-                f"http://{DEFAULT_HOST}:{DEFAULT_FRONTEND_PORT}",
+                f"http://{public_host}:{DEFAULT_FRONTEND_PORT}",
                 "http://localhost:5173",
             ]
         )
@@ -1576,15 +1614,25 @@ class InstanceSupervisor:
             "dev:renderer",
             "--",
             "--host",
-            DEFAULT_HOST,
+            instance_bind_host(),
             "--port",
             str(record.frontend_port),
             "--strictPort",
         ]
         env = os.environ.copy()
-        env["VITE_BACKEND_URL"] = record.backend_url
+        # The dev proxy must reach THIS instance's backend, never the main one.
+        env["KERNELONE_BACKEND_PORT"] = str(record.backend_port)
+        env["VITE_BACKEND_PORT"] = str(record.backend_port)
+        public_host = instance_public_host(instance_bind_host())
+        if public_host in {"127.0.0.1", "localhost"}:
+            # A loopback instance may address its backend directly: the shipped
+            # connect-src policy permits loopback origins.
+            env["VITE_BACKEND_URL"] = record.backend_url
+            env["VITE_POLARIS_BACKEND_URL"] = record.backend_url
+        # A published instance keeps the same-origin dev proxy instead: the
+        # connect-src policy permits only loopback origins and the page origin,
+        # so an absolute cross-origin backend would be refused by the browser.
         env["VITE_BACKEND_TOKEN"] = record.token
-        env["VITE_POLARIS_BACKEND_URL"] = record.backend_url
         env["VITE_POLARIS_BACKEND_TOKEN"] = record.token
         env["VITE_POLARIS_INSTANCE_ID"] = record.instance_id
         env["VITE_POLARIS_WORKSPACE"] = record.workspace
