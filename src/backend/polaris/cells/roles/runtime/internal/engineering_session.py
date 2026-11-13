@@ -72,6 +72,12 @@ class EngineeringSessionStore:
         self.control_root.chmod(0o700)
         self._database_identity = self._prepare_control_file(self.database_path)
         self._lock_identity = self._prepare_control_file(self.lock_path)
+        # Freshness re-checks (observe/snapshot/resume) reuse the last full
+        # content-hash input capture while an lstat-only tree signature proves
+        # the inputs are unchanged. Any ordinary edit advances ctime_ns, which
+        # the kernel sets and the user cannot rewind, so a matching signature
+        # means the captured bytes are still the current bytes.
+        self.verification_input_cache: dict[tuple[object, ...], tuple[bytes, dict[str, object]]] = {}
         with self._transaction() as connection:
             connection.execute("PRAGMA encoding='UTF-8'")
             connection.execute("""CREATE TABLE IF NOT EXISTS runs (

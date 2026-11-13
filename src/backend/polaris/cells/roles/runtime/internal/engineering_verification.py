@@ -190,12 +190,15 @@ class EngineeringVerification:
 
     @contextmanager
     def _observe_current_inputs(self) -> Iterator[None]:
-        """Share one actual KFS capture within a synchronous host read only.
+        """Share one current KFS capture within a synchronous host read only.
 
-        Execution before/after captures still call _manifest directly. Reset
-        even on errors; ordinary calls and the next public query stay fresh.
+        The capture reuses the last full content-hash observation while an
+        lstat-only signature proves the tree is unchanged; any change forces a
+        fresh full capture. Execution before/after captures still call
+        _manifest directly. Reset even on errors; ordinary calls and the next
+        public query stay fresh.
         """
-        token = self._observed_inputs.set(self._manifest(include_outputs=True))
+        token = self._observed_inputs.set(self._fresh_capture(include_outputs=True))
         try:
             yield
         finally:
@@ -203,7 +206,89 @@ class EngineeringVerification:
 
     def _current_manifest(self) -> dict[str, object]:
         observed = self._observed_inputs.get()
-        return observed if observed is not None else self._manifest(include_outputs=True)
+        return observed if observed is not None else self._fresh_capture(include_outputs=True)
+
+    def _input_cache_key(self, include_outputs: bool) -> tuple[object, ...]:
+        """Everything that can change which inputs a capture observes."""
+        return (
+            tuple(sorted(str(Path(root).expanduser().absolute()) for root in self.scope.read_roots)),
+            tuple(str(root) for root in self.output_roots),
+            self.tools.scope.command_cache,
+            include_outputs,
+        )
+
+    def _fresh_capture(self, include_outputs: bool) -> dict[str, object]:
+        """Current inputs, reusing the last full capture while metadata proves it.
+
+        A signature miss (or an unavailable signature walk) falls through to
+        the full KFS content-hash capture and refreshes the store-level cache.
+        Concurrent duplicate walks are harmless: the (signature, manifest)
+        pair is assigned atomically, and a racing reader re-walks at most once.
+        """
+        key = self._input_cache_key(include_outputs)
+        cached = self.store.verification_input_cache.get(key)
+        if cached is not None:
+            try:
+                if cached[0] == self._metadata_signature(include_outputs):
+                    return cached[1]
+            except (OSError, ValueError, RuntimeError, PathSecurityError, GuardedMetadataError):
+                pass
+        manifest = self._manifest(include_outputs=include_outputs)
+        try:
+            self.store.verification_input_cache[key] = (self._metadata_signature(include_outputs), manifest)
+        except (OSError, ValueError, RuntimeError, PathSecurityError, GuardedMetadataError):
+            pass
+        return manifest
+
+    def _metadata_signature(self, include_outputs: bool) -> bytes:
+        """Lstat-only tree signature; proves a cached capture is still current.
+
+        Reads no file content. Any ordinary edit (create, delete, rename,
+        content write, metadata change) advances at least one stat field --
+        in particular ctime_ns, which the kernel sets and userspace cannot
+        rewind -- so a matching signature means the last full capture still
+        describes the tree. This is a freshness shortcut on the documented
+        "not an immutable filesystem snapshot" boundary, never a substitute
+        for the authoritative content-hash capture on a signature miss.
+        """
+        self._validate_outputs(self._declared_output_roots)
+        roots = {self.workspace, *(Path(root).expanduser().absolute() for root in self.scope.read_roots)}
+        if any(root != root.resolve(strict=True) for root in roots):
+            raise ValueError("verification input root changed or traverses a symlink")
+        if any(root != self.workspace and self.workspace.is_relative_to(root) for root in roots):
+            raise ValueError("verification input root is broader than workspace")
+        outer = sorted(
+            root for root in roots if not any(root != parent and root.is_relative_to(parent) for parent in roots)
+        )
+        digest = hashlib.sha256()
+
+        def ignored(path: Path) -> bool:
+            return path.is_relative_to(self.workspace / ".polaris") or (
+                not include_outputs and any(path.is_relative_to(root) for root in self.output_roots)
+            )
+
+        def feed(path: Path, *, cache_input: bool = False) -> None:
+            if not cache_input and ignored(path):
+                return
+            metadata = path.lstat()
+            digest.update(f"{path} {self._metadata(metadata)}".encode("utf-8"))
+            if stat.S_ISLNK(metadata.st_mode):
+                digest.update(os.readlink(path).encode("utf-8"))
+            elif stat.S_ISDIR(metadata.st_mode):
+                children = sorted(child for child in path.iterdir() if cache_input or not ignored(child))
+                for child in children:
+                    feed(child, cache_input=cache_input)
+            elif not stat.S_ISREG(metadata.st_mode):
+                raise CandidateObservationUnavailableError(f"verification cannot bind special input: {path}")
+
+        for root in outer:
+            feed(root)
+        cache = resolve_command_cache(self.workspace, self.tools.scope.command_cache)
+        if cache is not None:
+            cache.validate()
+            feed(cache.root, cache_input=True)
+            cache.validate()
+        return digest.digest()
 
     def review_binding(self, session_id: str) -> dict[str, object]:
         """Host observations bind a review to exact current inputs, never model IDs."""
