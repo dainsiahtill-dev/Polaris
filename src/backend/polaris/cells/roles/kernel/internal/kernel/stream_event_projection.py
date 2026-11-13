@@ -62,6 +62,21 @@ class StreamEventProjectionResult:
     should_stop: bool = False
 
 
+def project_visible_content_chunk(event: ContentChunkEvent) -> dict[str, Any]:
+    """Build the public visible-chunk shape for one typed content chunk.
+
+    This function is the single owner of the visible chunk shape.  Emitters
+    must use it (or the guarded stream handler) instead of building ad-hoc
+    ``content_chunk`` dicts: the visible chunk path is owned by the guarded
+    handler, and a second ad-hoc shape would bypass that ownership.
+    """
+    return {
+        "type": "content_chunk",
+        "content": event.chunk,
+        "turn_id": event.turn_id,
+    }
+
+
 @dataclass
 class StreamEventProjector:
     """Translate typed stream events into public role-stream dictionaries."""
@@ -130,11 +145,7 @@ class StreamEventProjector:
                 self.accumulated_content = [event.chunk]
             else:
                 self.accumulated_content.append(event.chunk)
-            event_dict = {
-                "type": "content_chunk",
-                "content": event.chunk,
-                "turn_id": event.turn_id,
-            }
+            event_dict = project_visible_content_chunk(event)
         return await self._publish_result(event_dict)
 
     async def _project_tool_batch(self, event: ToolBatchEvent) -> StreamEventProjectionResult:
@@ -179,16 +190,22 @@ class StreamEventProjector:
         # execution. A turn without a durable commit falls back to the turn's
         # sealed invocation inventory, so a receipt row never guesses them.
         sealed_invocations = list(event.sealed_invocations) if event.sealed_invocations else None
-        tool_calls = tool_calls_from_batch_receipt(
-            batch_receipt,
-            turn_outcome=outcome,
-            sealed_invocations=sealed_invocations,
-        ) or self.stream_tool_calls
-        tool_results = tool_results_from_batch_receipt(
-            batch_receipt,
-            turn_outcome=outcome,
-            sealed_invocations=sealed_invocations,
-        ) or self.stream_tool_results
+        tool_calls = (
+            tool_calls_from_batch_receipt(
+                batch_receipt,
+                turn_outcome=outcome,
+                sealed_invocations=sealed_invocations,
+            )
+            or self.stream_tool_calls
+        )
+        tool_results = (
+            tool_results_from_batch_receipt(
+                batch_receipt,
+                turn_outcome=outcome,
+                sealed_invocations=sealed_invocations,
+            )
+            or self.stream_tool_results
+        )
 
         metadata = role_result_metadata_from_profile(
             profile=self.profile,

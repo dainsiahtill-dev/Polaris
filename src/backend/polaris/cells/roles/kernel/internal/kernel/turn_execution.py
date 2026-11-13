@@ -34,6 +34,9 @@ from polaris.cells.roles.kernel.internal.kernel.delivery_mode import (
     _latest_user_content_preview,
     _text_requests_materialize_delivery,
 )
+from polaris.cells.roles.kernel.internal.kernel.stream_event_projection import (
+    project_visible_content_chunk,
+)
 from polaris.cells.roles.kernel.internal.kernel.tool_policy import (
     _apply_forced_transaction_tool_definitions,
 )
@@ -448,11 +451,7 @@ async def execute_transaction_kernel_stream(
                     accumulated_content = [event.chunk]
                 else:
                     accumulated_content.append(event.chunk)
-                event_dict = {
-                    "type": "content_chunk",
-                    "content": event.chunk,
-                    "turn_id": event.turn_id,
-                }
+                event_dict = project_visible_content_chunk(event)
         elif isinstance(event, ToolBatchEvent):
             arguments = dict(event.arguments) if isinstance(event.arguments, dict) else {}
             if event.status == "started":
