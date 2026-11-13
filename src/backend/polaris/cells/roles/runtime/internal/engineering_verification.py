@@ -10,6 +10,7 @@ filesystem snapshot or a proof about arbitrary external/network effects.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import os
@@ -234,10 +235,8 @@ class EngineeringVerification:
             except (OSError, ValueError, RuntimeError, PathSecurityError, GuardedMetadataError):
                 pass
         manifest = self._manifest(include_outputs=include_outputs)
-        try:
+        with contextlib.suppress(OSError, ValueError, RuntimeError, PathSecurityError, GuardedMetadataError):
             self.store.verification_input_cache[key] = (self._metadata_signature(include_outputs), manifest)
-        except (OSError, ValueError, RuntimeError, PathSecurityError, GuardedMetadataError):
-            pass
         return manifest
 
     def _metadata_signature(self, include_outputs: bool) -> bytes:
@@ -252,7 +251,13 @@ class EngineeringVerification:
         for the authoritative content-hash capture on a signature miss.
         """
         self._validate_outputs(self._declared_output_roots)
-        roots = {self.workspace, *(Path(root).expanduser().absolute() for root in self.scope.read_roots)}
+        host_runtime = self._host_runtime_roots()
+        roots = {
+            root
+            for root in {self.workspace, *(Path(root).expanduser().absolute() for root in self.scope.read_roots)}
+            if not any(root == runtime or root.is_relative_to(runtime) for runtime in host_runtime)
+        }
+        roots.add(self.workspace)
         if any(root != root.resolve(strict=True) for root in roots):
             raise ValueError("verification input root changed or traverses a symlink")
         if any(root != self.workspace and self.workspace.is_relative_to(root) for root in roots):
@@ -271,7 +276,7 @@ class EngineeringVerification:
             if not cache_input and ignored(path):
                 return
             metadata = path.lstat()
-            digest.update(f"{path} {self._metadata(metadata)}".encode("utf-8"))
+            digest.update(f"{path} {self._metadata(metadata)}".encode())
             if stat.S_ISLNK(metadata.st_mode):
                 digest.update(os.readlink(path).encode("utf-8"))
             elif stat.S_ISDIR(metadata.st_mode):
@@ -331,10 +336,36 @@ class EngineeringVerification:
             information.st_ctime_ns,
         ]
 
+    def _host_runtime_roots(self) -> set[Path]:
+        """Host runtime mounts that are not project inputs.
+
+        The granted toolchain directories and the browser runtime are the
+        platform's own authority, not the delivered project's inputs.  They
+        can hold tens of thousands of files, so binding them into the
+        verification input manifest would make every verification enormous
+        without proving anything about the candidate.
+        """
+        roots: set[Path] = set()
+        for directory in self.scope.toolchain_bin_dirs:
+            candidate = Path(directory).expanduser().absolute()
+            roots.add(candidate.parent if candidate.parent != candidate else candidate)
+        browser = self.scope.browser
+        executable = str(getattr(browser, "executable", "") or "").strip()
+        if executable:
+            binary = Path(executable).expanduser().absolute()
+            roots.add(binary.parent.parent if binary.parent.parent != binary.parent else binary.parent)
+        return roots
+
     def _manifest(self, *, include_outputs: bool) -> dict[str, object]:
         """Observe actual declared inputs through KFS; never use a model digest."""
         self._validate_outputs(self._declared_output_roots)
-        roots = {self.workspace, *(Path(root).expanduser().absolute() for root in self.scope.read_roots)}
+        host_runtime = self._host_runtime_roots()
+        roots = {
+            root
+            for root in {self.workspace, *(Path(root).expanduser().absolute() for root in self.scope.read_roots)}
+            if not any(root == runtime or root.is_relative_to(runtime) for runtime in host_runtime)
+        }
+        roots.add(self.workspace)
         if any(root != root.resolve(strict=True) for root in roots):
             raise ValueError("verification input root changed or traverses a symlink")
         if any(root != self.workspace and self.workspace.is_relative_to(root) for root in roots):
