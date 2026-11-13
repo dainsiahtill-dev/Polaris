@@ -15,7 +15,7 @@ import re
 import sqlite3
 import stat
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager, suppress
 from dataclasses import asdict
 from pathlib import Path
@@ -41,6 +41,59 @@ class EngineeringSessionConflictError(ValueError):
 
 class WorkspaceBusyError(BlockingIOError):
     """Another live writer owns the workspace OS lock."""
+
+
+_EVENT_PAYLOAD_VALUE_LIMIT_BYTES = 32 * 1024
+_EVENT_WINDOW_BUDGET_BYTES = 512 * 1024
+
+
+def _bounded_event_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Replace oversized event payload values with their size and digest.
+
+    A verification input manifest covers every granted read root and can
+    reach tens of megabytes.  The polled snapshot must stay a state
+    hydration view, so an oversized value is summarized; the authoritative
+    payload stays in the event store and in the dedicated evidence paths.
+    """
+    bounded: dict[str, Any] = {}
+    for key, value in payload.items():
+        try:
+            encoded = json.dumps(value, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            bounded[key] = value
+            continue
+        if len(encoded) <= _EVENT_PAYLOAD_VALUE_LIMIT_BYTES:
+            bounded[key] = value
+            continue
+        bounded[key] = {
+            "truncated": True,
+            "bytes": len(encoded),
+            "sha256": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+        }
+    return bounded
+
+
+def _bounded_event_window(events: Sequence[Any]) -> list[dict[str, Any]]:
+    """Project the newest events into a bounded, JSON friendly window.
+
+    The window keeps the newest events that fit the budget; the caller
+    receives the sequence watermark so a reader can continue from the
+    authoritative store.
+    """
+    window: list[dict[str, Any]] = []
+    budget = _EVENT_WINDOW_BUDGET_BYTES
+    # The caller hands over the newest events first; keep that order while
+    # filling the budget and restore the ascending sequence at the end.
+    for event in events:
+        payload = json.loads(event["payload"])
+        projected = {**dict(event), "payload": _bounded_event_payload(payload)}
+        size = len(json.dumps(projected, ensure_ascii=False, default=str))
+        if window and size > budget:
+            break
+        budget -= size
+        window.append(projected)
+    window.reverse()
+    return window
 
 
 class EngineeringSessionStore:
@@ -338,7 +391,16 @@ class EngineeringSessionStore:
         return row
 
     def load_snapshot(self, session_id: str, *, workspace: Path, event_limit: int = 200) -> dict[str, Any]:
-        """Read row, history window and its watermark from one SQLite snapshot."""
+        """Read row, history window and its watermark from one SQLite snapshot.
+
+        The snapshot is a polled read model: observers fetch it once per
+        second while a run is live.  A verification input manifest covers
+        every granted read root (the tool caches included) and can reach tens
+        of megabytes, so the window is bounded here.  The authoritative
+        payloads stay in the event store and in the dedicated evidence
+        paths; the watermark still tells the reader where the history
+        continues.
+        """
         self._assert_workspace(workspace)
         if not 1 <= event_limit <= 1000:
             raise ValueError("event_limit must be between 1 and 1000")
@@ -371,8 +433,8 @@ class EngineeringSessionStore:
         )
         return {
             "run": row,
-            "events": [{**dict(event), "payload": json.loads(event["payload"])} for event in reversed(events)],
-            "role_events": [{**dict(event), "payload": json.loads(event["payload"])} for event in roles],
+            "events": _bounded_event_window(events),
+            "role_events": _bounded_event_window(roles),
             "last_seq": last_seq,
         }
 
