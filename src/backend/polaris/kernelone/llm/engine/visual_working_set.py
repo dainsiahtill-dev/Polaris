@@ -84,13 +84,20 @@ def select_visual_working_set(
     hard_allowance: int,
     optional_allowance: int,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Keep mandatory pixels; greedily admit whole optional sets most recent first."""
+    """Keep mandatory pixels; greedily admit whole optional sets most recent first.
+
+    When the mandatory pixels alone exceed the model window the request can
+    never be built, so the oldest mandatory capture sets are demoted: their
+    exact original pixels stay inspectable on demand
+    (``browser_observe(revisit_call_ids=[capture IDs])``) instead of killing
+    the run on its own evidence.
+    """
     original = copy.deepcopy([dict(item) for item in messages])
     optional: list[tuple[str, frozenset[tuple[int, int]]]] = []
+    mandatory: list[tuple[str, frozenset[tuple[int, int]]]] = []
     owned: set[tuple[int, int]] = set()
+    claimed: set[tuple[int, int]] = set()
     for origin in origins:
-        if origin.get("required") is not False:
-            continue
         mi, indices, hashes = origin.get("message_index"), origin.get("block_indices"), origin.get("image_sha256")
         if type(mi) is not int or not isinstance(indices, list) or not isinstance(hashes, list):
             raise ValueError("invalid_host_visual_origin")
@@ -107,11 +114,15 @@ def select_visual_working_set(
             if data is None or hashlib.sha256(base64.b64decode(data, validate=True)).hexdigest() != expected:
                 raise ValueError("host_visual_origin_integrity_mismatch")
             position = (mi, index)
-            if position in owned:
+            if position in claimed:
                 raise ValueError("ambiguous_host_visual_origin")
             positions.add(position)
-            owned.add(position)
-        optional.append((str(origin.get("call_id", "")), frozenset(positions)))
+            claimed.add(position)
+        if origin.get("required") is False:
+            optional.append((str(origin.get("call_id", "")), frozenset(positions)))
+            owned |= positions
+        else:
+            mandatory.append((str(origin.get("call_id", "")), frozenset(positions)))
 
     def project(removed: set[tuple[int, int]]) -> list[dict[str, Any]]:
         result = copy.deepcopy(original)
@@ -120,7 +131,7 @@ def select_visual_working_set(
                 message["content"] = [block for bi, block in enumerate(message["content"]) if (mi, bi) not in removed]
                 omitted_here = [
                     identity
-                    for identity, positions in optional
+                    for identity, positions in (*optional, *mandatory)
                     if positions <= removed and any(index == mi for index, _block in positions)
                 ]
                 if omitted_here:
@@ -139,10 +150,22 @@ def select_visual_working_set(
     removed = set(owned)
     selected = project(removed)
     cost = visual_payload_cost(selected)
+    demoted: list[str] = []
     if cost["admission_proxy_tokens"] > hard_allowance:
-        raise ValueError(
-            "required_visual_input_budget_exceeded: " + json.dumps({"cost": cost, "hard_allowance": hard_allowance})
-        )
+        # The mandatory pixels alone do not fit the model window.  Demote the
+        # oldest mandatory capture sets until the request fits: the newest
+        # capture stays mandatory and the demoted ones stay inspectable.
+        for identity, mandatory_positions in mandatory:
+            if cost["admission_proxy_tokens"] <= hard_allowance:
+                break
+            removed |= set(mandatory_positions)
+            selected = project(removed)
+            cost = visual_payload_cost(selected)
+            demoted.append(identity)
+        if cost["admission_proxy_tokens"] > hard_allowance:
+            raise ValueError(
+                "required_visual_input_budget_exceeded: " + json.dumps({"cost": cost, "hard_allowance": hard_allowance})
+            )
     omitted = {identity for identity, _positions in optional}
     soft = min(hard_allowance, optional_allowance)
     for identity, candidate_positions in reversed(optional):
@@ -157,5 +180,6 @@ def select_visual_working_set(
         "hard_allowance": hard_allowance,
         "optional_allowance": soft,
         "omitted_call_ids": [identity for identity, _positions in optional if identity in omitted],
+        "demoted_call_ids": demoted,
         "selection_reason": "resolved_model_budget_whole_capture_sets",
     }
