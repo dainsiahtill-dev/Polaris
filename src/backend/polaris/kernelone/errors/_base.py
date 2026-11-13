@@ -125,6 +125,64 @@ def _category_from_llm_exception(error: Exception) -> ErrorCategory | None:
     return None
 
 
+_TRANSPORT_CONNECTION_ERROR_TYPES = frozenset(
+    {
+        # aiohttp
+        "ClientConnectionError",
+        "ClientConnectorError",
+        "ClientOSError",
+        "ClientProxyConnectionError",
+        "ServerConnectionError",
+        "ServerDisconnectedError",
+        # requests / urllib3
+        "ConnectTimeout",
+        "ConnectionError",
+        "NewConnectionError",
+        "ProtocolError",
+        "ProxyError",
+    }
+)
+
+_TRANSPORT_CONNECTION_MESSAGE_MARKERS = (
+    "cannot connect",
+    "connection refused",
+    "connection reset",
+    "connection aborted",
+    "failed to establish a new connection",
+    "name or service not known",
+    "temporary failure in name resolution",
+    "network is unreachable",
+    "no route to host",
+)
+
+
+def _error_text(error: BaseException) -> str:
+    """The lowercased text of *error*, or an empty string.
+
+    Some transport errors raise while building their own message (aiohttp's
+    connection errors read the connection key).  Classification must never
+    fail because the error cannot describe itself.
+    """
+    try:
+        return str(error).lower()
+    except Exception:  # noqa: BLE001 - classification must not raise on a broken __str__
+        return ""
+
+
+def _is_transport_connection_error(error: BaseException) -> bool:
+    """Whether *error* is a transport-level connection failure.
+
+    The HTTP clients raise their own connection errors, and aiohttp's message
+    ("Cannot connect to host ...") does not contain the word "connection", so
+    the keyword classification alone misses them.
+    """
+    for error_type in type(error).__mro__:
+        if error_type.__name__ in _TRANSPORT_CONNECTION_ERROR_TYPES:
+            return True
+    message = _error_text(error)
+    return any(marker in message for marker in _TRANSPORT_CONNECTION_MESSAGE_MARKERS)
+
+
 def classify_error(error: Exception) -> ErrorCategory:
     """Canonical error classifier for the KernelOne LLM subsystem.
 
@@ -150,7 +208,18 @@ def classify_error(error: Exception) -> ErrorCategory:
     if isinstance(error, ConnectionError):
         return ErrorCategory.NETWORK_ERROR
 
-    error_str = str(error).lower()
+    error_str = _error_text(error)
+
+    # Transport clients raise their own connection errors: aiohttp's
+    # ClientConnectorError and requests' ConnectionError are not builtin
+    # ConnectionError subclasses, and aiohttp's message says "Cannot connect
+    # to host", which the keyword check below does not match.  A provider
+    # that cannot be reached is a transport failure: it must stay retryable
+    # and recoverable by the same role instead of ending the run.
+    if _is_transport_connection_error(error):
+        if "timeout" in error_str or "timed out" in error_str:
+            return ErrorCategory.TIMEOUT
+        return ErrorCategory.NETWORK_ERROR
 
     if "timeout" in error_str or "timed out" in error_str:
         return ErrorCategory.TIMEOUT

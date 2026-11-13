@@ -235,6 +235,34 @@ class TestClassifyError:
         err = ConnectionError("refused")
         assert classify_error(err) == ErrorCategory.NETWORK_ERROR
 
+    def test_transport_client_connection_error(self) -> None:
+        """A provider that cannot be reached is a transport failure.
+
+        The HTTP clients raise their own connection errors: aiohttp's
+        ClientConnectorError is not a builtin ConnectionError, and its message
+        says "Cannot connect to host", so the keyword classification alone
+        misses it.  A provider that cannot be reached must stay retryable and
+        recoverable by the same role instead of ending the engineering run.
+        """
+        err = Exception("Cannot connect to host apihub.agnes-ai.com:443 ssl:<ssl.SSLContext object>")
+        assert classify_error(err) == ErrorCategory.NETWORK_ERROR
+
+    def test_transport_client_connection_error_type(self) -> None:
+        """The transport client's own connection error type is a network error."""
+        import aiohttp
+
+        err = aiohttp.ClientConnectorError(
+            connection_key=type("Key", (), {"ssl": True, "host": "h", "port": 443, "is_ssl": True})(),
+            os_error=OSError("boom"),
+        )
+        assert classify_error(err) == ErrorCategory.NETWORK_ERROR
+
+    def test_classification_survives_a_broken_error_message(self) -> None:
+        """Classification must not raise when the error cannot describe itself."""
+        err = Exception("Cannot connect to host")
+        err.__str__ = lambda: (_ for _ in ()).throw(RuntimeError("broken"))  # type: ignore[method-assign]
+        assert classify_error(err) == ErrorCategory.NETWORK_ERROR
+
     def test_keyword_timeout(self) -> None:
         err = Exception("Socket timeout occurred")
         assert classify_error(err) == ErrorCategory.TIMEOUT
