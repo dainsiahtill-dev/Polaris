@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 import pytest
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.delivery.cli import terminal as terminal_cli
 from polaris.delivery.cli.super_mode import SuperClaimedTask, SuperTaskItem
 from polaris.delivery.cli.terminal import (
@@ -17,6 +23,31 @@ from polaris.delivery.cli.terminal import (
 
 if TYPE_CHECKING:
     from polaris.delivery.cli.director.console_host import RoleConsoleHost
+
+
+@pytest.fixture(autouse=True)
+def _isolated_console_workspace(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Run the console scenarios in a disposable workspace.
+
+    The scenarios drive the CLI with workspace="."; running them in the
+    repository would write the generated blueprints and the task board into
+    the source tree.  The workspace also needs the FactStream storage
+    authority, because the runtime publishes the PM tasks as facts.
+    """
+    owner = Path(__file__).resolve().parents[6]
+    root = owner / ".polaris/test-workspaces/terminal-console"
+    root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="terminal-console-", dir=root) as directory:
+        workspace = Path(directory)
+        monkeypatch.chdir(workspace)
+        bootstrap_fact_stream_workspace(
+            BootstrapFactStreamWorkspaceCommandV1(
+                workspace=str(workspace),
+                streams=fact_stream_bootstrap_streams(),
+                maintenance_reason="terminal_console_test",
+            )
+        )
+        yield workspace
 
 
 class _FakeRoleConsoleHost:
