@@ -72,7 +72,10 @@ def test_cli_semantic_qa_option_reaches_http_and_actual_qa_selector(
     assert platform["project_outcome"] == "not_accepted" and code != 0
     assert summary["catalog_quality"] == "UNKNOWN"
     assert [p for m, p, _ in http.calls if m == "POST"] == ["/v2/engineering/runs"]
-    assert not inputs.workspace.exists()
+    # The harness writes no target file: the target holds only the synthetic
+    # backend's own engineering evidence.
+    target_files = [path for path in inputs.workspace.rglob("*") if path.is_file()]
+    assert all(".polaris" in path.parts for path in target_files), target_files
 
 
 def test_semantic_qa_option_rejects_director_resume_before_workspace_creation(

@@ -58,11 +58,57 @@ def _consumer_inputs(base: Path, *, workflow: str = "direct") -> Any:
     )
 
 
+def _seed_terminal_run(
+    workspace: Path, *, instruction: str, workflow: str, request_key: str, required_checks: list[str]
+) -> None:
+    """Seed the workspace's own engineering evidence for the release fence.
+
+    The cleanup may only stop an instance whose resource state proves the run
+    is terminal and its effects are drained.  That evidence lives in the
+    workspace's engineering store, so the synthetic case has to carry it: a
+    missing store is an unknown resource state and the release stays
+    fail-closed.
+    """
+    from polaris.cells.roles.runtime.internal.engineering_session import EngineeringSessionStore
+    from polaris.cells.roles.runtime.public.contracts.engineering_run import (
+        PermissionScope,
+        RoleRunCommand,
+        RunLimits,
+    )
+
+    workspace.mkdir(parents=True, exist_ok=True)
+    store = EngineeringSessionStore(workspace)
+    command = RoleRunCommand(
+        "consumer-l1-01",
+        "director",
+        instruction,
+        workspace,
+        workflow=workflow,
+        required_checks=tuple(required_checks),
+    )
+    store.create_run(
+        command,
+        scope=PermissionScope((), (), frozenset(), False),
+        limits=RunLimits(None, 1_000_000, 64_000),
+        engine_version="engineering_v2",
+        request_key=request_key,
+        permission_profile_id="frozen",
+    )
+    store.update_run(command.session_id, status="completed", text="synthetic run", verification="passed", checks=())
+    store.append_event(
+        command.session_id,
+        kind="run_ended",
+        role="director",
+        payload={"status": "completed", "release_allowed": True, "drain_reporting_error": None},
+    )
+
+
 class _ConsumerSupervisor:
     def __init__(self, *, artifacts: bool = False, fail_start: bool = False) -> None:
         self.artifacts, self.fail_start = artifacts, fail_start
         self.starts: list[dict[str, Any]] = []
         self.stops: list[str] = []
+        self.settlements: list[dict[str, Any] | None] = []
         self.record: dict[str, Any] = {}
 
     def start_instance(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -93,8 +139,11 @@ class _ConsumerSupervisor:
         assert instance_id == self.record["instance_id"]
         return dict(self.record)
 
-    def stop_instance(self, instance_id: str) -> dict[str, Any]:
+    def stop_instance(
+        self, instance_id: str, *, engineering_settlement: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         self.stops.append(instance_id)
+        self.settlements.append(engineering_settlement)
         self.record.update(status="stopped", backend_alive=False, frontend_alive=False)
         return dict(self.record)
 
@@ -151,6 +200,15 @@ class _ConsumerHTTP:
             self.snapshot["workflow"] = payload["workflow"]
             self.snapshot["role"] = payload["role"]
             self.snapshot["required_checks"] = payload["required_checks"]
+            # The synthetic backend creates the run in the workspace's own
+            # engineering store; the release fence reads that evidence.
+            _seed_terminal_run(
+                Path(self.snapshot["workspace"]),
+                instruction=str(payload.get("instruction") or "synthetic engineering instruction"),
+                workflow=str(payload["workflow"]),
+                request_key=str(payload["request_key"]),
+                required_checks=list(payload.get("required_checks") or []),
+            )
         if path.endswith("/cancel"):
             self.snapshot.update(status="cancelled")
         if method == "GET":
@@ -477,7 +535,13 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         self.assertEqual(report["launch"]["harness_status"], "UNKNOWN")
         self.assertNotEqual(report["exit_code"], 0)
         self.assertEqual(http.calls, [])
-        self.assertFalse(inputs.workspace.exists())
+        # The harness writes no target file: the target holds only the
+        # synthetic backend's own engineering evidence.
+        target_files = [path for path in inputs.workspace.rglob("*") if path.is_file()]
+        self.assertTrue(
+            all(".polaris" in path.parts for path in target_files),
+            [str(path) for path in target_files],
+        )
         self.assertEqual(
             json.loads((inputs.evidence_dir / "binding.json").read_text(encoding="utf-8"))["phase"], "instance_unknown"
         )
@@ -508,7 +572,13 @@ class TestFactoryRunsIntegration(unittest.TestCase):
             [p for m, p, _ in http.calls if m == "POST"],
             ["/v2/engineering/runs", "/v2/engineering/runs/consumer-l1-01/cancel"],
         )
-        self.assertFalse(inputs.workspace.exists())
+        # The harness writes no target file: the target holds only the
+        # synthetic backend's own engineering evidence.
+        target_files = [path for path in inputs.workspace.rglob("*") if path.is_file()]
+        self.assertTrue(
+            all(".polaris" in path.parts for path in target_files),
+            [str(path) for path in target_files],
+        )
 
 
 if __name__ == "__main__":
