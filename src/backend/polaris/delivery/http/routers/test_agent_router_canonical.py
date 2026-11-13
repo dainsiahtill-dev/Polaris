@@ -8,9 +8,9 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, patch
 
-from fastapi import FastAPI
+import pytest
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from polaris.cells.roles.session.internal.conversation import Base
 from polaris.cells.roles.session.internal.role_session_service import RoleSessionService
@@ -37,6 +37,21 @@ def _make_sqlite_db_path() -> Path:
     fd, raw = tempfile.mkstemp(prefix="agent-router-", suffix=".db", dir=str(root))
     os.close(fd)
     return Path(raw)
+
+
+def _make_workspace_sqlite_db_path(workspace: Path) -> Path:
+    """The canonical conversations database path for one workspace.
+
+    The agent memory endpoints read historical role sessions through the
+    read-only, workspace-scoped resolver, so the seeded database must live
+    exactly where that resolver looks for it.
+    """
+    from polaris.cells.roles.session.internal.conversation import _DEFAULT_CONVERSATIONS_DB_LOGICAL_PATH
+    from polaris.kernelone.storage import resolve_storage_roots_read_only
+
+    roots = resolve_storage_roots_read_only(str(Path(workspace).resolve()))
+    logical = _DEFAULT_CONVERSATIONS_DB_LOGICAL_PATH.partition("/")[2]
+    return Path(roots.runtime_root) / logical
 
 
 def _install_temp_session_db(db_path: Path) -> tuple[Any, Any, Any]:
@@ -125,16 +140,20 @@ def _seed_agent_context_os_session(session_factory: Any, workspace: Path) -> str
 
 
 class TestAgentRouterCanonicalSessions:
-    def test_get_or_create_session_uses_roles_session(self) -> None:
+    def test_get_or_create_session_is_retired(self) -> None:
+        """The legacy session entry is closed and creates no session."""
         db_path = _make_sqlite_db_path()
         engine, _session_factory, conv_mod = _install_temp_session_db(db_path)
         try:
-            created = agent_router._get_or_create_session("/ws", "pm", None)
-            loaded = agent_router._load_agent_session(created["session_id"])
-            assert loaded is not None
-            assert loaded["session_id"] == created["session_id"]
-            assert loaded["role"] == "pm"
-            assert loaded["context"].get("agent_router_v1") is True
+            with pytest.raises(HTTPException) as failure:
+                agent_router._get_or_create_session("/ws", "pm", None)
+            assert failure.value.status_code == 410
+            detail = failure.value.detail
+            assert detail["error_code"] == "legacy_engine_retired"
+            # The supported surfaces are the engineering run service and the
+            # role chat discussion path.
+            assert "/v2/engineering/runs" in detail["supported_endpoints"]
+            assert "/v2/role/{role}/chat" in detail["supported_endpoints"]
         finally:
             conv_mod._engine = None
             conv_mod._SessionLocal = None
@@ -142,59 +161,40 @@ class TestAgentRouterCanonicalSessions:
             with contextlib.suppress(PermissionError):
                 db_path.unlink(missing_ok=True)
 
-    def test_execute_agent_message_persists_messages_via_canonical_session(self) -> None:
+    def test_send_agent_message_is_retired_and_persists_nothing(self) -> None:
+        """The retired agent message surface must not execute or persist."""
         db_path = _make_sqlite_db_path()
         engine, session_factory, conv_mod = _install_temp_session_db(db_path)
         try:
-            created = agent_router._get_or_create_session("/ws", "pm", None)
-            projection = SimpleNamespace(
-                changed=False,
-                recent_messages=[],
-                persisted_context_config={},
-                prompt_context={},
-            )
-
-            async def run() -> None:
-                with (
-                    patch.object(
-                        agent_router._ROLE_RUNTIME,
-                        "execute_role_session",
-                        AsyncMock(
-                            return_value=SimpleNamespace(
-                                ok=True,
-                                output="done",
-                                thinking="thinking",
-                                tool_calls=("read_file",),
-                                status="ok",
-                                error_message=None,
-                            )
-                        ),
-                    ),
-                    patch.object(
-                        agent_router._AGENT_CONTINUITY_ENGINE,
-                        "project",
-                        new=lambda *_args, **_kwargs: projection,
-                    ),
-                ):
-                    result = await agent_router._execute_agent_message(
-                        session_id=created["session_id"],
-                        message="继续完善 session continuity",
-                        role="pm",
-                        workspace="/ws",
-                    )
-                    assert result["ok"] is True
-
-            asyncio.run(run())
-
             with RoleSessionService(db=session_factory()) as service:
-                messages = service.get_messages(created["session_id"], limit=10, offset=0)
-                assert [message.role for message in messages] == ["user", "assistant"]
-                assert messages[0].content == "继续完善 session continuity"
-                assert messages[1].content == "done"
-                session = service.get_session(created["session_id"])
-                assert session is not None
-                payload = session.to_dict(include_messages=False)
-                assert payload["context_config"].get("agent_router_v1") is True
+                created = service.create_session(
+                    role="pm",
+                    host_kind="api_server",
+                    workspace="/ws",
+                    context_config={"agent_router_v1": True},
+                )
+                session_id = str(created.id)
+
+            class _Request:
+                def __init__(self) -> None:
+                    self.app_state = SimpleNamespace(
+                        settings=SimpleNamespace(workspace="/ws"),
+                    )
+
+            with pytest.raises(HTTPException) as retired:
+                asyncio.run(
+                    agent_router.send_agent_message(
+                        _Request(),
+                        session_id,
+                        agent_router.SessionMessageRequest(message="继续完善 session continuity", role="pm"),
+                    )
+                )
+            assert retired.value.status_code == 410
+            assert retired.value.detail["error_code"] == "legacy_engine_retired"
+
+            # The retired surface must not have persisted a message.
+            with RoleSessionService(db=session_factory()) as service:
+                assert service.get_messages(session_id, limit=10, offset=0) == []
         finally:
             conv_mod._engine = None
             conv_mod._SessionLocal = None
@@ -204,7 +204,8 @@ class TestAgentRouterCanonicalSessions:
 
     def test_agent_memory_endpoints_restore_context_os_payloads(self) -> None:
         workspace = _make_workspace_tempdir()
-        db_path = _make_sqlite_db_path()
+        db_path = _make_workspace_sqlite_db_path(workspace)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
         engine, session_factory, conv_mod = _install_temp_session_db(db_path)
         try:
             session_id = _seed_agent_context_os_session(session_factory, workspace)
