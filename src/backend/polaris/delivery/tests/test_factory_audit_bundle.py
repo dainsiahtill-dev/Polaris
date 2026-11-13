@@ -8,9 +8,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from polaris.cells.factory.pipeline.internal.factory_event_chain import (
+    FactoryRunAdmissionV1,
+    build_factory_run_admitted_event,
+)
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryConfig,
     FactoryRun,
@@ -18,6 +23,43 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryRunStatus,
 )
 from polaris.delivery.http.routers import factory as factory_router_module
+
+
+async def _append_admission_fact(service: FactoryRunService, run: FactoryRun) -> None:
+    """Append the immutable admission fact that opens the Factory event chain.
+
+    The chain rejects any first event that is not the run admission fact, so
+    a seeded run must open with it.
+    """
+    await service._append_event(
+        run.id,
+        build_factory_run_admitted_event(
+            FactoryRunAdmissionV1(
+                factory_run_id=run.id,
+                created_at=run.created_at,
+                name=run.config.name,
+                description=None,
+            )
+        ),
+    )
+
+
+def _seed_run(config: FactoryConfig) -> FactoryRun:
+    """Build one run record without the retired orchestration entry.
+
+    Factory execution was retired with the legacy engine, so the audit
+    bundle scenarios seed the durable run snapshot the endpoint reads
+    instead of creating a run through the retired service entry.
+    """
+    now = "2026-05-06T00:00:00+00:00"
+    return FactoryRun(
+        id=f"factory_{uuid4().hex[:12]}",
+        config=config,
+        status=FactoryRunStatus.RUNNING,
+        created_at=now,
+        updated_at=now,
+        metadata={},
+    )
 
 
 def _make_failed_run() -> FactoryRun:
@@ -36,6 +78,13 @@ def _make_failed_run() -> FactoryRun:
             "current_stage": "quality_gate",
             "last_successful_stage": "pm_planning",
             "last_failed_stage": "quality_gate",
+            "factory_start_request": {
+                "workspace": "/ws",
+                "metadata": {
+                    "factory_bench_requested_project_id": "L2-08",
+                    "factory_bench_canonical_project_id": "L2-18",
+                },
+            },
             "failure": {
                 "stage": "quality_gate",
                 "code": "FACTORY_STAGE_FAILED",
@@ -144,7 +193,7 @@ def test_get_factory_run_audit_bundle_reads_service_evidence(
 ) -> None:
     async def _exercise() -> dict[str, Any]:
         service = FactoryRunService(tmp_path)
-        run = await service.create_run(FactoryConfig(name="audit-run", stages=["pm_planning"]))
+        run = _seed_run(FactoryConfig(name="audit-run", stages=["pm_planning"]))
         run.metadata["summary_md"] = "# Summary\n"
         run.metadata["summary_json"] = {"status": "PENDING"}
         run.metadata["factory_start_request"] = {
@@ -158,12 +207,14 @@ def test_get_factory_run_audit_bundle_reads_service_evidence(
             },
         }
         await service.store.save_run(run)
+        await _append_admission_fact(service, run)
         artifact_path = service.store.get_run_dir(run.id) / "artifacts" / "evidence.json"
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
         artifact_path.write_text('{"ok": true}\n', encoding="utf-8")
         await service._append_event(run.id, {"type": "stage_started", "stage": "pm_planning"})
         await service._append_event(run.id, {"type": "stage_completed", "stage": "pm_planning"})
 
-        monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace: service)
+        monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace, read_only=False: service)
         monkeypatch.setattr(
             factory_router_module,
             "read_run_ledger_projection",
@@ -171,7 +222,9 @@ def test_get_factory_run_audit_bundle_reads_service_evidence(
                 projection={
                     "schema_version": "control_plane.run_ledger_projection.v1",
                     "source": "run_ledger_projection",
+                    "available": True,
                     "run_id": query.run_id,
+                    "factory_run_id": query.run_id,
                     "task_boundary": {"failed": False},
                     "tool_lifecycle": {"dropped_count": 0},
                 }
@@ -272,7 +325,9 @@ def test_control_plane_projection_prefers_valid_terminal_task_runtime_snapshot(
     monkeypatch.setattr(
         factory_router_module,
         "read_run_ledger_projection",
-        lambda query: SimpleNamespace(projection={"run_id": query.run_id}),
+        lambda query: SimpleNamespace(
+            projection={"available": True, "run_id": query.run_id, "factory_run_id": query.run_id}
+        ),
     )
 
     class _UnexpectedLiveProjectionRead:
@@ -300,7 +355,11 @@ def test_get_factory_run_audit_bundle_missing_run_returns_404(
         async def get_run(self, run_id: str) -> None:
             return None
 
-    monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace: MissingRunService())
+    monkeypatch.setattr(
+        factory_router_module,
+        "_get_service",
+        lambda workspace, read_only=False: MissingRunService(),
+    )
     state: Any = SimpleNamespace(settings=SimpleNamespace(workspace=tmp_path))
 
     with pytest.raises(HTTPException) as exc_info:
@@ -322,7 +381,7 @@ def test_get_factory_run_audit_bundle_partial_run_returns_quickly(
 
     async def _exercise() -> dict[str, Any]:
         service = FactoryRunService(tmp_path)
-        run = await service.create_run(
+        run = _seed_run(
             FactoryConfig(name="partial-run", stages=["pm_planning", "chief_engineer_review", "director_dispatch"])
         )
         run.status = FactoryRunStatus.FAILED
@@ -336,6 +395,7 @@ def test_get_factory_run_audit_bundle_partial_run_returns_quickly(
             "detail": "Director timed out",
         }
         await service.store.save_run(run)
+        await _append_admission_fact(service, run)
 
         await service._append_event(run.id, {"type": "stage_started", "stage": "pm_planning"})
         await service._append_event(run.id, {"type": "stage_completed", "stage": "pm_planning"})
@@ -351,7 +411,7 @@ def test_get_factory_run_audit_bundle_partial_run_returns_quickly(
             },
         )
 
-        monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace: service)
+        monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace, read_only=False: service)
         state: Any = SimpleNamespace(settings=SimpleNamespace(workspace=tmp_path))
         response = await factory_router_module.get_factory_run_audit_bundle_v2(run.id, limit=5, state=state)
         return response.model_dump(mode="json")
@@ -374,7 +434,7 @@ def test_get_factory_run_audit_bundle_partial_run_with_workspace_dispatch_logs(
 
     async def _exercise() -> dict[str, Any]:
         service = FactoryRunService(tmp_path)
-        run = await service.create_run(
+        run = _seed_run(
             FactoryConfig(
                 name="partial-with-logs", stages=["pm_planning", "chief_engineer_review", "director_dispatch"]
             )
@@ -383,6 +443,7 @@ def test_get_factory_run_audit_bundle_partial_run_with_workspace_dispatch_logs(
         run.stages_completed = ["pm_planning", "chief_engineer_review"]
         run.stages_failed = ["director_dispatch"]
         await service.store.save_run(run)
+        await _append_admission_fact(service, run)
 
         artifacts_dir = service.store.get_run_dir(run.id) / "artifacts"
         artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -394,7 +455,7 @@ def test_get_factory_run_audit_bundle_partial_run_with_workspace_dispatch_logs(
         await service._append_event(run.id, {"type": "stage_started", "stage": "pm_planning"})
         await service._append_event(run.id, {"type": "stage_completed", "stage": "pm_planning"})
 
-        monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace: service)
+        monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace, read_only=False: service)
         state: Any = SimpleNamespace(settings=SimpleNamespace(workspace=tmp_path))
         response = await factory_router_module.get_factory_run_audit_bundle_v2(run.id, limit=5, state=state)
         return response.model_dump(mode="json")
@@ -414,7 +475,7 @@ def test_director_partial_audit_bundle_includes_convergence_diagnostics(
 
     async def _exercise() -> dict[str, Any]:
         service = FactoryRunService(tmp_path)
-        run = await service.create_run(
+        run = _seed_run(
             FactoryConfig(
                 name="director-partial",
                 stages=["pm_planning", "chief_engineer_review", "director_dispatch", "quality_gate"],
@@ -434,6 +495,7 @@ def test_director_partial_audit_bundle_includes_convergence_diagnostics(
             "director": {"total": 3, "successes": 1, "failures": 2, "blocked": 0},
         }
         await service.store.save_run(run)
+        await _append_admission_fact(service, run)
 
         await service._append_event(run.id, {"type": "stage_started", "stage": "pm_planning"})
         await service._append_event(run.id, {"type": "stage_completed", "stage": "pm_planning"})
@@ -474,7 +536,7 @@ def test_director_partial_audit_bundle_includes_convergence_diagnostics(
             },
         )
 
-        monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace: service)
+        monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace, read_only=False: service)
         state: Any = SimpleNamespace(settings=SimpleNamespace(workspace=tmp_path))
         response = await factory_router_module.get_factory_run_audit_bundle_v2(run.id, limit=20, state=state)
         return response.model_dump(mode="json")
@@ -514,10 +576,11 @@ def test_qa_completed_bundle_omits_convergence(
 
     async def _exercise() -> dict[str, Any]:
         service = FactoryRunService(tmp_path)
-        run = await service.create_run(FactoryConfig(name="clean-run", stages=["pm_planning", "quality_gate"]))
+        run = _seed_run(FactoryConfig(name="clean-run", stages=["pm_planning", "quality_gate"]))
         run.status = FactoryRunStatus.COMPLETED
         run.stages_completed = ["pm_planning", "quality_gate"]
         await service.store.save_run(run)
+        await _append_admission_fact(service, run)
 
         await service._append_event(run.id, {"type": "stage_started", "stage": "pm_planning"})
         await service._append_event(run.id, {"type": "stage_completed", "stage": "pm_planning"})
@@ -530,7 +593,7 @@ def test_qa_completed_bundle_omits_convergence(
             },
         )
 
-        monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace: service)
+        monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace, read_only=False: service)
         state: Any = SimpleNamespace(settings=SimpleNamespace(workspace=tmp_path))
         response = await factory_router_module.get_factory_run_audit_bundle_v2(run.id, limit=5, state=state)
         return response.model_dump(mode="json")
