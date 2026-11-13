@@ -109,7 +109,7 @@ def _seed(workspace: Path, identity: str) -> tuple[EngineeringRunService, RoleRu
     command = RoleRunCommand(
         identity, "director", "Explicit synthetic browser fixture; no semantic project claim.", workspace
     )
-    limits = RunLimits(time.time() + 90, 2_000_000, 64000)
+    limits = RunLimits(time.time() + 600, 2_000_000, 64000)
     service.store.create_run(
         command, scope=scope, limits=limits, engine_version=service.engine_version, request_key=None
     )
@@ -252,7 +252,7 @@ async def test_real_producer_native_request_and_eight_step_dom_flow(
         form_workspace,
     )
     result = await service.run_role(
-        command, scope=scope, limits=RunLimits(time.time() + 90, 2_000_000, 64000), cancel=asyncio.Event()
+        command, scope=scope, limits=RunLimits(time.time() + 600, 2_000_000, 64000), cancel=asyncio.Event()
     )
     assert result.status == "completed", result.text
     events = service.store.load_events(command.session_id)

@@ -20,7 +20,16 @@ READY = "ESM_ABSOLUTE_CSS_READY:rgb(12, 34, 56)"
 
 @pytest.fixture
 def built_workspace(tmp_path: Path) -> Path:
-    fs = KernelFileSystem(str(tmp_path), LocalFileSystemAdapter(), read_only_paths=True)
+    # The browser owner runs inside the workspace sandbox, which mounts a
+    # private tmpfs over /tmp, so a workspace below /tmp can never be
+    # sandboxed.  Build the synthetic page under the authorized audit root.
+    root = Path(
+        os.environ.get("POLARIS_TEST_AUDIT_ROOT", str(Path(__file__).resolve().parents[7] / ".polaris/test-workspaces"))
+    ) / ("built-workspace-" + uuid4().hex)
+    guarded_create_directory(
+        str(root.parents[2]), root.relative_to(root.parents[2]).as_posix(), parents=True, exist_ok=True
+    )
+    fs = KernelFileSystem(str(root), LocalFileSystemAdapter(), read_only_paths=True)
     for directory in ["public/dist/nested", "public/dist/assets"]:
         fs.workspace_mkdir(directory, parents=True, exist_ok=True)
     files = {
@@ -31,7 +40,7 @@ def built_workspace(tmp_path: Path) -> Path:
     }
     for name, content in files.items():
         fs.workspace_write_text_atomic(name, content, encoding="utf-8")
-    return tmp_path
+    return root
 
 
 def save_capture(observation: ToolObservation, label: str) -> None:

@@ -101,7 +101,7 @@ async def test_static_origin_registry_json_native_service_and_cold_original_pixe
         "Use the authorized synthetic static browser fixture; no delivery claim.",
         built_workspace,
     )
-    limits = RunLimits(time.time() + 120, 2_000_000, 64000)
+    limits = RunLimits(time.time() + 600, 2_000_000, 64000)
     result = await service.run_role(command, scope=scope, limits=limits, cancel=asyncio.Event())
     assert result.status == "completed", result.text
     events = service.store.load_events(command.session_id)

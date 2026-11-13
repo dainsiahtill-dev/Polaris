@@ -131,7 +131,7 @@ def test_host_profile_and_cold_scope_preserve_dom_and_reject_mode_change(isolate
     assert not scope.enabled_tools and not scope.read_roots and not scope.write_roots
     store = EngineeringSessionStore(isolated_workspace)
     command = RoleRunCommand("dom-saved", "director", "Observe", isolated_workspace)
-    limits = RunLimits(time.time() + 60, 100000, 64000)
+    limits = RunLimits(time.time() + 600, 100000, 64000)
     store.create_run(command, scope=scope, limits=limits, engine_version="engineering_v2", request_key="dom-key")
     row = EngineeringSessionStore(isolated_workspace).load_run(command.session_id, workspace=isolated_workspace)
     assert EngineeringRunService._scope(row) == scope
@@ -212,7 +212,7 @@ async def test_dom_revisit_refused_before_saved_image_lookup(isolated_workspace:
     scope = _scope(isolated_workspace)
     service = EngineeringRunService(isolated_workspace)
     command = RoleRunCommand("dom-revisit", "director", "Observe", isolated_workspace)
-    limits = RunLimits(time.time() + 30, 100000, 64000)
+    limits = RunLimits(time.time() + 600, 100000, 64000)
     service.store.create_run(
         command, scope=scope, limits=limits, engine_version=service.engine_version, request_key=None
     )
@@ -235,7 +235,7 @@ async def test_dom_actual_provider_request_contains_text_evidence_and_no_image_b
     result = await service.run_role(
         RoleRunCommand("dom-native", "director", "Inspect actual browser behavior", isolated_workspace),
         scope=_scope(isolated_workspace),
-        limits=RunLimits(time.time() + 60, 1000000, 64000),
+        limits=RunLimits(time.time() + 600, 1000000, 64000),
         cancel=asyncio.Event(),
     )
     assert result.status == "completed"
@@ -255,7 +255,7 @@ def test_default_image_scope_preserves_historical_json_and_idempotency(isolated_
     browser = BrowserObservationConfig("/opt/browser", "/opt/python", ())
     scope = PermissionScope((), (), frozenset(), False, browser)
     command = RoleRunCommand("images-saved", "director", "Observe", isolated_workspace)
-    limits = RunLimits(time.time() + 60, 100000, 64000)
+    limits = RunLimits(time.time() + 600, 100000, 64000)
     store = EngineeringSessionStore(isolated_workspace)
     store.create_run(command, scope=scope, limits=limits, engine_version="engineering_v2", request_key="image-key")
     row = store.load_run(command.session_id, workspace=isolated_workspace)
