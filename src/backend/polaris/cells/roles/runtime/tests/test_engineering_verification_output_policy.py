@@ -30,6 +30,7 @@ from polaris.cells.roles.runtime.tests.engineering_support import (
 )
 from polaris.cells.roles.runtime.tests.test_engineering_autonomous_verification import _response
 from polaris.kernelone.fs import get_default_adapter, guarded_create_directory
+from polaris.kernelone.llm.engine.context_store_retention import provision_context_store_audit_lock
 
 _ROOT = Path(__file__).resolve().parents[7]
 _AUDIT = _ROOT / ".polaris/audits/verification-output-policy-visibility-20261024/implementation"
@@ -40,7 +41,11 @@ _HINT = "Host verification output declarations (original saved state, not curren
 def isolated_workspace() -> Path:
     relative = "fixtures/" + uuid4().hex
     guarded_create_directory(str(_AUDIT), relative, parents=True, exist_ok=True)
-    return _AUDIT / relative
+    workspace = _AUDIT / relative
+    # The context snapshot audit pin is observed read-only; its lock key is
+    # enrolled by an explicit workspace maintenance step.
+    provision_context_store_audit_lock(str(workspace))
+    return workspace
 
 
 def _scope(workspace: Path) -> PermissionScope:
@@ -174,7 +179,12 @@ async def test_initial_final_provider_body_shows_saved_declaration_without_fs_pr
         scope=scope,
         limits=limits,
         cancel=asyncio.Event(),
-        client=_native_client(workspace, limits, native_request_observer=service._observe_native_request),
+        client=_native_client(
+            workspace,
+            limits,
+            native_request_observer=service._observe_native_request,
+            context_reference_owner=service.context_reference_owner_resolver(command.session_id),
+        ),
     )
     assert result.status == "completed", result.text
     bodies = _assert_wire(service, scripted_provider, command.session_id)
@@ -258,7 +268,12 @@ async def test_cold_service_hint_preserves_saved_empty_or_unknown_without_new_ho
         scope=scope,
         limits=limits,
         cancel=asyncio.Event(),
-        client=_native_client(workspace, limits, native_request_observer=cold._observe_native_request),
+        client=_native_client(
+            workspace,
+            limits,
+            native_request_observer=cold._observe_native_request,
+            context_reference_owner=cold.context_reference_owner_resolver(command.session_id),
+        ),
     )
     assert result.status == "completed", result.text
     body = _assert_wire(cold, scripted_provider, command.session_id)[0]
@@ -343,7 +358,12 @@ async def test_revoked_verifier_output_does_not_add_initial_read_gate(
         scripted_provider.enqueue_json(response)
     cold = EngineeringRunService(workspace, writable_output_roots=())
     cancel = asyncio.Event()
-    client = _native_client(workspace, limits, native_request_observer=cold._observe_native_request)
+    client = _native_client(
+        workspace,
+        limits,
+        native_request_observer=cold._observe_native_request,
+        context_reference_owner=cold.context_reference_owner_resolver(command.session_id),
+    )
     token = cold._owner.set((command, scope, limits, cancel, client))
     try:
         result = await cold.run_role(command, scope=scope, limits=limits, cancel=cancel)

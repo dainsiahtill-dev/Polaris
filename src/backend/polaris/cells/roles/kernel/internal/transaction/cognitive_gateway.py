@@ -20,6 +20,7 @@ import contextlib
 import logging
 import threading
 import time
+import weakref
 from dataclasses import replace
 from typing import Any, Literal
 
@@ -56,17 +57,35 @@ class CognitiveGateway:
 
     _default_instance: CognitiveGateway | None = None
     _instance_lock: asyncio.Lock | None = None
+    _loop_instances: weakref.WeakKeyDictionary[Any, CognitiveGateway] = weakref.WeakKeyDictionary()
+    _loop_locks: weakref.WeakKeyDictionary[Any, asyncio.Lock] = weakref.WeakKeyDictionary()
     _thread_lock: threading.Lock = threading.Lock()
 
     @classmethod
     def _get_instance_lock(cls) -> asyncio.Lock:
-        """线程安全地获取/创建 asyncio.Lock（双重检查锁定）。"""
-        if cls._instance_lock is None:
+        """Get the instance lock of the running event loop.
+
+        An ``asyncio.Lock`` belongs to the loop that created it, and the
+        gateway holds loop-bound resources (the health lock and the warmup
+        task).  A process that drives the gateway from more than one event
+        loop therefore needs one lock and one instance per loop.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop: a plain lock is still safe to create here.
             with cls._thread_lock:
-                # 双重检查：防止多线程竞态创建多个 Lock
                 if cls._instance_lock is None:
                     cls._instance_lock = asyncio.Lock()
-        return cls._instance_lock
+                return cls._instance_lock
+        lock = cls._loop_locks.get(loop)
+        if lock is None:
+            with cls._thread_lock:
+                lock = cls._loop_locks.get(loop)
+                if lock is None:
+                    lock = asyncio.Lock()
+                    cls._loop_locks[loop] = lock
+        return lock
 
     # 默认健康检查 TTL（秒）
     _DEFAULT_HEALTH_TTL_SECONDS: float = 30.0
@@ -94,12 +113,30 @@ class CognitiveGateway:
 
     @classmethod
     async def default(cls) -> CognitiveGateway:
-        """获取全局单例（懒加载，带锁）。"""
-        if cls._default_instance is None:
-            async with cls._get_instance_lock():
-                if cls._default_instance is None:
-                    cls._default_instance = await cls._create_default()
-        return cls._default_instance
+        """获取全局单例（懒加载，带锁）。
+
+        单例按事件循环隔离：网关持有绑定到事件循环的资源（健康锁、预热任务），
+        跨循环复用会抛出 "bound to a different event loop"。
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is not None:
+            instance = cls._loop_instances.get(loop)
+            if instance is not None:
+                return instance
+        async with cls._get_instance_lock():
+            if loop is not None:
+                instance = cls._loop_instances.get(loop)
+                if instance is None:
+                    instance = await cls._create_default()
+                    cls._loop_instances[loop] = instance
+                    cls._default_instance = instance
+                return instance
+            if cls._default_instance is None:
+                cls._default_instance = await cls._create_default()
+            return cls._default_instance
 
     @classmethod
     async def _create_default(cls) -> CognitiveGateway:
@@ -161,18 +198,29 @@ class CognitiveGateway:
     def reset_default(cls) -> None:
         """重置单例 — 主要用于测试隔离。"""
         cls._default_instance = None
+        cls._loop_instances = weakref.WeakKeyDictionary()
+        cls._loop_locks = weakref.WeakKeyDictionary()
 
     @classmethod
     def has_default_instance(cls) -> bool:
         """检查全局单例是否已初始化（sync 安全）。"""
-        return cls._default_instance is not None
+        return cls.get_default_instance_sync() is not None
 
     @classmethod
     def get_default_instance_sync(cls) -> CognitiveGateway | None:
         """同步获取全局单例（若已初始化），用于 sync 上下文注入.
 
         若单例尚未初始化，返回 None；调用方应自行 fallback 到 lazy init.
+        当前事件循环有自己的实例时优先返回它，否则返回最近创建的实例。
         """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is not None:
+            instance = cls._loop_instances.get(loop)
+            if instance is not None:
+                return instance
         return cls._default_instance
 
     async def close(self) -> None:

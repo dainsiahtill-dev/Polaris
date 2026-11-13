@@ -18,12 +18,18 @@ Each test verifies:
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.delivery.cli import terminal as terminal_cli
 from polaris.delivery.cli.super_mode import (
     SuperBlueprintItem,
@@ -44,6 +50,31 @@ from polaris.delivery.cli.terminal import console as terminal_console_module
 # ---------------------------------------------------------------------------
 # Test infrastructure (mirrors test_terminal_console.py _FakeRoleConsoleHost)
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _isolated_super_workspace(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Run the SUPER scenarios in a disposable workspace.
+
+    The scenarios drive the CLI with workspace="."; running them in the
+    repository would write the generated blueprints into the source tree.
+    The workspace also needs the FactStream storage authority, because the
+    runtime appends execution facts while it persists the PM tasks.
+    """
+    owner = Path(__file__).resolve().parents[6]
+    root = owner / ".polaris/test-workspaces/super-pipeline-e2e"
+    root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="super-e2e-", dir=root) as directory:
+        workspace = Path(directory)
+        monkeypatch.chdir(workspace)
+        bootstrap_fact_stream_workspace(
+            BootstrapFactStreamWorkspaceCommandV1(
+                workspace=str(workspace),
+                streams=fact_stream_bootstrap_streams(),
+                maintenance_reason="super_pipeline_e2e_test",
+            )
+        )
+        yield workspace
 
 
 class _PipelineHost:

@@ -136,14 +136,14 @@ async def test_http_create_read_same_run_and_idempotency(
 
 
 async def test_retired_factory_start_has_no_effect_and_engineering_progresses(
-    tmp_path: Path,
+    isolated_workspace: Path,
     scripted_provider: ScriptedProvider,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Synthetic model replies; actual HTTP, owner, tools, SQLite and checks."""
     from polaris.delivery.http.routers import factory
 
-    settings = _settings(tmp_path)
+    settings = _settings(isolated_workspace)
     settings.server.engineering_run_timeout_seconds = 30
     app = _app(settings, scripted_provider, monkeypatch)
     app.include_router(factory.router)
@@ -151,7 +151,11 @@ async def test_retired_factory_start_has_no_effect_and_engineering_progresses(
     goal = "Create and verify artifact2 without legacy project admission."
 
     def persisted_bytes() -> dict[str, bytes]:
-        return {str(path.relative_to(tmp_path)): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+        return {
+            str(path.relative_to(isolated_workspace)): path.read_bytes()
+            for path in isolated_workspace.rglob("*")
+            if path.is_file()
+        }
 
     before = persisted_bytes()
     original_settings = settings.model_dump(mode="json")
@@ -159,7 +163,7 @@ async def test_retired_factory_start_has_no_effect_and_engineering_progresses(
         retired = await client.post(
             "/v2/factory/runs",
             json={
-                "workspace": str(tmp_path),
+                "workspace": str(isolated_workspace),
                 "start_from": "pm",
                 "directive": goal,
                 "persist_workspace": False,
@@ -176,31 +180,31 @@ async def test_retired_factory_start_has_no_effect_and_engineering_progresses(
                 assert connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
 
         _checked_artifact_reply(scripted_provider)
-        body = {"instruction": goal, "workspace": str(tmp_path), "request_key": "supported-after-retirement"}
+        body = {"instruction": goal, "workspace": str(isolated_workspace), "request_key": "supported-after-retirement"}
         created = await client.post("/v2/engineering/runs", json=body)
         assert created.status_code == 200, created.text
         session_id = created.json()["session_id"]
-        original_deadline = service.observe(session_id, workspace=tmp_path)["limits"]["deadline"]
+        original_deadline = service.observe(session_id, workspace=isolated_workspace)["limits"]["deadline"]
         row = await _terminal(client, session_id)
         assert row["session_id"] == row["run_id"] == session_id
-        assert row["engine_version"] == "engineering_v2" and row["workspace"] == str(tmp_path)
+        assert row["engine_version"] == "engineering_v2" and row["workspace"] == str(isolated_workspace)
         assert row["status"] == "completed" and row["project_outcome"] == "accepted"
         assert row["verification"] == "passed" and len(row["checks"]) == 1
         assert row["checks"][0]["exit_code"] == 0 and len(row["verification_commands"]) == 1
-        assert (tmp_path / "artifact.txt").read_text(encoding="utf-8") == "2"
+        assert (isolated_workspace / "artifact.txt").read_text(encoding="utf-8") == "2"
         assert row["roles"]["director"] == "completed"
         assert row["roles"]["pm"] == row["roles"]["chief_engineer"] == row["roles"]["qa"] == "not_called"
         assert "blueprint" not in row and "ledger" not in row
         assert not service.store.pending_tool_calls(session_id)
         repeated = await client.post("/v2/engineering/runs", json=body)
         assert repeated.status_code == 200 and repeated.json()["session_id"] == session_id
-        assert service.observe(session_id, workspace=tmp_path)["limits"]["deadline"] == original_deadline
+        assert service.observe(session_id, workspace=isolated_workspace)["limits"]["deadline"] == original_deadline
     with sqlite3.connect(service.store.database_path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 1
     assert len(scripted_provider.requests) == 2
     assert settings.model_dump(mode="json") == original_settings
-    assert not (tmp_path / ".polaris" / "runtime" / "factory").exists()
-    assert not (tmp_path / ".polaris" / "runtime" / "tasks" / "plan.json").exists()
+    assert not (isolated_workspace / ".polaris" / "runtime" / "factory").exists()
+    assert not (isolated_workspace / ".polaris" / "runtime" / "tasks" / "plan.json").exists()
 
 
 async def test_workspace_body_query_and_mutated_settings_cannot_rebind_owner(
