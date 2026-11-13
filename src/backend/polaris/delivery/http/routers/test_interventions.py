@@ -97,8 +97,8 @@ def test_action_without_workspace_returns_workspace_not_configured() -> None:
 def test_list_with_invalid_json_file_returns_invalid_json(monkeypatch: pytest.MonkeyPatch) -> None:
     # Arrange
     fake_fs = MagicMock()
-    fake_fs.exists.return_value = True
-    fake_fs.read_json.side_effect = json.JSONDecodeError("Expecting value", "", 0)
+    fake_fs.workspace_exists.return_value = True
+    fake_fs.workspace_read_text.side_effect = json.JSONDecodeError("Expecting value", "", 0)
     monkeypatch.setattr(interventions, "_path_fs", lambda _path: fake_fs)
     client = _make_client(workspace="/tmp/ws")
 
@@ -117,8 +117,8 @@ def test_list_with_invalid_json_file_returns_invalid_json(monkeypatch: pytest.Mo
 def test_list_with_non_object_root_returns_not_object(monkeypatch: pytest.MonkeyPatch) -> None:
     # Arrange
     fake_fs = MagicMock()
-    fake_fs.exists.return_value = True
-    fake_fs.read_json.return_value = ["not", "an", "object"]
+    fake_fs.workspace_exists.return_value = True
+    fake_fs.workspace_read_text.return_value = json.dumps(["not", "an", "object"])
     monkeypatch.setattr(interventions, "_path_fs", lambda _path: fake_fs)
     client = _make_client(workspace="/tmp/ws")
 
@@ -185,7 +185,7 @@ def test_action_with_unsupported_action_returns_action_unsupported() -> None:
 def test_action_with_unknown_id_returns_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
     # Arrange: empty store (file absent) so the id is never matched
     fake_fs = MagicMock()
-    fake_fs.exists.return_value = False
+    fake_fs.workspace_exists.return_value = False
     monkeypatch.setattr(interventions, "_path_fs", lambda _path: fake_fs)
     client = _make_client(workspace="/tmp/ws")
 

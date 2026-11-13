@@ -64,12 +64,24 @@ def _path_fs(path: Path) -> KernelFileSystem:
     return KernelFileSystem(str(path.parent.resolve()), get_default_adapter())
 
 
+def _interventions_logical_path(path: Path) -> str:
+    """The workspace-rooted relative path of the interventions file.
+
+    The interventions file lives in the workspace root, so it is read and
+    written through the workspace-scoped file helpers.  The bare file name
+    cannot be passed as a logical path: the port only accepts
+    workspace-persistent or runtime namespaces, which are different roots.
+    """
+    return path.name
+
+
 def _load_interventions(path: Path) -> dict[str, Any]:
     fs = _path_fs(path)
-    if not fs.exists(path.name):
+    relative = _interventions_logical_path(path)
+    if not fs.workspace_exists(relative):
         return {"version": 1, "interventions": []}
     try:
-        payload = fs.read_json(path.name)
+        payload = json.loads(fs.workspace_read_text(relative, encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise StructuredHTTPException(
             status_code=500,
@@ -89,7 +101,11 @@ def _load_interventions(path: Path) -> dict[str, Any]:
 
 
 def _store_interventions(path: Path, payload: dict[str, Any]) -> None:
-    _path_fs(path).write_json(path.name, payload, ensure_ascii=False, indent=2)
+    _path_fs(path).workspace_write_text_atomic(
+        _interventions_logical_path(path),
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 @router.get("/interventions/list", dependencies=[Depends(require_auth)])
