@@ -500,6 +500,13 @@ class AIExecutor:
                 trace_id,
                 physical_dispatch_port=physical_dispatch_port,
             )
+            # The response must name the endpoint that served it: a failover
+            # chain and the runtime evidence both need to know which provider
+            # actually answered.
+            if response.provider_id is None:
+                response.provider_id = provider_id
+            if response.model is None:
+                response.model = model
 
             # 记录调用结束
             if self.telemetry:
@@ -519,6 +526,11 @@ class AIExecutor:
                 latency_ms=int((time.time() - start_time) * 1000),
                 trace_id=trace_id,
             )
+            # The resolved endpoint stays on the evidence of a failed call too.
+            if response.provider_id is None:
+                response.provider_id = request.provider_id
+            if response.model is None:
+                response.model = request.model
             if self.telemetry:
                 self.telemetry.record_invoke_end(trace_id, request, response, start_time)
             return response
