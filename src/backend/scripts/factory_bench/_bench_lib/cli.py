@@ -35,6 +35,7 @@ from scripts.factory_bench._bench_lib.catalog import (
     _resolve_explicit_project_selection,
     load_projects,
 )
+from scripts.factory_bench._bench_lib.catalog_quality import catalog_quality_report
 from scripts.factory_bench._bench_lib.chain import prepare_engineering_case, run_engineering_case
 from scripts.factory_bench._bench_lib.constants import _FIXTURE
 
@@ -199,6 +200,15 @@ def main(argv: list[str] | None = None) -> int:
                     timeout=args.timeout,
                 )
                 record.update(run_engineering_case(inputs))
+                record.update(
+                    catalog_quality_report(
+                        project,
+                        Path(workspace),
+                        verification_checks=list(
+                            ((record.get("observation") or {}).get("platform") or {}).get("checks") or []
+                        ),
+                    )
+                )
             report["records"].append(record)
             pending_record = None
             (directory / "summary.json").write_text(

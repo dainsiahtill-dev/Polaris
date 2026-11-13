@@ -68,6 +68,10 @@ def prepare_engineering_case(
     if checks_file is None:
         checks_file = evidence_dir / "user-checks.json"
         with checks_file.open("x", encoding="utf-8") as stream:
+            # The user command list stays empty on purpose: the catalog checks
+            # are requirements stated in the goal, not commands the harness may
+            # execute.  The model chooses the real verification, and the
+            # harness reports the frozen floor as independent artifact quality.
             stream.write("[]\n")
     frozen = {
         "catalog": catalog_file.resolve(),
