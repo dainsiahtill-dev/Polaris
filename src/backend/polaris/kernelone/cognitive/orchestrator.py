@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from polaris.kernelone.cognitive.config import (
     COGNITIVE_ENABLE_EVOLUTION,
@@ -35,6 +36,9 @@ from polaris.kernelone.cognitive.personality.integrator import PersonalityIntegr
 from polaris.kernelone.cognitive.pipeline_coordinator import CognitivePipelineCoordinator, PipelineContext
 from polaris.kernelone.cognitive.telemetry import CognitiveTelemetry
 from polaris.kernelone.cognitive.types import ClarityLevel, ExecutionPath
+
+if TYPE_CHECKING:
+    from polaris.kernelone.cognitive.reasoning.meta_cognition import MetaCognitionEngine
 
 
 @dataclass(frozen=True)
@@ -142,6 +146,16 @@ class CognitiveOrchestrator:
             enable_personality=self._enable_personality,
             enable_value_alignment=self._enable_value_alignment,
         )
+
+    @property
+    def _meta(self) -> MetaCognitionEngine:
+        """Meta-cognition engine, owned by the pipeline coordinator.
+
+        The orchestrator is a thin facade over the coordinator; the meta
+        engine lives on the coordinator because that is where the
+        reflect -> evolve_from_reflection integration executes.
+        """
+        return self._coordinator.meta_engine
 
     async def process(
         self,

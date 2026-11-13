@@ -6,6 +6,18 @@ from contextlib import AbstractContextManager
 from types import TracebackType
 from typing import Any, cast
 
+# OpenTelemetry is an optional dependency. Import the names at module level
+# (with a guard) so the enabled path degrades to NoOp spans when it is absent
+# and the module-level references stay patchable in tests.
+try:
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
+
+    _OTEL_AVAILABLE = True
+except ImportError:  # pragma: no cover - exercised only without opentelemetry
+    _OTEL_AVAILABLE = False
+
 
 class NoOpSpan:
     """No-op span context manager for when telemetry is disabled."""
@@ -61,19 +73,16 @@ class CognitiveTelemetry:
         self._trace_api: Any = None
         self._tracer: Any = None
         if enabled:
-            try:
-                from opentelemetry import trace
-                from opentelemetry.sdk.trace import TracerProvider
-                from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
-
+            if not _OTEL_AVAILABLE:
+                # Optional dependency absent: degrade to no-op spans.
+                self._enabled = False
+            else:
                 provider = TracerProvider()
                 processor = SimpleSpanProcessor(ConsoleSpanExporter())
                 provider.add_span_processor(processor)
                 trace.set_tracer_provider(provider)
                 self._trace_api = trace
                 self._tracer = trace.get_tracer("cognitive_pipeline")
-            except ImportError:
-                self._enabled = False
 
     def start_span(
         self,

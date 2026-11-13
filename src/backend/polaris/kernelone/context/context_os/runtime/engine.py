@@ -133,6 +133,12 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
         # Observer registry for lifecycle events
         self._observers: list[ContextOSObserver] = []
 
+        # Last committed projection snapshot.  The pipeline builds events,
+        # artifacts and episodes inside stage processors, so lifecycle
+        # observers are notified by replaying the delta against this
+        # baseline (see _notify_projection_lifecycle_deltas).
+        self._last_committed_snapshot: ContextOSSnapshot | None = None
+
         # Hook manager for plugin system (lazy initialization)
         self._hook_manager: Any | None = None
 
@@ -531,6 +537,7 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
         )
 
         # 3. Commit under lock (CAS check + write)
+        previous_snapshot: ContextOSSnapshot | None = None
         async with self._get_project_lock():
             if input_version != self._projection_input_version:
                 # Never return a computed but uncommitted view as current, or
@@ -546,9 +553,16 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
                     field="projection",
                     constraint="projection_structure",
                 )
+            previous_snapshot = self._last_committed_snapshot
             self._commit_projection(projection)
             self._last_projection_report = projection_report.to_dict()
             record_contextos_projection_report(self._workspace, self._last_projection_report)
+
+        # 4. Notify lifecycle observers of the delta this projection produced.
+        #    The 7-stage pipeline builds events/artifacts/episodes inside stage
+        #    processors, so the observers are notified here by replaying the
+        #    delta against the previously committed snapshot.
+        self._notify_projection_lifecycle_deltas(previous_snapshot, projection)
 
         return projection
 
@@ -750,6 +764,10 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
 
         # Prime receipt refs for oversized content through ProjectionEngine policy.
         self._projection_engine.build_turns(projection.active_window, self._receipt_store)
+
+        # Remember the committed snapshot: it is the baseline that lifecycle
+        # observer deltas are computed against on the next projection.
+        self._last_committed_snapshot = projection.snapshot
 
     def _project_via_pipeline_sync(
         self,

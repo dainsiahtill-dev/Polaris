@@ -24,7 +24,14 @@ def get_workspace_persona_store_path(workspace: str) -> Path:
 
     路径：<workspace>/.polaris/role_persona.json
     """
-    resolved = resolve_workspace_persistent_path(workspace, f"workspace/{PERSONA_STORE_FILE}")
+    # The persona store is a workspace-persistent path.  Resolving it must not
+    # require a writable runtime root: otherwise a read-only workspace makes
+    # path resolution raise instead of degrading to an unpersisted selection.
+    resolved = resolve_workspace_persistent_path(
+        workspace,
+        f"workspace/{PERSONA_STORE_FILE}",
+        read_only=True,
+    )
     return Path(resolved)
 
 

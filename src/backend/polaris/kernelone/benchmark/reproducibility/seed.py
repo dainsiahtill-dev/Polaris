@@ -121,8 +121,10 @@ class ReproducibleSeed:
 
         # Restore PyTorch state if available
         if context.has_torch and _TORCH_AVAILABLE and context.torch_random_state:
-            state_array = np.frombuffer(context.torch_random_state, dtype=np.uint64)
-            state_tensor = torch.tensor(state_array, dtype=torch.uint64)
+            # torch.get_rng_state() is a ByteTensor; set_rng_state requires the
+            # same byte-level representation, so restore from raw bytes as uint8.
+            # bytearray() gives torch.frombuffer a writable buffer.
+            state_tensor = torch.frombuffer(bytearray(context.torch_random_state), dtype=torch.uint8)
             torch.set_rng_state(state_tensor)
 
     @classmethod

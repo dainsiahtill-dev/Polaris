@@ -292,7 +292,12 @@ class SelfHealingExecutor:
                 )
             except asyncio.CancelledError:
                 raise
-            except (RuntimeError, OSError) as e:
+            except Exception as e:  # noqa: BLE001
+                # Catch broadly: _classify_failure understands KernelOneError
+                # (retryable flag / ErrorCategory) and the permanent error
+                # types (ValueError, TypeError, KeyError, ...). A narrower
+                # catch would let those escape the healing machinery instead
+                # of being classified and healed.
                 last_error = e
                 failure_type = self._classify_failure(e)
 
@@ -337,7 +342,9 @@ class SelfHealingExecutor:
                 )
             except asyncio.CancelledError:
                 raise
-            except (RuntimeError, OSError):
+            except Exception:  # noqa: BLE001
+                # Same rationale as _try_primary: every failure mode must be
+                # classified here, so an alternative can still recover.
                 continue
 
         return None

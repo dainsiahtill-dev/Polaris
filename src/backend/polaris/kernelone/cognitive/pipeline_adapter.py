@@ -73,26 +73,27 @@ class CognitivePipelineAdapter:
             confidence = float(surface_intent.confidence) if surface_intent else 0.0
 
             # Step 2: Governance pre-checks
-            if self._orchestrator._governance_gate is not None:
-                pre_result = await self._orchestrator._governance_gate.verify_pre_perception(message)
-                if pre_result.status == "FAIL":
+            # The gate exposes check_* methods returning GovernanceCheckResult
+            # (blocked/block_reason); a disabled gate short-circuits to
+            # blocked=False without touching the underlying CognitiveGovernance.
+            gate = self._orchestrator._governance_gate
+            if gate is not None and gate.is_enabled:
+                pre_result = await gate.check_pre_perception(message)
+                if pre_result.blocked:
                     return CognitivePreCheckResult(
                         should_proceed=False,
                         governance_verdict="FAIL",
                         confidence=0.0,
-                        block_reason=pre_result.message,
+                        block_reason=pre_result.block_reason or pre_result.content,
                     )
 
-                post_result = await self._orchestrator._governance_gate.verify_post_perception(
-                    intent_type,
-                    confidence,
-                )
-                if post_result.status == "FAIL":
+                post_result = await gate.check_post_perception(intent_type, confidence)
+                if post_result.blocked:
                     return CognitivePreCheckResult(
                         should_proceed=False,
                         governance_verdict="FAIL",
                         confidence=confidence,
-                        block_reason=post_result.message,
+                        block_reason=post_result.block_reason or post_result.content,
                     )
 
             return CognitivePreCheckResult(

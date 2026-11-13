@@ -144,6 +144,11 @@ class CognitivePipelineCoordinator:
         self._fallback_count = 0
         self._hitl_timeout_count = 0
 
+    @property
+    def meta_engine(self) -> MetaCognitionEngine:
+        """The coordinator-owned meta-cognition engine (read-only access)."""
+        return self._meta
+
     async def execute(self, pipeline_ctx: PipelineContext) -> PipelineResult:
         """Execute the complete cognitive pipeline."""
         with self._telemetry.start_span(

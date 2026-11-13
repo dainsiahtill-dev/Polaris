@@ -104,7 +104,7 @@ class FileLockAdapter(LockPort):
         self._lock_dir = os.path.abspath(lock_dir)
         if ensure_dir:
             os.makedirs(self._lock_dir, exist_ok=True)
-        self._holder_locks: dict[str, str] = {}  # resource -> lock_path we hold
+        self._holder_locks: dict[str, tuple[str, str]] = {}  # resource -> (lock_path, holder_id)
         self._closed = False
 
     def _lock_path(self, resource: str) -> str:
@@ -130,12 +130,12 @@ class FileLockAdapter(LockPort):
     def _unlock_file(self, fh: int) -> None:
         try:
             _flock(fh, _LOCK_UN)
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             logger.warning("Lock: could not release lock %s: %s", fh, exc)
         finally:
             try:
                 os.close(fh)
-            except OSError as exc:
+            except (OSError, ValueError) as exc:
                 logger.warning("Lock: could not close handle %s: %s", fh, exc)
 
     def _read_entry(self, fh: int) -> _LockEntry | None:
@@ -197,7 +197,7 @@ class FileLockAdapter(LockPort):
         while time.monotonic() < deadline:
             result = self._try_acquire_sync(resource, holder_id, ttl)
             if result.acquired:
-                self._holder_locks[resource] = path
+                self._holder_locks[resource] = (path, holder_id)
                 return result
 
             slept = retry_interval
@@ -251,7 +251,7 @@ class FileLockAdapter(LockPort):
             if not self._write_entry_atomic(fh, new_entry):
                 return LockAcquireResult(acquired=False)
 
-            self._holder_locks[resource] = path
+            self._holder_locks[resource] = (path, holder_id)
             return LockAcquireResult(
                 acquired=True,
                 lock_id=path,
@@ -334,9 +334,12 @@ class FileLockAdapter(LockPort):
             self._unlock_file(fh)
 
     async def close(self) -> None:
+        # Release the held locks BEFORE marking closed: release() no-ops once
+        # _closed is set, and it must match the original holder_id to drop the
+        # entry (a fixed "__adapter__" sentinel never matches).
+        for resource, (_path, holder_id) in list(self._holder_locks.items()):
+            await self.release(resource, holder_id=holder_id)
         self._closed = True
-        for resource in list(self._holder_locks.keys()):
-            await self.release(resource, holder_id="__adapter__")
 
 
 __all__ = ["FileLockAdapter"]
