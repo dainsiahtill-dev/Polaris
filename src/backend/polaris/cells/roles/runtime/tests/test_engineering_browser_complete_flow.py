@@ -69,14 +69,21 @@ _ACTIONS: list[dict[str, Any]] = [
 
 @pytest.fixture
 def form_workspace(tmp_path: Path) -> Path:
-    guarded_create_directory(str(tmp_path), "public", parents=True, exist_ok=True)
+    # The browser owner runs inside the workspace sandbox, which mounts a
+    # private tmpfs over /tmp, so a workspace below /tmp can never be
+    # sandboxed.  Build the synthetic form under the authorized audit root.
+    owner = Path(__file__).resolve().parents[7]
+    base = Path(os.environ.get("POLARIS_TEST_AUDIT_ROOT", str(owner / ".polaris/test-workspaces")))
+    root = base / ("form-workspace-" + uuid4().hex)
+    guarded_create_directory(str(base), root.relative_to(base).as_posix(), parents=True, exist_ok=True)
+    guarded_create_directory(str(root), "public", parents=True, exist_ok=True)
     html = _HTML.replace("LONG_VALUE", "界" * 700).replace(
         "EXTRA_CONTROLS", "".join(f'<input id="extra-{n}" value="{n}">' for n in range(40))
     )
     fs = get_default_adapter()
-    fs.write_text(str(tmp_path / "public/index.html"), html, encoding="utf-8")
-    fs.write_text(str(tmp_path / "forbidden.html"), "<h1>FORBIDDEN</h1>", encoding="utf-8")
-    return tmp_path
+    fs.write_text(str(root / "public/index.html"), html, encoding="utf-8")
+    fs.write_text(str(root / "forbidden.html"), "<h1>FORBIDDEN</h1>", encoding="utf-8")
+    return root
 
 
 def _scope(workspace: Path) -> PermissionScope:

@@ -37,13 +37,18 @@ from polaris.kernelone.exceptions import PathSecurityError
 from polaris.kernelone.llm.engine import ContextSnapshotAuditPinRepository
 from polaris.kernelone.llm.engine.client import ProviderConfig, ResilientLLMClient
 from polaris.kernelone.llm.engine.contracts import AIRequest, AIResponse, TaskType
-from polaris.kernelone.llm.engine.executor import AIExecutor
+from polaris.kernelone.llm.engine.executor import AIExecutor, resolve_provider_model
 from polaris.kernelone.llm.engine.invocation_budget import invoke_with_budget
 from polaris.kernelone.llm.engine.resilience import RetryConfig, TimeoutConfig
+from polaris.kernelone.llm.runtime_config import get_role_binding_candidates
 from polaris.kernelone.process.process_tree import ProcessTreeDrainError
 from polaris.kernelone.storage import resolve_workspace_runtime_identity
 
 _TERMINAL = frozenset({"completed", "failed", "cancelled", "interrupted"})
+
+#: Only the Director may run with a degraded provider binding set.  Every
+#: other role, and every single-binding role, stays fail-closed.
+_DEGRADABLE_ROLES = frozenset({"director"})
 logger = logging.getLogger(__name__)
 _ObservationT = TypeVar("_ObservationT")
 
@@ -78,18 +83,94 @@ class _NativeEngineProvider(AIExecutor):
     name = "kernelone_native"
 
 
+class _PinnedNativeProvider(_NativeEngineProvider):
+    """One configured role binding as a client provider entry.
+
+    The resilient client owns provider failover, and each entry has to
+    address exactly one configured endpoint.  The binding's provider and
+    model are therefore pinned onto the request instead of being resolved
+    per turn, so the failover chain really walks the configured bindings.
+    """
+
+    def __init__(self, provider_id: str, model: str, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._provider_id = provider_id
+        self._model = model
+        self.name = f"kernelone_native:{provider_id}"
+
+    async def invoke(
+        self,
+        request: AIRequest,
+        *,
+        physical_dispatch_port: Any = None,
+    ) -> AIResponse:
+        pinned = replace(request, provider_id=self._provider_id, model=self._model)
+        return await super().invoke(pinned, physical_dispatch_port=physical_dispatch_port)
+
+
+def _native_bindings(role: str) -> tuple[tuple[str, str], ...]:
+    """The endpoints this role may use, in failover order.
+
+    Only the Director may run with a degraded binding set: every other role
+    and every single-binding role stays fail-closed.  The endpoints are the
+    ones the host already configured for the role, so the chain never
+    invents an endpoint and never widens the authorization.
+    """
+    if role not in _DEGRADABLE_ROLES:
+        return ()
+    try:
+        provider_id, model = resolve_provider_model(
+            provider_id=None,
+            model=None,
+            role=role,
+            logger_prefix="[engineering]",
+        )
+    except (RuntimeError, ValueError, TypeError):
+        return ()
+    provider_id = str(provider_id or "").strip()
+    model = str(model or "").strip()
+    if not provider_id or not model:
+        return ()
+    bindings: list[tuple[str, str]] = [(provider_id, model)]
+    try:
+        candidates = get_role_binding_candidates(role)
+    except (RuntimeError, ValueError, TypeError):
+        candidates = ()
+    for slot in candidates:
+        candidate = (str(slot.provider_id or "").strip(), str(slot.model or "").strip())
+        if not candidate[0] or not candidate[1] or candidate in bindings:
+            continue
+        bindings.append(candidate)
+    return tuple(bindings)
+
+
 def _native_client(
     workspace: Path,
     limits: RunLimits,
+    role: str = "director",
     native_request_observer: Callable[[AIRequest, Mapping[str, Any]], None] | None = None,
     context_reference_owner: Callable[[AIRequest, str], ContextSnapshotReferenceOwnerV1] | None = None,
 ) -> ResilientLLMClient:
-    # K1 owns model selection and provider timeouts. This one-provider wrapper
-    # adds no fallback or retries and cannot shorten a provider's configured
+    # K1 owns model selection and provider timeouts. This wrapper adds no
+    # fallback of its own and cannot shorten a provider's configured
     # deadline. The engineering loop also watches the actual run deadline.
     remaining = max(0.001, limits.deadline - time.time()) if limits.deadline is not None else float("inf")
-    return ResilientLLMClient(
-        [
+    entries: list[tuple[Any, ProviderConfig]] = []
+    for provider_id, model in _native_bindings(role):
+        entries.append(
+            (
+                _PinnedNativeProvider(
+                    provider_id,
+                    model,
+                    workspace=str(workspace),
+                    native_request_observer=native_request_observer,
+                    context_reference_owner=context_reference_owner,
+                ),
+                ProviderConfig(provider_name=f"kernelone_native:{provider_id}"),
+            )
+        )
+    if not entries:
+        entries.append(
             (
                 _NativeEngineProvider(
                     workspace=str(workspace),
@@ -98,7 +179,9 @@ def _native_client(
                 ),
                 ProviderConfig(provider_name="kernelone_native"),
             )
-        ],
+        )
+    return ResilientLLMClient(
+        entries,
         default_retry_config=RetryConfig(max_attempts=1),
         default_timeout_config=TimeoutConfig(request_timeout=remaining, total_timeout=remaining),
     )
@@ -446,7 +529,7 @@ class EngineeringRunService:
             options=options,
             context={"workspace": str(self.workspace), "engine_version": self.engine_version},
         )
-        client = self._client if self._client is not None else _native_client(self.workspace, host_limits)
+        client = self._client if self._client is not None else _native_client(self.workspace, host_limits, role)
         if host_limits.deadline is None:
             response = await client.invoke(request)
         else:
@@ -1896,6 +1979,7 @@ class EngineeringRunService:
                 else _native_client(
                     self.workspace,
                     limits,
+                    command.role,
                     self._observe_native_request,
                     self.context_reference_owner_resolver(command.session_id),
                 )
