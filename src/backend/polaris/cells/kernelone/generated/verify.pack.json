@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "cell_id": "kernelone",
+  "generated_at": "2026-11-13T10:40:00Z",
+  "status": "guarded",
+  "summary": "KernelOne 底座的公共消费面是 Cell 的 public 契约；能力目录冻结顶层子树集合，15 条底座结构性债务以监控态守卫，路径与契约不得回退为第二个 core/。",
+  "verify_targets": {
+    "tests": [
+      {
+        "path": "polaris/tests/architecture/test_kernelone_toplevel_admission.py",
+        "purpose": "冻结 polaris/kernelone 顶层子树集合：新增子树必须先有 ADR 与能力目录条目。"
+      },
+      {
+        "path": "polaris/tests/architecture/test_repair_kernel_path_ssot_fence.py",
+        "purpose": "守卫 repair_kernel 路径单一事实源，禁止路径归一化在各实现点各自展开。"
+      },
+      {
+        "path": "polaris/tests/architecture/test_structural_bug_governance_assets.py",
+        "purpose": "守卫债务登记与 verify pack 的形态：ID 集合、状态词汇与四组证据链接。"
+      },
+      {
+        "path": "polaris/tests/architecture/governance/test_catalog_presence.py",
+        "purpose": "守卫图谱目录条目与已声明 Cell 的存在性。"
+      },
+      {
+        "path": "polaris/tests/architecture/test_kernelone_llm_contract_reexports.py",
+        "purpose": "守卫 KernelOne LLM 契约再导出面，避免底座契约出现第二个消费面。"
+      }
+    ],
+    "contracts": [
+      "polaris/cells/*/public 契约是 Cells 对外唯一消费面",
+      "polaris/kernelone 只提供技术实现，不拥有业务状态",
+      "docs/graph/catalog/kernelone_capabilities.yaml 是底座顶层准入的唯一事实源",
+      "docs/governance/debt.register.yaml 是底座结构性债务的唯一登记面"
+    ]
+  },
+  "governance_artifacts": {
+    "adrs": [
+      "docs/governance/decisions/adr-0100-kernelone-foundation-capability-catalog.md"
+    ],
+    "verification_cards": [
+      "docs/governance/templates/verification-cards/vc-20260810-kernelone-foundation-capability-catalog.yaml",
+      "docs/governance/templates/verification-cards/vc-20261109-kernelone-catalog-topology.yaml"
+    ],
+    "debt_register": "docs/governance/debt.register.yaml",
+    "schemas": [
+      "docs/governance/schemas/verification-card.schema.yaml",
+      "docs/governance/schemas/debt-register.schema.yaml"
+    ]
+  },
+  "open_debt_ids": [
+    "DEBT-20260810-f01",
+    "DEBT-20260810-f02",
+    "DEBT-20260810-f03",
+    "DEBT-20260810-f04",
+    "DEBT-20260810-f05",
+    "DEBT-20260810-f06",
+    "DEBT-20260810-f07",
+    "DEBT-20260810-f08",
+    "DEBT-20260810-f09",
+    "DEBT-20260810-f10",
+    "DEBT-20260810-f11",
+    "DEBT-20260810-f12",
+    "DEBT-20260810-f13",
+    "DEBT-20260810-f14",
+    "DEBT-20260810-f15"
+  ],
+  "residual_risks": [
+    "底座顶层子树数量已冻结，但目录条目本身的准入策略仍需随新能力面复核。",
+    "polaris/cells/kernelone 与 polaris/kernelone 的双入口仍由债务监控，未收敛为单一消费面。",
+    "15 条底座债务以监控态守卫：它们不会自动收敛，必须由后续阶段显式关闭。"
+  ]
+}

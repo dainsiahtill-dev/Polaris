@@ -157,10 +157,10 @@ debts:
       - "Keep upstream provider event-stream tokens confined to the provider allowlist"
       - "Run Factory L1-L8 and the Playwright realtime audit as stress evidence, not as open-debt retirement prerequisites"
 
-  - id: "DEBT-20260810-F01"
+  - id: "DEBT-20260810-f01"
     title: "KernelOne 顶层过宽，像第二个 `core/`"
     classification: structural
-    status: open
+    status: monitoring
     severity: high
     scope_refs:
       - "polaris/kernelone"
@@ -184,9 +184,13 @@ debts:
       - "准入门禁落地前仍可无 ADR 新增第 58 个顶层子树"
       - "57 个子树中哪些是死模块/重复子系统尚未验证"
     linked_assets:
-      adrs: []
-      verification_cards: []
-      verify_packs: []
+      adrs:
+        - "docs/governance/decisions/adr-0100-kernelone-foundation-capability-catalog.md"
+      verification_cards:
+        - "docs/governance/templates/verification-cards/vc-20260810-kernelone-foundation-capability-catalog.yaml"
+        - "docs/governance/templates/verification-cards/vc-20261109-kernelone-catalog-topology.yaml"
+      verify_packs:
+        - "polaris/cells/kernelone/generated/verify.pack.json"
       tests:
         - "polaris/tests/architecture/governance/test_catalog_presence.py"
     next_actions:
@@ -194,10 +198,10 @@ debts:
       - "新增架构测试：禁止再增加第 58 个顶层子树，除非 ADR + catalog 条目"
       - "明确 polaris.cells.kernelone.* 与 polaris.kernelone.* 的唯一消费面（Cell public 对外，kernelone 仅技术实现）"
 
-  - id: "DEBT-20260810-F02"
+  - id: "DEBT-20260810-f02"
     title: "`kernelone` 包 vs `cells/kernelone` 双入口"
     classification: structural
-    status: open
+    status: monitoring
     severity: high
     scope_refs:
       - "polaris/kernelone"
@@ -221,9 +225,12 @@ debts:
       - "双入口并存时调用方仍会选错层"
       - "切断旧公共面前无法证明契约身份一致"
     linked_assets:
-      adrs: []
-      verification_cards: []
-      verify_packs: []
+      adrs:
+        - "docs/governance/decisions/adr-0100-kernelone-foundation-capability-catalog.md"
+      verification_cards:
+        - "docs/governance/templates/verification-cards/vc-20260810-kernelone-foundation-capability-catalog.yaml"
+      verify_packs:
+        - "polaris/cells/kernelone/generated/verify.pack.json"
       tests:
         - "tests/architecture/test_kernelone_llm_contract_reexports.py"
         - "polaris/kernelone/llm/tests/test_core_contracts.py"
@@ -232,10 +239,10 @@ debts:
       - "为双入口补 identity/parity 测试，禁止新消费者直连错误层"
       - "阶段 A 能力目录写明每个子系统的合法 import 路径（对外 ≤2 个）"
 
-  - id: "DEBT-20260810-F03"
+  - id: "DEBT-20260810-f03"
     title: "Delivery 直接碰 KernelOne/Infra 过多"
     classification: structural
-    status: open
+    status: monitoring
     severity: high
     scope_refs:
       - "polaris/delivery"
@@ -258,19 +265,24 @@ debts:
       - "未分类前无法判断哪些引用必须下沉"
       - "delivery 继续增厚会把策略锁在传输层"
     linked_assets:
-      adrs: []
-      verification_cards: []
-      verify_packs: []
-      tests: []
+      adrs:
+        - "docs/governance/decisions/adr-0100-kernelone-foundation-capability-catalog.md"
+      verification_cards:
+        - "docs/governance/templates/verification-cards/vc-20260810-kernelone-foundation-capability-catalog.yaml"
+      verify_packs:
+        - "polaris/cells/kernelone/generated/verify.pack.json"
+      tests:
+        - "polaris/tests/architecture/test_scope_cell_dependency_alignment.py"
+        - "polaris/tests/architecture/test_delivery_internal_import_fence.py"
     next_actions:
       - "审计 142 处 delivery 引用，分类：合法传输适配 vs 用例编排泄漏"
       - "编排泄漏下沉到 application/ 或对应 Cell public service"
       - "delivery 新增文件默认不能 import infrastructure.*（allowlist 例外 + 架构测试）"
 
-  - id: "DEBT-20260810-F04"
+  - id: "DEBT-20260810-f04"
     title: "完成/验证/repair 三套证据链仍依赖约定而非编译期类型"
     classification: structural
-    status: open
+    status: monitoring
     severity: high
     scope_refs:
       - "polaris/cells/runtime/projection"
@@ -297,9 +309,13 @@ debts:
       - "伪造 receipt / 缺 hash / 错 owner 仍可能靠约定而非类型被挡住"
       - "自报 attempt 触发 model_ceiling 终态的架构测试尚未补齐"
     linked_assets:
-      adrs: []
-      verification_cards: []
-      verify_packs: []
+      adrs:
+        - "docs/governance/decisions/adr-0100-kernelone-foundation-capability-catalog.md"
+        - "docs/governance/decisions/adr-0043-structural-bug-governance-loop.md"
+      verification_cards:
+        - "docs/governance/templates/verification-cards/vc-20260810-kernelone-foundation-capability-catalog.yaml"
+      verify_packs:
+        - "polaris/cells/kernelone/generated/verify.pack.json"
       tests:
         - "polaris/cells/runtime/projection/tests/test_project_outcome_authority_binding.py"
         - "polaris/cells/runtime/projection/tests/test_factory_chain_owner_binding.py"
@@ -312,10 +328,10 @@ debts:
       - "model_ceiling：只能由最终请求快照 + physical attempt + ledger + repair residual 共同封存；补架构测试禁止自报 attempt 触发终态"
       - "用测试矩阵证明伪造 receipt / 缺 hash / 错 owner 无法走到 completed_verified"
 
-  - id: "DEBT-20260810-F05"
+  - id: "DEBT-20260810-f05"
     title: "LLM：`tool_spec_registry` + toolkit executor + engine executor + stream executor 多层并行"
     classification: structural
-    status: open
+    status: monitoring
     severity: medium
     scope_refs:
       - "polaris/kernelone/tool_execution/tool_spec_registry.py"
@@ -341,9 +357,12 @@ debts:
       - "多层执行器并存时语义会漂移"
       - "弱模型裁剪/兼容包装可能静默绕过 ToolSpecRegistry"
     linked_assets:
-      adrs: []
-      verification_cards: []
-      verify_packs: []
+      adrs:
+        - "docs/governance/decisions/adr-0100-kernelone-foundation-capability-catalog.md"
+      verification_cards:
+        - "docs/governance/templates/verification-cards/vc-20260810-kernelone-foundation-capability-catalog.yaml"
+      verify_packs:
+        - "polaris/cells/kernelone/generated/verify.pack.json"
       tests:
         - "polaris/tests/architecture/test_kernelone_llm_contract_reexports.py"
         - "polaris/kernelone/llm/tests/test_core_contracts.py"
@@ -354,10 +373,10 @@ debts:
       - "C3：ProviderManager 唯一实例化；delivery 禁止 new Provider"
       - "每个 LLM 子系统对外 ≤2 个稳定 import 路径，旧 re-export 补 parity 测试"
 
-  - id: "DEBT-20260810-F06"
+  - id: "DEBT-20260810-f06"
     title: "ContextOS：models / pipeline / evaluation / projection 各自 1.5k+"
     classification: structural
-    status: open
+    status: monitoring
     severity: medium
     scope_refs:
       - "polaris/kernelone/context"
@@ -381,9 +400,13 @@ debts:
       - "未拆端口前改任一 1.5k+ 文件都可能串层"
       - "跨 workspace 404 契约测试仍待补"
     linked_assets:
-      adrs: []
-      verification_cards: []
-      verify_packs: []
+      adrs:
+        - "docs/governance/decisions/adr-0100-kernelone-foundation-capability-catalog.md"
+        - "docs/governance/decisions/adr-0071-transaction-kernel-single-commit-and-context-plane-isolation.md"
+      verification_cards:
+        - "docs/governance/templates/verification-cards/vc-20260810-kernelone-foundation-capability-catalog.yaml"
+      verify_packs:
+        - "polaris/cells/kernelone/generated/verify.pack.json"
       tests:
         - "polaris/kernelone/context/tests/test_context_os_four_layer_split.py"
         - "polaris/kernelone/context/tests/test_context_os_projection_isolation.py"
@@ -394,10 +417,10 @@ debts:
       - "不把 bench 事件当生产事实"
       - "补跨 workspace 404 契约测试：非法 context_snapshot_ref 在 delivery 层 fail-closed"
 
-  - id: "DEBT-20260810-F07"
+  - id: "DEBT-20260810-f07"
     title: "FS：`locked_regular_file` + snapshot 接近 2k"
     classification: structural
-    status: open
+    status: monitoring
     severity: medium
     scope_refs:
       - "polaris/kernelone/fs/locked_regular_file.py"
@@ -421,9 +444,12 @@ debts:
       - "混居文件继续膨胀会使锁与路径策略难以拆分"
       - "C1 与 repair path_files 若并行改语义会双写路径规则"
     linked_assets:
-      adrs: []
-      verification_cards: []
-      verify_packs: []
+      adrs:
+        - "docs/governance/decisions/adr-0100-kernelone-foundation-capability-catalog.md"
+      verification_cards:
+        - "docs/governance/templates/verification-cards/vc-20260810-kernelone-foundation-capability-catalog.yaml"
+      verify_packs:
+        - "polaris/cells/kernelone/generated/verify.pack.json"
       tests:
         - "polaris/kernelone/fs/tests/test_locked_regular_file.py"
         - "polaris/kernelone/fs/tests/test_guarded_regular_file_snapshot.py"
@@ -433,10 +459,10 @@ debts:
       - "C5：locked file + snapshot 合并策略对象；不改 UTF-8 / 锁语义"
       - "禁止与 repair path_files 同时改路径语义"
 
-  - id: "DEBT-20260810-F08"
+  - id: "DEBT-20260810-f08"
     title: "Quality：`artifact_quality` 测试已 2k+，生产扫描器仍是平台热点"
     classification: structural
-    status: open
+    status: monitoring
     severity: medium
     scope_refs:
       - "polaris/kernelone/quality/artifact_quality"
@@ -459,9 +485,12 @@ debts:
       - "双套 taxonomy 会让同一诊断在 quality 与 repair 对不齐"
       - "测试文件继续膨胀但生产扫描器热点不变"
     linked_assets:
-      adrs: []
-      verification_cards: []
-      verify_packs: []
+      adrs:
+        - "docs/governance/decisions/adr-0100-kernelone-foundation-capability-catalog.md"
+      verification_cards:
+        - "docs/governance/templates/verification-cards/vc-20260810-kernelone-foundation-capability-catalog.yaml"
+      verify_packs:
+        - "polaris/cells/kernelone/generated/verify.pack.json"
       tests:
         - "polaris/kernelone/quality/tests/test_artifact_quality.py"
         - "polaris/cells/director/runtime/tests/test_repair_kernel_coverage_gate.py"
@@ -470,10 +499,10 @@ debts:
       - "bench_gates 禁止顺手修；新 diagnostic 先走 query_director_repair_coverage"
       - "同源后再谈扫描器拆分，避免只搬测试不收口 taxonomy"
 
-  - id: "DEBT-20260810-F09"
+  - id: "DEBT-20260810-f09"
     title: "path helper 18 副本、6 语义"
     classification: structural
-    status: open
+    status: monitoring
     severity: medium
     scope_refs:
       - "polaris/cells/director/runtime/internal/repair_kernel/path_files.py"
@@ -497,9 +526,12 @@ debts:
       - "18 副本的 6 种语义接受集未做 characterization，强行统一会改 repair 结果"
       - "非 TS 语言继续复制 helper"
     linked_assets:
-      adrs: []
-      verification_cards: []
-      verify_packs: []
+      adrs:
+        - "docs/governance/decisions/adr-0100-kernelone-foundation-capability-catalog.md"
+      verification_cards:
+        - "docs/governance/templates/verification-cards/vc-20260810-kernelone-foundation-capability-catalog.yaml"
+      verify_packs:
+        - "polaris/cells/kernelone/generated/verify.pack.json"
       tests:
         - "polaris/cells/director/runtime/tests/test_repair_kernel_path_files.py"
         - "polaris/tests/architecture/governance/test_cell_kernelone_04.py"
@@ -508,10 +540,10 @@ debts:
       - "旧副本分批改 path_files（syntax 层 strict，runtime 层 permissive 显式）"
       - "每语言一 PR 删除副本；先 characterization，禁止静默统一 6 种语义"
 
-  - id: "DEBT-20260810-F10"
+  - id: "DEBT-20260810-f10"
     title: "`javascript_syntax.py` 4166 仍是单文件"
     classification: structural
-    status: open
+    status: monitoring
     severity: medium
     scope_refs:
       - "polaris/cells/director/runtime/internal/repair_kernel/javascript_syntax"
@@ -534,9 +566,12 @@ debts:
       - "单文件或回并后继续超过 3000 行成功标准"
       - "D2 JS 与 D3 registry 并行会破坏 source_tool 常量"
     linked_assets:
-      adrs: []
-      verification_cards: []
-      verify_packs: []
+      adrs:
+        - "docs/governance/decisions/adr-0100-kernelone-foundation-capability-catalog.md"
+      verification_cards:
+        - "docs/governance/templates/verification-cards/vc-20260810-kernelone-foundation-capability-catalog.yaml"
+      verify_packs:
+        - "polaris/cells/kernelone/generated/verify.pack.json"
       tests:
         - "polaris/cells/director/runtime/tests/test_repair_kernel_javascript_python_runtime.py"
         - "polaris/cells/director/runtime/tests/test_typescript_syntax_package_split.py"
@@ -545,10 +580,10 @@ debts:
       - "不改启发式 / SOURCE_TOOL 字符串；D2 不可与 D3 registry 并行"
       - "成功标准：无单文件 syntax/runtime >3000；targeted repair tests 全绿"
 
-  - id: "DEBT-20260810-F11"
+  - id: "DEBT-20260810-f11"
     title: "`typescript_syntax/common` 已拆子包，但 `misc_ops`/`arg_shape`/`member_text` 仍 >1k"
     classification: structural
-    status: open
+    status: monitoring
     severity: medium
     scope_refs:
       - "polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax/common/misc_ops.py"
@@ -570,9 +605,12 @@ debts:
       - "ops 文件继续 >1k 会让 TS 规则不可审"
       - "二次切片若改启发式会破坏 targeted gate"
     linked_assets:
-      adrs: []
-      verification_cards: []
-      verify_packs: []
+      adrs:
+        - "docs/governance/decisions/adr-0100-kernelone-foundation-capability-catalog.md"
+      verification_cards:
+        - "docs/governance/templates/verification-cards/vc-20260810-kernelone-foundation-capability-catalog.yaml"
+      verify_packs:
+        - "polaris/cells/kernelone/generated/verify.pack.json"
       tests:
         - "polaris/cells/director/runtime/tests/test_typescript_syntax_package_split.py"
         - "polaris/cells/director/runtime/tests/test_typescript_m10_strict_compile_repairs.py"
@@ -581,10 +619,10 @@ debts:
       - "不改启发式 / SOURCE_TOOL；保持 TS 包 facade"
       - "成功标准配合无单文件 syntax/runtime >3000"
 
-  - id: "DEBT-20260810-F12"
+  - id: "DEBT-20260810-f12"
     title: "`registry` 规则表、`runtime_dispatch` 绑定表仍厚"
     classification: structural
-    status: open
+    status: monitoring
     severity: medium
     scope_refs:
       - "polaris/cells/director/runtime/internal/repair_kernel/registry"
@@ -609,9 +647,12 @@ debts:
       - "厚表继续膨胀会使语言分派不可审"
       - "拆文件时改门面会破坏全仓 Plan/Run 调用方"
     linked_assets:
-      adrs: []
-      verification_cards: []
-      verify_packs: []
+      adrs:
+        - "docs/governance/decisions/adr-0100-kernelone-foundation-capability-catalog.md"
+      verification_cards:
+        - "docs/governance/templates/verification-cards/vc-20260810-kernelone-foundation-capability-catalog.yaml"
+      verify_packs:
+        - "polaris/cells/kernelone/generated/verify.pack.json"
       tests:
         - "polaris/tests/architecture/test_director_repair_kernel_boundary.py"
         - "polaris/cells/director/runtime/tests/test_repair_kernel_contract_3.py"
@@ -621,11 +662,11 @@ debts:
       - "保持 default_repair_rule_registry() / runtime_repair_bindings() 门面不变"
       - "D3 不可与 D2 JS 并行（JS source_tool 常量被 registry import）"
 
-  - id: "DEBT-20260810-F13"
+  - id: "DEBT-20260810-f13"
     title: "`debt.register.yaml` 几乎空转；真实债散落在 10+ ledger md"
     classification: structural
-    status: open
-    severity: low
+    status: monitoring
+    severity: medium
     scope_refs:
       - "docs/governance/debt.register.yaml"
       - "docs/governance/POLARIS_EXECUTION_CONTRACT_GAP_LEDGER.md"
@@ -649,20 +690,26 @@ debts:
       - "10+ ledger md 仍可能与本寄存器双写"
       - "登记后若不维护 status，账本会再次空转"
     linked_assets:
-      adrs: []
-      verification_cards: []
-      verify_packs: []
-      tests: []
+      adrs:
+        - "docs/governance/decisions/adr-0100-kernelone-foundation-capability-catalog.md"
+        - "docs/governance/decisions/adr-0043-structural-bug-governance-loop.md"
+      verification_cards:
+        - "docs/governance/templates/verification-cards/vc-20260810-kernelone-foundation-capability-catalog.yaml"
+        - "docs/governance/templates/verification-cards/vc-20261109-kernelone-catalog-topology.yaml"
+      verify_packs:
+        - "polaris/cells/kernelone/generated/verify.pack.json"
+      tests:
+        - "polaris/tests/architecture/test_structural_bug_governance_assets.py"
     next_actions:
       - "把 F-01~F-15 登记为 open（本条跟踪登记后的持续维护）"
       - "后续新结构债只追加本寄存器，禁止再开平行 ledger 当事实源"
       - "散落 ledger 只保留审计副本，收敛时回写 id/status"
 
-  - id: "DEBT-20260810-F14"
+  - id: "DEBT-20260810-f14"
     title: "CELL_KERNELONE_04 等门禁存在，但未覆盖「新 kernelone 子树准入」"
     classification: structural
-    status: open
-    severity: low
+    status: monitoring
+    severity: medium
     scope_refs:
       - "docs/governance/ci/fitness-rules.yaml"
       - "polaris/tests/architecture/governance/test_cell_kernelone_03.py"
@@ -687,9 +734,13 @@ debts:
       - "无顶层冻结测试时 F-01 可继续发生"
       - "规则写在 yaml 但没有对应测试会被当成已覆盖"
     linked_assets:
-      adrs: []
-      verification_cards: []
-      verify_packs: []
+      adrs:
+        - "docs/governance/decisions/adr-0100-kernelone-foundation-capability-catalog.md"
+      verification_cards:
+        - "docs/governance/templates/verification-cards/vc-20260810-kernelone-foundation-capability-catalog.yaml"
+        - "docs/governance/templates/verification-cards/vc-20261109-kernelone-catalog-topology.yaml"
+      verify_packs:
+        - "polaris/cells/kernelone/generated/verify.pack.json"
       tests:
         - "polaris/tests/architecture/governance/test_cell_kernelone_03.py"
         - "polaris/tests/architecture/governance/test_cell_kernelone_04.py"
@@ -701,11 +752,11 @@ debts:
       - "新子树仅允许 ADR + catalog 条目后增加"
       - "B5：把 CELL_KERNELONE_04 扩展到禁止 repair_kernel 新增 path helper 副本"
 
-  - id: "DEBT-20260810-F15"
+  - id: "DEBT-20260810-f15"
     title: "图谱 `cells.yaml` 仍标注 phase1 gap（bootstrap 启动仍穿越 infrastructure）"
     classification: structural
-    status: open
-    severity: low
+    status: monitoring
+    severity: medium
     scope_refs:
       - "docs/graph/catalog/cells.yaml"
       - "polaris/bootstrap"
@@ -728,9 +779,12 @@ debts:
       - "启动路径继续直连 infrastructure，阶段 E 变薄无法收口"
       - "图谱 gap 与实现长期不一致"
     linked_assets:
-      adrs: []
-      verification_cards: []
-      verify_packs: []
+      adrs:
+        - "docs/governance/decisions/adr-0100-kernelone-foundation-capability-catalog.md"
+      verification_cards:
+        - "docs/governance/templates/verification-cards/vc-20260810-kernelone-foundation-capability-catalog.yaml"
+      verify_packs:
+        - "polaris/cells/kernelone/generated/verify.pack.json"
       tests:
         - "polaris/tests/unit/bootstrap/test_backend_bootstrap.py"
         - "polaris/tests/unit/bootstrap/test_assembly.py"

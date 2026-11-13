@@ -39,7 +39,7 @@
         "purpose": "Protect B3.2 locator-only ACK resolution, exact detached proof validation, canonical evidence injection, semantic identity, and final semantic freeze."
       },
       {
-        "path": "polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority.py",
+        "path": "polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority_sa.py",
         "purpose": "Protect Factory-owned strict cutoff persistence, proof reconstruction, source-head verification, and replay conflict handling."
       },
       {
@@ -51,7 +51,7 @@
         "purpose": "Protect complete role-specific evidence policy projection for Architect, PM, Chief Engineer, Director, and QA semantic requests."
       },
       {
-        "path": "polaris/cells/roles/kernel/tests/test_llm_caller_components.py",
+        "path": "polaris/cells/roles/kernel/tests/test_llm_caller_components_sa.py",
         "purpose": "Protect B3.2 RequestPreparer evidence freezing and B3.3 retry re-cutoff, stale-attempt cleanup, zero-transport, and ordinary-call compatibility."
       },
       {
@@ -79,12 +79,20 @@
         "purpose": "Protect fresh-session defaults, session continuity memory, and prompt-context filtering in role CLI hosts."
       },
       {
-        "path": "tests/architecture/test_structural_bug_governance_assets.py",
+        "path": "polaris/tests/architecture/test_structural_bug_governance_assets.py",
         "purpose": "Protect linkage between verification cards, ADRs, debt register, and verify pack."
       },
       {
-        "path": "tests/architecture/test_kernelone_llm_contract_reexports.py",
+        "path": "polaris/tests/architecture/test_kernelone_llm_contract_reexports.py",
         "purpose": "Protect StreamEventType parity across contracts.core, engine contracts, toolkit contracts, and executor imports."
+      },
+      {
+        "path": "polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority_sb.py",
+        "purpose": "Protect Factory-owned strict cutoff persistence, proof reconstruction, source-head verification, and replay conflict handling (second half of the split authority suite)."
+      },
+      {
+        "path": "polaris/cells/roles/kernel/tests/test_llm_caller_components_sb.py",
+        "purpose": "Protect the LLM caller component contracts (second half of the split components suite)."
       }
     ],
     "contracts": [

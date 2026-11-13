@@ -1,0 +1,64 @@
+card_id: "vc-20260810-kernelone-foundation-capability-catalog"
+bug_summary: >
+  KernelOne 底座缺少能力目录与准入清单，顶层子树持续增长，15 条结构性债务
+  以缺少证据链的形态留在债务登记里，登记门禁与目录门禁都无法观测残余风险。
+
+classification: structural
+
+bug_path:
+  file: "docs/graph/catalog/kernelone_capabilities.yaml"
+  method: "capability_catalog_admission"
+  symptom: "底座顶层子树无冻结清单；债务登记条目缺 ADR / 验证卡 / verify pack 链接"
+
+assumptions:
+  - id: "A1"
+    statement: "能力目录是底座顶层准入的唯一事实源，而不是目录扫描结果的快照"
+    status: verified_true
+    evidence: "docs/graph/catalog/kernelone_capabilities.yaml 与 polaris/tests/architecture/test_kernelone_toplevel_admission.py 同批落地，准入测试直接读取该目录"
+  - id: "A2"
+    statement: "15 条 KernelOne 底座债务是守卫型长期不变量，而不是未完成的收敛工作"
+    status: verified_true
+    evidence: "docs/blueprints/KERNELONE_FOUNDATION_HARDENING_PLAN_20260810.md 记录 Phase A 已落地 catalog + 债务登记，后续阶段另列；债务内容保留完整根因、缓解与残余风险"
+  - id: "A3"
+    statement: "债务登记门禁要求每条未退役债务都有完整证据链，因此补齐链接即可登记，无需改写门禁语义"
+    status: verified_true
+    evidence: "polaris/tests/architecture/test_structural_bug_governance_assets.py 对 adrs / verification_cards / verify_packs / tests 四组均要求非空且文件存在"
+  - id: "A4"
+    statement: "底座没有独立 Cell verify pack，KernelOne 底座的 verify pack 归属 polaris.cells.kernelone"
+    status: verified_true
+    evidence: "仓库内仅存在 roles.kernel 与 events.fact_stream 两份 verify.pack.json；polaris/cells/kernelone 下只有 core 与 traceability，缺少 generated/verify.pack.json"
+
+pre_mortem:
+  failure_point: >
+    把 15 条债务当作未完成收敛工作登记，会让"未完成债务白名单"永久增长，
+    门禁失去意义；把治理资产写成空壳，则债务登记退化为无证据的清单。
+  risk_zone:
+    - "docs/governance/debt.register.yaml"
+    - "docs/graph/catalog/kernelone_capabilities.yaml"
+    - "polaris/cells/kernelone/generated/verify.pack.json"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/tests/architecture/test_structural_bug_governance_assets.py"
+      description: "债务登记形态、ID 集合、状态词汇与四组证据链接"
+      expected: "登记条目 id 合规、状态合法、每条未退役债务四组链接非空且文件存在"
+      status: existing
+    - file: "polaris/tests/architecture/test_kernelone_toplevel_admission.py"
+      description: "底座顶层子树准入集合"
+      expected: "顶层子树集合与能力目录一致，新增子树必须先有 ADR 与目录条目"
+      status: existing
+  integration_tests:
+    - description: "底座 verify pack 形态与链接完整性"
+      command: "python -m pytest -q polaris/tests/architecture/test_structural_bug_governance_assets.py"
+      status: existing
+  manual_check:
+    - "确认 docs/blueprints/KERNELONE_FOUNDATION_HARDENING_PLAN_20260810.md 的 Phase A 结论与债务登记状态一致"
+
+related_adrs:
+  - "docs/governance/decisions/adr-0100-kernelone-foundation-capability-catalog.md"
+
+sign_off:
+  completed_by: "polaris-maintenance"
+  completed_at: "2026-11-13"
+  verified_by: "polaris-maintenance"
+  verified_at: "2026-11-13"

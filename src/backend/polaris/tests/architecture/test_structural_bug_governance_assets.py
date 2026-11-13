@@ -38,6 +38,9 @@ EXPECTED_DEBT_IDS = {
     "DEBT-20260325-roles-kernel-turn-stage-contract",
     "DEBT-20260325-kernelone-llm-reexport-parity",
     "DEBT-20260620-runtime-realtime-single-rail",
+    # KernelOne 底座结构性债务：监控态守卫的不变量（ADR-0100），每条都必须
+    # 链接 ADR、验证卡、verify pack 与测试。
+    *{f"DEBT-20260810-f{index:02d}" for index in range(1, 16)},
 }
 EXPECTED_ACTIVE_DEBT_IDS: set[str] = set()
 EXPECTED_RULE_IDS = {
