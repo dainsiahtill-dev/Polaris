@@ -501,3 +501,41 @@ async def test_drain_error_survives_reporting_failure_and_owner_retains_writer(
         for lock in service._retained_locks.values():
             lock.__exit__(None, None, None)
         service._retained_locks.clear()
+
+
+def test_provider_connection_failure_is_recoverable_transport_failure() -> None:
+    """A provider that cannot be reached must not end the engineering run.
+
+    The transport clients raise their own connection errors (aiohttp's
+    ClientConnectorError is not a builtin ConnectionError), and such an
+    error used to classify as unknown: neither retryable nor recoverable by
+    the same role, so one transient connection blip ended the run.  A network
+    failure is a transport failure and the same role continues its goal.
+    """
+    from polaris.cells.roles.runtime.internal.engineering_loop import _is_transport_failure
+    from polaris.kernelone.errors import ErrorCategory
+    from polaris.kernelone.llm.engine.contracts import AIResponse
+
+    network_failure = AIResponse(
+        ok=False,
+        output="",
+        error="All providers exhausted. Last error: Cannot connect to host apihub.agnes-ai.com:443",
+        error_category=ErrorCategory.NETWORK_ERROR,
+    )
+    assert _is_transport_failure(network_failure) is True
+
+    timeout_failure = AIResponse(
+        ok=False,
+        output="",
+        error="All providers exhausted. Last error: provider_physical_http_total_timeout",
+        error_category=ErrorCategory.TIMEOUT,
+    )
+    assert _is_transport_failure(timeout_failure) is True
+
+    semantic_failure = AIResponse(
+        ok=False,
+        output="",
+        error="invalid response payload",
+        error_category=ErrorCategory.INVALID_RESPONSE,
+    )
+    assert _is_transport_failure(semantic_failure) is False
