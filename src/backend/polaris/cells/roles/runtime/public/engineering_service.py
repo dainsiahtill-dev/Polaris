@@ -546,6 +546,20 @@ class EngineeringRunService:
         row = self.store.load_run(session_id, workspace=self.workspace)
         return self._fresh_verification(row)
 
+    async def _observe_off_loop(self, session_id: str, *, workspace: Path) -> dict[str, Any]:
+        """Read the run facts with the fresh-input observation off the event loop.
+
+        The observation hashes every granted read root.  Running it on the
+        event loop stalls the whole runtime: the provider request that is
+        waiting for its answer loses its wall-clock budget, and the HTTP
+        surface stops answering while the capture runs.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            get_concurrency_manager().get_io_pool(),
+            partial(self.observe, session_id, workspace=workspace),
+        )
+
     def _fresh_verification(self, row: dict[str, Any]) -> dict[str, Any]:
         needs_qa = row.get("require_qa") and row.get("qa_verdict") in {"approved", "rejected"}
         if row["verification"] == "passed" or needs_qa:
@@ -686,7 +700,7 @@ class EngineeringRunService:
             verification_output_roots=declared_outputs,
             verification_execution_policy=execution_policy,
         )
-        row = self.observe(session_id, workspace=self.workspace)
+        row = await self._observe_off_loop(session_id, workspace=self.workspace)
         if session_id in self._tasks or row["status"] in _TERMINAL or row["status"] == "running":
             return session_id
         command = self._command(row)
@@ -740,13 +754,13 @@ class EngineeringRunService:
     async def wait(self, session_id: str, *, workspace: Path) -> RoleRunResult:
         """Join the existing owner, including its physical cleanup, without a new run."""
         self._assert_workspace(workspace)
-        self.observe(session_id, workspace=workspace)
+        await self._observe_off_loop(session_id, workspace=workspace)
         return await self._await_result(session_id, asyncio.Event())
 
     async def _await_result(self, session_id: str, cancel: asyncio.Event) -> RoleRunResult:
         task = self._tasks.get(session_id)
         if task is None:
-            row = self.observe(session_id, workspace=self.workspace)
+            row = await self._observe_off_loop(session_id, workspace=self.workspace)
             if row["status"] not in _TERMINAL:
                 raise WorkspaceBusyError("engineering run is owned by another live execution")
             return self._result(row)
@@ -1192,7 +1206,7 @@ class EngineeringRunService:
         """Run actual PM, CE and Director loops once, retaining ordinary advice."""
         from polaris.cells.roles.runtime.internal.engineering_roles import collaborative_instruction
 
-        row = self.observe(session_id, workspace=self.workspace)
+        row = await self._observe_off_loop(session_id, workspace=self.workspace)
         if instruction != row["instruction"]:
             raise ValueError("collaborative instruction must retain the original user goal")
         if row["workflow"] != "collaborative":

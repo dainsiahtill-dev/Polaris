@@ -19,6 +19,7 @@ ToolSpecRegistry - 单一权威源头 for LLM Tool定义
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -190,6 +191,16 @@ class _ToolSpecRegistryStateV1:
     effective_canonical_specs: FrozenMapV1
     canonical_names: FrozenSequenceV1
     alias_bindings: FrozenMapV1
+    # Derived views of this immutable state.  The state never changes after
+    # construction, so the views are computed once here instead of on every
+    # lookup: materialising the frozen tree back into dictionaries and
+    # rebuilding every ToolSpec cost tens of milliseconds per call, and the
+    # registry is consulted on every tool dispatch and every provider request.
+    specs_by_name: Mapping[str, ToolSpec] = field(init=False, repr=False, compare=False)
+    canonical_by_name: Mapping[str, str] = field(init=False, repr=False, compare=False)
+    raw_view: Mapping[str, dict[str, Any]] = field(init=False, repr=False, compare=False)
+    effective_view: Mapping[str, dict[str, Any]] = field(init=False, repr=False, compare=False)
+    alias_view: Mapping[str, str] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         raw = _frozen_map_to_dict(self.raw_canonical_specs)
@@ -201,6 +212,7 @@ class _ToolSpecRegistryStateV1:
         if set(raw) != set(names_value) or len(names_value) != len(set(names_value)):
             raise ToolSpecRegistryConsistencyError("raw and canonical name views disagree")
         expected_effective_specs: dict[str, dict[str, Any]] = {}
+        specs: dict[str, ToolSpec] = {}
         for name, spec in raw.items():
             if not isinstance(spec, dict):
                 raise ToolSpecRegistryConsistencyError(f"raw specification for {name} is not a dictionary")
@@ -208,6 +220,7 @@ class _ToolSpecRegistryStateV1:
             if effective.canonical_name != name:
                 raise ToolSpecRegistryConsistencyError("raw/effective canonical mismatch")
             expected_effective_specs[name] = _materialize_effective_spec(name, spec)
+            specs[name] = effective
         if effective_specs != expected_effective_specs:
             raise ToolSpecRegistryConsistencyError("raw and effective tool specification views disagree")
         for alias, canonical in aliases.items():
@@ -228,6 +241,16 @@ class _ToolSpecRegistryStateV1:
                 required_bindings[normalized_alias] = name
         if any(aliases.get(alias) != canonical for alias, canonical in required_bindings.items()):
             raise ToolSpecRegistryConsistencyError("alias binding view is missing a canonical or declared alias owner")
+        specs_by_name: dict[str, ToolSpec] = {alias: specs[canonical] for alias, canonical in aliases.items()}
+        canonical_by_name: dict[str, str] = {
+            **{name: name for name in raw},
+            **{alias: specs[canonical].canonical_name for alias, canonical in aliases.items()},
+        }
+        object.__setattr__(self, "specs_by_name", specs_by_name)
+        object.__setattr__(self, "canonical_by_name", canonical_by_name)
+        object.__setattr__(self, "raw_view", raw)
+        object.__setattr__(self, "effective_view", effective_specs)
+        object.__setattr__(self, "alias_view", aliases)
 
 
 def _state_from_raw(
@@ -302,10 +325,9 @@ class ToolSpecRegistry:
 
     @classmethod
     def _get_specs(cls) -> dict[str, ToolSpec]:
-        raw = _frozen_map_to_dict(cls._get_state().effective_canonical_specs)
-        aliases = _frozen_map_to_dict(cls._get_state().alias_bindings)
-        specs = {name: _build_tool_spec_from_dict(name, spec) for name, spec in raw.items()}
-        return {alias: specs[canonical] for alias, canonical in aliases.items()}
+        # The state already holds the materialised specifications; rebuilding
+        # them per lookup made every tool dispatch pay for the whole registry.
+        return dict(cls._get_state().specs_by_name)
 
     @classmethod
     def _get_canonical_names(cls) -> set[str]:
@@ -410,11 +432,11 @@ class ToolSpecRegistry:
     @classmethod
     def get_canonical(cls, name: str) -> str:
         """获取canonical name"""
-        specs = cls._get_specs()
+        canonical_by_name = cls._get_state().canonical_by_name
         for candidate in _tool_name_candidates(name):
-            spec = specs.get(candidate)
-            if spec:
-                return spec.canonical_name
+            canonical = canonical_by_name.get(candidate)
+            if canonical:
+                return canonical
         return name
 
     @classmethod
@@ -446,15 +468,12 @@ class ToolSpecRegistry:
     def capture_effective_spec(cls, raw_tool_name: str) -> CapturedToolSpecSnapshotV1:
         """Capture one coherent, tagged and immutable owner-side tool view."""
         state = cls._get_state()
-        state = _ToolSpecRegistryStateV1(
-            raw_canonical_specs=state.raw_canonical_specs,
-            effective_canonical_specs=state.effective_canonical_specs,
-            canonical_names=state.canonical_names,
-            alias_bindings=state.alias_bindings,
-        )
-        raw = _frozen_map_to_dict(state.raw_canonical_specs)
-        effective_specs = _frozen_map_to_dict(state.effective_canonical_specs)
-        bindings = _frozen_map_to_dict(state.alias_bindings)
+        # The state is immutable, so the capture reads its derived views
+        # instead of rebuilding and re-validating the whole frozen registry
+        # for every tool dispatch.
+        raw = state.raw_view
+        effective_specs = state.effective_view
+        bindings = state.alias_view
         canonical = ""
         for candidate in _tool_name_candidates(raw_tool_name):
             target = bindings.get(candidate)
@@ -463,7 +482,7 @@ class ToolSpecRegistry:
                 break
         registered = canonical in raw
         effective = effective_specs.get(canonical, {}) if registered else {}
-        snapshot_bindings = deepcopy(bindings)
+        snapshot_bindings: dict[str, str] = dict(bindings)
         exact_raw_tool_name = str(raw_tool_name)
         if registered:
             existing_exact_owner = snapshot_bindings.get(exact_raw_tool_name)
@@ -471,7 +490,7 @@ class ToolSpecRegistry:
                 raise ToolSpecRegistryConsistencyError("exact raw tool name conflicts with resolved canonical owner")
             snapshot_bindings[exact_raw_tool_name] = canonical
         effective_node = _freeze_tool_value(effective)
-        names_node = _freeze_tool_value(frozen_node_to_value(state.canonical_names))
+        names_node = state.canonical_names
         aliases_node = _freeze_tool_value(snapshot_bindings)
         if not isinstance(effective_node, FrozenMapV1):
             raise ToolSpecRegistryConsistencyError("effective tool spec is not a map")

@@ -15,7 +15,7 @@ import hashlib
 import json
 import os
 import stat
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -199,11 +199,29 @@ class EngineeringVerification:
         _manifest directly. Reset even on errors; ordinary calls and the next
         public query stay fresh.
         """
-        token = self._observed_inputs.set(self._fresh_capture(include_outputs=True))
+        with self._observe_captured_inputs(self._fresh_capture(include_outputs=True)):
+            yield
+
+    @contextmanager
+    def _observe_captured_inputs(self, observed: Mapping[str, object]) -> Iterator[None]:
+        """Bind an already captured manifest to the current host read.
+
+        The capture itself is a full content-hash walk of every granted read
+        root.  On a real project tree that takes seconds, and running it on
+        the event loop steals the wall-clock budget of the provider request
+        that is waiting for its answer: the request then fails even though
+        the provider answered in milliseconds.  An asynchronous caller
+        therefore captures off the loop and binds the result here.
+        """
+        token = self._observed_inputs.set(dict(observed))
         try:
             yield
         finally:
             self._observed_inputs.reset(token)
+
+    async def capture_current_inputs(self, *, include_outputs: bool = True) -> dict[str, object]:
+        """Capture the current inputs off the event loop."""
+        return await asyncio.to_thread(self._fresh_capture, include_outputs)
 
     def _current_manifest(self) -> dict[str, object]:
         observed = self._observed_inputs.get()
@@ -504,7 +522,11 @@ class EngineeringVerification:
             return ()
         manifest_error = None
         try:
-            binding["source_manifest"] = self._manifest(include_outputs=False)
+            # The manifest walks and hashes every granted read root.  On a
+            # real project tree that takes seconds; running it on the event
+            # loop stalls the provider request that is waiting for its
+            # answer and steals its wall-clock budget.
+            binding["source_manifest"] = await asyncio.to_thread(self._manifest, include_outputs=False)
         except (OSError, ValueError, RuntimeError, PathSecurityError) as error:
             manifest_error = error
         binding = self.store.begin_verification(
@@ -544,7 +566,7 @@ class EngineeringVerification:
                 observations.append(observation)
                 if observation.interrupted:
                     break
-            result_manifest = self._manifest(include_outputs=True)
+            result_manifest = await asyncio.to_thread(self._manifest, include_outputs=True)
             if binding["source_manifest"] != self._source_view(result_manifest):
                 record("unknown", "Source inputs changed during final checks.")
             else:

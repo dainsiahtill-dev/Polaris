@@ -76,15 +76,16 @@ def _bounded_event_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
 def _bounded_event_window(events: Sequence[Any]) -> list[dict[str, Any]]:
     """Project the newest events into a bounded, JSON friendly window.
 
-    The window keeps the newest events that fit the budget; the caller
-    receives the sequence watermark so a reader can continue from the
-    authoritative store.
+    The window keeps the newest events that fit the budget, whatever order
+    the caller read them in: a reader must see the latest facts (the run's
+    terminal role event) instead of the oldest ones that happened to fit.
+    The caller receives the sequence watermark so a reader can continue from
+    the authoritative store.
     """
+    ordered = sorted(events, key=lambda event: int(event["seq"]), reverse=True)
     window: list[dict[str, Any]] = []
     budget = _EVENT_WINDOW_BUDGET_BYTES
-    # The caller hands over the newest events first; keep that order while
-    # filling the budget and restore the ascending sequence at the end.
-    for event in events:
+    for event in ordered:
         payload = json.loads(event["payload"])
         projected = {**dict(event), "payload": _bounded_event_payload(payload)}
         size = len(json.dumps(projected, ensure_ascii=False, default=str))
