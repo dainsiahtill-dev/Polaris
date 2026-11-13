@@ -308,7 +308,10 @@ def test_build_task_runtime_execution_event_payload_projects_runtime_state() -> 
     assert event_payload["factory_run_id"] == "factory-1"
     assert event_payload["factory_bench_session_id"] == "bench-1"
     assert event_payload["factory_bench_project_id"] == "L1-01"
-    assert event_payload["task_row_snapshot"] == task_row
+    # The row snapshot is a deep copy of the row and carries the run identity
+    # explicitly (derived from the row's own run identity, which this row
+    # does not carry, so it stays empty here).
+    assert event_payload["task_row_snapshot"] == {**task_row, "workflow_run_id": ""}
     assert event_payload["task_row_snapshot"] is not task_row
     assert event_payload["task_row_snapshot"]["metadata"] is not task_row["metadata"]
 
@@ -385,11 +388,13 @@ def test_build_task_row_snapshot_returns_json_compatible_deep_copy() -> None:
 
     snapshot = build_task_row_snapshot(source)
 
+    # The snapshot keeps the row and binds the run identity explicitly.
     assert snapshot == {
         "id": 7,
         "metadata": {
             "nested": [{"value": str(marker)}],
         },
+        "workflow_run_id": "",
     }
     assert snapshot is not source
     assert snapshot["metadata"] is not source["metadata"]

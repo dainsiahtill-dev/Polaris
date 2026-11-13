@@ -1319,9 +1319,10 @@ def test_list_task_rows_from_execution_facts_queries_gateway_and_keeps_latest_wi
 
     rows = service.list_task_rows_from_execution_facts(limit=2)
 
-    # Newest page first (offset 1), then one older page so tasks whose latest
-    # event sits behind the requested page size stay in the latest-per-task map.
-    assert gateway_calls == [(2, 0), (2, 1), (2, 0)]
+    # Pages are folded in canonical sequence: the first page asks for the
+    # requested page size, and the next page asks only for the events that are
+    # still missing, so the whole stream is read exactly once.
+    assert gateway_calls == [(2, 0), (1, 2)]
     assert len(rows) == 1
     assert rows[0]["task_id"] == "TASK-GATEWAY-WINDOW"
     assert rows[0]["status"] == "completed"
@@ -1366,7 +1367,9 @@ def test_list_task_rows_from_execution_facts_reuses_projection_until_stream_head
     second = service.list_task_rows_from_execution_facts(limit=2)
 
     assert first == second
-    assert gateway_calls == [(2, 0), (2, 1), (2, 0)]
+    # One scan of the stream serves both observers; the projection is reused
+    # until the stream head advances.
+    assert gateway_calls == [(2, 0), (1, 2)]
 
     _append_execution_fact_probe(
         workspace,
@@ -1381,7 +1384,7 @@ def test_list_task_rows_from_execution_facts_reuses_projection_until_stream_head
 
     assert advanced[0]["status"] == "failed"
     # Head advance must merge only the new suffix, not rescan the whole stream.
-    assert gateway_calls == [(2, 0), (2, 1), (2, 0), (1, 3)]
+    assert gateway_calls == [(2, 0), (1, 2), (1, 3)]
 
 
 def test_find_latest_execution_fact_row_for_task_pages_backward_through_gateway(

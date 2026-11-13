@@ -981,7 +981,6 @@ cells:
       - resident.autonomy
       - runtime.artifact_store
       - workspace.integrity
-      - director.execution
     subgraphs:
       - storage_archive_pipeline
     state_owners: []

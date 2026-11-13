@@ -24,7 +24,6 @@ cell should read or write either path directly.
 from __future__ import annotations
 
 import copy
-import errno
 import hashlib
 import io
 import json
@@ -689,18 +688,25 @@ class TaskBoard:
             return self._row_write_receipts_by_task_id.get(normalized_task_id)
 
     def _read_current_task_file_hash(self, task_path: Path) -> str:
-        """Return the current UTF-8 content hash, or empty string when absent."""
+        """Return the current UTF-8 content hash, or empty string when absent.
+
+        The hash uses the same legacy text semantics as the strict snapshot
+        (universal newlines), so a row that is stored with CRLF does not look
+        like a concurrent modification to the write path's compare-and-set.
+        """
 
         if not task_path.is_file():
             return ""
 
         try:
-            logical = self._logical_path(task_path)
-            return _sha256_text(self._kernel_fs.read_text(logical, encoding="utf-8"))
-        except OSError as exc:
-            if exc.errno in {errno.ENOENT, errno.ENOTDIR}:
+            snapshot = read_guarded_regular_file_snapshot(str(self.tasks_dir), task_path.name, sys.maxsize)
+        except GuardedRegularFileSnapshotError as exc:
+            if exc.code == "guarded_snapshot_missing" and exc.details.get("name") == task_path.name:
                 return ""
-            raise
+            raise RuntimeError("taskboard_task_snapshot_unreadable") from exc
+        except (OSError, ValueError) as exc:
+            raise RuntimeError("taskboard_task_snapshot_unreadable") from exc
+        return _sha256_text(io.StringIO(snapshot.content.decode("utf-8"), newline=None).read())
 
     def _assert_task_row_unchanged(
         self,

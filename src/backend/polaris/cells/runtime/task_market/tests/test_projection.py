@@ -26,7 +26,9 @@ def mock_store() -> MagicMock:
 
 @pytest.fixture
 def projection(mock_store: MagicMock) -> TaskMarketProjection:
-    with patch("polaris.cells.runtime.projection.task_market_projection.get_store") as mock_get_store:
+    # TaskMarketProjection lives in the task_market cell; the get_store
+    # binding is resolved from that module.
+    with patch("polaris.cells.runtime.task_market.internal.projection.get_store") as mock_get_store:
         mock_get_store.return_value = mock_store
         proj = TaskMarketProjection(TEST_WORKSPACE)
         proj._store = mock_store

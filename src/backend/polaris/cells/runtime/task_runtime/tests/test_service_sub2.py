@@ -1812,7 +1812,10 @@ def test_prepare_owner_rework_execution_reopens_terminal_row_and_rotates_session
     assert prepared.runtime_task_id == str(runtime_task_id)
     persisted_session = service._read_session(runtime_task_id)
     assert persisted_session is not None
-    assert persisted_session.status == "suspended"
+    # The fulfilled terminal session keeps its immutable settlement proof
+    # while the row is reopened; the retry claim rotates it under the
+    # reopened row's retry authorization.
+    assert persisted_session.status == terminal_outcome
     assert prepared.execution_event["event_type"] == "owner_rework_execution_prepared"
     facts = query_fact_events(
         QueryFactEventsV1(
@@ -1832,6 +1835,10 @@ def test_prepare_owner_rework_execution_reopens_terminal_row_and_rotates_session
     )
     assert retried["success"] is True
     assert retried["reason"] == "claimed"
+    # The claim rotates the terminal session and takes a fresh active lease.
+    retried_session = service._read_session(runtime_task_id)
+    assert retried_session is not None
+    assert retried_session.status == "active"
 
 
 def test_prepare_owner_rework_execution_is_idempotent_for_nonterminal_handoff(tmp_path: Path) -> None:

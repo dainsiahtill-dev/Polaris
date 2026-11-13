@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock
 
@@ -82,6 +83,20 @@ class _ProjectionOrchestrationSnapshot:
     tasks: dict[str, _ProjectionTaskSnapshot] = field(default_factory=dict)
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+def _future_iso(*, hours: int) -> str:
+    """An ISO timestamp in the future.
+
+    Lease deadlines are re-evaluated at observation time, so a fixture must
+    not hardcode a date that expires with the calendar.
+    """
+    return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
+
+
+def _past_iso(*, minutes: int) -> str:
+    """An ISO timestamp in the past."""
+    return (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
 
 
 @pytest.fixture
@@ -501,8 +516,8 @@ def test_snapshot_task_rows_project_task_runtime_execution_facts_when_rows_are_m
                 "resume_count": 1,
                 "resume_state": "resumed",
                 "resume_available": False,
-                "lease_expires_at": "2026-07-04T00:00:00+00:00",
-                "last_heartbeat_at": "2026-07-03T23:59:00+00:00",
+                "lease_expires_at": _future_iso(hours=1),
+                "last_heartbeat_at": _past_iso(minutes=1),
                 "task_row_snapshot": {
                     "id": "TASK-3",
                     "task_id": "TASK-3",

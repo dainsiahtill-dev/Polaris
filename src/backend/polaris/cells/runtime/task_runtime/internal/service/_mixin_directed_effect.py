@@ -566,9 +566,11 @@ class _DirectedEffectMixin(_ServiceMixinBase):
         TaskMarket, recreates dependencies, or mutates TaskMarket state.
 
         A terminal TaskRuntime row is reopened only through the sanctioned
-        runtime path, which rotates a terminal session and appends execution
-        facts. A matching authorization on an already non-terminal row is a
-        no-op, while a conflicting or malformed authorization fails closed.
+        runtime path, which appends execution facts. The fulfilled terminal
+        session keeps its immutable settlement proof here; the retry claim
+        rotates it under the reopened row's retry authorization. A matching
+        authorization on an already non-terminal row is a no-op, while a
+        conflicting or malformed authorization fails closed.
         """
 
         self._require_writable()

@@ -9,11 +9,10 @@ from __future__ import annotations
 import math
 import threading
 from collections.abc import Callable, Mapping
-from typing import NoReturn, SupportsIndex, TypeAlias, cast
+from typing import Any, NoReturn, SupportsIndex, TypeAlias, cast
 
 from polaris.cells.runtime.task_runtime.internal.directed_effect_operation import DirectedEffectOperationRepository
 from polaris.cells.runtime.task_runtime.internal.service import TaskRuntimeService, reset_runtime_task_records
-from polaris.kernelone.type_ops import opaque_not_isinstance
 
 from .contracts import (
     AbortDirectedEffectOperationCommandV1,
@@ -75,6 +74,16 @@ TaskRuntimeExecutionAttemptSettlementCallableV1: TypeAlias = Callable[
     [SettleTaskRuntimeExecutionAttemptCommandV1],
     TaskRuntimeExecutionAttemptSettlementVerdictV1,
 ]
+
+
+def _opaque_not_isinstance(value: object, expected: type[Any] | tuple[type[Any], ...]) -> bool:
+    """Negated isinstance check that stays opaque to the type checker.
+
+    The public surface of this cell must not import from other segments, so
+    the guard lives here instead of a shared module.  Keeping the check
+    opaque stops the type checker from narrowing the rejected branch away.
+    """
+    return not isinstance(value, expected)
 
 
 def _directed_effect_authority_failure(
@@ -320,7 +329,12 @@ def get_directed_effect_parent_readiness(
             code=failure.code,
             evidence=failure.evidence,
         )
-    return cast("DirectedEffectParentReadinessResultV1", (repository.get_parent_readiness(query)))
+    # The repository class is assembled from a frozen source file, so the
+    # static type of this call is opaque.  Bind it to the declared result
+    # type instead of casting at the return, so the public readiness path
+    # keeps its read-only call surface.
+    readiness: DirectedEffectParentReadinessResultV1 = repository.get_parent_readiness(query)
+    return readiness
 
 
 def heartbeat_task_runtime_execution_attempt(
@@ -553,7 +567,7 @@ class TaskRuntimeExecutionAttemptAuthorityV1:
                     identity=current,
                     callback_error_type=type(exc).__name__,
                 )
-            if opaque_not_isinstance(verdict, TaskRuntimeExecutionAttemptHeartbeatVerdictV1):
+            if _opaque_not_isinstance(verdict, TaskRuntimeExecutionAttemptHeartbeatVerdictV1):
                 return TaskRuntimeExecutionAttemptAuthorityHeartbeatVerdictV1(
                     success=False,
                     code="heartbeat_invalid_verdict",
@@ -675,7 +689,7 @@ class TaskRuntimeExecutionAttemptAuthorityV1:
                     outcome=typed_outcome,
                     callback_error_type=type(exc).__name__,
                 )
-            if opaque_not_isinstance(verdict, TaskRuntimeExecutionAttemptSettlementVerdictV1):
+            if _opaque_not_isinstance(verdict, TaskRuntimeExecutionAttemptSettlementVerdictV1):
                 return TaskRuntimeExecutionAttemptAuthoritySettlementVerdictV1(
                     success=False,
                     code="settlement_invalid_verdict",
