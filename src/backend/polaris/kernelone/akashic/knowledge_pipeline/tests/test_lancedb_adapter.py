@@ -17,6 +17,11 @@ from polaris.kernelone.akashic.knowledge_pipeline.lancedb_adapter import (
     VectorRecord,
 )
 
+# LanceDB is an optional dependency. The production adapter lazy-imports it
+# and stays importable without it; the adapter's storage path requires the real
+# library, so skip cleanly when it is not installed.
+pytest.importorskip("lancedb")
+
 
 class TestVectorRecord:
     """Tests for VectorRecord dataclass."""

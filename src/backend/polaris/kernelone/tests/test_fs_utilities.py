@@ -66,13 +66,27 @@ def test_enforce_utf8_handles_stdout_reconfigure_failure(monkeypatch: pytest.Mon
     enforce_utf8()
 
 
-def test_build_utf8_env_returns_dict_with_defaults() -> None:
+def test_build_utf8_env_returns_dict_with_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     """build_utf8_env returns a dict with UTF-8 defaults."""
+    # The UTF-8 locale defaults apply only when the host does not define a
+    # locale (setdefault semantics), so the host locale is cleared here to
+    # keep the expectation deterministic.
+    monkeypatch.delenv("LANG", raising=False)
+    monkeypatch.delenv("LC_ALL", raising=False)
     env = build_utf8_env()
     assert env["PYTHONUTF8"] == "1"
     assert env["PYTHONIOENCODING"] == "utf-8"
     assert env["LANG"] == "en_US.UTF-8"
     assert env["LC_ALL"] == "en_US.UTF-8"
+
+
+def test_build_utf8_env_preserves_host_locale(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An existing host locale is preserved rather than overwritten."""
+    monkeypatch.setenv("LANG", "C.UTF-8")
+    monkeypatch.setenv("LC_ALL", "C.UTF-8")
+    env = build_utf8_env()
+    assert env["LANG"] == "C.UTF-8"
+    assert env["LC_ALL"] == "C.UTF-8"
 
 
 def test_build_utf8_env_merges_extra() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import mimetypes
 import tempfile
 from pathlib import Path
 
@@ -77,7 +78,12 @@ class TestMagicMimeDetector:
     def test_detect_octet_stream_for_unknown(self) -> None:
         """Unknown binary types fall back to application/octet-stream."""
         detector = MagicMimeDetector()
-        mime = detector.detect("/tmp/file.xyz", first_bytes=b"\x00\x01\x02\x03garbage")
+        # Use an extension the host MIME database does not know: ".xyz" is
+        # registered as chemical/x-xyz on many systems, which made the
+        # expectation depend on /etc/mime.types content.
+        path = "/tmp/file.polaris-unknown-ext"
+        assert mimetypes.guess_type(path)[0] is None
+        mime = detector.detect(path, first_bytes=b"\x00\x01\x02\x03garbage")
         assert mime == "application/octet-stream"
 
     def test_detect_with_no_bytes_returns_fallback(self) -> None:
@@ -112,7 +118,17 @@ class TestMagicMimeDetector:
         assert d1 is d2
 
     def test_forced_mime(self) -> None:
-        """forced_mime parameter is used when first_bytes is empty."""
+        """fallback_mime is used when magic and extension detection find nothing."""
         detector = MagicMimeDetector()
-        mime = detector.detect("/tmp/random.xyz", first_bytes=b"", fallback_mime="application/custom")
+        # Unknown extension keeps the assertion independent of the host MIME
+        # database (".xyz" is registered as chemical/x-xyz on many systems).
+        path = "/tmp/random.polaris-unknown-ext"
+        assert mimetypes.guess_type(path)[0] is None
+        mime = detector.detect(path, first_bytes=b"", fallback_mime="application/custom")
         assert mime == "application/custom"
+
+    def test_extension_guess_precedes_fallback_mime(self) -> None:
+        """A known extension is a detection result, so it wins over fallback_mime."""
+        detector = MagicMimeDetector()
+        mime = detector.detect("/tmp/image.png", first_bytes=b"", fallback_mime="application/custom")
+        assert mime == "image/png"

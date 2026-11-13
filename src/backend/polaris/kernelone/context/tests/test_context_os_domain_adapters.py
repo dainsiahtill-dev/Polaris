@@ -15,7 +15,7 @@ def _event(
     kind: str,
     content: str,
     sequence: int = 1,
-    _metadata: dict[str, str] | None = None,
+    metadata: dict[str, str] | None = None,
 ) -> TranscriptEvent:
     return TranscriptEvent(
         event_id=f"evt_{sequence}",
@@ -26,7 +26,11 @@ def _event(
         content=content,
         source_turns=(f"t{sequence}",),
         created_at="2026-03-26T00:00:00Z",
-        _metadata=dict(_metadata or {}),
+        # The model field is "metadata"; Pydantic silently drops an
+        # underscore-prefixed "_metadata" kwarg, so the metadata must be
+        # passed under its real name for the adapter to see it. The declared
+        # field type is a tuple of pairs.
+        metadata=tuple((metadata or {}).items()),
     )
 
 
@@ -113,7 +117,7 @@ def test_generic_adapter_lifts_followup_confirmation_into_goal_and_open_loop() -
             kind="user_message",
             content="需要",
             sequence=7,
-            _metadata={
+            metadata={
                 "followup_action": "深入查看特定代码段或进行代码修复",
                 "followup_confirmed": "true",
             },

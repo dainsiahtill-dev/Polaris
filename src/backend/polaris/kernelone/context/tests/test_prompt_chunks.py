@@ -9,6 +9,8 @@ This module tests the context compaction and budget management capabilities:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 
@@ -255,11 +257,14 @@ class TestRoleContextIdentity:
 class TestCompactionStrategy:
     """Tests for RoleContextCompressor."""
 
-    def test_micro_compact(self) -> None:
+    def test_micro_compact(self, tmp_path: Path) -> None:
         """Should apply micro compaction."""
         from polaris.kernelone.context.compaction import RoleContextCompressor
 
-        compressor = RoleContextCompressor(workspace="/fake", role_name="test")
+        # The compressor resolves its transcript store under the project-local
+        # runtime root, which must exist and be writable: use a real
+        # workspace instead of a placeholder path.
+        compressor = RoleContextCompressor(workspace=str(tmp_path), role_name="test")
         messages = [
             {"role": "user", "content": "test"},
             {"role": "assistant", "content": "result"},
@@ -267,11 +272,14 @@ class TestCompactionStrategy:
         result = compressor.micro_compact(messages)
         assert len(result) == 2
 
-    def test_truncate_compact(self) -> None:
+    def test_truncate_compact(self, tmp_path: Path) -> None:
         """Should apply truncate compaction."""
         from polaris.kernelone.context.compaction import RoleContextCompressor
 
-        compressor = RoleContextCompressor(workspace="/fake", role_name="test")
+        # The compressor resolves its transcript store under the project-local
+        # runtime root, which must exist and be writable: use a real
+        # workspace instead of a placeholder path.
+        compressor = RoleContextCompressor(workspace=str(tmp_path), role_name="test")
         messages = [{"role": "user", "content": f"message {i}"} for i in range(50)]
         compacted, snapshot = compressor.truncate_compact(messages)
         assert len(compacted) < len(messages)

@@ -177,7 +177,10 @@ class TestCognitiveMiddleware:
 
         assert result["enabled"] is False
         assert result["degraded"] is True
-        assert result["degraded_reason"] == "process:OSError"
+        # The reason carries the failure category (process:OSError) plus the
+        # bounded exception detail so callers can surface WHY, not just that.
+        assert result["degraded_reason"].startswith("process:OSError")
+        assert "simulated infra failure" in result["degraded_reason"]
 
     @pytest.mark.asyncio
     async def test_disabled_middleware_is_not_marked_degraded(self, tmp_path):

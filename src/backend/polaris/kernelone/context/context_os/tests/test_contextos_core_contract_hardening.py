@@ -140,7 +140,10 @@ def test_pipeline_stage_failure_degrades_to_typed_minimal_projection() -> None:
 
 
 def test_kernelone_core_graph_declares_contextos_public_contracts() -> None:
-    cell_yaml = Path("src/backend/polaris/cells/kernelone/core/cell.yaml").read_text(encoding="utf-8")
+    # Resolve from the test file, not the CWD: pytest is run from src/backend,
+    # so a repo-relative path string would point at a nonexistent file.
+    cell_yaml_path = Path(__file__).resolve().parents[5] / "polaris" / "cells" / "kernelone" / "core" / "cell.yaml"
+    cell_yaml = cell_yaml_path.read_text(encoding="utf-8")
     for contract_name in (
         "ProjectionRequest",
         "ProjectionResult",

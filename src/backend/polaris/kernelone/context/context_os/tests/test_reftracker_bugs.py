@@ -195,9 +195,11 @@ class TestRefTrackerStructuralIssues:
     def test_ref_tracker_has_own_lock(self) -> None:
         """RefTracker now has its own lock to protect _active."""
         tracker = RefTracker(ContentStore())
-        # _active is now protected by tracker._lock
+        # _active is now protected by tracker._lock (an RLock, since acquire
+        # paths can nest). Note: threading.Lock is the allocate_lock builtin,
+        # not a type, so pin the runtime type of the lock instance instead.
         assert hasattr(tracker, "_lock")
-        assert isinstance(tracker._lock, threading.Lock)
+        assert type(tracker._lock) is type(threading.RLock())
 
     def test_release_all_creates_fake_refs(self) -> None:
         """release_all() constructs ContentRef with size=0, losing metadata."""

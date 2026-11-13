@@ -13,6 +13,7 @@ import asyncio
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -206,20 +207,27 @@ class TestStorageConcurrency:
         assert not errors, f"Concurrent storage access errors: {errors}"
         assert len(results) == 20
 
-    def test_build_cache_root_concurrent(self) -> None:
+    def test_build_cache_root_concurrent(self, tmp_path: Path) -> None:
         """build_cache_root must handle concurrent calls safely."""
         from polaris.kernelone.storage.io_paths import build_cache_root
+
+        # Real workspaces: the canonical project-local runtime root must
+        # exist and be writable before it can be resolved.
+        workspaces: list[Path] = []
+        for i in range(3):
+            workspace = tmp_path / f"project_{i}"
+            (workspace / ".polaris" / "runtime").mkdir(parents=True, exist_ok=True)
+            workspaces.append(workspace)
 
         results: list[Any] = []
         errors: list[Exception] = []
 
         def build_cache(i: int) -> None:
             try:
-                import tempfile
-
-                with tempfile.TemporaryDirectory() as ramdisk:
-                    cache_root = build_cache_root(ramdisk, f"/tmp/project_{i % 3}")
-                    results.append(cache_root)
+                # No RAM-disk root: the redirection is retired, the canonical
+                # project-local root is the only runtime root.
+                cache_root = build_cache_root("", str(workspaces[i % 3]))
+                results.append(cache_root)
             except (RuntimeError, ValueError) as e:
                 errors.append(e)
 
@@ -234,6 +242,18 @@ class TestStorageConcurrency:
 
         assert not errors, f"Concurrent cache root build errors: {errors}"
         assert len(results) == 20
+        # Every resolution lands on the canonical project-local runtime root.
+        assert set(results) == {str(workspace / ".polaris" / "runtime") for workspace in workspaces}
+
+    def test_build_cache_root_rejects_retired_ramdisk_redirection(self, tmp_path: Path) -> None:
+        """A RAM-disk runtime root is retired and must fail closed."""
+        from polaris.kernelone.storage.io_paths import build_cache_root
+
+        workspace = tmp_path / "project"
+        (workspace / ".polaris" / "runtime").mkdir(parents=True, exist_ok=True)
+
+        with pytest.raises(RuntimeError, match="RAM-disk runtime redirection is retired"):
+            build_cache_root(str(tmp_path / "ramdisk"), str(workspace))
 
 
 class TestExecutorManagerConcurrency:

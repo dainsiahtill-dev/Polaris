@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tempfile
 import threading
 import time
 from collections.abc import Iterator
@@ -28,11 +29,19 @@ SVG = (
 
 
 @pytest.fixture
-def capture_workspace(tmp_path: Path) -> Iterator[Path]:
-    fs = KernelFileSystem(str(tmp_path), get_default_adapter(), read_only_paths=True)
-    fs.workspace_mkdir("project/.polaris", parents=True)
-    fs.workspace_write_text("project/source.txt", "unchanged", encoding="utf-8")
-    yield tmp_path / "project"
+def capture_workspace() -> Iterator[Path]:
+    # The workspace sandbox refuses a workspace that overlaps a reserved
+    # mount, and /tmp is mounted as a private tmpfs inside the sandbox.  The
+    # disposable workspace therefore lives under the repository owner, like
+    # test_workspace_sandbox.py does.
+    private = Path(__file__).resolve().parents[5] / ".polaris/test-workspaces/command-output-capture"
+    private.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="command-output-capture-", dir=private) as name:
+        root = Path(name)
+        fs = KernelFileSystem(str(root), get_default_adapter(), read_only_paths=True)
+        fs.workspace_mkdir("project/.polaris", parents=True)
+        fs.workspace_write_text("project/source.txt", "unchanged", encoding="utf-8")
+        yield root / "project"
 
 
 def _open(workspace: Path):

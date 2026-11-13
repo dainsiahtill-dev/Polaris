@@ -14,14 +14,18 @@ class TestMetadataImmutability:
 
     def test_transcript_event_metadata_is_tuple(self) -> None:
         """TranscriptEvent.metadata should be tuple, not dict."""
-        event = TranscriptEvent(
-            event_id="e1",
-            sequence=1,
-            role="user",
-            kind="message",
-            route="test",
-            content="hello",
-            _metadata={"key": "value"},
+        # model_validate exercises the before-validator that lifts a mapping
+        # into the declared tuple-of-tuples form.
+        event = TranscriptEvent.model_validate(
+            {
+                "event_id": "e1",
+                "sequence": 1,
+                "role": "user",
+                "kind": "message",
+                "route": "test",
+                "content": "hello",
+                "metadata": {"key": "value"},
+            }
         )
 
         # metadata should be stored as tuple of tuples
@@ -37,7 +41,7 @@ class TestMetadataImmutability:
             kind="message",
             route="test",
             content="hello",
-            _metadata={"key": "value"},
+            metadata=(("key", "value"),),
         )
 
         # metadata property returns tuple, which is immutable
@@ -45,14 +49,16 @@ class TestMetadataImmutability:
 
     def test_artifact_record_metadata_is_tuple(self) -> None:
         """ArtifactRecord.metadata should be tuple, not dict."""
-        record = ArtifactRecord(
-            artifact_id="a1",
-            artifact_type="code_block",
-            mime_type="text/plain",
-            token_count=100,
-            char_count=500,
-            peek="def foo()",
-            _metadata={"format": "python"},
+        record = ArtifactRecord.model_validate(
+            {
+                "artifact_id": "a1",
+                "artifact_type": "code_block",
+                "mime_type": "text/plain",
+                "token_count": 100,
+                "char_count": 500,
+                "peek": "def foo()",
+                "metadata": {"format": "python"},
+            }
         )
 
         assert isinstance(record.metadata, tuple)
@@ -67,17 +73,19 @@ class TestMetadataImmutability:
             token_count=100,
             char_count=500,
             peek="def foo()",
-            _metadata={"format": "python"},
+            metadata=(("format", "python"),),
         )
 
         assert isinstance(record.metadata, tuple)
 
     def test_dialog_act_result_metadata_is_tuple(self) -> None:
         """DialogActResult.metadata should be tuple, not dict."""
-        result = DialogActResult(
-            act="affirm",
-            confidence=0.95,
-            _metadata={"source": "classifier"},
+        result = DialogActResult.model_validate(
+            {
+                "act": "affirm",
+                "confidence": 0.95,
+                "metadata": {"source": "classifier"},
+            }
         )
 
         assert isinstance(result.metadata, tuple)
@@ -88,13 +96,13 @@ class TestMetadataImmutability:
         result = DialogActResult(
             act="affirm",
             confidence=0.95,
-            _metadata={"source": "classifier"},
+            metadata=(("source", "classifier"),),
         )
 
         assert isinstance(result.metadata, tuple)
 
     def test_from_mapping_creates_tuple_metadata(self) -> None:
-        """from_mapping should convert dict metadata to tuple."""
+        """model_validate should convert dict metadata to tuple."""
         payload = {
             "event_id": "e1",
             "sequence": 1,
@@ -105,7 +113,7 @@ class TestMetadataImmutability:
             "metadata": {"key": "value", "other": 123},
         }
 
-        event = TranscriptEvent.from_mapping(payload)
+        event = TranscriptEvent.model_validate(payload)
 
         assert isinstance(event.metadata, tuple)
         assert ("key", "value") in event.metadata
@@ -120,7 +128,7 @@ class TestMetadataImmutability:
             kind="message",
             route="test",
             content="hello",
-            _metadata={"key": "value"},
+            metadata=(("key", "value"),),
         )
 
         result = event.to_dict()
@@ -143,7 +151,7 @@ class TestMetadataImmutability:
         assert isinstance(event.metadata, tuple)
 
     def test_none_metadata_from_mapping(self) -> None:
-        """from_mapping with None metadata should result in empty tuple."""
+        """model_validate with None metadata should result in empty tuple."""
         payload = {
             "event_id": "e1",
             "sequence": 1,
@@ -154,14 +162,12 @@ class TestMetadataImmutability:
             "metadata": None,
         }
 
-        event = TranscriptEvent.from_mapping(payload)
+        event = TranscriptEvent.model_validate(payload)
 
         assert event.metadata == ()
 
-    def test_frozen_dataclass_not_replaceable(self) -> None:
-        """Dataclass fields should be replaceable via dataclasses.replace."""
-        from dataclasses import replace
-
+    def test_frozen_model_copies_via_model_copy(self) -> None:
+        """A frozen Pydantic model yields a new instance via model_copy."""
         event = TranscriptEvent(
             event_id="e1",
             sequence=1,
@@ -169,10 +175,10 @@ class TestMetadataImmutability:
             kind="message",
             route="test",
             content="hello",
-            _metadata={"key": "value"},
+            metadata=(("key", "value"),),
         )
 
-        # This should work - replace creates a new instance
-        new_event = replace(event, event_id="e2")
+        # model_copy creates a new instance with the updated field
+        new_event = event.model_copy(update={"event_id": "e2"})
         assert new_event.event_id == "e2"
         assert new_event.metadata == event.metadata

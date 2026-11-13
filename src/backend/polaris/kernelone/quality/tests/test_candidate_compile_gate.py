@@ -1,10 +1,19 @@
 """Regression tests for workspace-aware candidate compile protection."""
 
+import shutil
 from pathlib import Path
 
+import pytest
 from polaris.kernelone.quality.candidate_compile_gate import check_candidate_workspace_compile
 
+# These scenarios assert on real Go compiler output, which the gate can only
+# produce when the Go toolchain is installed (the gate reports
+# reason="go unavailable" otherwise). Same guard as
+# test_candidate_kfs_boundary.py and test_factory_audit_go_compile.py.
+requires_go = pytest.mark.skipif(shutil.which("go") is None, reason="go toolchain is not available")
 
+
+@requires_go
 def test_rejects_candidate_that_expands_existing_go_diagnostics(tmp_path: Path) -> None:
     """A red baseline is not permission to add more compiler failures.
 
@@ -34,6 +43,7 @@ def test_rejects_candidate_that_expands_existing_go_diagnostics(tmp_path: Path) 
     assert "undefined: value" in result.error
 
 
+@requires_go
 def test_allows_candidate_that_reduces_existing_go_diagnostics(tmp_path: Path) -> None:
     """An incomplete project remains repairable when diagnostics decrease."""
 

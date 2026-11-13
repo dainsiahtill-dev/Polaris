@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 
 import polaris.kernelone.quality.artifact_quality as artifact_quality_module
+import pytest
 from polaris.kernelone.quality import (
     ArtifactQualityIssue,
     artifact_quality_issue_key,
@@ -19,7 +21,13 @@ from polaris.kernelone.quality import (
 )
 from polaris.kernelone.quality.interface_ledger import record_declared_interfaces
 
+# The Go scenarios assert on real `go build` / `go test` output, which the
+# scanner can only produce when the Go toolchain is installed. Same guard as
+# test_candidate_kfs_boundary.py and test_factory_audit_go_compile.py.
+requires_go = pytest.mark.skipif(shutil.which("go") is None, reason="go toolchain is not available")
 
+
+@requires_go
 def test_scan_go_project_compile_reports_undefined_test_selectors(tmp_path: Path) -> None:
     (tmp_path / "go.mod").write_text("module demo\n\ngo 1.22\n", encoding="utf-8")
     (tmp_path / "main.go").write_text("package main\n\nfunc main() {}\n", encoding="utf-8")
@@ -36,6 +44,7 @@ def test_scan_go_project_compile_reports_undefined_test_selectors(tmp_path: Path
     assert any("undefined: PaletteForMood" in error for error in errors)
 
 
+@requires_go
 def test_scan_go_project_test_reports_owned_assertion_failures(tmp_path: Path) -> None:
     (tmp_path / "go.mod").write_text("module demo\n\ngo 1.22\n", encoding="utf-8")
     (tmp_path / "main.go").write_text(

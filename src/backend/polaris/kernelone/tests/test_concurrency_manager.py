@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import sys
+import threading
 
 import pytest
 from polaris.kernelone.concurrency.manager import (
@@ -52,19 +53,27 @@ async def test_different_loops_get_different_instances() -> None:
     def _inner() -> UnifiedConcurrencyManager:
         return get_concurrency_manager()
 
-    # Run in a separate thread with its own event loop
-    loop = asyncio.new_event_loop()
-    try:
-        future = loop.run_in_executor(None, _inner)
-        # Need to run the loop to completion
-        m2 = loop.run_until_complete(future)
-    finally:
-        loop.close()
+    # Run in a separate thread with its own event loop: a second loop cannot
+    # be driven from a thread that already runs one (this test is async).
+    results: list[UnifiedConcurrencyManager] = []
+
+    def _run_in_thread() -> None:
+        loop = asyncio.new_event_loop()
+        try:
+            future = loop.run_in_executor(None, _inner)
+            results.append(loop.run_until_complete(future))
+        finally:
+            loop.close()
+
+    thread = threading.Thread(target=_run_in_thread)
+    thread.start()
+    thread.join()
 
     # m1 and m2 may or may not be the same depending on thread/event loop state,
     # but they should both be valid instances
     assert isinstance(m1, UnifiedConcurrencyManager)
-    assert isinstance(m2, UnifiedConcurrencyManager)
+    assert results, "the worker thread must produce a manager instance"
+    assert isinstance(results[0], UnifiedConcurrencyManager)
 
 
 # -----------------------------------------------------------------------------
