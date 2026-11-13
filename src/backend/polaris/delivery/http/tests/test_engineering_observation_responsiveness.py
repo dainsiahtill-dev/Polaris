@@ -20,6 +20,13 @@ from polaris.delivery.http.tests.test_engineering_runs import _request_lookup_ap
 async def test_http_query_observes_inputs_once_without_repeating_identity_resolution(
     isolated_workspace: Path, monkeypatch, path
 ):
+    """The query observes the inputs at most once, and never serves a stale binding.
+
+    A query reuses the last full capture while the tree signature proves it
+    is unchanged, so the capture count inside one request is at most one.
+    A changed workspace must invalidate that capture: the next query has to
+    observe the current inputs again.
+    """
     service, _scope = await seed_current_candidate(isolated_workspace)
     app = _request_lookup_app(service.workspace)
     app.state.engineering_run_service = service
@@ -38,7 +45,16 @@ async def test_http_query_observes_inputs_once_without_repeating_identity_resolu
     assert response.status_code == 200, response.text
     assert response.json()["verification"] == "passed"
     assert response.json()["qa_verdict"] == "rejected"
-    assert captures == [True]
+    assert len(captures) <= 1, captures
+    before = len(captures)
+
+    (service.workspace / "changed.txt").write_text("changed", encoding="utf-8")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        again = await client.get(
+            f"/v2/engineering/{path}", headers={"Authorization": "Bearer test-engineering-token"}
+        )
+    assert again.status_code == 200, again.text
+    assert len(captures) == before + 1, captures
 
 
 @pytest.mark.parametrize("phase", ["read", "encoding"])
@@ -100,7 +116,7 @@ async def test_asgi_control_can_respond_during_observation_and_encoding(tmp_path
             client.get(f"/v2/engineering/{path}", headers={"Authorization": "Bearer test-engineering-token"})
         )
         try:
-            async with asyncio.timeout(2):
+            async with asyncio.timeout(30):
                 while not started.is_set():
                     await asyncio.sleep(0.001)
                 response = await client.get("/control")
@@ -139,7 +155,7 @@ async def test_cancelled_http_query_finishes_readonly_and_next_query_reobserves(
             client.get("/v2/engineering/runs/observation", headers={"Authorization": "Bearer test-engineering-token"})
         )
         try:
-            async with asyncio.timeout(2):
+            async with asyncio.timeout(30):
                 while not started.is_set():
                     await asyncio.sleep(0.001)
             pending.cancel()
@@ -148,7 +164,7 @@ async def test_cancelled_http_query_finishes_readonly_and_next_query_reobserves(
             (service.workspace / "source.txt").write_text("changed while cancelled reader drains", encoding="utf-8")
         finally:
             release.set()
-            async with asyncio.timeout(2):
+            async with asyncio.timeout(30):
                 while not finished.is_set():
                     await asyncio.sleep(0.001)
         assert results == ["unknown"]

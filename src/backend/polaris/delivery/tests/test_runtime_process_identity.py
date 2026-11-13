@@ -2,11 +2,46 @@
 
 import argparse
 import inspect
+import os
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 from polaris.delivery.cli import backend
 from polaris.delivery.http.routers import system
+
+#: The keys the backend CLI binds in the process environment.
+_BACKEND_ENV_KEYS = (
+    "KERNELONE_WORKSPACE",
+    "KERNELONE_INSTANCE_WORKSPACE",
+    "KERNELONE_RUNTIME_ROOT",
+    "KERNELONE_RUNTIME_CACHE_ROOT",
+    "KERNELONE_TOKEN",
+    "KERNELONE_BACKEND_PORT",
+    "KERNELONE_INSTANCE_ID",
+    "KERNELONE_INSTANCE_KIND",
+    "KERNELONE_CORS_ORIGINS",
+)
+
+
+@pytest.fixture
+def restored_backend_env() -> Iterator[None]:
+    """Restore every process environment key the backend CLI binds.
+
+    The backend process owns its runtime binding, so the CLI writes it into
+    the process environment.  A test process must not keep that binding: a
+    later test would then resolve another workspace's runtime root and fail
+    on a path that points at a deleted temporary directory.
+    """
+    original = {key: os.environ.get(key) for key in _BACKEND_ENV_KEYS}
+    try:
+        yield
+    finally:
+        for key, value in original.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def test_process_identity_does_not_rehash_backend_source(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -49,12 +84,11 @@ def test_process_identity_reports_immutable_workspace_binding(
 
 def test_backend_cli_records_immutable_instance_workspace_binding(
     monkeypatch: pytest.MonkeyPatch,
+    restored_backend_env: None,
     tmp_path: Path,
 ) -> None:
     workspace = tmp_path / "project"
     workspace.mkdir()
-    # Register both keys before the CLI mutates os.environ so monkeypatch
-    # restores the process environment for every later endpoint test.
     monkeypatch.setenv("KERNELONE_WORKSPACE", "/before/workspace")
     monkeypatch.setenv("KERNELONE_INSTANCE_WORKSPACE", "/before/binding")
     args = argparse.Namespace(

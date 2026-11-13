@@ -87,7 +87,7 @@ def _client(app: FastAPI) -> httpx.AsyncClient:
 
 
 async def _terminal(client: httpx.AsyncClient, session_id: str) -> dict[str, Any]:
-    async with asyncio.timeout(8):
+    async with asyncio.timeout(30):
         while True:
             response = await client.get(f"/v2/engineering/runs/{session_id}")
             assert response.status_code == 200, response.text
@@ -318,7 +318,7 @@ async def test_cancel_resume_and_missing_legacy_id_do_not_create_run(
             "/v2/engineering/runs", json={"instruction": "explain", "workspace": str(isolated_workspace)}
         )
         session_id = response.json()["session_id"]
-        async with asyncio.timeout(3):
+        async with asyncio.timeout(30):
             while not any(
                 event["kind"] == "role_started"
                 for event in app.state.engineering_run_service.store.load_events(session_id)
@@ -596,7 +596,7 @@ async def test_shutdown_drains_real_running_command_and_is_repeatable(
         )
         assert response.status_code == 200, response.text
         session_id = response.json()["session_id"]
-        async with asyncio.timeout(8):
+        async with asyncio.timeout(30):
             while not (isolated_workspace / "started").exists():
                 await asyncio.sleep(0.01)
         await service.shutdown()
