@@ -62,16 +62,32 @@ _SOURCE_SUFFIXES = frozenset(
 )
 
 #: The language compile checks the frozen floor can declare.
-_COMPILE_CHECK_NAMES = frozenset({"go_compile", "java_compile", "js_syntax", "py_compile", "ts_syntax"})
+_COMPILE_CHECK_NAMES = frozenset(
+    {
+        "cpp_compile",
+        "go_compile",
+        "java_compile",
+        "js_syntax",
+        "py_compile",
+        "rust_compile",
+        "ts_syntax",
+    }
+)
 
 #: The language compile check each source suffix family satisfies.
 _COMPILE_CHECK_BY_SUFFIX = {
+    ".c": "cpp_compile",
+    ".cc": "cpp_compile",
+    ".cpp": "cpp_compile",
     ".go": "go_compile",
+    ".h": "cpp_compile",
+    ".hpp": "cpp_compile",
     ".java": "java_compile",
     ".js": "js_syntax",
     ".jsx": "js_syntax",
     ".mjs": "js_syntax",
     ".py": "py_compile",
+    ".rs": "rust_compile",
     ".ts": "ts_syntax",
     ".tsx": "ts_syntax",
 }
@@ -167,6 +183,8 @@ def _compile_check_by_suffix(workspace: Path) -> dict[str, bool]:
         "ts_syntax": [path for path in sources if path.suffix.lower() in {".ts", ".tsx"}],
         "go_compile": [path for path in sources if path.suffix.lower() == ".go"],
         "java_compile": [path for path in sources if path.suffix.lower() == ".java"],
+        "rust_compile": [path for path in sources if path.suffix.lower() == ".rs"],
+        "cpp_compile": [path for path in sources if path.suffix.lower() in {".c", ".cc", ".cpp"}],
     }
     if families["js_syntax"]:
         verdicts["js_syntax"] = _run_syntax_check("node", ["--check"], families["js_syntax"])
@@ -178,7 +196,70 @@ def _compile_check_by_suffix(workspace: Path) -> dict[str, bool]:
         verdicts["go_compile"] = _run_project_build(workspace, ["go", "build", "./..."])
     if families["java_compile"]:
         verdicts["java_compile"] = _run_java_check(workspace, families["java_compile"])
+    if families["rust_compile"]:
+        verdicts["rust_compile"] = _run_rust_check(workspace)
+    if families["cpp_compile"]:
+        verdicts["cpp_compile"] = _run_cpp_check(workspace, families["cpp_compile"])
     return verdicts
+
+
+def _toolchain_executable(name: str) -> str | None:
+    """The host toolchain binary, when this host provides one."""
+    return shutil.which(name)
+
+
+def _run_rust_check(workspace: Path, *, timeout_s: int = 900) -> bool:
+    """Build the delivered Rust crate with cargo."""
+    if (workspace / "Cargo.toml").is_file():
+        return _run_project_build(workspace, ["cargo", "build", "--offline"], timeout_s=timeout_s)
+    cargo = _toolchain_executable("cargo")
+    if cargo is None:
+        return False
+    return _run_project_build(workspace, [cargo, "build", "--offline"], timeout_s=timeout_s)
+
+
+def _run_cpp_check(workspace: Path, sources: list[Path], *, timeout_s: int = 600) -> bool:
+    """Compile the delivered C/C++ sources with the host compiler.
+
+    A delivered Makefile project is compiled with its own build entry point;
+    a bare source set is compiled one translation unit at a time, because the
+    project may not have a linkable main.  The include roots of the project
+    are honoured, so a source that includes its own headers relative to the
+    project layout compiles exactly as the project intends.
+    """
+    compiler = _toolchain_executable("g++") or _toolchain_executable("c++")
+    if compiler is None:
+        return False
+    makefile = workspace / "Makefile"
+    if makefile.is_file():
+        return _run_project_build(workspace, ["make"], timeout_s=timeout_s)
+    for source in sources:
+        include_flags: list[str] = []
+        for parent in source.parents:
+            try:
+                relative = parent.relative_to(workspace)
+            except ValueError:
+                break
+            include_flags.append(f"-I{parent}")
+            if relative == Path("."):
+                break
+        # The project's own include roots: a source in tests/ includes the
+        # headers of the project root the same way the project does.
+        for root in ("src", "include"):
+            candidate = workspace / root
+            if candidate.is_dir():
+                include_flags.append(f"-I{candidate}")
+        completed = subprocess.run(
+            [compiler, "-fsyntax-only", *include_flags, str(source)],
+            cwd=str(workspace),
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+        )
+        if completed.returncode != 0:
+            return False
+    return True
 
 
 def _run_syntax_check(
@@ -233,11 +314,12 @@ def _run_typescript_check(workspace: Path, *, timeout_s: int = 300) -> bool:
     return False
 
 
-def _run_project_build(workspace: Path, command: list[str], *, timeout_s: int = 600) -> bool:
+def _run_command(command: list[str], *, cwd: Path, timeout_s: int = 600) -> bool:
+    """Run one command and report whether it succeeded."""
     try:
         completed = subprocess.run(
             command,
-            cwd=str(workspace),
+            cwd=str(cwd),
             capture_output=True,
             text=True,
             timeout=timeout_s,
@@ -248,11 +330,29 @@ def _run_project_build(workspace: Path, command: list[str], *, timeout_s: int = 
     return completed.returncode == 0
 
 
+def _run_project_build(workspace: Path, command: list[str], *, timeout_s: int = 600) -> bool:
+    return _run_command(command, cwd=workspace, timeout_s=timeout_s)
+
+
 def _run_java_check(workspace: Path, sources: list[Path], *, timeout_s: int = 600) -> bool:
-    javac = shutil.which("javac")
+    """Compile the delivered Java production sources.
+
+    The frozen floor asks whether the delivered Java source compiles.  The
+    production sources are the ones under the project's main source root; the
+    test sources belong to the project's own test framework, which the
+    project resolves through its build.
+    """
+    javac = _toolchain_executable("javac")
     if javac is None:
         return False
-    return _run_syntax_check(javac, [], sources, timeout_s=timeout_s)
+    main_root = workspace / "src" / "main" / "java"
+    if main_root.is_dir():
+        production = [path for path in sources if path.is_relative_to(main_root)]
+        if production:
+            sources = production
+    # Java compiles as a unit: one translation unit alone cannot resolve the
+    # other classes of the project.
+    return _run_command([javac, *[str(path) for path in sources]], cwd=workspace, timeout_s=timeout_s)
 
 
 def evaluate_catalog_checks(
