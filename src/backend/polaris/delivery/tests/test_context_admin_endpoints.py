@@ -11,6 +11,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from polaris.delivery.http.v2 import context as v2_context
+from polaris.kernelone.llm.engine.context_store_retention import provision_context_store_audit_lock
 
 
 @pytest.fixture
@@ -86,9 +87,16 @@ class TestContextAdminStats:
         tmp_path: Any,
     ) -> None:
         """GET /v2/context/stats must resolve to stats, not /{hash}."""
+        from polaris.kernelone.storage import StorageLayout
         from polaris.kernelone.storage.io_paths import build_cache_root
 
         workspace = str(tmp_path)
+        # The inventory is only provable when the context tree exists, so
+        # plant the store this request claims to observe.
+        layout = StorageLayout(workspace=workspace, runtime_base=build_cache_root("", workspace))
+        contexts_dir = layout.get_path("runtime", "contexts/ab")
+        contexts_dir.mkdir(parents=True, exist_ok=True)
+        (contexts_dir / "abcdef0000000000000000aa").write_text("x", encoding="utf-8")
         with (
             patch.object(v2_context, "_resolve_workspace", return_value=workspace),
             patch.object(v2_context, "_build_retention") as build_mock,
@@ -100,6 +108,9 @@ class TestContextAdminStats:
                 sweep_min_interval_seconds=0,
                 enabled=True,
             )
+            # The audit pin is observed read-only; its lock key is enrolled
+            # by the workspace maintenance step the HTTP lifespan performs.
+            provision_context_store_audit_lock(workspace)
             retention = v2_context.ContextStoreRetention(
                 workspace=workspace,
                 config=cfg,
@@ -138,6 +149,9 @@ class TestContextAdminStats:
                 sweep_min_interval_seconds=0,
                 enabled=True,
             )
+            # The audit pin is observed read-only; its lock key is enrolled
+            # by the workspace maintenance step the HTTP lifespan performs.
+            provision_context_store_audit_lock(workspace)
             retention = v2_context.ContextStoreRetention(
                 workspace=workspace,
                 config=cfg,
@@ -164,9 +178,15 @@ class TestContextAdminSweep:
 
     def test_sweep_returns_report(self, enabled_client: TestClient, tmp_path: Any) -> None:
         """The sweep endpoint returns a SweepReport-shaped body."""
+        from polaris.kernelone.storage import StorageLayout
         from polaris.kernelone.storage.io_paths import build_cache_root
 
         workspace = str(tmp_path)
+        # The sweep inventory is only provable when the context tree exists.
+        layout = StorageLayout(workspace=workspace, runtime_base=build_cache_root("", workspace))
+        contexts_dir = layout.get_path("runtime", "contexts/ab")
+        contexts_dir.mkdir(parents=True, exist_ok=True)
+        (contexts_dir / "abcdef0000000000000000aa").write_text("x", encoding="utf-8")
         cfg = v2_context.ContextStoreRetentionConfig(
             ttl_seconds=10**9,
             max_total_bytes=10**9,
@@ -178,6 +198,9 @@ class TestContextAdminSweep:
             patch.object(v2_context, "_resolve_workspace", return_value=workspace),
             patch.object(v2_context, "_build_retention") as build_mock,
         ):
+            # The audit pin is observed read-only; its lock key is enrolled
+            # by the workspace maintenance step the HTTP lifespan performs.
+            provision_context_store_audit_lock(workspace)
             retention = v2_context.ContextStoreRetention(
                 workspace=workspace,
                 config=cfg,

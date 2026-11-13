@@ -139,7 +139,19 @@ class TestV2ChannelToSubject:
 
     def test_expected_count(self) -> None:
         """Test expected mapping count."""
-        assert len(V2_CHANNEL_TO_SUBJECT) == 8
+        # Pin the exact channel set: a count drifts silently whenever a
+        # realtime channel is added.
+        assert set(V2_CHANNEL_TO_SUBJECT) == {
+            "log.system",
+            "log.process",
+            "log.llm",
+            "event.file_edit",
+            "event.task_trace",
+            "event.engineering",
+            "status.snapshot",
+            "status.resident",
+            "status.instances",
+        }
 
     def test_values_are_strings(self) -> None:
         """Test that all values are strings."""

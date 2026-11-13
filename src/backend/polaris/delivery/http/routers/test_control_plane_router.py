@@ -6,12 +6,33 @@ from types import SimpleNamespace
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from polaris.cells.control_plane.run_ledger.public import AppendRunLedgerEventCommandV1, append_run_ledger_event
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.delivery.http.error_handlers import setup_exception_handlers
 from polaris.delivery.http.routers import control_plane
 from polaris.delivery.http.routers._shared import require_auth
 
 
+def _bootstrap_fact_stream(workspace: Path) -> None:
+    """Provision the FactStream storage authority for one workspace.
+
+    The HTTP app bootstraps it in its lifespan; a bare router app must do the
+    same before it can append runtime facts.
+    """
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(workspace),
+            streams=fact_stream_bootstrap_streams(),
+            maintenance_reason="control_plane_router_test_client",
+        )
+    )
+
+
 def _build_client(workspace: Path) -> TestClient:
+    _bootstrap_fact_stream(workspace)
     app = FastAPI()
     setup_exception_handlers(app)
     app.include_router(control_plane.router)
@@ -21,6 +42,7 @@ def _build_client(workspace: Path) -> TestClient:
 
 
 def test_control_plane_run_provenance_bundle_endpoint_returns_bundle(tmp_path: Path) -> None:
+    _bootstrap_fact_stream(tmp_path)
     append_run_ledger_event(
         AppendRunLedgerEventCommandV1(
             workspace=str(tmp_path),

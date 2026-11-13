@@ -1006,10 +1006,26 @@ def clear_retention_cache() -> None:
     _RETENTION_CACHE.clear()
 
 
+def provision_context_store_audit_lock(workspace: str) -> None:
+    """Enroll the context snapshot audit lock for one workspace.
+
+    Read-only inventory (stats, sweep) observes the store through the audit
+    pin and must never create state, so the lock key has to be enrolled by an
+    explicit workspace maintenance step.  Without it every read-only
+    inventory request fails closed with ``lock_authority_missing`` or
+    ``stream_lock_missing`` on a workspace that has not written a snapshot
+    yet.
+    """
+    instance = ContextStoreRetention(workspace=workspace, read_only=False)
+    with instance._pin_repository._exclusive_lock(observe=False):
+        return
+
+
 __all__ = [
     "ContextStoreRetention",
     "ContextStoreRetentionConfig",
     "SweepReport",
     "clear_retention_cache",
     "get_retention",
+    "provision_context_store_audit_lock",
 ]

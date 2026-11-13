@@ -7,6 +7,11 @@ from typing import Any
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from polaris.cells.events.fact_stream.public import (
+    BootstrapFactStreamWorkspaceCommandV1,
+    bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
+)
 from polaris.cells.roles.runtime.public import service as role_runtime_service
 from polaris.cells.roles.runtime.public.contracts import (
     AggregateChatChoiceV1,
@@ -24,6 +29,16 @@ class _AllowAllAuth:
 
 
 def _build_client(workspace: str) -> TestClient:
+    # The HTTP app bootstraps the FactStream storage authority in its
+    # lifespan; a bare router app must do the same before the runtime can
+    # materialize evidence as facts.
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=workspace,
+            streams=fact_stream_bootstrap_streams(),
+            maintenance_reason="aggregate_chat_router_test_client",
+        )
+    )
     app = FastAPI()
     app.include_router(aggregate_chat.router)
     app.state.auth = _AllowAllAuth()
@@ -222,25 +237,20 @@ def test_v1_chat_completions_normalizes_failure_evidence_rows(monkeypatch: Any, 
     assert command.failure_evidence["evidence_refs"] == ("provider_response:abc",)
 
 
-def test_v1_chat_completions_lobe_chain_materializes_runtime_evidence_via_service(
-    monkeypatch: Any, tmp_path: Any
-) -> None:
+def test_v1_chat_completions_rejects_retired_lobe_chain_execution(monkeypatch: Any, tmp_path: Any) -> None:
+    """The retired aggregate execution mode must fail closed without effects.
+
+    Aggregate execution was retired together with the legacy role-session
+    engine: the advice path (plan_only) stays, and the engineering run
+    service owns real execution.  A retired mode must not plan, execute or
+    materialize runtime evidence.
+    """
     client = _build_client(str(tmp_path))
     captured: list[Any] = []
 
     async def fake_stream_chat_turn(command: Any) -> Any:
         captured.append(command)
-        yield {
-            "type": "fingerprint",
-            "profile_id": f"code.{command.role}",
-            "profile_hash": f"hash-{len(captured)}",
-            "bundle_id": "bundle-code",
-            "bundle_version": "v1",
-            "run_id": f"strategy-run-{len(captured)}",
-            "turn_index": len(captured),
-            "cognitive_strategy_override_applied": False,
-        }
-        yield {"type": "content_chunk", "content": f"{command.role} aggregate routed"}
+        yield {"type": "content_chunk", "content": "must not run"}
 
     monkeypatch.setattr(role_runtime_service._DEFAULT_ROLE_RUNTIME_SERVICE, "stream_chat_turn", fake_stream_chat_turn)
 
@@ -263,26 +273,14 @@ def test_v1_chat_completions_lobe_chain_materializes_runtime_evidence_via_servic
         },
     )
 
-    assert response.status_code == 200
-    body = response.json()
-    assert captured
-    assert body["metadata"]["execution_mode"] == "lobe_chain"
-    assert body["metadata"]["stateful"] is True
-    execution_result = body["execution_result"]
-    runtime_metadata = execution_result["metadata"]["aggregate_runtime"]
-    assert len(runtime_metadata["runtime_integrations_wired"]) == 16
-    assert runtime_metadata["context_governance_status"] == "ok"
-    assert runtime_metadata["distilled_knowledge_status"] == "ok"
-    assert runtime_metadata["knowledge_distillation_status"] == "ok"
-    assert execution_result["metadata"]["knowledge_distillation"]["knowledge_units_created"] >= 1
-    assert execution_result["metadata"]["context_governance"]["retrieval_candidate_count"] >= 0
-    command = captured[0]
-    aggregate_context = command.context["aggregate_runtime_context"]
-    assert aggregate_context["context_governance_pack"]["status"] == "ok"
-    assert aggregate_context["contextos_attention_budget_pack"]["status"] == "ok"
-    assert aggregate_context["task_market_projection_pack"]["status"] == "ok"
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert detail["code"] == "AGGREGATE_RUNTIME_ERROR"
+    assert "legacy_engine_retired" in detail["message"]
+    # No role turn ran and no runtime evidence was materialized.
+    assert captured == []
     knowledge_file = Path(resolve_runtime_path(str(tmp_path), "runtime/knowledge/distilled_knowledge.jsonl"))
-    assert knowledge_file.exists()
+    assert not knowledge_file.exists()
 
 
 def test_v1_chat_completions_rejects_unknown_execution_mode(tmp_path: Any) -> None:

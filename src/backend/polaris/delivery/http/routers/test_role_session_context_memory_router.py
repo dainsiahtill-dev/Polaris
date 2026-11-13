@@ -11,10 +11,14 @@ from typing import Any
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from polaris.cells.roles.session.internal.conversation import Base
+from polaris.cells.roles.session.internal.conversation import (
+    _DEFAULT_CONVERSATIONS_DB_LOGICAL_PATH,
+    Base,
+)
 from polaris.cells.roles.session.internal.role_session_service import RoleSessionService
 from polaris.delivery.http.routers import role_session as role_session_router
 from polaris.kernelone.context.context_os import CodeContextDomainAdapter, StateFirstContextOS
+from polaris.kernelone.storage import resolve_storage_roots_read_only
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -38,6 +42,18 @@ def _make_sqlite_db_path() -> Path:
     return Path(raw)
 
 
+def _make_workspace_sqlite_db_path(workspace: Path) -> Path:
+    """The canonical conversations database path for one workspace.
+
+    The HTTP router opens historical role sessions through the read-only,
+    workspace-scoped resolver, so the seeded database must live exactly where
+    that resolver looks for it.
+    """
+    roots = resolve_storage_roots_read_only(str(Path(workspace).resolve()))
+    logical = _DEFAULT_CONVERSATIONS_DB_LOGICAL_PATH.partition("/")[2]
+    return Path(roots.runtime_root) / logical
+
+
 def _install_temp_session_db(db_path: Path) -> tuple[Any, Any, Any]:
     engine = create_engine(
         f"sqlite:///{db_path.resolve().as_posix()}",
@@ -53,7 +69,7 @@ def _install_temp_session_db(db_path: Path) -> tuple[Any, Any, Any]:
     return engine, session_factory, conv_mod
 
 
-def _seed_context_os_session(session_factory: Any) -> str:
+def _seed_context_os_session(session_factory: Any, workspace: Path) -> str:
     projection = asyncio.run(
         StateFirstContextOS(domain_adapter=CodeContextDomainAdapter()).project(
             messages=[
@@ -102,6 +118,7 @@ def _seed_context_os_session(session_factory: Any) -> str:
     with RoleSessionService(db=session_factory()) as service:
         session = service.create_session(
             role="director",
+            workspace=str(workspace),
             context_config={"state_first_context_os": snapshot},
         )
         return str(session.id)
@@ -120,10 +137,11 @@ def _build_test_client(workspace: Path) -> TestClient:
 class TestRoleSessionContextMemoryRouter:
     def test_search_memory_endpoint_returns_items(self) -> None:
         workspace = _make_workspace_tempdir()
-        db_path = _make_sqlite_db_path()
+        db_path = _make_workspace_sqlite_db_path(workspace)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
         engine, session_factory, conv_mod = _install_temp_session_db(db_path)
         try:
-            session_id = _seed_context_os_session(session_factory)
+            session_id = _seed_context_os_session(session_factory, workspace)
             with _build_test_client(workspace) as client:
                 response = client.get(
                     f"/v2/roles/sessions/{session_id}/memory/search",
@@ -145,10 +163,11 @@ class TestRoleSessionContextMemoryRouter:
 
     def test_read_artifact_endpoint_returns_payload(self) -> None:
         workspace = _make_workspace_tempdir()
-        db_path = _make_sqlite_db_path()
+        db_path = _make_workspace_sqlite_db_path(workspace)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
         engine, session_factory, conv_mod = _install_temp_session_db(db_path)
         try:
-            session_id = _seed_context_os_session(session_factory)
+            session_id = _seed_context_os_session(session_factory, workspace)
             with _build_test_client(workspace) as client:
                 search = client.get(
                     f"/v2/roles/sessions/{session_id}/memory/search",
@@ -175,10 +194,11 @@ class TestRoleSessionContextMemoryRouter:
 
     def test_read_episode_and_state_endpoints_return_context_os_views(self) -> None:
         workspace = _make_workspace_tempdir()
-        db_path = _make_sqlite_db_path()
+        db_path = _make_workspace_sqlite_db_path(workspace)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
         engine, session_factory, conv_mod = _install_temp_session_db(db_path)
         try:
-            session_id = _seed_context_os_session(session_factory)
+            session_id = _seed_context_os_session(session_factory, workspace)
             with _build_test_client(workspace) as client:
                 episode_search = client.get(
                     f"/v2/roles/sessions/{session_id}/memory/search",

@@ -234,6 +234,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 )
             )
             _startup_phase_completed("bootstrap_fact_stream_workspace", phase_started_at)
+            # The context snapshot audit pin is observed read-only by the
+            # context inventory endpoints; the lock key must be enrolled by
+            # an explicit maintenance step because observations never
+            # provision state.
+            from polaris.kernelone.llm.engine.context_store_retention import (
+                provision_context_store_audit_lock,
+            )
+
+            try:
+                provision_context_store_audit_lock(workspace)
+            except (OSError, RuntimeError, ValueError) as exc:
+                logger.warning("[startup] context store audit lock provisioning failed: %s", exc)
         instance_watchdog_task = maybe_start_instance_watchdog()
         if workspace:
             from polaris.bootstrap.managed_process_receipt_owner import configure_managed_process_receipt_owner

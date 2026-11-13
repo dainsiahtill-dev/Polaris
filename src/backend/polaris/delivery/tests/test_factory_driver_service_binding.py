@@ -26,12 +26,14 @@ def test_factory_service_sees_run_when_env_is_already_project_runtime(
     from polaris.kernelone.storage.layout import clear_storage_roots_cache, resolve_storage_roots
 
     monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
-    cache_base = tmp_path / "runtime-cache"
-    cache_base.mkdir()
+    # The runtime root is single-rooted: an explicit KERNELONE_RUNTIME_ROOT
+    # must name the canonical project-local root, so resolve that root first
+    # and then point the environment at it.
+    monkeypatch.delenv("KERNELONE_RUNTIME_ROOT", raising=False)
+    monkeypatch.delenv("KERNELONE_RUNTIME_CACHE_ROOT", raising=False)
+    clear_storage_roots_cache()
     workspace = tmp_path / "f21e79dac015d4f121370610"
     workspace.mkdir()
-    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(cache_base))
-    clear_storage_roots_cache()
     project_runtime = Path(resolve_storage_roots(str(workspace)).runtime_root)
     run_id = "factory_6647fd444bb7"
     run_dir = project_runtime / "factory" / run_id
