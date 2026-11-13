@@ -177,6 +177,27 @@ def test_write_and_read_text_roundtrip_utf8(
     assert Path(receipt.absolute_path).is_file()
 
 
+def test_read_missing_file_raises_file_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A missing path must surface the port's documented FileNotFoundError.
+
+    The guarded namespace layer refuses a missing path with its typed
+    ``guarded_snapshot_missing`` boundary error.  The filesystem port
+    documents FileNotFoundError, so callers that treat "absent" as an empty
+    result (evidence readers, receipt lookups) must not see a boundary
+    refusal instead.
+    """
+    fs, _ = _build_kernel_fs(monkeypatch, tmp_path)
+
+    with pytest.raises(FileNotFoundError):
+        fs.read_text("workspace/meta/kfs/absent.txt")
+
+    with pytest.raises(FileNotFoundError):
+        fs.read_bytes("workspace/meta/kfs/absent.bin")
+
+
 def test_rejects_legacy_or_invalid_prefix(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

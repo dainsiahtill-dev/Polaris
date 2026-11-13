@@ -49,6 +49,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
+from polaris.kernelone.fs.encoding import apply_utf8_locale
 from polaris.kernelone.process.process_tree import (
     _PROCESS_TREE_WAIT_SLICE_SECONDS,
     ProcessTreeDrainError,
@@ -439,7 +440,7 @@ class SubprocessAsyncRunner:
             resolved_env = dict(env)
             resolved_env.setdefault("PYTHONUTF8", "1")
             resolved_env.setdefault("PYTHONIOENCODING", "utf-8")
-            resolved_env.setdefault("LANG", "en_US.UTF-8")
+            apply_utf8_locale(resolved_env)
 
         # asyncio.create_subprocess_exec does not accept shell= keyword.
         # This satisfies the shell=False invariant at the API level.
@@ -1267,9 +1268,7 @@ class SubprocessPopenRunner:
             resolved_env = dict(env)
             resolved_env.setdefault("PYTHONUTF8", "1")
             resolved_env.setdefault("PYTHONIOENCODING", "utf-8")
-            resolved_env.setdefault("LANG", "en_US.UTF-8")
-            resolved_env.setdefault("LC_ALL", "en_US.UTF-8")
-            resolved_env.setdefault("LC_CTYPE", "en_US.UTF-8")
+            apply_utf8_locale(resolved_env)
 
         # SECURITY: shell=False is the default when args is a list.
         # This is the permanent shell-disallow enforcement mechanism.

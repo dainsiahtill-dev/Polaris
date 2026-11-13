@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 import re
@@ -26,6 +27,7 @@ from .contracts import (
 )
 from .guarded_directory import guarded_create_directory
 from .guarded_metadata import list_guarded_directory, read_guarded_metadata, read_guarded_symlink
+from .guarded_namespace_ops import NamespaceBoundaryError
 from .guarded_remove_tree import guarded_remove_tree
 from .text_ops import open_guarded_text_log_append
 from .types import (
@@ -126,13 +128,13 @@ class KernelFileSystem:
         self._require_utf8_encoding(encoding)
         normalized = self.to_logical_path(logical_path)
         binding = self._namespace_binding(normalized)
-        content = self._read_managed_namespace_bytes(binding)
+        content = self._read_managed_namespace_bytes_or_missing(binding)
         return content.decode(encoding)
 
     def read_bytes(self, logical_path: str) -> bytes:
         normalized = self.to_logical_path(logical_path)
         binding = self._namespace_binding(normalized)
-        return self._read_managed_namespace_bytes(binding)
+        return self._read_managed_namespace_bytes_or_missing(binding)
 
     def read_json(self, logical_path: str) -> Any:
         return json.loads(self.read_text(logical_path, encoding="utf-8"))
@@ -448,6 +450,26 @@ class KernelFileSystem:
         """Read one namespace-bound leaf through the adapter's capability."""
         reader = self._bind_managed_namespace_capability("read_managed_namespace_bytes")
         return bytes(reader(binding))
+
+    def _read_managed_namespace_bytes_or_missing(self, binding: NamespaceBindingV1) -> bytes:
+        """Read one namespace-bound leaf, keeping the port's missing-file contract.
+
+        The guarded namespace layer refuses a missing path with its typed
+        ``guarded_snapshot_missing`` boundary error.  The filesystem port
+        documents ``FileNotFoundError`` for a path that does not exist, so the
+        missing case is translated here and every other refusal (symlink
+        escape, identity drift, not a regular file) keeps its typed error.
+        """
+        try:
+            return self._read_managed_namespace_bytes(binding)
+        except NamespaceBoundaryError as exc:
+            if exc.code == "guarded_snapshot_missing":
+                raise FileNotFoundError(
+                    errno.ENOENT,
+                    os.strerror(errno.ENOENT),
+                    binding.physical_path(),
+                ) from exc
+            raise
 
     def _write_managed_namespace_bytes(self, binding: NamespaceBindingV1, payload: bytes) -> int:
         """Replace one namespace-bound leaf through the adapter's capability."""

@@ -7,6 +7,7 @@ import sys
 import time
 from typing import Any, Union
 
+from polaris.kernelone.fs.encoding import apply_utf8_locale
 from polaris.kernelone.fs.text_ops import read_file_safe
 from polaris.kernelone.tool_execution.io_tools import ensure_codex_available
 
@@ -355,9 +356,7 @@ def invoke_codex(
     env = os.environ.copy()
     env.setdefault("PYTHONUTF8", "1")
     env.setdefault("PYTHONIOENCODING", "utf-8")
-    env.setdefault("LANG", "en_US.UTF-8")
-    env.setdefault("LC_ALL", "en_US.UTF-8")
-    env.setdefault("LC_CTYPE", "en_US.UTF-8")
+    apply_utf8_locale(env)
     if extra_env:
         env.update(extra_env)
     caps = _probe_codex_exec_capabilities(

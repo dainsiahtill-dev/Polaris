@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from polaris.kernelone.fs.encoding import apply_utf8_locale, resolve_utf8_locale
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -115,8 +117,8 @@ _DANGEROUS_ENV_VAR_PREFIXES: tuple[str, ...] = (
 _SAFE_DEFAULT_ENV: dict[str, str] = {
     "PYTHONUTF8": "1",
     "PYTHONIOENCODING": "utf-8",
-    "LANG": "en_US.UTF-8",
-    "LC_ALL": "en_US.UTF-8",
+    "LANG": resolve_utf8_locale(),
+    "LC_ALL": resolve_utf8_locale(),
 }
 
 _FORBIDDEN_COMMAND_PATTERNS = (
@@ -236,8 +238,7 @@ def _build_utf8_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
     env = dict(base_env or {})
     env.setdefault("PYTHONUTF8", "1")
     env.setdefault("PYTHONIOENCODING", "utf-8")
-    env.setdefault("LANG", "en_US.UTF-8")
-    env.setdefault("LC_ALL", "en_US.UTF-8")
+    apply_utf8_locale(env)
     return env
 
 

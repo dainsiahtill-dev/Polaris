@@ -17,7 +17,12 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from polaris.kernelone.fs.encoding import build_utf8_env, enforce_utf8
+from polaris.kernelone.fs.encoding import (
+    build_utf8_env,
+    enforce_utf8,
+    is_locale_available,
+    resolve_utf8_locale,
+)
 from polaris.kernelone.fs.fsync_mode import (
     _DISABLED_TOKENS,
     IO_FSYNC_ENV,
@@ -32,29 +37,57 @@ from polaris.kernelone.fs.tree import format_workspace_tree
 
 
 def test_enforce_utf8_sets_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
-    """enforce_utf8 sets PYTHONUTF8, PYTHONIOENCODING, LANG, LC_ALL."""
+    """enforce_utf8 sets PYTHONUTF8, PYTHONIOENCODING and a usable UTF-8 locale."""
     monkeypatch.delenv("PYTHONUTF8", raising=False)
     monkeypatch.delenv("PYTHONIOENCODING", raising=False)
     monkeypatch.delenv("LANG", raising=False)
     monkeypatch.delenv("LC_ALL", raising=False)
+    monkeypatch.delenv("LC_CTYPE", raising=False)
+    resolve_utf8_locale.cache_clear()
 
     enforce_utf8()
 
     assert os.environ.get("PYTHONUTF8") == "1"
     assert os.environ.get("PYTHONIOENCODING") == "utf-8"
-    assert os.environ.get("LANG") == "en_US.UTF-8"
-    assert os.environ.get("LC_ALL") == "en_US.UTF-8"
+    # The locale must be a UTF-8 locale this host really provides: an
+    # unavailable locale makes every child tool warn on stderr, and the
+    # platform records command stderr as physical error evidence.
+    locale_name = os.environ.get("LANG")
+    assert locale_name is not None
+    assert "UTF-8" in locale_name.upper()
+    assert is_locale_available(locale_name)
+    assert os.environ.get("LC_ALL") == locale_name
 
 
 def test_enforce_utf8_does_not_override_existing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """enforce_utf8 uses setdefault and preserves existing values."""
-    monkeypatch.setenv("LANG", "ja_JP.UTF-8")
-    monkeypatch.setenv("LC_ALL", "ja_JP.UTF-8")
+    """enforce_utf8 preserves a host locale the host can actually use."""
+    monkeypatch.setenv("LANG", "C.UTF-8")
+    monkeypatch.setenv("LC_ALL", "C.UTF-8")
+    resolve_utf8_locale.cache_clear()
 
     enforce_utf8()
 
-    assert os.environ.get("LANG") == "ja_JP.UTF-8"
-    assert os.environ.get("LC_ALL") == "ja_JP.UTF-8"
+    assert os.environ.get("LANG") == "C.UTF-8"
+    assert os.environ.get("LC_ALL") == "C.UTF-8"
+
+
+def test_enforce_utf8_replaces_unusable_host_locale(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A locale the host cannot provide is replaced, not inherited.
+
+    An unavailable locale makes every child tool print a setlocale warning on
+    stderr; the platform would then record that warning as a command error.
+    """
+    monkeypatch.setenv("LANG", "polaris-not-a-locale")
+    monkeypatch.setenv("LC_ALL", "polaris-not-a-locale")
+    resolve_utf8_locale.cache_clear()
+
+    enforce_utf8()
+
+    locale_name = os.environ.get("LANG")
+    assert locale_name is not None
+    assert locale_name != "polaris-not-a-locale"
+    assert is_locale_available(locale_name)
+    assert os.environ.get("LC_ALL") == locale_name
 
 
 def test_enforce_utf8_handles_stdout_reconfigure_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -69,15 +102,18 @@ def test_enforce_utf8_handles_stdout_reconfigure_failure(monkeypatch: pytest.Mon
 def test_build_utf8_env_returns_dict_with_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     """build_utf8_env returns a dict with UTF-8 defaults."""
     # The UTF-8 locale defaults apply only when the host does not define a
-    # locale (setdefault semantics), so the host locale is cleared here to
-    # keep the expectation deterministic.
+    # usable locale, so the host locale is cleared here to keep the
+    # expectation deterministic.
     monkeypatch.delenv("LANG", raising=False)
     monkeypatch.delenv("LC_ALL", raising=False)
+    monkeypatch.delenv("LC_CTYPE", raising=False)
+    resolve_utf8_locale.cache_clear()
     env = build_utf8_env()
     assert env["PYTHONUTF8"] == "1"
     assert env["PYTHONIOENCODING"] == "utf-8"
-    assert env["LANG"] == "en_US.UTF-8"
-    assert env["LC_ALL"] == "en_US.UTF-8"
+    assert "UTF-8" in env["LANG"].upper()
+    assert is_locale_available(env["LANG"])
+    assert env["LC_ALL"] == env["LANG"]
 
 
 def test_build_utf8_env_preserves_host_locale(monkeypatch: pytest.MonkeyPatch) -> None:
