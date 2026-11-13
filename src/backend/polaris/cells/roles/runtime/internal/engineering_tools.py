@@ -468,6 +468,7 @@ class EngineeringTools:
             write_roots=writes,
             network_allowed=self.scope.network_allowed,
             toolchain_bin_dirs=self.scope.toolchain_bin_dirs,
+            toolchain_env=dict(self.scope.toolchain_env),
             capture_output_root=capture_output_root,
         )
         command_cache = resolve_command_cache(
@@ -482,6 +483,7 @@ class EngineeringTools:
                 write_roots=writes,
                 network_allowed=self.scope.network_allowed,
                 toolchain_bin_dirs=self.scope.toolchain_bin_dirs,
+            toolchain_env=dict(self.scope.toolchain_env),
                 command_cache=command_cache,
                 capture_output_root=capture_output_root,
             )

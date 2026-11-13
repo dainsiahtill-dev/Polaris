@@ -13,8 +13,9 @@ import re
 import shutil
 import stat
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import AbstractSet
 
 from .command_cache import COMMAND_CACHE_ALIAS, CommandCacheMount
 
@@ -187,6 +188,23 @@ def resolve_toolchain_bin_dirs(
     return tuple(result)
 
 
+def _validated_toolchain_env_value(key: str, value: str, *, reads: AbstractSet[Path]) -> str:
+    """Validate one declared toolchain environment value.
+
+    The value must name an absolute path inside a granted read root: the
+    sandbox mounts the granted roots at their own paths, so a toolchain can
+    only reach a home the host actually granted.
+    """
+    if not isinstance(key, str) or not key.strip() or not key.replace("_", "").isalnum():
+        raise ValueError("sandbox toolchain environment key must be a plain environment name")
+    if not isinstance(value, str) or not value or "\0" in value or not Path(value).is_absolute():
+        raise ValueError("sandbox toolchain environment value must be an absolute path")
+    candidate = Path(value)
+    if not any(root == candidate or candidate.is_relative_to(root) for root in reads):
+        raise ValueError("sandbox toolchain environment value must be inside a granted read root")
+    return str(candidate)
+
+
 def build_workspace_sandbox_argv(
     argv: Sequence[str],
     *,
@@ -196,6 +214,7 @@ def build_workspace_sandbox_argv(
     write_roots: Sequence[str | os.PathLike[str]],
     network_allowed: bool,
     toolchain_bin_dirs: Sequence[str | os.PathLike[str]] = (),
+    toolchain_env: Mapping[str, str] | None = None,
     capture_output_root: Path | None = None,
     command_cache: CommandCacheMount | None = None,
 ) -> list[str]:
@@ -208,6 +227,12 @@ def build_workspace_sandbox_argv(
     Home, cache, output and temporary files use distinct private tmpfs mounts.
     No host environment or home directory is inherited. Hardlinks are writable
     only when every alias is within the authorized writable roots.
+
+    A granted toolchain keeps the environment its own configuration needs:
+    ``toolchain_env`` declares the toolchain home variables (for example
+    ``RUSTUP_HOME`` or ``CARGO_HOME``).  Each declared value must be an
+    absolute path inside a granted read root, so the sandbox cannot leak a
+    host path it does not mount.
 
     Linux user namespaces and bubblewrap are required. A namespace setup error
     remains a nonzero bubblewrap result; callers must report its stderr, never
@@ -320,6 +345,8 @@ def build_workspace_sandbox_argv(
         environment["PATH"] = ":".join(
             dict.fromkeys([*environment["PATH"].split(":"), *(str(path) for path in extra_bins)])
         )
+    for key, value in sorted((toolchain_env or {}).items()):
+        environment[key] = _validated_toolchain_env_value(key, value, reads=reads)
     if command_cache is not None:
         environment["POLARIS_COMMAND_CACHE"] = COMMAND_CACHE_ALIAS
     for key, value in environment.items():

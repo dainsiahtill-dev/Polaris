@@ -331,6 +331,7 @@ class EngineeringPermissionProfile(BaseModel):
     network_allowed: bool = False
     browser: EngineeringBrowserObservationConfig | None = None
     toolchain_bin_dirs: tuple[Path, ...] = ()
+    toolchain_env: dict[str, str] = {}
     command_cache: Literal["disabled", "read_only", "read_write"] = "disabled"
 
 

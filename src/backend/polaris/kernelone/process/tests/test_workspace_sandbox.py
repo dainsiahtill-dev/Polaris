@@ -312,6 +312,45 @@ def test_explicit_toolchain_path_runs_an_already_readable_compiler_without_write
     assert "host-toolchain-ready" in (bin_dir / "polaris_toolchain_probe").read_text(encoding="utf-8")
 
 
+def test_granted_toolchain_keeps_its_own_home_environment(sandbox_workspace: Path):
+    """A granted toolchain finds its own configuration inside the sandbox.
+
+    The sandbox inherits no host environment, so a toolchain whose launcher
+    reads its home from the environment (rustup's RUSTUP_HOME, cargo's
+    CARGO_HOME) cannot run at all.  The host declares that home explicitly
+    and the sandbox passes it through, but only when the value names a path
+    inside a granted read root.
+    """
+    home = sandbox_workspace.parent / "toolchain-home"
+    (home / "bin").mkdir(parents=True)
+    executable = home / "bin" / "polaris_toolchain_home_probe"
+    executable.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"${POLARIS_TOOLCHAIN_HOME:-unset}\"\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    scope = {"read_roots": (sandbox_workspace, home), "write_roots": ()}
+    observed = _run(
+        sandbox_workspace,
+        "polaris_toolchain_home_probe",
+        toolchain_bin_dirs=(home / "bin",),
+        toolchain_env={"POLARIS_TOOLCHAIN_HOME": str(home)},
+        **scope,
+    )
+    assert observed.returncode == 0, observed.stderr
+    assert observed.stdout.strip() == str(home)
+    # A declared home outside the granted roots must fail closed.
+    with pytest.raises(ValueError, match="granted read root"):
+        _sandbox(
+            ["/bin/sh", "-c", "true"],
+            sandbox_workspace,
+            read_roots=scope["read_roots"],
+            write_roots=(),
+            toolchain_bin_dirs=(home / "bin",),
+            toolchain_env={"POLARIS_TOOLCHAIN_HOME": str(sandbox_workspace.parent / "not-granted")},
+        )
+
+
 def test_empty_toolchain_paths_keep_the_original_sandbox_and_system_path(sandbox_workspace: Path):
     argv = ["/usr/bin/printenv", "PATH"]
     baseline = _sandbox(argv, sandbox_workspace, write_roots=())

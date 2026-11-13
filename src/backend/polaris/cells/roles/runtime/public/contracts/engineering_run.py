@@ -51,6 +51,7 @@ class PermissionScope:
     network_allowed: bool
     browser: BrowserObservationConfig | None = None
     toolchain_bin_dirs: tuple[Path, ...] = ()
+    toolchain_env: tuple[tuple[str, str], ...] = ()
     command_cache: Literal["disabled", "read_only", "read_write"] = "disabled"
 
     def __post_init__(self) -> None:
