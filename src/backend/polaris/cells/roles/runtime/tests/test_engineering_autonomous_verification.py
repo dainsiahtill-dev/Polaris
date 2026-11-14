@@ -36,6 +36,11 @@ def _response(*calls: tuple[str, str, dict[str, Any]], text: str = "Ready.") -> 
     return {"choices": [{"message": message, "finish_reason": "tool_calls" if calls else "stop"}]}
 
 
+def event_roles(events: list[dict[str, Any]]) -> list[str]:
+    """The roles that actually ran, in order."""
+    return [event["role"] for event in events if event["kind"] == "role_started"]
+
+
 def _scope(workspace: Path) -> PermissionScope:
     return PermissionScope(
         (workspace,),
@@ -94,6 +99,46 @@ async def test_goal_only_model_check_runs_once_then_current_independent_qa(
     )
     assert cold["project_outcome"] == "accepted"
     assert cold["required_checks"] == [] and cold["verification_commands"] == [command_text]
+
+
+async def test_qa_rejection_keeps_its_verdict_when_the_review_budget_is_gone(
+    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rejected review stays a rejected review when the budget is spent.
+
+    The Director and the independent review share one run deadline.  When the
+    remaining budget cannot cover another Director round and the re-review,
+    continuing would spend it on the Director and leave the re-review without
+    an answer, so the run ended without any verdict.  The run keeps the
+    verdict it actually has.
+    """
+    (isolated_workspace / "artifact.txt").write_text("2", encoding="utf-8")
+    command_text = (
+        'python3 -c "from pathlib import Path; '
+        "assert Path('artifact.txt').read_text(encoding='utf-8') == '2'; print('CHECKED_ARTIFACT2')\""
+    )
+    for response in (
+        _response(("verify", "verify_project", {"commands": [command_text]})),
+        _response(text="Actual check succeeded; independently review the artifact."),
+        _response(("read", "read_file", {"file": "artifact.txt"})),
+        _response(("review", "report_review", {"approved": False, "feedback": "The artifact is incomplete."})),
+    ):
+        scripted_provider.enqueue_json(response)
+    service = _service(isolated_workspace, scripted_provider, monkeypatch)
+    command = RoleRunCommand("budget-reserve", "director", "Deliver the artifact with value2.", isolated_workspace)
+    # The whole run has less than the review reserve: another Director round
+    # and its re-review cannot both fit.
+    await service.start(
+        command, scope=_scope(isolated_workspace), limits=RunLimits(time.time() + 120, 1_000_000, 64_000)
+    )
+    await service.wait(command.session_id, workspace=isolated_workspace)
+    row = service.snapshot(command.session_id, workspace=isolated_workspace)
+
+    assert row["verification"] == "passed", row
+    assert row["qa_verdict"] == "rejected", row
+    assert row["project_outcome"] == "rejected", row
+    events = service.store.load_events(command.session_id)
+    assert event_roles(events) == ["director", "qa"], events
 
 
 async def test_text_completion_without_checks_returns_feedback_to_same_director(
@@ -183,7 +228,7 @@ async def test_unanswered_provider_continues_the_same_director(
     )
     # A provider that does not answer at all is the failure the platform has
     # to survive: no tool ran and the committed observations stay valid.
-    scripted_provider.enqueue_hang(4.0)
+    scripted_provider.enqueue_hang(8.0)
     for response in (
         _response(("verify", "verify_project", {"commands": [command_text]})),
         _response(text="The candidate is verified; independent QA reviews it now."),

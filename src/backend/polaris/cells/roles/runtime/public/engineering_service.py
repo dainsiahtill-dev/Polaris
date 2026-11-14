@@ -46,6 +46,12 @@ from polaris.kernelone.storage import resolve_workspace_runtime_identity
 
 _TERMINAL = frozenset({"completed", "failed", "cancelled", "interrupted"})
 
+#: The budget the independent review needs.  The Director and the review
+#: share one run deadline, so the Director must not spend the last of it:
+#: a review without time to answer leaves the run without a verdict even
+#: though the candidate was verified.
+_QA_REVIEW_RESERVE_SECONDS = 600.0
+
 #: Only the Director may run with a degraded provider binding set.  Every
 #: other role, and every single-binding role, stays fail-closed.
 _DEGRADABLE_ROLES = frozenset({"director"})
@@ -1688,6 +1694,17 @@ class EngineeringRunService:
                     return result
                 if verdict != "rejected" or cancel.is_set():
                     return replace(result, status="cancelled" if cancel.is_set() else "interrupted")
+                if not self._has_budget_for(limits):
+                    # The remaining budget cannot cover another Director round
+                    # and the independent re-review.  Continuing would spend it
+                    # on the Director and leave the re-review without an
+                    # answer, so the run keeps the verdict it actually has.
+                    current = self.store.load_run(command.session_id, workspace=self.workspace)
+                    return replace(
+                        result,
+                        verification=current["verification"],
+                        checks=tuple(ToolObservation(**check) for check in current["checks"]),
+                    )
                 result = await self._continue_director(
                     command,
                     "Independent QA rejected the current candidate. Continue the same original goal using actual review findings:\n"
@@ -1742,6 +1759,16 @@ class EngineeringRunService:
                 else actual_results,
                 ensure_ascii=False,
             )
+            if not self._has_budget_for(limits):
+                # The remaining budget cannot cover another Director round and
+                # the independent review of its result, so the run keeps the
+                # verdict it actually has.
+                current = self.store.load_run(command.session_id, workspace=self.workspace)
+                return replace(
+                    result,
+                    verification=current["verification"],
+                    checks=tuple(ToolObservation(**check) for check in current["checks"]),
+                )
             result = await self._continue_director(command, feedback, scope=scope, limits=limits, cancel=cancel)
             if result.status != "completed":
                 current = self.store.load_run(command.session_id, workspace=self.workspace)
@@ -1751,6 +1778,19 @@ class EngineeringRunService:
                     checks=tuple(ToolObservation(**check) for check in current["checks"]),
                 )
         return result
+
+    def _has_budget_for(self, limits: RunLimits) -> bool:
+        """Whether the remaining budget still covers a review round.
+
+        The Director and the independent review share one run deadline.  A
+        Director round that consumes the last of the budget leaves the review
+        without an answer, and the run ends with an unknown verdict even
+        though the candidate was verified.  The reserve keeps enough time for
+        the review to answer.
+        """
+        if limits.deadline is None:
+            return True
+        return limits.deadline - time.time() > _QA_REVIEW_RESERVE_SECONDS
 
     async def _continue_director(
         self,

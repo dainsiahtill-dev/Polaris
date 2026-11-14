@@ -82,6 +82,26 @@ class ScriptedProvider:
         }
         # Finite scripts consume one response per call; K1 owns aggregate retries.
         monkeypatch.setenv("KERNELONE_PLATFORM_RETRY_MAX", "0")
+        # The engineering client walks the role's configured provider bindings
+        # as its failover chain.  A synthetic provider is the only endpoint
+        # this fixture owns, so the chain must not reach the ambient host
+        # configuration (a real provider would answer the scripted request).
+        from polaris.cells.roles.runtime.public import engineering_service as engineering_service_module
+        from polaris.kernelone.llm.runtime_config import RoleBindingSlot
+
+        monkeypatch.setattr(
+            engineering_service_module,
+            "get_role_binding_candidates",
+            lambda _role: (
+                RoleBindingSlot(
+                    role_id=_role,
+                    provider_id="synthetic",
+                    model="synthetic-model",
+                    binding_id=f"{_role}:0:synthetic:synthetic-model",
+                    binding_index=0,
+                ),
+            ),
+        )
         executor = AIExecutor(workspace=str(workspace))
         stream_executor = StreamExecutor(workspace=str(workspace))
         monkeypatch.setattr(AIExecutor, "_get_provider_config", lambda _self, _provider_id: dict(config))
