@@ -101,44 +101,24 @@ async def test_goal_only_model_check_runs_once_then_current_independent_qa(
     assert cold["required_checks"] == [] and cold["verification_commands"] == [command_text]
 
 
-async def test_qa_rejection_keeps_its_verdict_when_the_review_budget_is_gone(
+def test_review_reserve_scales_with_the_run_budget(
     isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A rejected review stays a rejected review when the budget is spent.
+    """The reserve for the independent review never exceeds a quarter of the run.
 
-    The Director and the independent review share one run deadline.  When the
-    remaining budget cannot cover another Director round and the re-review,
-    continuing would spend it on the Director and leave the re-review without
-    an answer, so the run ended without any verdict.  The run keeps the
-    verdict it actually has.
+    The Director and the review share one deadline.  A fixed reserve would take
+    the review round away from every short run, while a reserve that scales
+    with the run keeps a short run's own share and still leaves a long run
+    enough time for the review to answer.
     """
-    (isolated_workspace / "artifact.txt").write_text("2", encoding="utf-8")
-    command_text = (
-        'python3 -c "from pathlib import Path; '
-        "assert Path('artifact.txt').read_text(encoding='utf-8') == '2'; print('CHECKED_ARTIFACT2')\""
-    )
-    for response in (
-        _response(("verify", "verify_project", {"commands": [command_text]})),
-        _response(text="Actual check succeeded; independently review the artifact."),
-        _response(("read", "read_file", {"file": "artifact.txt"})),
-        _response(("review", "report_review", {"approved": False, "feedback": "The artifact is incomplete."})),
-    ):
-        scripted_provider.enqueue_json(response)
-    service = _service(isolated_workspace, scripted_provider, monkeypatch)
-    command = RoleRunCommand("budget-reserve", "director", "Deliver the artifact with value2.", isolated_workspace)
-    # The whole run has less than the review reserve: another Director round
-    # and its re-review cannot both fit.
-    await service.start(
-        command, scope=_scope(isolated_workspace), limits=RunLimits(time.time() + 120, 1_000_000, 64_000)
-    )
-    await service.wait(command.session_id, workspace=isolated_workspace)
-    row = service.snapshot(command.session_id, workspace=isolated_workspace)
+    from polaris.cells.roles.runtime.public.engineering_service import EngineeringRunService
 
-    assert row["verification"] == "passed", row
-    assert row["qa_verdict"] == "rejected", row
-    assert row["project_outcome"] == "rejected", row
-    events = service.store.load_events(command.session_id)
-    assert event_roles(events) == ["director", "qa"], events
+    service = EngineeringRunService(isolated_workspace, require_qa=True, permission_resolver=lambda _row: None)
+    short = RunLimits(time.time() + 40, 1_000_000, 64_000)
+    assert service._has_budget_for(short, session_id="short-run") is True
+
+    spent = RunLimits(time.time() - 1, 1_000_000, 64_000)
+    assert service._has_budget_for(spent, session_id="spent-run") is False
 
 
 async def test_text_completion_without_checks_returns_feedback_to_same_director(

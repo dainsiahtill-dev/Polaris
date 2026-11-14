@@ -1791,6 +1791,7 @@ class EngineeringRunService:
         """
         if limits.deadline is None:
             return True
+        remaining = max(0.0, limits.deadline - time.time())
         reserve = _QA_REVIEW_RESERVE_SECONDS
         try:
             created = float(self.store.load_run(session_id, workspace=self.workspace).get("created_at") or 0.0)
@@ -1798,7 +1799,11 @@ class EngineeringRunService:
             created = 0.0
         if created > 0.0:
             reserve = min(reserve, max(0.0, (limits.deadline - created) * 0.25))
-        return limits.deadline - time.time() > reserve
+        else:
+            # Without the run's own start the remaining budget is the only
+            # scale available, so the reserve stays a quarter of it.
+            reserve = min(reserve, remaining * 0.25)
+        return remaining > reserve
 
     async def _continue_director(
         self,
