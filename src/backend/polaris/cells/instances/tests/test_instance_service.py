@@ -2225,6 +2225,65 @@ def test_start_instance_auto_ports_skip_registered_running_instances(
     )
 
 
+def test_start_instance_auto_ports_skip_ports_of_stopped_records(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    """A recorded port stays off limits even after the record stopped.
+
+    A stopped instance can still hold its port for a while, and a lost or
+    expired reservation must not hand that port to the next instance: the new
+    backend would fail to bind and the whole project would be lost.
+    """
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    registry.save(
+        InstanceRecord(
+            instance_id="stopped-bench",
+            name="Stopped",
+            kind="bench_project",
+            polaris_root=str(root),
+            workspace=str((tmp_path / "bench" / "L1-09").resolve()),
+            runtime_root=str((tmp_path / "bench" / "L1-09" / "runtime").resolve()),
+            backend_port=instance_service.DEFAULT_BACKEND_PORT + 1,
+            frontend_port=instance_service.DEFAULT_FRONTEND_PORT + 1,
+            backend_url=f"http://127.0.0.1:{instance_service.DEFAULT_BACKEND_PORT + 1}",
+            frontend_url=f"http://127.0.0.1:{instance_service.DEFAULT_FRONTEND_PORT + 1}",
+            token="stopped-token",
+            backend_pid=71001,
+            frontend_pid=71002,
+            status="stopped",
+        )
+    )
+    calls: list[dict[str, Any]] = []
+
+    class FakeProcess:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+    def fake_popen(command: list[str], **kwargs: Any) -> FakeProcess:
+        calls.append({"command": command, **kwargs})
+        return FakeProcess(71100 + len(calls))
+
+    monkeypatch.setattr(instance_service.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(instance_service, "is_port_free", lambda _port: True)
+    monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: bool(pid))
+    monkeypatch.setattr(InstanceSupervisor, "_http_ok", staticmethod(lambda _url, _token: True))
+
+    record = InstanceSupervisor(registry).start_instance(
+        {
+            "instance_id": "new-bench",
+            "kind": "bench_project",
+            "polaris_root": str(root),
+            "workspace": str(tmp_path / "bench" / "L1-10"),
+            "start_frontend": True,
+        }
+    )
+
+    assert record["backend_port"] == instance_service.DEFAULT_BACKEND_PORT + 2
+    assert record["frontend_port"] == instance_service.DEFAULT_FRONTEND_PORT + 2
+
+
 def test_start_instance_retries_auto_backend_port_identity_mismatch(
     tmp_path: Path,
     monkeypatch: Any,

@@ -932,7 +932,7 @@ class InstanceSupervisor:
         frontend_reserved_max = DEFAULT_FRONTEND_PORT if is_bench_project else 0
         auto_backend_port = _request_uses_auto_port(request.get("backend_port"), reserved_max=backend_reserved_max)
         auto_frontend_port = _request_uses_auto_port(request.get("frontend_port"), reserved_max=frontend_reserved_max)
-        max_attempts = 3 if auto_backend_port else 1
+        max_attempts = 6 if auto_backend_port else 1
         excluded_backend_ports: set[int] = set()
         excluded_frontend_ports: set[int] = set()
         last_error: BaseException | None = None
@@ -1157,11 +1157,17 @@ class InstanceSupervisor:
             self.registry.save(record)
 
     def _registered_ports(self, exclude_instance_id: str, *, port_kind: str) -> set[int]:
+        """Every port another instance record mentions is off limits.
+
+        A record outlives its process: a stopped instance may still hold its
+        port for a while, and a reservation can be lost or expire before the
+        next start.  Handing such a port to another instance makes the new
+        backend fail to bind and costs the whole project, so every recorded
+        port stays excluded.
+        """
         ports: set[int] = set()
         for record in self.registry.list_records():
             if record.instance_id == exclude_instance_id:
-                continue
-            if not _record_reserves_ports(record):
                 continue
             port = record.backend_port if port_kind == "backend" else record.frontend_port
             if port > 0:
