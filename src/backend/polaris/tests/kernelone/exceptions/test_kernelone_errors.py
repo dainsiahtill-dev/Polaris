@@ -257,6 +257,21 @@ class TestClassifyError:
         )
         assert classify_error(err) == ErrorCategory.NETWORK_ERROR
 
+    def test_transport_client_timeout_is_a_timeout(self) -> None:
+        """A request that ran out of its own deadline is a transport failure.
+
+        The transport clients raise their own timeout types, and the platform's
+        own deadline markers do not contain the word "timeout".  A request
+        that never got an answer must stay retryable and recoverable by the
+        same role instead of ending the run.
+        """
+        import requests
+
+        assert classify_error(requests.exceptions.Timeout("provider_invocation_deadline")) == ErrorCategory.TIMEOUT
+        assert classify_error(requests.exceptions.ReadTimeout("slow")) == ErrorCategory.TIMEOUT
+        assert classify_error(Exception("provider_invocation_deadline")) == ErrorCategory.TIMEOUT
+        assert classify_error(Exception("provider_physical_http_total_timeout")) == ErrorCategory.TIMEOUT
+
     def test_classification_survives_a_broken_error_message(self) -> None:
         """Classification must not raise when the error cannot describe itself."""
         err = Exception("Cannot connect to host")

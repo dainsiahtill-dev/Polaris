@@ -169,6 +169,38 @@ def _error_text(error: BaseException) -> str:
         return ""
 
 
+#: The timeout types the transport clients raise.  ``requests.Timeout`` is not
+#: a builtin ``TimeoutError``, and ``aiohttp`` raises the builtin one, so the
+#: name has to be matched by type as well.
+_TRANSPORT_TIMEOUT_ERROR_TYPES = frozenset(
+    {
+        "ConnectTimeout",
+        "ReadTimeout",
+        "Timeout",
+        "TimeoutException",
+        "TimeoutError",
+        "WriteTimeout",
+    }
+)
+
+#: The platform's own deadline markers.  They name the deadline that ran out
+#: and never contain the word "timeout".
+_TRANSPORT_TIMEOUT_MESSAGE_MARKERS = (
+    "provider_invocation_deadline",
+    "physical_http_total_timeout",
+    "provider_physical_http_total_timeout",
+)
+
+
+def _is_transport_timeout_error(error: BaseException) -> bool:
+    """Whether *error* is a request that ran out of its own deadline."""
+    for error_type in type(error).__mro__:
+        if error_type.__name__ in _TRANSPORT_TIMEOUT_ERROR_TYPES:
+            return True
+    message = _error_text(error)
+    return any(marker in message for marker in _TRANSPORT_TIMEOUT_MESSAGE_MARKERS)
+
+
 def _is_transport_connection_error(error: BaseException) -> bool:
     """Whether *error* is a transport-level connection failure.
 
@@ -220,6 +252,15 @@ def classify_error(error: Exception) -> ErrorCategory:
         if "timeout" in error_str or "timed out" in error_str:
             return ErrorCategory.TIMEOUT
         return ErrorCategory.NETWORK_ERROR
+
+    # The same holds for a request that ran out of its own deadline: the
+    # transport clients raise their own timeout types (requests.Timeout is not
+    # a builtin TimeoutError), and the platform's own deadline markers do not
+    # contain the word "timeout".  A request that never got an answer is a
+    # transport failure, so it stays retryable and recoverable by the same
+    # role instead of ending the run.
+    if _is_transport_timeout_error(error):
+        return ErrorCategory.TIMEOUT
 
     if "timeout" in error_str or "timed out" in error_str:
         return ErrorCategory.TIMEOUT
