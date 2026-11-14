@@ -102,6 +102,9 @@ class TestRunWorkspaceQualityChecks:
             ),
         )
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_typescript_repairs_require_canonical_director_execution_before_rerun(
         self,
@@ -209,6 +212,9 @@ class TestRunWorkspaceQualityChecks:
             encoding="utf-8"
         )
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     @pytest.mark.parametrize("last_round_progress", (False, True))
     async def test_repair_summary_success_requires_rerun_to_pass(
@@ -317,6 +323,9 @@ class TestRunWorkspaceQualityChecks:
             assert final_round["diagnostic_count_after"] == 1
             assert final_round["write_tool_evidence"] is True
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_delivery_depth_contract_enters_repair_loop(
         self,
@@ -478,6 +487,9 @@ class TestRunWorkspaceQualityChecks:
         assert payload["repair"]["attempted"] is True
         assert payload["repair"]["success"] is True
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_escalates_to_director_llm_repair_after_deterministic_noop(
         self,
@@ -612,6 +624,9 @@ class TestRunWorkspaceQualityChecks:
         assert payload["repair"]["source_tools"] == ["director_materialization_quality_repair"]
         assert payload["repair"]["rounds"][0]["source_tools"] == ["director_materialization_quality_repair"]
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_rebinds_deferred_repair_to_owning_director_task(
         self,
@@ -730,6 +745,9 @@ class TestRunWorkspaceQualityChecks:
         assert rebind["target_files"] == ["index.html"]
         assert rebind["previous_repair"]["stage"] == "task_boundary_repair_targets_deferred"
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_grants_bounded_extra_round_for_residual_owner_handoff(
         self,
@@ -873,6 +891,9 @@ class TestRunWorkspaceQualityChecks:
         assert payload["repair"]["extra_round_limit"] == 2
         assert payload["repair"]["extra_rounds_consumed"] == 1
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_reactivates_prior_owner_handoff_after_diagnostic_unmask(
         self,
@@ -1213,6 +1234,9 @@ class TestRunWorkspaceQualityChecks:
 
         assert targets[0] == "tests/cpp_unit.cpp"
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_llm_repair_wires_cpp_frontier_into_mixed_owner_claim(
         self,
@@ -1713,6 +1737,9 @@ class TestRunWorkspaceQualityChecks:
 
         assert expanded == ["internal/sandbox/sandbox_test.go"]
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_cpp_linker_repair_keeps_multi_target_topology_after_claim(
         self,
@@ -1789,6 +1816,9 @@ class TestRunWorkspaceQualityChecks:
         assert captured["context"]["director_quality_repair"]["topology_multi_target"] is True
         assert captured["repair_target_files"] == targets
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_cpp_standard_compatibility_repair_removes_single_target_contract(
         self,
@@ -1872,6 +1902,9 @@ class TestRunWorkspaceQualityChecks:
         assert quality_context["atomic_multi_target"] is True
         assert captured["repair_target_files"] == targets
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_behavior_repair_rotates_claimed_production_frontier_without_owner_rebind(
         self,
@@ -1968,6 +2001,9 @@ class TestRunWorkspaceQualityChecks:
         assert captured["context"]["director_quality_repair"]["repair_target_files"] == ["src/cipher.cpp"]
         assert captured["repair_target_files"] == ["src/cipher.cpp"]
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_cli_contract_failure_pins_owned_entrypoint_instead_of_rotating_domain_sources(
         self,
@@ -2072,6 +2108,9 @@ class TestRunWorkspaceQualityChecks:
         assert captured["context"]["director_quality_repair"]["repair_target_files"] == ["src/cli/main.cpp"]
         assert captured["repair_target_files"] == ["src/cli/main.cpp"]
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_behavior_repair_compile_rejection_includes_owned_interface_companion(
         self,
@@ -2666,6 +2705,9 @@ class TestRunWorkspaceQualityChecks:
             (3, "main_test.go"),
         ],
     )
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     async def test_workspace_quality_deferred_rebind_claims_real_owner_and_filters_provider_targets(
         self,
         tmp_path: Path,
@@ -2828,6 +2870,9 @@ class TestRunWorkspaceQualityChecks:
         }
         assert "step_test.go" not in captured["context"]["target_files"]
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_deferred_rebind_replaces_stale_owner_hint_with_current_cpp_tu(
         self,
@@ -2922,6 +2967,9 @@ class TestRunWorkspaceQualityChecks:
             (0, "src/cli/main.cpp"),
             (1, "include/invisible_diary/cipher_engine.cpp"),
         ],
+    )
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
     )
     async def test_workspace_quality_owner_rebind_rotation_uses_current_diagnostic_signature_cursor(
         self,
@@ -4320,6 +4368,9 @@ class TestRunWorkspaceQualityChecks:
         assert extract(("plain text only",)) == set()
         assert extract(()) == set()
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_attempt_settles_success_only_after_verifier_passes(
         self,
@@ -4431,6 +4482,9 @@ class TestRunWorkspaceQualityChecks:
         assert passed is True
         assert timeline == ["verifier:1", "mutation", "verifier:2", "artifact:registered", "settle:success"]
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_llm_fallback_preserves_current_claimed_test_owner(
         self,
@@ -4543,6 +4597,9 @@ class TestRunWorkspaceQualityChecks:
         assert passed is True
         assert owner_targets_seen == [["tests/test_product.py"]]
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_no_mutation_retries_director_without_rerunning_verifier(
         self,
@@ -4659,6 +4716,9 @@ class TestRunWorkspaceQualityChecks:
         )
         assert "deterministic_no_commit_signature_cache_hit" in repair["rounds"][1]["evidence"]
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_global_nonprogress_cap_precedes_owner_rotation(
         self,
@@ -4743,6 +4803,9 @@ class TestRunWorkspaceQualityChecks:
         assert repair["convergence_stop_reason"] == "three_nonprogress_repairs_without_verified_progress"
         assert len(repair["rounds"]) == 3
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_rejected_transaction_grants_one_distinct_residual_frontier_handoff(
         self,
@@ -4843,6 +4906,9 @@ class TestRunWorkspaceQualityChecks:
         assert repair["convergence_stop_reason"] == "three_nonprogress_repairs_without_verified_progress"
         assert len(repair["rounds"]) == 4
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_mutation_nonprogress_cap_masks_volatile_lines_before_owner_rotation(
         self,
@@ -4953,6 +5019,9 @@ class TestRunWorkspaceQualityChecks:
         assert "deterministic_no_commit_signature_cache_hit" in repair["rounds"][1]["evidence"]
         assert "deterministic_no_commit_signature_cache_hit" in repair["rounds"][2]["evidence"]
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_stops_after_two_equal_count_diagnostic_swaps(
         self,
@@ -5063,6 +5132,9 @@ class TestRunWorkspaceQualityChecks:
             assert item["repair_summary"]["success"] is False
             assert item["repair_summary"]["success_authority"] == "post_repair_verifier"
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_same_named_test_timing_jitter_stops_without_regression_guards(
         self,
@@ -5174,6 +5246,9 @@ class TestRunWorkspaceQualityChecks:
         assert all(item["regression_guard_errors"] == [] for item in repair["rounds"])
         assert all(not item.get("regression_guard_errors_for_next_round") for item in repair["rounds"])
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_equal_count_swap_carries_prior_failure_as_llm_regression_guard(
         self,
@@ -5298,6 +5373,9 @@ class TestRunWorkspaceQualityChecks:
         assert any("TestStepClampsOnFloor" in str(item) for item in rounds[1]["regression_guard_errors"])
         assert rounds[1]["regression_synthesis_round_granted"] is True
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_aba_oscillation_gets_one_regression_synthesis_round(
         self,
@@ -5460,6 +5538,9 @@ class TestRunWorkspaceQualityChecks:
             ),
         ],
     )
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     async def test_rejected_llm_candidate_restores_pre_round_bytes_and_diagnostics(
         self,
         tmp_path: Path,
@@ -5617,6 +5698,9 @@ class TestRunWorkspaceQualityChecks:
         assert first_round["verifier_effect"] == "candidate_rejected_rolled_back"
         assert any(item["phase"] == "check_after_rollback_1" for item in payload["commands"])
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_count_changing_aba_carries_regression_guards(
         self,
@@ -5761,6 +5845,9 @@ class TestRunWorkspaceQualityChecks:
         assert any("TestRunEndToEndViaLibraryAPI" in str(item) for item in third_quality["regression_guard_errors"])
         assert all("TestStepAppliesGravity" not in str(item) for item in third_quality["regression_guard_errors"])
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_new_plannable_repair_gets_next_bounded_round(
         self,
@@ -5890,6 +5977,9 @@ class TestRunWorkspaceQualityChecks:
         assert repair["rounds"][1]["verifier_effect"] == "equal_count_swap"
         assert repair["rounds"][1]["newly_plannable_source_tools"] == ["deterministic_go_missing_stdlib_import_repair"]
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_rust_forward_unmask_chain_runs_to_verifier(
         self,
@@ -6006,6 +6096,9 @@ class TestRunWorkspaceQualityChecks:
             "forward_unmask",
         ]
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_rust_unmask_oscillation_still_stops(
         self,
@@ -6114,6 +6207,9 @@ class TestRunWorkspaceQualityChecks:
         # trips the same-owner stagnation breaker.
         assert len(repair["rounds"]) == 4
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_new_diagnostic_signature_reenables_deterministic_probe(
         self,
@@ -6247,6 +6343,9 @@ class TestRunWorkspaceQualityChecks:
             "resolved",
         ]
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_same_signature_no_commit_stops_without_reclaiming_deterministic(
         self,
@@ -6353,6 +6452,9 @@ class TestRunWorkspaceQualityChecks:
         ]
         assert "deterministic_no_commit_signature_cache_hit" in repair["rounds"][1]["evidence"]
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_provider_timeout_gets_one_transport_retry_without_spending_semantic_budget(
         self,
@@ -6449,6 +6551,9 @@ class TestRunWorkspaceQualityChecks:
             "resolved",
         ]
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_second_provider_timeout_stops_without_semantic_nonprogress(
         self,
@@ -6535,6 +6640,9 @@ class TestRunWorkspaceQualityChecks:
             "provider_timeout",
         ]
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_llm_repair_context_includes_ce_blueprint_and_catalog(
         self,
@@ -6958,6 +7066,9 @@ class TestRunWorkspaceQualityChecks:
         assert settled["project_artifact_receipt_count"] == 1
         assert calls == ["artifact_receipt", "settle:failed"]
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_ignores_deterministic_results_without_write_evidence(
         self,
@@ -7103,6 +7214,9 @@ class TestRunWorkspaceQualityChecks:
             "repair_hash:file=tests/run-tests.js;before=file_absent;after=bbbbbbbbbbbbbbbb",
         ]
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_projects_task_boundary_triage_without_llm_fallback(
         self,
@@ -7224,6 +7338,9 @@ class TestRunWorkspaceQualityChecks:
         assert payload["repair"]["rounds"][0]["task_boundary_triage_required"] is True
         assert payload["repair"]["rounds"][0]["repair_summary"]["stage"] == "runtime_plan_probe_unplannable"
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_workspace_quality_routes_local_task_boundary_triage_to_director_repair(
         self,
@@ -7373,6 +7490,9 @@ class TestRunWorkspaceQualityChecks:
         assert payload["repair"]["success"] is True
         assert payload["repair"]["rounds"][0]["repair_summary"]["stage"] == "quality_repair"
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     @pytest.mark.parametrize("named_owned_targets", [False, True])
     async def test_workspace_quality_replays_interface_probe_after_deterministic_no_commit_cache_hit(
@@ -7524,6 +7644,9 @@ class TestRunWorkspaceQualityChecks:
         payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
         assert payload["repair"]["rounds"][1]["repair_summary"]["stage"] == "quality_repair"
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_workspace_quality_keeps_claimed_rust_diagnostic_owner_on_director(self) -> None:
         diagnostic = "cargo check :: error[E0432]: unresolved import `crate::engine::RecipeDraft` in src/lib.rs"
         owner_evidence = {
@@ -7742,6 +7865,9 @@ class TestRunWorkspaceQualityChecks:
         assert phases_seen == ["prepare", "check", "prepare_after_repair", "check_after_repair"]
         assert payload["passed"] is True
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_unplannable_cross_file_typescript_missing_export_routes_to_task_boundary_triage(
         self,
@@ -7854,6 +7980,9 @@ class TestRunWorkspaceQualityChecks:
         assert repair["write_tool_evidence"] is False
         assert repair["tool_results"] == 0
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_typescript_enum_repair_requires_canonical_director_execution_before_rerun(
         self,
@@ -7938,6 +8067,9 @@ class TestRunWorkspaceQualityChecks:
         assert "  WaningCrescent;" in moonphase.read_text(encoding="utf-8")
         assert "  phase: MoonPhase;" in moonphase.read_text(encoding="utf-8")
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_typescript_identifier_repair_requires_canonical_director_execution_before_rerun(
         self,

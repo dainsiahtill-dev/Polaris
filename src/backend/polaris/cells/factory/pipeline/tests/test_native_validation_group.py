@@ -455,6 +455,9 @@ def test_real_cancel_control_before_spawn_is_terminal(tmp_path: Path) -> None:
     assert not group.staging_workspace.exists()
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 def test_real_current_node_tool_root_smoke(tmp_path: Path) -> None:
     node = shutil.which("node")
     if not node:

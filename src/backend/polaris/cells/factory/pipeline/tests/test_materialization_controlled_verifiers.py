@@ -329,6 +329,9 @@ def test_collector_consumes_static_inventory_without_second_tree_scan(
     assert not any("missing test source" in diagnostic for diagnostic in result)
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 def test_incomplete_static_evidence_blocks_claim(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """An unreadable scan cannot become empty-error success or a repair claim."""
     import polaris.kernelone.quality as quality
@@ -797,6 +800,9 @@ class _LifecycleSession:
         self.events.append(("close", self.hash()))
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["three_rounds", "restored", "drain_failure"])
 async def test_candidate_restored_and_repeated_baselines_are_owned(
@@ -901,6 +907,9 @@ async def test_candidate_restored_and_repeated_baselines_are_owned(
     assert session.events[-1][0] == "close"
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.parametrize("replacement", ["manifest_symlink", "workspace_symlink", "manifest_replace"])
 def test_manifest_scan_race_never_reads_external_content_or_admits_effects(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replacement: str

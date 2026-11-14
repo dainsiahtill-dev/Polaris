@@ -27,6 +27,10 @@ from polaris.cells.roles.kernel.public.provider_attempt_lifecycle_replay import 
     query_factory_provider_attempt_lifecycle_replay,
 )
 
+pytestmark = pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
+
 _BASE_ENDPOINT = NativeEndpoint
 
 

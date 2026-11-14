@@ -1653,6 +1653,9 @@ async def test_cancel_during_dispatch_waits_for_committed_terminal_projection(
         (False, True, "success"),
     ],
 )
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 async def test_quality_gate_conflict_matrix_uses_canonical_projection(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1712,6 +1715,9 @@ async def test_quality_gate_conflict_matrix_uses_canonical_projection(
     assert f"qa_verdict_passed={canonical_qa_passed}" in result.output
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_complete_run_records_operational_not_verified_status(tmp_path: Path) -> None:
     service = FactoryRunService(tmp_path)

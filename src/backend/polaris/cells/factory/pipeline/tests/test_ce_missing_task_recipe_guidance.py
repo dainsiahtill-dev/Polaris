@@ -380,6 +380,9 @@ def test_missing_row_binder_rejects_untrusted_or_noncanonical_shape(tmp_path: Pa
     assert diagnosis is None
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 def test_actual_factory_repair_command_uses_the_missing_owner_schema_and_guidance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -470,6 +473,9 @@ def test_actual_factory_repair_command_uses_the_missing_owner_schema_and_guidanc
     assert context["verification_recipe_diagnostics"][0]["owner_task_id"] == "TASK-B"
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 def test_actual_initial_factory_command_exposes_the_same_task_recipe_ownership_condition(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

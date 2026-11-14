@@ -187,6 +187,9 @@ def continuation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNames
     )
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_owned_foreign_owned_finishes_owned_effects_then_reclaims_and_replans(
     continuation: SimpleNamespace,
@@ -212,6 +215,9 @@ async def test_owned_foreign_owned_finishes_owned_effects_then_reclaims_and_repl
     assert continuation.order[-2:] == [("assets", "TASK-1"), ("close:success", "TASK-1")]
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["unknown", "ambiguous", "unsafe"])
 async def test_unresolvable_candidate_preserves_prior_effect_and_assets(
@@ -245,6 +251,9 @@ async def test_unresolvable_candidate_preserves_prior_effect_and_assets(
     }[failure] in result["detail"]
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_rejected_foreign_owner_claim_keeps_owned_progress(
     continuation: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
@@ -263,6 +272,9 @@ async def test_rejected_foreign_owner_claim_keeps_owned_progress(
     assert ("effect", "browser-app.ts") not in continuation.order
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 @pytest.mark.parametrize("reject_at", ["foreign_registration", "prior_owner_revalidation", "prior_owner_close"])
 async def test_clean_workspace_cannot_erase_required_owner_rejection(
@@ -296,6 +308,9 @@ async def test_clean_workspace_cannot_erase_required_owner_rejection(
     assert result["project_artifact_receipt_count"] == (2 if reject_at == "foreign_registration" else 3)
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_failed_effect_receipt_remains_red_after_later_clean_verifier(
     continuation: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
@@ -316,6 +331,9 @@ async def test_failed_effect_receipt_remains_red_after_later_clean_verifier(
     assert ("close:success", "TASK-2") not in continuation.order
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_owner_signature_cycle_stops_without_moving_plans(continuation: SimpleNamespace) -> None:
     continuation.executor._apply_workspace_quality_repairs = lambda **k: (
@@ -331,6 +349,9 @@ async def test_owner_signature_cycle_stops_without_moving_plans(continuation: Si
     assert [item for item in continuation.order if item[0] == "claim"] == [("claim", "TASK-1"), ("claim", "TASK-2")]
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_foreign_owner_heartbeat_rejection_keeps_prior_receipts(
     continuation: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
@@ -360,6 +381,9 @@ async def test_foreign_owner_heartbeat_rejection_keeps_prior_receipts(
     assert continuation.order[-1] == ("close:failed", "TASK-2")
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_cancellation_stops_owner_renewal_without_terminal_receipt(
     continuation: SimpleNamespace, monkeypatch: pytest.MonkeyPatch

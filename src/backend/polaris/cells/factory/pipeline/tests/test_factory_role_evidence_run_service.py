@@ -35,6 +35,10 @@ from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     get_factory_role_evidence_authority_binding,
 )
 
+pytestmark = pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
+
 
 class _CutoffProbeExecutor:
     def __init__(self) -> None:

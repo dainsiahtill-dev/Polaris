@@ -23,6 +23,10 @@ from polaris.cells.factory.pipeline.tests._characterization_helpers import (
 )
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
 
+pytestmark = pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
+
 
 def _capture_repair_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Any]:
     """Real Factory objective/schema producer and TaskRuntime claim; provider/PM cutoff are test ports."""

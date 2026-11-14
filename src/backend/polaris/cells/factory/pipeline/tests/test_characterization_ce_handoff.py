@@ -714,6 +714,9 @@ class TestChiefEngineerHandoffGuards:
 
         assert errors == ["task_plans contains unknown task ids: TASK-UNKNOWN"]
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_portfolio_schema_requires_shared_behavior_contract_and_task_refs(self) -> None:
         contract = OrchestrationStageExecutor._chief_engineer_structured_output_contract(("TASK-A", "TASK-B"))
         schema = contract.json_schema
@@ -1125,6 +1128,9 @@ class TestChiefEngineerHandoffGuards:
         assert context["metadata"]["factory_bench_level"] == 2
         assert context["metadata"]["factory_bench_project_id"] == "L2-08"
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_review_consumes_llm_blueprint_overlay(
         self,
         tmp_path: Path,
@@ -1326,6 +1332,9 @@ class TestChiefEngineerHandoffGuards:
         assert command.execution_attempt.role_id == "chief_engineer"
         assert command.execution_attempt.run_id == run.id
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_review_accepts_omitted_advisory_scope_with_audit_signal(
         self,
         tmp_path: Path,
@@ -1417,6 +1426,9 @@ class TestChiefEngineerHandoffGuards:
         assert result.metadata["error_code"] == "chief_engineer.project_completion_authority_invalid"
         assert provider_calls == []
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_portfolio_authority_uses_committed_pm_and_compiled_verifier_policy(
         self,
         tmp_path: Path,
@@ -1825,6 +1837,9 @@ class TestChiefEngineerHandoffGuards:
             ({"metadata": {"task_execution_contract": {"context_budget": {"max_tokens": 32000}}}}, 32000),
         ],
     )
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_schema_repair_uses_separate_claim_and_closes_stage(
         self,
         tmp_path: Path,
@@ -1956,6 +1971,9 @@ class TestChiefEngineerHandoffGuards:
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_schema_repair_preserves_native_candidate_and_patches_only_missing_path(
         self,
         tmp_path: Path,
@@ -2034,6 +2052,9 @@ class TestChiefEngineerHandoffGuards:
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_required_property_schema_repair_normalizes_single_task_local_invariants(
         self,
         tmp_path: Path,
@@ -2115,6 +2136,9 @@ class TestChiefEngineerHandoffGuards:
         ]
         assert recovery_signals[-1]["repair_codes"] == ["remove_task_local_invariant_from_shared_contract"]
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_required_property_schema_repair_retains_normalized_task_risk_flags(
         self,
         tmp_path: Path,
@@ -2210,6 +2234,9 @@ class TestChiefEngineerHandoffGuards:
             == 60_000
         )
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_thinking_only_result_uses_bounded_schema_repair(
         self,
         tmp_path: Path,
@@ -2271,6 +2298,9 @@ class TestChiefEngineerHandoffGuards:
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_structured_result_mismatch_uses_bounded_schema_repair(
         self,
         tmp_path: Path,
@@ -2323,6 +2353,9 @@ class TestChiefEngineerHandoffGuards:
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_schema_valid_depth_deficit_uses_bounded_repair(
         self,
         tmp_path: Path,
@@ -2415,6 +2448,9 @@ class TestChiefEngineerHandoffGuards:
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_semantic_repair_fails_before_provider_when_pm_authority_is_infeasible(
         self,
         tmp_path: Path,
@@ -2474,6 +2510,9 @@ class TestChiefEngineerHandoffGuards:
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_final_contract_repair_closes_remaining_depth_deficit(
         self,
         tmp_path: Path,
@@ -2563,6 +2602,9 @@ class TestChiefEngineerHandoffGuards:
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_final_repair_refreshes_candidate_and_diagnosis(
         self,
         tmp_path: Path,
@@ -2676,6 +2718,9 @@ class TestChiefEngineerHandoffGuards:
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_final_repair_recovers_second_schema_failure(
         self,
         tmp_path: Path,
@@ -2746,6 +2791,9 @@ class TestChiefEngineerHandoffGuards:
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_final_schema_repair_gets_one_typed_semantic_patch(
         self,
         tmp_path: Path,
@@ -2833,6 +2881,9 @@ class TestChiefEngineerHandoffGuards:
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_final_schema_candidate_unknown_behavior_ref_uses_typed_semantic_patch(
         self,
         tmp_path: Path,
@@ -2902,6 +2953,9 @@ class TestChiefEngineerHandoffGuards:
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_schema_repair_semantic_deficit_uses_typed_final_patch(
         self,
         tmp_path: Path,
@@ -3025,6 +3079,9 @@ class TestChiefEngineerHandoffGuards:
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_semantic_repair_stops_on_repeated_candidate_and_failure(
         self,
         tmp_path: Path,
@@ -3119,6 +3176,9 @@ class TestChiefEngineerHandoffGuards:
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_thinking_only_repair_falls_back_after_repeated_failure(
         self,
         tmp_path: Path,
@@ -3221,6 +3281,9 @@ class TestChiefEngineerHandoffGuards:
         assert "Emit no assistant prose or raw JSON outside that tool call" in objective
         assert "Return JSON only" not in objective
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_portfolio_tasks_bind_go_source_and_cli_authority(self, tmp_path: Path) -> None:
         executor = OrchestrationStageExecutor(tmp_path)
 

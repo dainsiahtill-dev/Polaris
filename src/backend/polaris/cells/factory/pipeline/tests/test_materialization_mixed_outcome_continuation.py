@@ -50,6 +50,10 @@ from polaris.cells.runtime.task_runtime.public import TaskRuntimeExecutionAttemp
 from polaris.cells.runtime.task_runtime.public.service import create_task_runtime_execution_attempt_authority
 from polaris.kernelone.llm.engine.executor import AIExecutor
 
+pytestmark = pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(

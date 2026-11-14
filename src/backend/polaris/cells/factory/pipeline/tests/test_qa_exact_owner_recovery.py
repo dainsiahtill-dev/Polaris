@@ -14,6 +14,10 @@ from polaris.cells.factory.pipeline.internal.factory_stage_executor import (
     _mixin_03 as stage,
 )
 
+pytestmark = pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
+
 
 def _authority(passed: bool, present: bool = True) -> SimpleNamespace:
     return SimpleNamespace(

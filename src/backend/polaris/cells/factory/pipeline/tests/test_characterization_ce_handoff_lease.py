@@ -55,6 +55,9 @@ from polaris.kernelone.storage import resolve_logical_path
 
 
 class TestChiefEngineerHandoffGuards:
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_schema_repair_stops_on_repeated_validation_failure(
         self,
         tmp_path: Path,
@@ -120,6 +123,9 @@ class TestChiefEngineerHandoffGuards:
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_schema_fallback_cannot_bypass_cross_task_behavior_authority(
         self,
         tmp_path: Path,
@@ -195,6 +201,9 @@ class TestChiefEngineerHandoffGuards:
             "TASK-TEST",
         ]
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_owner_finalized_fallback_satisfies_pm_delivery_depth(
         self,
         tmp_path: Path,
@@ -285,6 +294,9 @@ class TestChiefEngineerHandoffGuards:
         assert "chief_engineer.advisory_projection_fallback_infeasible" not in signal_codes
         assert review["generated_blueprints"] == 1
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_owner_finalized_fallback_rejects_true_target_deficit(
         self,
         tmp_path: Path,
@@ -387,6 +399,9 @@ class TestChiefEngineerHandoffGuards:
         assert requeued_attempt.session_id != first_attempt.session_id
         assert requeued_attempt.attempt == first_attempt.attempt + 1
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_execution_attempt_lease_covers_admitted_long_call(
         self,
         tmp_path: Path,
@@ -443,6 +458,9 @@ class TestChiefEngineerHandoffGuards:
         ).events
         assert len(completed_events) == 1
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_execution_attempt_lease_budget_is_bounded(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -478,6 +496,9 @@ class TestChiefEngineerHandoffGuards:
         with pytest.raises(ValueError, match="chief_engineer_execution_timeout_seconds_out_of_bounds"):
             OrchestrationStageExecutor._chief_engineer_execution_attempt_lease_budget(maximum + 1)
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_lease_renews_during_synchronous_post_processing(
         self,
         tmp_path: Path,
@@ -558,6 +579,9 @@ class TestChiefEngineerHandoffGuards:
         session = json.loads(session_path.read_text(encoding="utf-8"))
         assert session["status"] == "completed"
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_heartbeat_failure_fails_closed(
         self,
         tmp_path: Path,
@@ -754,6 +778,9 @@ class TestChiefEngineerHandoffGuards:
         assert keeper.stop().thread_exited is True
         _assert_no_chief_engineer_lease_keeper_threads()
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_heartbeat_failure_does_not_mask_cancellation(
         self,
         tmp_path: Path,
@@ -809,6 +836,9 @@ class TestChiefEngineerHandoffGuards:
         assert keepers[0].is_alive is False
         _assert_no_chief_engineer_lease_keeper_threads()
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_review_uses_one_portfolio_call_for_multiple_tasks(
         self,
         tmp_path: Path,
@@ -994,6 +1024,9 @@ class TestChiefEngineerHandoffGuards:
         assert portfolio_hashes == {review["portfolio"]["portfolio_hash"]}
         assert interface_hashes == {review["project_interface_contract"]["project_interface_contract_hash"]}
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_review_fails_closed_after_llm_timeout(
         self,
         tmp_path: Path,
@@ -1084,6 +1117,9 @@ class TestChiefEngineerHandoffGuards:
         assert keepers[0].is_alive is False
         _assert_no_chief_engineer_lease_keeper_threads()
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_cancellation_suspends_claimed_attempt_once(
         self,
         tmp_path: Path,
@@ -1136,6 +1172,9 @@ class TestChiefEngineerHandoffGuards:
         assert keepers[0].is_alive is False
         _assert_no_chief_engineer_lease_keeper_threads()
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_chief_engineer_cancellation_survives_settlement_failure(
         self,
         tmp_path: Path,

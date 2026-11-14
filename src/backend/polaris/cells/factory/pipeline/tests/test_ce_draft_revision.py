@@ -13,6 +13,10 @@ from polaris.cells.factory.pipeline.tests.test_ce_owner_continuation import _run
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 
+pytestmark = pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
+
 
 def _role_result() -> RoleExecutionResultV1:
     source = _single_task_chief_engineer_result()

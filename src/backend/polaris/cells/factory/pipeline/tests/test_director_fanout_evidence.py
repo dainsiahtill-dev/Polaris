@@ -157,6 +157,9 @@ async def test_background_role_submit_task_inherits_binding_while_parent_context
     assert get_factory_role_evidence_authority_binding() is None
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_unified_orchestration_submit_run_background_task_inherits_exact_binding(tmp_path: Path) -> None:
     class _BindingProbeAdapter:
@@ -583,6 +586,9 @@ class TestPerBindingRouteEvents:
 class TestDispatchLogPayload:
     """Verify that fanout metadata propagates into dispatch log payload."""
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_per_binding_route_events_in_dispatch_log(self, tmp_path: Path) -> None:
         """per_binding_route_events are written to dispatch/log.json."""
@@ -684,6 +690,9 @@ class TestDispatchLogPayload:
         assert fanout_attempt["metadata"]["execution_mode"] == "parallel"
         assert fanout_attempt["metadata"]["max_workers"] == 2
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_execution_mode_in_dispatch_log_context(self, tmp_path: Path) -> None:
         """execution_mode is preserved in dispatch log signals."""

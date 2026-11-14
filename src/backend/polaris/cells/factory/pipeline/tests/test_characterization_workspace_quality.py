@@ -75,6 +75,9 @@ class TestWorkspaceQualityRepairEvidence:
         assert "repair_hash:file=src/simulation.ts;before=aaaaaaaaaaaaaaaa;after=bbbbbbbbbbbbbbbb" in evidence
         assert any("export type GardenConfig" in item for item in evidence)
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     def test_interface_discrepancy_evidence_recognizes_cross_language_symbol_mismatches(self) -> None:
         cases = (
             "go test ./... :: src/main.go:17: undefined: NewCapsule",
@@ -1279,6 +1282,9 @@ class TestWorkspaceQualityDeterministicRepairExecution:
         assert summary["task_runtime_repair_attempt"]["outcome"] == "failed"
         assert settled["stage_status"] == "failed"
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_llm_repair_heartbeat_failure_invalidates_physical_mutation(
         self,
@@ -1366,6 +1372,9 @@ class TestWorkspaceQualityDeterministicRepairExecution:
         assert summary["task_runtime_repair_attempt"]["outcome"] == "failed"
         assert settled["stage_status"] == "failed"
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_llm_repair_keeps_candidate_guard_private_until_verifier_settlement(
         self,

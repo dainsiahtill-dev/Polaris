@@ -24,6 +24,9 @@ from polaris.cells.factory.pipeline.tests._characterization_helpers import (
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 def test_mixed_ce_schema_errors_use_bound_patch_and_preserve_valid_roots(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -126,6 +129,9 @@ def test_composed_draft_does_not_replace_physical_patch_evidence(tmp_path: Path)
     assert receipt["patch_hash"] != receipt["composed_candidate_hash"]
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.parametrize("empty", [False, True])
 def test_displaced_nested_task_reconstructs_with_complete_task_coverage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, empty: bool

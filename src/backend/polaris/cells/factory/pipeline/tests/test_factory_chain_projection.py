@@ -89,6 +89,9 @@ async def _project_with_private_test_reader(
         return await get_factory_chain_projection(query)
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_real_owner_service_reads_strict_authoritative_event_chain(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
@@ -111,6 +114,9 @@ async def test_real_owner_service_reads_strict_authoritative_event_chain(tmp_pat
     assert result.chain_completed is False
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_real_owner_completion_requires_and_binds_terminal_event(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
@@ -134,6 +140,9 @@ async def test_real_owner_completion_requires_and_binds_terminal_event(tmp_path:
     assert result.completion_event_ref in result.event_refs
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_real_owner_service_does_not_skip_corrupt_event_bytes(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"

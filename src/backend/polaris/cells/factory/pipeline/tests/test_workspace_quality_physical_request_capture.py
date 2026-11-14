@@ -42,6 +42,9 @@ from polaris.kernelone.llm.engine.executor import AIExecutor
 @pytest.mark.parametrize(
     "role,scenario", [("director", "normal"), ("qa", "normal"), ("qa", "retry"), ("director", "cancel")]
 )
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 async def test_quality_facade_capture_real_anthropic_http(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, role: str, scenario: str
 ) -> None:
@@ -184,8 +187,8 @@ async def test_quality_facade_capture_real_anthropic_http(
             return SimpleNamespace(submit_run=submit_run)
 
         monkeypatch.setattr(commands, "get_orchestration_service", get_worker)
-    # The command service registers no role adapter itself, so there is
-    # nothing to disable here.
+        # The command service registers no role adapter itself, so there is
+        # nothing to disable here.
         executor._resolve_abort_checker = lambda _ctx: None
 
         async def no_abort(_checker):

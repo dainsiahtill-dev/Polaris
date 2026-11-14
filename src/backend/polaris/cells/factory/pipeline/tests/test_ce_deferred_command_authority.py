@@ -58,6 +58,9 @@ async def _capture_bootstrap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ta
     return captured[0]
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_delegated_ce_bootstrap_omits_nonexistent_required_command_table(
     tmp_path: Path,
@@ -77,6 +80,9 @@ async def test_delegated_ce_bootstrap_omits_nonexistent_required_command_table(
     assert coverage == {"required": False, "pass": True, "required_rows": [], "included_rows": []}
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_explicit_typed_command_table_is_preserved_exactly(
     tmp_path: Path,
@@ -124,6 +130,9 @@ def deferred_native_endpoint(
         yield endpoint
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.parametrize("deferred_native_endpoint", ["accept", "retry"], indirect=True)
 def test_delegated_ce_factory_request_reaches_sealed_localhost_provider(
     tmp_path: Path,

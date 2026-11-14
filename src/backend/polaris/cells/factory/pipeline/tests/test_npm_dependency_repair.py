@@ -87,6 +87,9 @@ def test_workspace_quality_keeps_exiting_node_start_smoke(tmp_path: Path) -> Non
     assert ["npm", "run", "start"] in commands
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_npm_prepare_failure_is_preserved_without_workspace_mutation(
     tmp_path: Path,
@@ -154,6 +157,9 @@ async def test_npm_prepare_failure_is_preserved_without_workspace_mutation(
     assert payload["repair"]["attempted"] is False
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_check_failure_enters_runtime_then_llm_repair_without_factory_shortcut(
     tmp_path: Path,

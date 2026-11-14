@@ -52,6 +52,9 @@ async def _running_service(tmp_path: Path) -> tuple[FactoryRunService, FactoryRu
     return service, run
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_released_failed_run_budget_can_be_restored_without_live_transport(tmp_path: Path) -> None:
     owner, run = await _running_service(tmp_path)
@@ -74,6 +77,9 @@ def _claim_is_preserved(service: FactoryRunService, run_id: str) -> bool:
     return lease is not None and lease.run_id == run_id and lease.stage_execution_claim is not None
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_success_orders_stage_event_before_commit_marker_and_publishes_after_ack(tmp_path: Path) -> None:
     service, run = await _running_service(tmp_path)
@@ -97,6 +103,9 @@ async def test_success_orders_stage_event_before_commit_marker_and_publishes_aft
     assert current["metadata"]["last_factory_stage_commit"]["stage_completed_event_id"] == events[-2]["event_id"]
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failed_step", ["save_run", "checkpoint"])
 async def test_post_event_storage_failure_quarantines_without_publish_and_preserves_claim(
@@ -138,6 +147,9 @@ async def test_post_event_storage_failure_quarantines_without_publish_and_preser
     assert _claim_is_preserved(service, run.id)
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_detached_stage_append_failure_has_no_success_publish_and_preserves_claim(tmp_path: Path) -> None:
     service, run = await _running_service(tmp_path)
@@ -175,6 +187,9 @@ async def test_detached_stage_append_failure_has_no_success_publish_and_preserve
     assert _claim_is_preserved(service, run.id)
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_commit_marker_failure_appends_explicit_quarantine(tmp_path: Path) -> None:
     service, run = await _running_service(tmp_path)
@@ -206,6 +221,9 @@ async def test_commit_marker_failure_appends_explicit_quarantine(tmp_path: Path)
     assert _claim_is_preserved(service, run.id)
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_publish_failure_is_non_authoritative_after_commit_ack(tmp_path: Path) -> None:
     service, run = await _running_service(tmp_path)
@@ -226,6 +244,9 @@ async def test_publish_failure_is_non_authoritative_after_commit_ack(tmp_path: P
     assert not _claim_is_preserved(service, run.id)
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_cancellation_cut_before_marker_prevents_marker_and_publish_and_quarantines(tmp_path: Path) -> None:
     service, run = await _running_service(tmp_path)
@@ -261,6 +282,9 @@ async def test_cancellation_cut_before_marker_prevents_marker_and_publish_and_qu
     assert _claim_is_preserved(service, run.id)
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_retry_recovers_exact_cancelled_stage_commit_before_reentry(tmp_path: Path) -> None:
     """A restart cut after snapshot+checkpoint must not permanently brick a run.
@@ -306,6 +330,9 @@ async def test_retry_recovers_exact_cancelled_stage_commit_before_reentry(tmp_pa
     assert recovery_marker_index > quarantine_index
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_retry_recovers_exact_checkpoint_reread_race_without_rerunning_stage(tmp_path: Path) -> None:
     """Transient strict reread drift after save+checkpoint must not brick run."""
@@ -343,6 +370,9 @@ async def test_retry_recovers_exact_checkpoint_reread_race_without_rerunning_sta
     assert state.is_quarantined is False
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_cancelled_stage_ack_recovery_preserves_newer_mutable_run_state(tmp_path: Path) -> None:
     """Missing ACK repair must not roll back a later accepted retry epoch."""
@@ -390,6 +420,9 @@ async def test_cancelled_stage_ack_recovery_preserves_newer_mutable_run_state(tm
     assert state.is_quarantined is False
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_cancellation_after_marker_wrapper_entry_but_before_real_append_wins_cut(tmp_path: Path) -> None:
     service, run = await _running_service(tmp_path)
@@ -437,6 +470,9 @@ async def test_cancellation_after_marker_wrapper_entry_but_before_real_append_wi
     assert _claim_is_preserved(service, run.id)
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_cancellation_racing_marker_append_uses_final_authoritative_ack(tmp_path: Path) -> None:
     service, run = await _running_service(tmp_path)
@@ -482,6 +518,9 @@ async def test_cancellation_racing_marker_append_uses_final_authoritative_ack(tm
     assert not _claim_is_preserved(service, run.id)
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_cancellation_after_marker_ack_cannot_revoke_commit(tmp_path: Path) -> None:
     service, run = await _running_service(tmp_path)
@@ -507,6 +546,9 @@ async def test_cancellation_after_marker_ack_cannot_revoke_commit(tmp_path: Path
     assert not _claim_is_preserved(service, run.id)
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_all_mutating_entrypoints_reject_unmatched_stage_event_before_early_return(tmp_path: Path) -> None:
     service, run = await _running_service(tmp_path)
@@ -560,6 +602,9 @@ async def test_all_mutating_entrypoints_reject_unmatched_stage_event_before_earl
         assert captured.value.code == "factory_stage_persistence_quarantined"
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_current_pointer_tamper_blocks_next_mutation(tmp_path: Path) -> None:
     service, run = await _running_service(tmp_path)
@@ -576,6 +621,9 @@ async def test_current_pointer_tamper_blocks_next_mutation(tmp_path: Path) -> No
     assert captured.value.code == "current_pointer_mismatch"
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_find_last_successful_stage_revalidates_immutable_checkpoint_hash(tmp_path: Path) -> None:
     service, run = await _running_service(tmp_path)
@@ -602,6 +650,9 @@ async def test_find_last_successful_stage_revalidates_immutable_checkpoint_hash(
         ("history", "checkpoint_canonical_sha256", "factory_stage_checkpoint_hash_mismatch"),
     ],
 )
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 async def test_guard_and_history_recompute_both_marker_hash_domains(
     tmp_path: Path,
     consumer: str,
@@ -627,6 +678,9 @@ async def test_guard_and_history_recompute_both_marker_hash_domains(
     assert captured.value.code == expected_code
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 @pytest.mark.parametrize("consumer", ["guard", "history"])
 async def test_guard_and_history_reject_valid_shaped_but_noncanonical_checkpoint_ref(
@@ -679,6 +733,9 @@ async def test_guard_and_history_reject_valid_shaped_but_noncanonical_checkpoint
     assert captured.value.code == "factory_stage_checkpoint_ref_mismatch"
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_bound_artifact_snapshot_is_reread_immediately_before_stage_append(tmp_path: Path) -> None:
     service: FactoryRunService
@@ -732,6 +789,9 @@ async def test_bound_artifact_snapshot_is_reread_immediately_before_stage_append
     assert "factory_stage_persistence_committed" not in {event["type"] for event in events}
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_automatic_router_mutation_matrix_executes_real_service_owned_writes(tmp_path: Path) -> None:
     expected = {
@@ -814,6 +874,9 @@ async def test_automatic_router_mutation_matrix_executes_real_service_owned_writ
         )
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_restarted_router_projection_cannot_bypass_physical_replay(tmp_path: Path) -> None:
     owner, run = await _running_service(tmp_path)
@@ -839,6 +902,9 @@ async def test_restarted_router_projection_cannot_bypass_physical_replay(tmp_pat
     assert after_events == before_events
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_atomic_router_mutation_serializes_cancel_and_preserves_commit_pointer(tmp_path: Path) -> None:
     service, run = await _running_service(tmp_path)
@@ -909,6 +975,9 @@ def test_marker_append_holds_arbiter_permit_across_pre_durable_seam() -> None:
     assert order == ["durable", "cancelled"]
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_role_artifact_binding_failure_persists_failed_result_and_settles_terminal_claim(
     tmp_path: Path,

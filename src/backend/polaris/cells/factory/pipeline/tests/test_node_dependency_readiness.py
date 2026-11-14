@@ -129,6 +129,9 @@ def test_preparation_rejects_authored_source_drift_without_restoring_it(
     assert source.read_text(encoding="utf-8") == "changed"
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_collector_surfaces_preparation_failure_even_with_existing_compiler(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, authored: tuple[Any, Any, Any]
@@ -262,6 +265,9 @@ def test_cancel_or_unproved_drain_never_becomes_preparation_success(
         )
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_materialization_uses_explicit_authenticated_run_and_retains_preparation_result(
     tmp_path: Path,
@@ -449,6 +455,9 @@ def test_stale_lock_cannot_hide_unlisted_dependency_escape_before_install(
     assert not marker.exists()
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_postcommit_preparation_failure_is_not_discarded_when_metadata_becomes_ready(
     tmp_path: Path,

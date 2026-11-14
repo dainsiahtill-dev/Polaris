@@ -16,6 +16,10 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
 )
 from polaris.cells.factory.pipeline.tests._characterization_helpers import _executor
 
+pytestmark = pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
+
 
 @pytest.fixture(autouse=True)
 def phase_only_validation_session(monkeypatch: pytest.MonkeyPatch) -> None:

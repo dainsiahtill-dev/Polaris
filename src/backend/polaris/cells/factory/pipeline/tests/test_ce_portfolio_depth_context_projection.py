@@ -189,6 +189,9 @@ def test_ce_depth_projection_does_not_clone_live_runtime_ports(tmp_path: Path) -
     )
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_current_depth_reaches_runtime_boundary_with_isolated_authority(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

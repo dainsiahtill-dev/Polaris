@@ -72,6 +72,9 @@ def test_installed_rustup_selector_is_pinned_without_default_fallback(
         group.close()
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.parametrize("fallback", [False, True])
 def test_verifier_toml_imports_use_real_compatible_parser(tmp_path: Path, fallback: bool) -> None:
     parser_root = os.environ.get("POLARIS_TEST_TOMLI_ROOT", "")

@@ -125,6 +125,9 @@ async def test_current_ce_authority_never_comes_from_copied_or_foreign_carrier(
     assert before == {str(p): p.read_bytes() for p in executor.workspace.rglob("*") if p.is_file()}
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_same_exact_argv_runs_both_declared_unicode_cwd_bindings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -156,6 +159,9 @@ async def test_same_exact_argv_runs_both_declared_unicode_cwd_bindings(
         session.close()
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_exact_entry_failure_reaches_same_owner_source_repair_and_fresh_clean_group(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -277,6 +283,9 @@ async def test_env_owner_receipt_must_revalidate_before_any_clean_verifier(
     assert calls == []
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_entry_admission_failure_cannot_borrow_prior_build_process_observation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

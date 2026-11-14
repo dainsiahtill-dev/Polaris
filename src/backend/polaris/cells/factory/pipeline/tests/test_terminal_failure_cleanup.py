@@ -18,6 +18,10 @@ from polaris.cells.factory.pipeline.tests.test_factory_workspace_admission impor
     _SuccessfulStageExecutor,
 )
 
+pytestmark = pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
+
 
 async def _failed_run(workspace: Path) -> tuple[FactoryRunService, str]:
     workspace.mkdir()

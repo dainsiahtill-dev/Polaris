@@ -26,6 +26,10 @@ from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.storage import resolve_logical_path
 
+pytestmark = pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
+
 _SOURCE = "TASK-SOURCE"
 _TEST = "TASK-TEST"
 

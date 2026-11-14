@@ -71,6 +71,9 @@ def _command(workspace: Path, run_id: str, fencing_token: int) -> RecoverStaleFa
     )
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_public_recovery_returns_typed_released_lease(tmp_path: Path) -> None:
     service, admission, _, run_id, fencing_token = await _create_service(tmp_path, stale=True)
@@ -90,6 +93,9 @@ async def test_public_recovery_returns_typed_released_lease(tmp_path: Path) -> N
     assert admission.current() == result.lease
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_public_recovery_accepts_single_restart_replay_fence_increment(tmp_path: Path) -> None:
     """A restarted service may fence the stale token before releasing it."""
@@ -108,6 +114,9 @@ async def test_public_recovery_accepts_single_restart_replay_fence_increment(tmp
     assert admission.current() == result.lease
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_public_recovery_preserves_wrong_fencing_token_error(tmp_path: Path) -> None:
     service, _, _, run_id, fencing_token = await _create_service(tmp_path, stale=True)
@@ -121,6 +130,9 @@ async def test_public_recovery_preserves_wrong_fencing_token_error(tmp_path: Pat
     assert error.value.code == "factory_workspace_run_fenced"
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_public_recovery_rejects_non_stale_owner(tmp_path: Path) -> None:
     service, _, _, run_id, fencing_token = await _create_service(tmp_path, stale=False)
@@ -134,6 +146,9 @@ async def test_public_recovery_rejects_non_stale_owner(tmp_path: Path) -> None:
     assert error.value.code == "factory_workspace_run_owner_not_stale"
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_public_recovery_retry_is_fail_closed_and_does_not_mutate_again(tmp_path: Path) -> None:
     service, admission, _, run_id, fencing_token = await _create_service(tmp_path, stale=True)
@@ -153,6 +168,9 @@ async def test_public_recovery_retry_is_fail_closed_and_does_not_mutate_again(tm
     assert admission.current() == first.lease
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_concurrent_public_recovery_has_one_authoritative_release(tmp_path: Path) -> None:
     service, admission, _, run_id, fencing_token = await _create_service(tmp_path, stale=True)
@@ -175,6 +193,9 @@ async def test_concurrent_public_recovery_has_one_authoritative_release(tmp_path
     assert current.state is FactoryWorkspaceRunLeaseStateV1.RELEASED
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_public_recovery_rejects_service_workspace_mismatch(tmp_path: Path) -> None:
     requested, _, _, run_id, fencing_token = await _create_service(

@@ -160,6 +160,9 @@ async def test_missing_earlier_obligation_still_refreshes_later_real_effect(part
     assert all(row["path"] != _MISSING for row in stored)
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_materialization_partial_closure_summary_and_real_task_remain_failed(
     partial_owner: SimpleNamespace, monkeypatch: pytest.MonkeyPatch

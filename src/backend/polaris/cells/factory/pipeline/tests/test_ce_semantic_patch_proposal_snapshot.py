@@ -152,6 +152,9 @@ def test_capture_storage_failure_is_unknown_and_does_not_change_semantics(
     assert evidence["byte_count"] is None
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 def test_two_rounds_reach_stage_result_and_cold_existing_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Actual StageResult collector; PM proof/cutoff and provider are declared test ports."""
     monkeypatch.setenv("KERNELONE_JETSTREAM_PUBLISH", "0")

@@ -198,6 +198,9 @@ def test_wrong_handoff_rejects_before_commit(tmp_path: Path, monkeypatch: pytest
         )
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 @pytest.mark.parametrize("record_fails", [False, True])
 @pytest.mark.parametrize("lease_rejected", [False, True])
@@ -321,6 +324,9 @@ async def test_stage_settle_reuses_owner_and_records_assets_before_close(
     ]
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_cancelled_settle_does_not_leave_owner_heartbeat_running(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

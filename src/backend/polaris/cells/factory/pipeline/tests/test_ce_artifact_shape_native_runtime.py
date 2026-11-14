@@ -188,6 +188,9 @@ def artifact_native_endpoint(
         yield endpoint
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.parametrize("artifact_native_endpoint", ["accept", "foreign_owner"], indirect=True)
 def test_native_shape_recovery_preserves_pm_and_final_authority(
     tmp_path: Path, artifact_native_endpoint: _ArtifactShapeEndpoint

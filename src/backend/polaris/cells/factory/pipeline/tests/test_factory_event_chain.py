@@ -306,6 +306,9 @@ print(json.dumps({"sequence": record["chain_sequence"], "hash": record["chain_ev
     assert fourth == records[-1]
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_create_run_orders_durable_admission_then_save_then_publish(
     tmp_path: Path,
@@ -343,6 +346,9 @@ async def test_create_run_orders_durable_admission_then_save_then_publish(
     assert operations[2][1] == (run.id, admission)
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_create_run_save_failure_never_publishes_or_returns(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -561,6 +567,9 @@ def test_strict_decoder_rejects_duplicate_nan_nonobject_and_non_utf8(raw: bytes)
         decode_factory_event_chain(raw, run_id="strict-run")
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_durability_failure_propagates_before_create_save_or_publish(
     tmp_path: Path,
@@ -637,6 +646,9 @@ def _tamper_successful_stage(service: FactoryRunService, run_id: str, *, stage: 
     )
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_corrupt_success_event_cannot_change_recovery_point(tmp_path: Path) -> None:
     service, run_id = await _recovery_candidate(
@@ -665,6 +677,9 @@ async def test_corrupt_success_event_cannot_change_recovery_point(tmp_path: Path
     assert persisted.recovery_point is None
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_corrupt_success_event_cannot_select_retry_checkpoint(tmp_path: Path) -> None:
     service, run_id = await _recovery_candidate(
@@ -694,6 +709,9 @@ async def test_corrupt_success_event_cannot_select_retry_checkpoint(tmp_path: Pa
     assert "retry_execution_stage" not in persisted.metadata
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_legacy_success_event_cannot_drive_recovery(tmp_path: Path) -> None:
     service, run_id = await _recovery_candidate(
@@ -721,6 +739,9 @@ async def test_legacy_success_event_cannot_drive_recovery(tmp_path: Path) -> Non
     assert persisted.recovery_point is None
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_create_run_admits_before_creating_run_subdirectories(
     tmp_path: Path,
@@ -743,6 +764,9 @@ async def test_create_run_admits_before_creating_run_subdirectories(
     assert (service.store.get_run_dir(run.id) / "checkpoints").is_dir()
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_create_run_detaches_mutable_config_before_first_await(
     tmp_path: Path,
@@ -838,6 +862,9 @@ async def test_admission_directory_fsync_failure_is_not_reported_as_success(
     assert (run_dir / "events" / "events.jsonl").is_file()
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_cancelled_create_waits_for_worker_then_leaves_admission_only_and_unlocked(
     tmp_path: Path,
@@ -989,6 +1016,9 @@ async def test_repeated_cancellation_still_waits_for_worker_and_releases_stream_
     assert [record["chain_sequence"] for record in records] == [1, 2]
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_first_admission_fresh_anchor_contention_times_out_without_factory_residue(
     tmp_path: Path,
@@ -1120,6 +1150,9 @@ with LockedRegularFileSetV1.acquire(
         assert process.returncode == 0, f"{stdout}\n{stderr}"
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_first_admission_uses_one_configured_budget_while_other_stream_holds_anchor(
     tmp_path: Path,

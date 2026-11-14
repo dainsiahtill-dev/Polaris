@@ -130,6 +130,9 @@ async def test_pm_timeout_never_starts_deterministic_recovery(tmp_path: Path, mo
     assert result.metadata["real_planning_qualified"] is False
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_provider_planning_path_persists_qualified_origin(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

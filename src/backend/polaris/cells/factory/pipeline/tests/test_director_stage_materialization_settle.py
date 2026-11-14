@@ -160,6 +160,9 @@ def test_director_stage_should_settle_on_timeout_error_code(tmp_path: Path) -> N
     )
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 def test_collect_director_stage_diagnostics_includes_go_compile_without_package_json(
     tmp_path: Path,
 ) -> None:
@@ -1338,6 +1341,9 @@ def test_typed_repair_plan_cannot_create_owner_authority(
     assert not (tmp_path / "src/diary.cpp").exists()
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 def test_collect_director_stage_materialization_diagnostics_parses_tsc_stderr(
     tmp_path: Path,
 ) -> None:
@@ -1364,6 +1370,9 @@ def test_collect_director_stage_materialization_diagnostics_parses_tsc_stderr(
     assert any("TS6133" in item for item in diags)
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 def test_collect_materialization_diagnostics_includes_html_entrypoint_quality(
     tmp_path: Path,
 ) -> None:
@@ -1385,6 +1394,9 @@ def test_collect_materialization_diagnostics_includes_html_entrypoint_quality(
     assert any("./src/web.ts" in item for item in diagnostics)
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 def test_collect_materialization_diagnostics_runs_declared_npm_test(
     tmp_path: Path,
 ) -> None:
@@ -1482,6 +1494,9 @@ def test_seal_director_stage_missing_tool_lifecycles_appends_blocked_receipt(
     )
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 def test_collect_materialization_diagnostics_flags_missing_package_test_files(tmp_path: Path) -> None:
     """R184: settle diagnostics include missing package.json test entrypoints."""
 

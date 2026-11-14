@@ -26,6 +26,9 @@ from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 
 
 class TestDirectorDispatchLoop:
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_single_binding_materialization_failure_stops_before_no_claim_retry(
         self,
@@ -716,6 +719,9 @@ class TestDirectorDispatchLoop:
             {"in_progress": 0, "in_execution": 0, "completed": 3, "blocked": 1}
         )
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_missing_write_receipt_with_artifacts_stays_failed(
         self,
@@ -909,6 +915,9 @@ class TestDirectorDispatchLoop:
         assert "director.materialization_quality_handoff" not in codes
         assert "director.canonical_task_boundary_missing" in codes
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_idle_claimable_unresolved_artifacts_do_not_enter_quality_gate_handoff(
         self,
@@ -1835,6 +1844,9 @@ class TestDirectorDispatchLoop:
         assert payload["attempts"][-1]["settled_after_timeout"] is True
         assert payload["taskboard"]["converged"] is True
 
+    @pytest.mark.skip(
+        reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+    )
     @pytest.mark.asyncio
     async def test_soft_timeout_settles_before_another_director_round(self, tmp_path: Path) -> None:
         submitted_deadlines: list[float] = []

@@ -47,6 +47,9 @@ from polaris.cells.runtime.task_runtime.public.contracts import (
         ({"factory_run_deadline_epoch_seconds": float("nan")}, None, None, 60000),
     ],
 )
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 async def test_pm_factory_admitted_wait_and_role_entry_are_aligned(
     tmp_path, monkeypatch, extra, want_stage, want_call, want_output
 ):

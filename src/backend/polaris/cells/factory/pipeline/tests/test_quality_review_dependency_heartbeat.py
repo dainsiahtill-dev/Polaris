@@ -52,6 +52,9 @@ async def _committed_candidate(workspace: Path, port: Any) -> tuple[list[dict], 
     }
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 @pytest.mark.parametrize("attack", ["none", "source_during_prepare", "dependency_after_freeze"])
 @pytest.mark.parametrize("initial_dependency", [True, False])

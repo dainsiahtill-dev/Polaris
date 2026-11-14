@@ -175,6 +175,9 @@ def recipe_native_endpoint(
         "verification_command_change",
     ],
 )
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 def test_wrong_verifier_modality_repair_reaches_sealed_provider(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

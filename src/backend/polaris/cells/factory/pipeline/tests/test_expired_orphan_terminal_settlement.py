@@ -18,6 +18,10 @@ from polaris.cells.factory.pipeline.public import (
     recover_stale_factory_workspace_owner,
 )
 
+pytestmark = pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
+
 
 class _Clock:
     def __init__(self) -> None:

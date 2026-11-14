@@ -344,6 +344,9 @@ def _session(
     return NativeValidationSession.from_factory(executor, run, {}, commands=(command,))
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 @pytest.mark.parametrize("python", [sys.executable, "/usr/bin/python3"])
 async def test_native_python_entrypoint_imports_only_sandbox_workspace(
@@ -374,6 +377,9 @@ async def test_native_python_entrypoint_imports_only_sandbox_workspace(
         session.close()
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_native_rustup_cargo_test_runs_installed_toolchain_offline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

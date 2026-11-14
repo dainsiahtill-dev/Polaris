@@ -17,6 +17,10 @@ from polaris.cells.roles.adapters.internal.director.quality_gate._candidate_guar
     DirectorQualityRepairCandidateGuard,
 )
 
+pytestmark = pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(

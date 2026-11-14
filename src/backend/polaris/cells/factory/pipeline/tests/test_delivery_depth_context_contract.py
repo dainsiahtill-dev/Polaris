@@ -218,6 +218,9 @@ def test_matching_identity_and_nested_level_projection_preserve_declared_minimum
     assert context == before
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.parametrize("restored", [False, True])
 def test_formal_http_input_persistence_and_stage_restore_reach_real_depth_checker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restored: bool

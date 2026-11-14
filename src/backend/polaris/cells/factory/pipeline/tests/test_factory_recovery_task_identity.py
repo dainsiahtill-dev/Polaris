@@ -150,6 +150,9 @@ def test_factory_retry_refuses_changed_ce_binding(tmp_path: Path) -> None:
     assert service.list_observable_task_rows() == before
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 def test_factory_retry_rebuilds_cleaned_owner_from_same_run_ce_review(tmp_path: Path) -> None:
     service, old, plan_task = _failed_ce_owner(tmp_path)
     executor = OrchestrationStageExecutor(tmp_path)
@@ -215,6 +218,9 @@ def test_quality_repair_refuses_competing_rows_for_one_logical_owner(tmp_path: P
     assert service.list_observable_task_rows() == before
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["explicit", "body_error", "legacy", "kwargs_only", "missing_owner", "non_node"])
 async def test_qa_preparation_bridge_requires_explicit_contract_without_retry(

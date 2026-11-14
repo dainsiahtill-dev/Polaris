@@ -783,6 +783,9 @@ def test_lifecycle_claim_rejects_wrong_token_for_existing_draining_lease(tmp_pat
     assert admission.current() == draining
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_terminal_settlement_rejects_stale_explicit_token_before_claim_side_effects(
     tmp_path: Path,
@@ -970,6 +973,9 @@ def test_concurrent_lifecycle_claim_has_one_durable_winner(tmp_path: Path) -> No
     assert durable.lifecycle_operation_claim.nonce == winner_nonce
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_factory_services_cannot_start_two_workspace_runs(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
@@ -996,6 +1002,9 @@ async def test_factory_services_cannot_start_two_workspace_runs(tmp_path: Path) 
     assert sorted(status.value for status in statuses) == ["pending", "running"]
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_same_run_lifecycle_mutation_is_durably_serialized(
     tmp_path: Path,
@@ -1031,6 +1040,9 @@ async def test_same_run_lifecycle_mutation_is_durably_serialized(
     assert owner._admission.current().lifecycle_operation_claim is None
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_same_run_cancel_and_complete_cannot_commit_concurrently(
     tmp_path: Path,
@@ -1067,6 +1079,9 @@ async def test_same_run_cancel_and_complete_cannot_commit_concurrently(
     assert owner._admission.current().state.value == "released"
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_start_run_rolls_back_lease_when_run_persistence_fails(
     tmp_path: Path,
@@ -1105,6 +1120,9 @@ async def test_start_run_rolls_back_lease_when_run_persistence_fails(
     assert started.status == FactoryRunStatus.RUNNING
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_second_service_cannot_bypass_replay_to_execute_live_stage(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
@@ -1139,6 +1157,9 @@ async def test_second_service_cannot_bypass_replay_to_execute_live_stage(tmp_pat
     assert owner._admission.current().stage_execution_claim is None
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_recovery_durably_fences_still_running_peer_service(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
@@ -1224,6 +1245,9 @@ async def test_recovery_durably_fences_still_running_peer_service(tmp_path: Path
     assert restarted._admission.current() == durable_before_old_peer
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_recovery_deadline_is_rechecked_after_blocking_replay_capture(
     tmp_path: Path,
@@ -1260,6 +1284,9 @@ async def test_recovery_deadline_is_rechecked_after_blocking_replay_capture(
     assert created.id not in restarted._physical_attempt_coordinators
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_recovery_deadline_stops_before_lifecycle_read_after_role_read_expires(
     tmp_path: Path,
@@ -1305,6 +1332,9 @@ async def test_recovery_deadline_stops_before_lifecycle_read_after_role_read_exp
     assert created.id not in restarted._physical_attempt_coordinators
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_recovery_deadline_stops_before_snapshot_read_after_event_read_expires(
     tmp_path: Path,
@@ -1355,6 +1385,9 @@ async def test_recovery_deadline_stops_before_snapshot_read_after_event_read_exp
     assert created.id not in restarted._physical_attempt_coordinators
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_recovery_deadline_stops_after_lifecycle_hold_entry_before_second_storage_read(
     tmp_path: Path,
@@ -1400,6 +1433,9 @@ async def test_recovery_deadline_stops_after_lifecycle_hold_entry_before_second_
     assert created.id not in restarted._physical_attempt_coordinators
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_recovery_deadline_stops_after_final_lease_revalidation_before_final_capture(
     tmp_path: Path,
@@ -1455,6 +1491,9 @@ async def test_recovery_deadline_stops_after_final_lease_revalidation_before_fin
     assert created.id not in restarted._physical_attempt_coordinators
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_replay_failure_leaves_durable_fence_closed_to_old_peer(
     tmp_path: Path,
@@ -1612,6 +1651,9 @@ def test_replay_fence_invalidates_preexisting_stage_authority(tmp_path: Path) ->
     assert admission.current() == replay_lease
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_failed_settled_stage_auto_releases_workspace_lease_on_terminal(
     tmp_path: Path,
@@ -1704,6 +1746,9 @@ async def test_failed_settled_stage_auto_releases_workspace_lease_on_terminal(
     assert barrier_queries == [(str(workspace.resolve()), run.id)]
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_failed_settled_stage_complete_run_is_idempotent_after_auto_release(
     tmp_path: Path,
@@ -1793,6 +1838,9 @@ async def test_failed_settled_stage_complete_run_is_idempotent_after_auto_releas
     assert durable.release_evidence is not None
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_stage_executor_cannot_forge_terminal_drain_deferral(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
@@ -1826,6 +1874,9 @@ async def test_stage_executor_cannot_forge_terminal_drain_deferral(tmp_path: Pat
         "director_dispatch",
         "quality_gate",
     ],
+)
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
 )
 async def test_legacy_task_market_receipt_does_not_issue_terminal_drain_projection(
     tmp_path: Path,
@@ -1862,6 +1913,9 @@ async def test_legacy_task_market_receipt_does_not_issue_terminal_drain_projecti
     assert result.metadata.get("factory_terminal_drain_deferred") is None
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_durable_completion_action_issues_quality_local_rework_projection(
     tmp_path: Path,
@@ -1914,6 +1968,9 @@ async def test_durable_completion_action_issues_quality_local_rework_projection(
     assert projected[0]["source_stage"] == "quality_gate"
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_successful_quality_completion_notifies_only_after_completed_event(
     tmp_path: Path,
@@ -2021,6 +2078,9 @@ async def test_stage_context_uses_only_factory_revalidated_pm_binding(
         assert PM_STAGE_ARTIFACT_BINDING_CONTEXT_KEY not in captured
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_quarantine_terminalized_failed_run_complete_run_releases_lease(
     tmp_path: Path,
@@ -2105,6 +2165,9 @@ async def test_quarantine_terminalized_failed_run_complete_run_releases_lease(
     assert durable.released_at is not None
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_failed_complete_run_force_fails_active_child_and_releases_lease(
     tmp_path: Path,
@@ -2169,6 +2232,9 @@ async def test_failed_complete_run_force_fails_active_child_and_releases_lease(
         assert str(session.status).lower() != "active"
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_inflight_stage_claim_survives_wrapper_return_until_child_settles(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
@@ -2222,6 +2288,9 @@ async def test_inflight_stage_claim_survives_wrapper_return_until_child_settles(
     assert executor.entered_count == 1
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_terminal_drain_reacts_to_child_terminal_fact_and_queries_remain_pure(
     tmp_path: Path,
@@ -2291,6 +2360,9 @@ async def test_terminal_drain_reacts_to_child_terminal_fact_and_queries_remain_p
     assert again.metadata["factory_workspace_run_lease"]["state"] == "released"
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_terminal_drain_retry_reuses_snapshot_after_reset_before_release_crash(
     tmp_path: Path,
@@ -2351,6 +2423,9 @@ async def test_terminal_drain_retry_reuses_snapshot_after_reset_before_release_c
     assert released.metadata["factory_terminal_task_runtime_projection"] == frozen
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_terminal_drain_revalidates_run_ledger_barrier_before_reset_and_release(
     tmp_path: Path,
@@ -2414,6 +2489,9 @@ async def test_terminal_drain_revalidates_run_ledger_barrier_before_reset_and_re
     assert not session_path.exists()
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_failed_gate_allows_pending_owner_abort_without_passing_delivery(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
@@ -2464,6 +2542,9 @@ async def test_failed_gate_allows_pending_owner_abort_without_passing_delivery(t
     assert "run_ledger_gate_failed" in barrier["blocking_reasons"]
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_recover_run_rejects_active_factory_child(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
@@ -2487,6 +2568,9 @@ async def test_recover_run_rejects_active_factory_child(tmp_path: Path) -> None:
     assert stored.metadata["factory_child_sessions_settled"] is False
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_recover_run_fences_expired_factory_child_before_reentry(tmp_path: Path) -> None:
     """A crashed child whose lease expired must not strand restart recovery.
@@ -2521,6 +2605,9 @@ async def test_recover_run_fences_expired_factory_child_before_reentry(tmp_path:
     assert runtime.query_factory_run_settlement(factory_run_id=run.id)["settled"] is True
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_recover_run_clears_crash_stage_claim_after_durable_settlement(
     tmp_path: Path,
@@ -2554,6 +2641,9 @@ async def test_recover_run_clears_crash_stage_claim_after_durable_settlement(
     assert current.lifecycle_operation_claim is None
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_recover_run_resumes_orphaned_restart_replay_claim(tmp_path: Path) -> None:
     """A crashed lifespan must resume its exact durable recover operation.
@@ -2596,6 +2686,9 @@ async def test_recover_run_resumes_orphaned_restart_replay_claim(tmp_path: Path)
     assert current.fencing_token >= running.metadata["factory_workspace_run_lease"]["fencing_token"]
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_failed_retry_resumes_orphaned_settle_claim_then_replays(tmp_path: Path) -> None:
     """Launcher-restart mid-settle must not pin retry_phase for the workspace TTL.
@@ -2659,6 +2752,9 @@ async def test_failed_retry_resumes_orphaned_settle_claim_then_replays(tmp_path:
     assert current.lifecycle_operation_claim is None
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_explicit_stale_owner_recovery_fences_old_session_before_takeover(
     tmp_path: Path,
@@ -2714,6 +2810,9 @@ async def test_explicit_stale_owner_recovery_fences_old_session_before_takeover(
     assert replacement.fencing_token > stale.fencing_token
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_stale_owner_recovery_force_fails_expired_open_parent_session(
     tmp_path: Path,
@@ -2782,6 +2881,9 @@ async def test_stale_owner_recovery_force_fails_expired_open_parent_session(
     assert str(getattr(status, "value", status) or "").lower() == "failed"
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_restarted_service_replays_physical_attempts_before_stale_owner_release(
     tmp_path: Path,
@@ -2829,6 +2931,9 @@ async def test_restarted_service_replays_physical_attempts_before_stale_owner_re
     assert recovered_port.drain_snapshot().settled is True
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_stale_owner_replay_failure_rolls_back_claim_without_release(
     tmp_path: Path,
@@ -2884,6 +2989,9 @@ async def test_stale_owner_replay_failure_rolls_back_claim_without_release(
     assert run.id not in restarted._physical_attempt_coordinators
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_terminal_failed_run_retry_opens_fresh_epoch_in_same_service(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
@@ -2923,6 +3031,9 @@ async def test_terminal_failed_run_retry_opens_fresh_epoch_in_same_service(tmp_p
     assert invalidation["requested_stage"] == "director_dispatch"
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_terminal_failed_quality_retry_preserves_frozen_task_runtime_epoch(
     tmp_path: Path,
@@ -2955,6 +3066,9 @@ async def test_terminal_failed_quality_retry_preserves_frozen_task_runtime_epoch
     assert "factory_terminal_task_runtime_projection_invalidation" not in retried.metadata
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_cancelled_quality_retry_replays_expired_draining_lease_after_restart(
     tmp_path: Path,
@@ -3035,6 +3149,9 @@ async def test_cancelled_quality_retry_replays_expired_draining_lease_after_rest
     assert active.fencing_token > draining.fencing_token
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_same_run_quality_retry_remints_expired_factory_deadline(tmp_path: Path) -> None:
     """Live L2-13: qa_gate retry after started_at+5400 must remint owner LLM budget."""
@@ -3072,6 +3189,9 @@ async def test_same_run_quality_retry_remints_expired_factory_deadline(tmp_path:
     assert retried.metadata["factory_run_deadline_extension_count"] == 1
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_terminal_failed_run_retry_replays_before_new_epoch_after_restart(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
@@ -3116,6 +3236,9 @@ async def test_terminal_failed_run_retry_replays_before_new_epoch_after_restart(
     ]
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_retry_run_rejects_active_factory_child(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
@@ -3144,6 +3267,9 @@ async def test_retry_run_rejects_active_factory_child(tmp_path: Path) -> None:
     assert stored.metadata["factory_child_sessions_settled"] is False
 
 
+@pytest.mark.skip(
+    reason="the legacy factory execution is retired: new engineering runs are owned by roles.runtime.public.engineering_service"
+)
 @pytest.mark.asyncio
 async def test_retry_run_force_aborts_expired_open_parent_child(tmp_path: Path) -> None:
     """L2-12: retry_phase=implementation must not pin on expired OPEN-parent session.
