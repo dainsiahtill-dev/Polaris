@@ -1694,7 +1694,7 @@ class EngineeringRunService:
                     return result
                 if verdict != "rejected" or cancel.is_set():
                     return replace(result, status="cancelled" if cancel.is_set() else "interrupted")
-                if not self._has_budget_for(limits):
+                if not self._has_budget_for(limits, session_id=command.session_id):
                     # The remaining budget cannot cover another Director round
                     # and the independent re-review.  Continuing would spend it
                     # on the Director and leave the re-review without an
@@ -1759,7 +1759,7 @@ class EngineeringRunService:
                 else actual_results,
                 ensure_ascii=False,
             )
-            if not self._has_budget_for(limits):
+            if not self._has_budget_for(limits, session_id=command.session_id):
                 # The remaining budget cannot cover another Director round and
                 # the independent review of its result, so the run keeps the
                 # verdict it actually has.
@@ -1779,18 +1779,26 @@ class EngineeringRunService:
                 )
         return result
 
-    def _has_budget_for(self, limits: RunLimits) -> bool:
+    def _has_budget_for(self, limits: RunLimits, *, session_id: str) -> bool:
         """Whether the remaining budget still covers a review round.
 
         The Director and the independent review share one run deadline.  A
         Director round that consumes the last of the budget leaves the review
         without an answer, and the run ends with an unknown verdict even
         though the candidate was verified.  The reserve keeps enough time for
-        the review to answer.
+        the review to answer, and it never exceeds a quarter of the run's own
+        budget, so a short run keeps its own share.
         """
         if limits.deadline is None:
             return True
-        return limits.deadline - time.time() > _QA_REVIEW_RESERVE_SECONDS
+        reserve = _QA_REVIEW_RESERVE_SECONDS
+        try:
+            created = float(self.store.load_run(session_id, workspace=self.workspace).get("created_at") or 0.0)
+        except (KeyError, OSError, TypeError, ValueError):
+            created = 0.0
+        if created > 0.0:
+            reserve = min(reserve, max(0.0, (limits.deadline - created) * 0.25))
+        return limits.deadline - time.time() > reserve
 
     async def _continue_director(
         self,
