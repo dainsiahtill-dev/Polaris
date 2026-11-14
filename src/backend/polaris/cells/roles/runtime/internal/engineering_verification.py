@@ -248,7 +248,7 @@ class EngineeringVerification:
         cached = self.store.verification_input_cache.get(key)
         if cached is not None:
             try:
-                if cached[0] == self._metadata_signature(include_outputs):
+                if cached[0] == self._metadata_signature(include_outputs) and self._inputs_are_readable():
                     return cached[1]
             except (OSError, ValueError, RuntimeError, PathSecurityError, GuardedMetadataError):
                 pass
@@ -256,6 +256,43 @@ class EngineeringVerification:
         with contextlib.suppress(OSError, ValueError, RuntimeError, PathSecurityError, GuardedMetadataError):
             self.store.verification_input_cache[key] = (self._metadata_signature(include_outputs), manifest)
         return manifest
+
+    def _inputs_are_readable(self) -> bool:
+        """Whether the platform's own file port can still read an input.
+
+        A cached capture proves that the tree did not change, but the claim of
+        a current pass also needs the platform to still be able to observe its
+        inputs.  When the file port cannot read them, the cached capture must
+        not stand in for a current observation.
+        """
+        for root in sorted(self._capture_roots()):
+            for path in sorted(root.rglob("*")):
+                if path.is_relative_to(self.workspace / ".polaris"):
+                    continue
+                try:
+                    metadata = path.lstat()
+                except OSError:
+                    return False
+                if not stat.S_ISREG(metadata.st_mode):
+                    continue
+                try:
+                    filesystem = KernelFileSystem(str(self.workspace), LocalFileSystemAdapter())
+                    filesystem.workspace_read_bytes(str(path))
+                except (OSError, ValueError, RuntimeError, PathSecurityError, GuardedMetadataError):
+                    return False
+                return True
+        return True
+
+    def _capture_roots(self) -> set[Path]:
+        """The roots a capture observes: the workspace and its granted reads."""
+        host_runtime = self._host_runtime_roots()
+        roots = {
+            root
+            for root in {self.workspace, *(Path(root).expanduser().absolute() for root in self.scope.read_roots)}
+            if not any(root == runtime or root.is_relative_to(runtime) for runtime in host_runtime)
+        }
+        roots.add(self.workspace)
+        return roots
 
     def _metadata_signature(self, include_outputs: bool) -> bytes:
         """Lstat-only tree signature; proves a cached capture is still current.

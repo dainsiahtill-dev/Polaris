@@ -147,8 +147,17 @@ async def test_native_qa_facts_refresh_once_without_history_or_pixel_changes(
         sum(MARKER in str(m.get("content")) for m in e["payload"]["request"]["options"]["messages"]) == 1
         for e in prepared
     )
-    assert prepared[0]["payload"]["request"]["options"]["messages"][:-1] == original
-    assert prepared[1]["payload"]["request"]["options"]["messages"][:-1] == durable[:-1]
+    # The host continuation note is a legitimate host message between the
+    # run's own history and the QA working state; the QA state stays last.
+    def _without_continuation_note(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            message
+            for message in messages
+            if "same run's earlier turns" not in str(message.get("content") or "")
+        ]
+
+    assert _without_continuation_note(prepared[0]["payload"]["request"]["options"]["messages"])[:-1] == original
+    assert _without_continuation_note(prepared[1]["payload"]["request"]["options"]["messages"])[:-1] == durable[:-1]
     for body, event in zip(bodies, prepared, strict=True):
         canonical = event["payload"]["request"]["options"]["messages"]
         if protocol == "anthropic":
