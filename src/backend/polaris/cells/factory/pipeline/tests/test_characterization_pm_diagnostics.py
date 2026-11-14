@@ -81,7 +81,8 @@ async def test_pm_factory_admitted_wait_and_role_entry_are_aligned(
         return SubmitService()
 
     monkeypatch.setattr(command_module, "get_orchestration_service", get_service)
-    monkeypatch.setattr(command_module, "register_all_adapters", lambda _: None)
+    # The command service registers no role adapter itself, so there is
+    # nothing to disable here.
     service = command_module.OrchestrationCommandService(settings={})
     monkeypatch.setattr(
         stage_executor_module,

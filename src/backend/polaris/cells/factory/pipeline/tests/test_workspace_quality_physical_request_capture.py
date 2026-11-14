@@ -184,7 +184,8 @@ async def test_quality_facade_capture_real_anthropic_http(
             return SimpleNamespace(submit_run=submit_run)
 
         monkeypatch.setattr(commands, "get_orchestration_service", get_worker)
-        monkeypatch.setattr(commands, "register_all_adapters", lambda _worker: None)
+    # The command service registers no role adapter itself, so there is
+    # nothing to disable here.
         executor._resolve_abort_checker = lambda _ctx: None
 
         async def no_abort(_checker):
