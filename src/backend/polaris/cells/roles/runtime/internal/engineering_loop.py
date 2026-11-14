@@ -231,26 +231,40 @@ def _bounded_request_messages(
             audit=audit,
         )
 
-    built = build(messages)
     window = int(context_window_tokens or 0)
-    if window <= 0:
+    built: list[dict[str, Any]] | None = None
+    try:
+        built = build(messages)
+    except ValueError as error:
+        if "required_visual_input_budget_exceeded" not in str(error):
+            raise
+        # The history does not fit the window yet.  The text budget belongs
+        # to the trimmer, so the raw history is trimmed first and only the
+        # trimmed history is projected.  Projecting the raw history must not
+        # end the run: a long conversation is a trimming question, not a
+        # visual budget failure.
+    if built is not None and window <= 0:
         return built
     from polaris.kernelone.llm.engine.visual_working_set import visual_payload_cost
 
-    cost = visual_payload_cost(built)
+    cost = visual_payload_cost(built) if built is not None else None
     allowance = int(window * 0.95) - 16384 - 8192
-    if cost["admission_proxy_tokens"] <= allowance:
+    if built is not None and cost is not None and cost["admission_proxy_tokens"] <= allowance:
         return built
     from polaris.kernelone.llm.engine.prompt_budget import compress_native_tool_history
 
-    text_budget = max(2048, allowance - int(cost["image_serialization_proxy_tokens"]))
+    text_budget = max(2048, allowance - int((cost or {}).get("image_serialization_proxy_tokens", 0)))
     # The compression works on the raw history. The visual projection moves
     # the image bytes out of the tool content into attachment blocks, so
     # compressing an already projected history and projecting it again would
     # read image blocks without their bytes.
     bounded = compress_native_tool_history(messages, text_budget)
     if bounded is None:
-        return built
+        if built is not None:
+            return built
+        raise ValueError(
+            "required_visual_input_budget_exceeded: the trimmed history still does not fit the model window"
+        )
     return build(bounded)
 
 
@@ -555,7 +569,24 @@ async def run_engineering_loop(
                     "request": request.to_dict(),
                 },
             )
-            response = await _invoke(client, request, cancel, limits.deadline)
+            try:
+                response = await _invoke(client, request, cancel, limits.deadline)
+            except TimeoutError:
+                # The run deadline expired while the provider was answering.
+                # The run ends with the facts it committed, not with an
+                # exception: the candidate and its checks stay valid, and the
+                # verdict the run already reached is kept.
+                store.append_event(
+                    command.session_id,
+                    kind="role_error",
+                    role=command.role,
+                    payload={
+                        "error": "Engineering run deadline exceeded.",
+                        "error_type": "TimeoutError",
+                        "deadline_expired": True,
+                    },
+                )
+                return finish("interrupted", "Engineering run deadline exceeded.")
             response_seq = store.append_event(
                 command.session_id,
                 kind="provider_response",

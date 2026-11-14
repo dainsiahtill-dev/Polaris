@@ -60,7 +60,7 @@ def _tool_message(call_id: str, images: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _assistant_turn(index: int) -> list[dict[str, Any]]:
+def _assistant_turn(index: int, *, size: int = 200) -> list[dict[str, Any]]:
     call_id = f"call-{index}"
     return [
         {
@@ -70,7 +70,7 @@ def _assistant_turn(index: int) -> list[dict[str, Any]]:
                 {
                     "id": call_id,
                     "type": "function",
-                    "function": {"name": "execute_command", "arguments": json.dumps({"command": "x" * 200})},
+                    "function": {"name": "execute_command", "arguments": json.dumps({"command": "x" * size})},
                 }
             ],
         },
@@ -127,3 +127,34 @@ async def test_bounded_working_set_keeps_the_visual_evidence_projectable(tmp_pat
     assert image_sets, audit
     blocks = [block for message in bounded if isinstance(message.get("content"), list) for block in message["content"]]
     assert any(isinstance(block, dict) and block.get("type") == "image" for block in blocks)
+
+
+async def test_bounded_working_set_trims_a_history_that_overflows_the_window(tmp_path: Path) -> None:
+    """A long conversation is trimmed, not refused by the visual budget.
+
+    The visual working set guards the image budget.  A history that is simply
+    too long has no images at all, and its text belongs to the trimmer: the
+    request must be trimmed instead of ending the run with
+    ``required_visual_input_budget_exceeded``.
+    """
+    workspace = tmp_path / "bounded-long-history"
+    store = create(workspace)
+    command = RoleRunCommand("run-1", "director", "Deliver the artifact.", workspace)
+
+    messages: list[dict[str, Any]] = [{"role": "user", "content": "Deliver the artifact."}]
+    for index in range(400):
+        messages.extend(_assistant_turn(index, size=4096))
+
+    audit: dict[str, Any] = {}
+    bounded = _bounded_request_messages(
+        messages,
+        store=store,
+        command=command,
+        role="director",
+        context_window_tokens=32_000,
+        visual_binding=None,
+        audit=audit,
+    )
+
+    assert bounded, "the bounded request must keep a working set"
+    assert len(bounded) < len(messages)
