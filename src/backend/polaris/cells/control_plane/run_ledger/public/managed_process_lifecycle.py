@@ -73,6 +73,26 @@ def _clear_managed_process_receipt_owner_port(port: ManagedProcessReceiptOwnerPo
             _managed_process_receipt_owner_port = None
 
 
+def _swap_managed_process_receipt_owner_port(
+    port: ManagedProcessReceiptOwnerPortV1,
+) -> ManagedProcessReceiptOwnerPortV1 | None:
+    """Replace the bound owner and return the previous one.
+
+    The production binding is a process-lifetime singleton: the bootstrap
+    binds it once and a conflicting rebind fails closed.  A scoped owner (a
+    test that needs its own receipts, or a host that composes a different
+    owner) must therefore be able to take the binding for its scope and put
+    the previous owner back.
+    """
+    if not isinstance(port, ManagedProcessReceiptOwnerPortV1):
+        raise TypeError("port must implement ManagedProcessReceiptOwnerPortV1")
+    global _managed_process_receipt_owner_port
+    with _managed_process_receipt_owner_port_lock:
+        previous = _managed_process_receipt_owner_port
+        _managed_process_receipt_owner_port = port
+        return previous
+
+
 def _managed_process_receipt_owner() -> ManagedProcessReceiptOwnerPortV1:
     with _managed_process_receipt_owner_port_lock:
         port = _managed_process_receipt_owner_port

@@ -24,8 +24,7 @@ from polaris.cells.control_plane.run_ledger.public.managed_process_lifecycle imp
     ManagedProcessReceiptOwnerRecordV1,
 )
 from polaris.cells.control_plane.run_ledger.public.managed_process_lifecycle_bootstrap import (
-    bind_managed_process_receipt_owner_port,
-    clear_managed_process_receipt_owner_port,
+    swap_managed_process_receipt_owner_port,
 )
 from polaris.cells.events.fact_stream.public.contracts import BootstrapFactStreamWorkspaceCommandV1
 from polaris.cells.events.fact_stream.public.workspace_bootstrap import bootstrap_fact_stream_workspace
@@ -50,7 +49,9 @@ _OWNER = _ReceiptOwner()
 @pytest.fixture(autouse=True)
 def _bootstrap_streams(tmp_path: Path) -> Any:
     _OWNER.records.clear()
-    bind_managed_process_receipt_owner_port(_OWNER)
+    # The production owner is bound for the process lifetime; the scenario
+    # takes the binding for its own scope and restores the previous owner.
+    previous_owner = swap_managed_process_receipt_owner_port(_OWNER)
     bootstrap_fact_stream_workspace(
         BootstrapFactStreamWorkspaceCommandV1(
             workspace=str(tmp_path),
@@ -59,7 +60,10 @@ def _bootstrap_streams(tmp_path: Path) -> Any:
         )
     )
     yield
-    clear_managed_process_receipt_owner_port(_OWNER)
+    if previous_owner is not None:
+        swap_managed_process_receipt_owner_port(previous_owner)
+    else:
+        swap_managed_process_receipt_owner_port(_OWNER)
 
 
 def _persist_receipt(workspace: Path, receipt: dict[str, Any]) -> str:
