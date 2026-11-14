@@ -508,6 +508,13 @@ async def run_engineering_loop(
                         ),
                     }
                 )
+            if resumed_history and not history_notice_sent:
+                # The note belongs to the end of the request, after the host
+                # messages but before the budget observation, so it never
+                # merges into the platform feedback the provider already
+                # received and the budget observation stays last.
+                history_notice_sent = True
+                options["messages"].append({"role": "user", "content": _CONTINUATION_HISTORY_NOTE})
             if command.role == "director" and limits.deadline is not None:
                 observed_at = time.time()
                 # Keep the original system/history prefix and durable messages
@@ -525,12 +532,6 @@ async def run_engineering_loop(
                         ),
                     }
                 )
-            if resumed_history and not history_notice_sent:
-                # The note belongs to the end of the request, after the host
-                # messages, so it never merges into the platform feedback the
-                # provider already received.
-                history_notice_sent = True
-                options["messages"].append({"role": "user", "content": _CONTINUATION_HISTORY_NOTE})
             if command.role == "qa":
                 from polaris.cells.roles.runtime.internal.engineering_working_state import (
                     QA_WORKING_STATE_EVENT_KINDS,
