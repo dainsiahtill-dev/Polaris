@@ -400,7 +400,9 @@ async def run_engineering_loop(
     # A continued frame replays the earlier turns of the same run. Their
     # observations describe the state at the time they ran, and a model that
     # reads one as the current state restarts work that is already done.
-    resumed_history = bool(messages)
+    # The continuation note only warns about stale tool observations from
+    # prior turns; it is not needed when there are only initial messages
+    # (e.g. a fresh run with system + user instruction but no tool results yet).
     history_notice_sent = False
     if not messages:
         messages = [
@@ -508,29 +510,46 @@ async def run_engineering_loop(
                         ),
                     }
                 )
-            if resumed_history and not history_notice_sent:
-                # The note belongs to the end of the request, after the host
-                # messages but before the budget observation, so it never
-                # merges into the platform feedback the provider already
-                # received and the budget observation stays last.
-                history_notice_sent = True
-                options["messages"].append({"role": "user", "content": _CONTINUATION_HISTORY_NOTE})
+            if not history_notice_sent:
+                # Only warn about stale observations when there are actual
+                # prior tool observations in this run's history. A fresh run
+                # with only initial system/user messages has no stale state.
+                prior_observations = store.load_events(
+                    command.session_id,
+                    kinds=("tool_observed",),
+                    role=command.role,
+                )
+                if prior_observations:
+                    # The note belongs to the end of the request, before the
+                    # budget observation, so it never merges into the platform
+                    # feedback the provider already received and the budget
+                    # observation stays last.
+                    history_notice_sent = True
+
+            # Combine the host continuation note and budget observation into a
+            # single user message so protocol-native merging (e.g. Anthropic's
+            # _merge_same_role_messages) produces exactly one trailing text
+            # block, not two separate user turns.
+            host_parts: list[str] = []
+            if history_notice_sent:
+                host_parts.append(_CONTINUATION_HISTORY_NOTE)
             if command.role == "director" and limits.deadline is not None:
                 observed_at = time.time()
                 # Keep the original system/history prefix and durable messages
                 # unchanged; this observation belongs only to this request.
+                host_parts.append(
+                    (
+                        "Host runtime budget observation (request preparation): "
+                        f"deadline_epoch_seconds={limits.deadline:.3f}; "
+                        f"observed_at_epoch_seconds={observed_at:.3f}; "
+                        f"approximate_remaining_seconds={max(0.0, limits.deadline - observed_at):.3f}. "
+                        "All work in this run shares the same run deadline. "
+                        "This is an observation at preparation time; remaining time may be lower when received."
+                    )
+                )
+            if host_parts:
                 options["messages"].append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "Host runtime budget observation (request preparation): "
-                            f"deadline_epoch_seconds={limits.deadline:.3f}; "
-                            f"observed_at_epoch_seconds={observed_at:.3f}; "
-                            f"approximate_remaining_seconds={max(0.0, limits.deadline - observed_at):.3f}. "
-                            "All work in this run shares the same run deadline. "
-                            "This is an observation at preparation time; remaining time may be lower when received."
-                        ),
-                    }
+                    {"role": "user", "content": "\n\n".join(host_parts)}
                 )
             if command.role == "qa":
                 from polaris.cells.roles.runtime.internal.engineering_working_state import (
