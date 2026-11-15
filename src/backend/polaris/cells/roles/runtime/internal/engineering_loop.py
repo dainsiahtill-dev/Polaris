@@ -526,10 +526,11 @@ async def run_engineering_loop(
             # Combine the host continuation note and budget observation into a
             # single user message so protocol-native merging (e.g. Anthropic's
             # _merge_same_role_messages) produces exactly one trailing text
-            # block, not two separate user turns.
+            # block, not two separate user turns.  Budget observation comes
+            # first so protocol-native merging preserves its _MARKER prefix;
+            # a single "\n" separator keeps the pair in one text block while
+            # still letting _tail_observation find the budget facts.
             host_parts: list[str] = []
-            if history_notice_sent:
-                host_parts.append(_CONTINUATION_HISTORY_NOTE)
             if command.role == "director" and limits.deadline is not None:
                 observed_at = time.time()
                 # Keep the original system/history prefix and durable messages
@@ -542,8 +543,10 @@ async def run_engineering_loop(
                     "All work in this run shares the same run deadline. "
                     "This is an observation at preparation time; remaining time may be lower when received."
                 )
+            if history_notice_sent:
+                host_parts.append(_CONTINUATION_HISTORY_NOTE)
             if host_parts:
-                options["messages"].append({"role": "user", "content": "\n\n".join(host_parts)})
+                options["messages"].append({"role": "user", "content": "\n".join(host_parts)})
             if command.role == "qa":
                 from polaris.cells.roles.runtime.internal.engineering_working_state import (
                     QA_WORKING_STATE_EVENT_KINDS,
