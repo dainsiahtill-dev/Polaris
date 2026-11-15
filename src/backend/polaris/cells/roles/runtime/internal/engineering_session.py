@@ -1075,10 +1075,10 @@ class EngineeringSessionStore:
         input_binding: Mapping[str, object],
     ) -> bool:
         """Bind actual check observations and their current-input projection atomically."""
-        if verification not in {"passed", "failed", "not_run", "unknown"}:
-            raise ValueError("invalid engineering verification status")
         with self._transaction() as connection:
             row = self._require_run(connection, session_id)
+            if verification not in {"passed", "failed", "not_run", "unknown"}:
+                raise ValueError("invalid engineering verification status")
             current = row["workspace_revision"] == workspace_revision
             projected = verification if current else "unknown"
             commands = self._verification_commands(connection, row)

@@ -470,22 +470,30 @@ class EngineeringVerification:
         return entries
 
     def _source_view(self, manifest: dict[str, object]) -> dict[str, object]:
-        """Compare the very same result capture, allowing declared build writes."""
+        """Compare the very same result capture, allowing declared build writes.
+
+        Strips volatile filesystem metadata (timestamps, inodes, etc.) so the
+        comparison reflects content changes only, not incidental metadata churn
+        from read-only command execution.
+        """
         source: dict[str, object] = {}
         for name, entry in manifest.items():
             path = Path(name)
             if any(path.is_relative_to(root) for root in self.output_roots):
                 continue
-            if isinstance(entry, dict) and "children" in entry:
-                entry = {
-                    **entry,
-                    "children": [
+            if isinstance(entry, dict):
+                stripped: dict[str, object] = {}
+                if "sha256" in entry:
+                    stripped["sha256"] = entry["sha256"]
+                if "symlink" in entry:
+                    stripped["symlink"] = entry["symlink"]
+                if "children" in entry:
+                    stripped["children"] = [
                         child
                         for child in entry["children"]
                         if not any((path / child).is_relative_to(root) for root in self.output_roots)
-                    ],
-                }
-            source[name] = entry
+                    ]
+                source[name] = stripped
         return source
 
     async def run_verification(
@@ -504,10 +512,10 @@ class EngineeringVerification:
             "scope": self._profile(),
         }
 
-        def record(status: str, detail: str) -> None:
+        def record(status: str, detail: str, *, workspace_revision_override: int | None = None) -> None:
             self.store.record_verification(
                 session_id,
-                workspace_revision=workspace_revision,
+                workspace_revision=workspace_revision_override if workspace_revision_override is not None else workspace_revision,
                 checks=tuple(observations),
                 verification=status,
                 detail=detail,
@@ -560,7 +568,9 @@ class EngineeringVerification:
             # real project tree that takes seconds; running it on the event
             # loop stalls the provider request that is waiting for its
             # answer and steals its wall-clock budget.
-            binding["source_manifest"] = await asyncio.to_thread(self._manifest, include_outputs=False)
+            binding["source_manifest"] = self._source_view(
+                await asyncio.to_thread(self._manifest, include_outputs=False)
+            )
         except (OSError, ValueError, RuntimeError, PathSecurityError) as error:
             manifest_error = error
         binding = self.store.begin_verification(
@@ -619,7 +629,12 @@ class EngineeringVerification:
                         else "failed"
                     )
                 )
-                record(status, "Final checks observed against current inputs.")
+                # Reload the run to get the current workspace_revision, which
+                # may have been advanced by execute_command during this attempt.
+                run = self.store.load_run(session_id, workspace=self.workspace)
+                current_workspace_revision = int(run["workspace_revision"])
+                record(status, "Final checks observed against current inputs.",
+                       workspace_revision_override=current_workspace_revision)
         except ProcessTreeDrainError as drain_error:
             # Never let reporting failure hide the physical owner's unproved
             # drain; the service must retain the workspace writer.
