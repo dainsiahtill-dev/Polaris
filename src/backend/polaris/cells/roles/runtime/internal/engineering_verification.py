@@ -515,7 +515,9 @@ class EngineeringVerification:
         def record(status: str, detail: str, *, workspace_revision_override: int | None = None) -> None:
             self.store.record_verification(
                 session_id,
-                workspace_revision=workspace_revision_override if workspace_revision_override is not None else workspace_revision,
+                workspace_revision=workspace_revision_override
+                if workspace_revision_override is not None
+                else workspace_revision,
                 checks=tuple(observations),
                 verification=status,
                 detail=detail,
@@ -633,8 +635,11 @@ class EngineeringVerification:
                 # may have been advanced by execute_command during this attempt.
                 run = self.store.load_run(session_id, workspace=self.workspace)
                 current_workspace_revision = int(run["workspace_revision"])
-                record(status, "Final checks observed against current inputs.",
-                       workspace_revision_override=current_workspace_revision)
+                record(
+                    status,
+                    "Final checks observed against current inputs.",
+                    workspace_revision_override=current_workspace_revision,
+                )
         except ProcessTreeDrainError as drain_error:
             # Never let reporting failure hide the physical owner's unproved
             # drain; the service must retain the workspace writer.
