@@ -224,8 +224,12 @@ class EngineeringVerification:
         return await asyncio.to_thread(self._fresh_capture, include_outputs)
 
     def _current_manifest(self) -> dict[str, object]:
+        # Use the observed inputs when a host query already captured them;
+        # otherwise read the manifest directly without populating the
+        # verification_input_cache, so a later explicit capture (e.g. snapshot)
+        # still observes fresh inputs instead of a stale cached copy.
         observed = self._observed_inputs.get()
-        return observed if observed is not None else self._fresh_capture(include_outputs=True)
+        return observed if observed is not None else self._manifest(include_outputs=True)
 
     def _input_cache_key(self, include_outputs: bool) -> tuple[object, ...]:
         """Everything that can change which inputs a capture observes."""
@@ -472,9 +476,11 @@ class EngineeringVerification:
     def _source_view(self, manifest: dict[str, object]) -> dict[str, object]:
         """Compare the very same result capture, allowing declared build writes.
 
-        Strips volatile filesystem metadata (timestamps, inodes, etc.) so the
+        Strips volatile filesystem metadata (inode, ctime, etc.) so the
         comparison reflects content changes only, not incidental metadata churn
-        from read-only command execution.
+        from read-only command execution.  Keeps size and mtime_ns, which
+        change when file content is written, so an edit-and-restore during a
+        check is still detected as a source change.
         """
         source: dict[str, object] = {}
         for name, entry in manifest.items():
@@ -487,6 +493,12 @@ class EngineeringVerification:
                     stripped["sha256"] = entry["sha256"]
                 if "symlink" in entry:
                     stripped["symlink"] = entry["symlink"]
+                metadata = entry.get("metadata")
+                if isinstance(metadata, list) and len(metadata) >= 6:
+                    # Keep only size (index 4) and mtime_ns (index 5);
+                    # strip dev, ino, mode, nlink, ctime_ns which can
+                    # change incidentally during read-only execution.
+                    stripped["metadata"] = [metadata[4], metadata[5]]
                 if "children" in entry:
                     stripped["children"] = [
                         child
