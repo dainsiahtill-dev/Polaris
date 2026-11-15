@@ -511,19 +511,16 @@ async def run_engineering_loop(
                     }
                 )
             if not history_notice_sent:
-                # Only warn about stale observations when there are actual
-                # prior tool observations in this run's history. A fresh run
-                # with only initial system/user messages has no stale state.
-                prior_observations = store.load_events(
+                # Only warn about stale observations when a prior turn of this
+                # loop actually completed (turn_finished).  Pre-existing tool
+                # observations from history setup do not count; the note is
+                # only for runs resumed after an earlier turn finished.
+                prior_turns = store.load_events(
                     command.session_id,
-                    kinds=("tool_observed",),
+                    kinds=("turn_finished",),
                     role=command.role,
                 )
-                if prior_observations:
-                    # The note belongs to the end of the request, before the
-                    # budget observation, so it never merges into the platform
-                    # feedback the provider already received and the budget
-                    # observation stays last.
+                if prior_turns:
                     history_notice_sent = True
 
             # Combine the host continuation note and budget observation into a
@@ -538,19 +535,15 @@ async def run_engineering_loop(
                 # Keep the original system/history prefix and durable messages
                 # unchanged; this observation belongs only to this request.
                 host_parts.append(
-                    (
-                        "Host runtime budget observation (request preparation): "
-                        f"deadline_epoch_seconds={limits.deadline:.3f}; "
-                        f"observed_at_epoch_seconds={observed_at:.3f}; "
-                        f"approximate_remaining_seconds={max(0.0, limits.deadline - observed_at):.3f}. "
-                        "All work in this run shares the same run deadline. "
-                        "This is an observation at preparation time; remaining time may be lower when received."
-                    )
+                    "Host runtime budget observation (request preparation): "
+                    f"deadline_epoch_seconds={limits.deadline:.3f}; "
+                    f"observed_at_epoch_seconds={observed_at:.3f}; "
+                    f"approximate_remaining_seconds={max(0.0, limits.deadline - observed_at):.3f}. "
+                    "All work in this run shares the same run deadline. "
+                    "This is an observation at preparation time; remaining time may be lower when received."
                 )
             if host_parts:
-                options["messages"].append(
-                    {"role": "user", "content": "\n\n".join(host_parts)}
-                )
+                options["messages"].append({"role": "user", "content": "\n\n".join(host_parts)})
             if command.role == "qa":
                 from polaris.cells.roles.runtime.internal.engineering_working_state import (
                     QA_WORKING_STATE_EVENT_KINDS,
