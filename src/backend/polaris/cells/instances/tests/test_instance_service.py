@@ -2498,8 +2498,80 @@ def test_instance_update_event_redacts_token(tmp_path: Path, monkeypatch: Any) -
     assert RuntimeEventEnvelope.from_dict(payload).run_id == "instance-registry"
     assert payload["channel"] == "status.instances"
     assert payload["payload"]["instance"]["instance_id"] == "project-a"
-    assert "token" not in payload["payload"]["instance"]
-    assert "token" not in payload["payload"]["instances"][0]
+
+
+def _make_record(tmp_path: Path, index: int, polaris_root: Path) -> InstanceRecord:
+    return InstanceRecord(
+        instance_id=f"project-{index}",
+        name=f"Project {index}",
+        kind="bench_project",
+        polaris_root=str(polaris_root),
+        workspace=str((tmp_path / f"bench-{index}" / f"L1-{index}").resolve()),
+        runtime_root=str((tmp_path / f"runtime-{index}").resolve()),
+        backend_port=0,
+        frontend_port=0,
+        backend_url="",
+        frontend_url="",
+        token=f"secret-token-{index}",
+        status="stopped",
+    )
+
+
+def test_instance_update_event_bounds_payload_and_marks_truncated(tmp_path: Path, monkeypatch: Any) -> None:
+    published: list[dict[str, Any]] = []
+    polaris_root = _make_polaris_root(tmp_path)
+
+    class FakePublisher:
+        def publish(self, *, subject: str, payload: dict[str, Any]) -> bool:
+            published.append({"subject": subject, "payload": payload})
+            return True
+
+    monkeypatch.setattr(
+        "polaris.infrastructure.log_pipeline.jetstream_publisher.get_log_jetstream_publisher",
+        lambda: FakePublisher(),
+    )
+    # Inflate per-record metadata so a few dozen records exceed the wire cap.
+    records = []
+    for index in range(64):
+        record = _make_record(tmp_path, index, polaris_root)
+        record.metadata = {"blob": "x" * 16_384}
+        records.append(record)
+
+    assert publish_instances_update(action="saved", record=records[0], records=records) is True
+    envelope = published[0]["payload"]
+    serialized = json.dumps(envelope, ensure_ascii=False).encode("utf-8")
+    assert len(serialized) <= instance_service._MAX_INSTANCES_UPDATE_BYTES
+    payload = envelope["payload"]
+    assert payload["total"] == len(records)
+    assert payload["truncated"] is True
+    assert len(payload["instances"]) < len(records)
+    # The focal record is always included and tokens stay redacted.
+    assert payload["instance"]["instance_id"] == records[0].instance_id
+    assert "token" not in payload["instance"]
+    assert all("token" not in item for item in payload["instances"])
+
+
+def test_instance_update_event_keeps_full_list_under_cap(tmp_path: Path, monkeypatch: Any) -> None:
+    published: list[dict[str, Any]] = []
+    polaris_root = _make_polaris_root(tmp_path)
+
+    class FakePublisher:
+        def publish(self, *, subject: str, payload: dict[str, Any]) -> bool:
+            published.append({"subject": subject, "payload": payload})
+            return True
+
+    monkeypatch.setattr(
+        "polaris.infrastructure.log_pipeline.jetstream_publisher.get_log_jetstream_publisher",
+        lambda: FakePublisher(),
+    )
+    records = [_make_record(tmp_path, index, polaris_root) for index in range(8)]
+
+    assert publish_instances_update(action="saved", record=None, records=records) is True
+    payload = published[0]["payload"]["payload"]
+    assert payload["truncated"] is False
+    assert payload["instances"] and len(payload["instances"]) == len(records)
+    assert payload["instance"] is None
+    assert "token" not in payload["instances"][0]
 
 
 def test_external_backend_without_pid_is_observed(tmp_path: Path, monkeypatch: Any) -> None:

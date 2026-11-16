@@ -790,6 +790,65 @@ def public_instance_summary(record: InstanceRecord) -> dict[str, Any]:
     return payload
 
 
+# The runtime JetStream stream caps each message at 256 KiB
+# (JetStreamConstants.STREAM_MAX_MSG_SIZE). The realtime registry update must
+# stay below that with headroom: the registry accumulates stopped bench
+# instances over time, and an unbounded full-list snapshot would be dropped
+# with err_code=10054. Consumers load the complete list from the HTTP snapshot
+# and use this channel for change notification, so trimming the snapshot list
+# with an explicit `truncated` flag preserves the contract.
+_MAX_INSTANCES_UPDATE_BYTES = 250_000
+
+
+def _instances_update_envelope(
+    *,
+    action: str,
+    record: InstanceRecord | None,
+    records: list[InstanceRecord],
+) -> dict[str, Any]:
+    """Build a runtime.v2 registry envelope whose serialized size is bounded."""
+    now = datetime.now(timezone.utc)
+    event_id = f"instances-{int(now.timestamp() * 1000)}-{secrets.token_hex(3)}"
+
+    def _enclosure(instances: list[dict[str, Any]], truncated: bool) -> dict[str, Any]:
+        return {
+            "schema_version": "runtime.v2",
+            "event_id": event_id,
+            "workspace_key": "instances",
+            # Platform-global instance events are not tied to one Factory run,
+            # but runtime.v2 still requires a stable, non-empty run identity.
+            "run_id": "instance-registry",
+            "channel": "status.instances",
+            "kind": "instance_registry_update",
+            "ts": now.isoformat(),
+            "cursor": 0,
+            "trace_id": event_id,
+            "payload": {
+                "action": action,
+                "instance": public_instance_summary(record) if record else None,
+                "instances": instances,
+                "total": len(records),
+                "truncated": truncated,
+            },
+            "meta": {"source": "polaris.instances"},
+        }
+
+    summaries: list[dict[str, Any]] = []
+    truncated = False
+    used = len(json.dumps(_enclosure([], False), ensure_ascii=False).encode("utf-8"))
+    for index, item in enumerate(records):
+        item_json = json.dumps(public_instance_summary(item), ensure_ascii=False).encode("utf-8")
+        # Join cost: the first item replaces the "[]" placeholder (no comma),
+        # every later item adds one comma byte.
+        added = len(item_json) + (1 if index > 0 else 0)
+        if used + added > _MAX_INSTANCES_UPDATE_BYTES:
+            truncated = True
+            break
+        used += added
+        summaries.append(public_instance_summary(item))
+    return _enclosure(summaries, truncated)
+
+
 def publish_instances_update(
     *,
     action: str,
@@ -802,28 +861,7 @@ def publish_instances_update(
     except (ImportError, RuntimeError):
         return False
 
-    now = datetime.now(timezone.utc)
-    event_id = f"instances-{int(now.timestamp() * 1000)}-{secrets.token_hex(3)}"
-    envelope = {
-        "schema_version": "runtime.v2",
-        "event_id": event_id,
-        "workspace_key": "instances",
-        # Platform-global instance events are not tied to one Factory run, but
-        # runtime.v2 still requires a stable, non-empty run identity.
-        "run_id": "instance-registry",
-        "channel": "status.instances",
-        "kind": "instance_registry_update",
-        "ts": now.isoformat(),
-        "cursor": 0,
-        "trace_id": event_id,
-        "payload": {
-            "action": action,
-            "instance": public_instance_summary(record) if record else None,
-            "instances": [public_instance_summary(item) for item in records],
-            "total": len(records),
-        },
-        "meta": {"source": "polaris.instances"},
-    }
+    envelope = _instances_update_envelope(action=action, record=record, records=records)
     try:
         return get_log_jetstream_publisher().publish(
             subject="hp.runtime.instances.status.instances",
