@@ -321,3 +321,29 @@ async def test_unproved_drain_escapes_even_when_verification_journal_fails(
         await check.run_verification(("true",), session_id="verify", workspace_revision=0)
     assert caught.value is error
     assert len(store.pending_tool_calls("verify")) == 1
+
+
+def test_capture_roots_excludes_oversized_toolchain_mounts(
+    isolated_workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from polaris.cells.roles.runtime.internal import engineering_verification
+
+    outside_toolchain = tmp_path / "toolchain-mount"
+    nested = outside_toolchain / "share" / "runtime"
+    nested.mkdir(parents=True)
+    (nested / "library.py").write_text("# toolchain authority, not a candidate input\n", encoding="utf-8")
+    (isolated_workspace / "main.py").write_text("print('candidate')\n", encoding="utf-8")
+    scope = PermissionScope(
+        (isolated_workspace, outside_toolchain),
+        (isolated_workspace,),
+        frozenset({"execute_command"}),
+        False,
+    )
+    check, _store = verifier(isolated_workspace, ("true",), scope=scope)
+    monkeypatch.setattr(engineering_verification, "_MAX_CAPTURE_ROOT_ENTRIES", 0)
+    roots = check._capture_roots()
+    assert roots == {isolated_workspace}
+    manifest = check._current_manifest()
+    assert str(outside_toolchain) not in manifest
+    assert str(nested / "library.py") not in manifest
+    assert str(isolated_workspace / "main.py") in manifest

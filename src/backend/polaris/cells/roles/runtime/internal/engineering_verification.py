@@ -39,6 +39,12 @@ class CandidateObservationUnavailableError(ValueError):
     """Current input observation is incomplete; this grants no verification authority."""
 
 
+# A granted read root larger than this is an environment/toolchain mount, not a
+# declared candidate input; it is excluded from capture identity (see
+# EngineeringVerification._capture_roots).
+_MAX_CAPTURE_ROOT_ENTRIES = 10_000
+
+
 def verification_observation(call_id: str, payload: dict[str, Any], max_output_bytes: int) -> ToolObservation:
     """Project a durable Verifier completion, never a model's claimed verdict."""
     status = payload.get("verification", "unknown")
@@ -285,7 +291,16 @@ class EngineeringVerification:
         return True
 
     def _capture_roots(self) -> set[Path]:
-        """The roots a capture observes: the workspace and its granted reads."""
+        """The roots a capture observes: the workspace and its declared reads.
+
+        A granted read root outside the workspace is a declared dependency and
+        stays part of candidate identity (mutating it must invalidate a pass),
+        but only while its observed size stays within a per-root budget. Larger
+        mounts are toolchain or environment authorities (same rationale as
+        ``_host_runtime_roots``): binding them would walk hundreds of thousands
+        of unrelated files, including content hashes, on every capture without
+        proving anything about the candidate.
+        """
         host_runtime = self._host_runtime_roots()
         roots = {
             root
@@ -293,7 +308,24 @@ class EngineeringVerification:
             if not any(root == runtime or root.is_relative_to(runtime) for runtime in host_runtime)
         }
         roots.add(self.workspace)
-        return roots
+        return {
+            root
+            for root in roots
+            if root.resolve(strict=False) == self.workspace
+            or not root.is_dir()
+            or self._within_capture_budget(root)
+        }
+
+    @staticmethod
+    def _within_capture_budget(root: Path) -> bool:
+        """Cheap early-aborting file count; bounds every capture walk."""
+        limit = _MAX_CAPTURE_ROOT_ENTRIES
+        count = 0
+        for _dirpath, _dirnames, filenames in os.walk(root):
+            count += len(filenames)
+            if count > limit:
+                return False
+        return True
 
     def _metadata_signature(self, include_outputs: bool) -> bytes:
         """Lstat-only tree signature; proves a cached capture is still current.
@@ -307,13 +339,7 @@ class EngineeringVerification:
         for the authoritative content-hash capture on a signature miss.
         """
         self._validate_outputs(self._declared_output_roots)
-        host_runtime = self._host_runtime_roots()
-        roots = {
-            root
-            for root in {self.workspace, *(Path(root).expanduser().absolute() for root in self.scope.read_roots)}
-            if not any(root == runtime or root.is_relative_to(runtime) for runtime in host_runtime)
-        }
-        roots.add(self.workspace)
+        roots = self._capture_roots()
         if any(root != root.resolve(strict=True) for root in roots):
             raise ValueError("verification input root changed or traverses a symlink")
         if any(root != self.workspace and self.workspace.is_relative_to(root) for root in roots):
@@ -415,13 +441,7 @@ class EngineeringVerification:
     def _manifest(self, *, include_outputs: bool) -> dict[str, object]:
         """Observe actual declared inputs through KFS; never use a model digest."""
         self._validate_outputs(self._declared_output_roots)
-        host_runtime = self._host_runtime_roots()
-        roots = {
-            root
-            for root in {self.workspace, *(Path(root).expanduser().absolute() for root in self.scope.read_roots)}
-            if not any(root == runtime or root.is_relative_to(runtime) for runtime in host_runtime)
-        }
-        roots.add(self.workspace)
+        roots = self._capture_roots()
         if any(root != root.resolve(strict=True) for root in roots):
             raise ValueError("verification input root changed or traverses a symlink")
         if any(root != self.workspace and self.workspace.is_relative_to(root) for root in roots):
