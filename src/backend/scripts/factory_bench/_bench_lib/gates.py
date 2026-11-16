@@ -646,10 +646,68 @@ def _build_feature_keywords_contract(feature_keywords: list[str]) -> str:
     )
 
 
+def _render_deterministic_check(check: str) -> str:
+    """Render one frozen check as an explicit, weak-model-readable requirement.
+
+    The raw machine form (``source_target_coverage:src/**/*.rs``) is
+    meaningless to a coding model deciding where to put files; the readable
+    form keeps the exact check identity (for traceability) while spelling out
+    the concrete obligation. The checker semantics stay in catalog_quality.
+    """
+    name, _, argument = check.partition(":")
+    name = name.strip()
+    argument = argument.strip()
+    if name == "min_files":
+        return f"- {check} — 交付至少 {argument} 个真实文件（实现/测试/配置均可，纯脚手架与描述文字不计）。"
+    if name == "content_any":
+        words = " / ".join(word for word in re.split(r"[|,\s]+", argument) if word)
+        return f"- {check} — 真实领域源码中须出现以下词汇至少之一：{words}。"
+    if name == "source_target_coverage":
+        suffix = argument.rsplit(".", 1)[-1] if "." in argument else ""
+        language_names = {
+            "rs": "Rust",
+            "cpp": "C/C++",
+            "c": "C",
+            "cc": "C++",
+            "ts": "TypeScript",
+            "tsx": "TypeScript",
+            "js": "JavaScript",
+            "jsx": "JavaScript",
+            "mjs": "JavaScript",
+            "py": "Python",
+            "java": "Java",
+            "go": "Go",
+            "kt": "Kotlin",
+        }
+        language = language_names.get(suffix, f"{suffix} 源码" if suffix else "源码")
+        return (
+            f"- {check} — 至少一个真实源码文件必须位于 `{argument}` 命中"
+            f"（把 {language} 源码放进该目录结构；这是硬性路径要求）。"
+        )
+    if name == "package_scripts":
+        return f"- {check} — package.json scripts 必须是真实可执行入口（build/test/start 实际运行产品），不得是只查 manifest 的占位脚本。"
+    compile_notes = {
+        "rust_compile": "交付的 Rust 源码必须真实编译通过（工程须 cargo build 成功；零散源码须通过 rustc 编译/语法检查）。",
+        "java_compile": "交付的 Java 源码必须真实编译通过（javac 按项目自身构建入口编译）。",
+        "cpp_compile": "交付的 C/C++ 源码必须真实编译通过（make 或编译器语法检查）。",
+        "go_compile": "交付的 Go 源码必须 go build ./... 通过。",
+        "ts_syntax": "交付的 TypeScript 源码必须语法检查通过。",
+        "js_syntax": "交付的 JavaScript 源码必须 node --check 通过。",
+        "py_compile": "交付的 Python 源码必须 py_compile 通过。",
+    }
+    if name in compile_notes:
+        return f"- {check} — {compile_notes[name]}"
+    return f"- {check}"
+
+
 def build_requirements_doc(project: dict[str, Any]) -> str:
     """Render the complete case as a readable engineering goal, without legacy admission."""
     checks = [str(item).strip() for item in project.get("checks", []) if str(item).strip()]
-    checks_block = "\n".join(f"- {item}" for item in checks) if checks else "- 未声明额外 deterministic checks。"
+    checks_block = (
+        "\n".join(_render_deterministic_check(item) for item in checks)
+        if checks
+        else "- 未声明额外 deterministic checks。"
+    )
     primary_language = str(project.get("primary_language") or "").strip()
     project_type = str(project.get("project_type") or "").strip()
     domain = str(project.get("domain") or "").strip()
