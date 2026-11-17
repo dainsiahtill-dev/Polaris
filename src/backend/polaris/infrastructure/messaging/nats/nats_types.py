@@ -89,8 +89,13 @@ class JetStreamConstants:
     STREAM_RETENTION = "limits"  # Custom retention policy
     STREAM_STORAGE = "file"  # File-based storage (vs memory)
     STREAM_REPLICAS = 1  # Single replica for development
-    STREAM_MAX_BYTES = 1_073_741_824  # 1GB
-    STREAM_MAX_AGE_SECONDS = 86400 * 7  # 7 days
+    STREAM_MAX_BYTES = 268_435_456  # 256MB — the stream is the realtime
+    # transport, not the durable journal (each workspace's engineering
+    # sessions.sqlite3 already keeps every observation). A large file-backed
+    # backlog measurably degrades JetStream publish latency until publishes
+    # time out and realtime clients cascade-disconnect, so the transport
+    # retention stays small; consumers that need history read the journal.
+    STREAM_MAX_AGE_SECONDS = 6 * 3600  # 6 hours of transport replay
     STREAM_MAX_MSG_SIZE = 262_144  # 256KB per message
     STREAM_DISCARD = "old"  # Discard old messages when limits reached
 

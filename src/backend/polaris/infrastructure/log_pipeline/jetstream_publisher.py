@@ -226,7 +226,12 @@ class JetStreamPublisher:
         if jetstream is None:
             raise RuntimeError("JetStream context unavailable")
 
-        from nats.js.api import StreamConfig
+        from nats.js.api import (
+            DiscardPolicy,
+            RetentionPolicy,
+            StorageType,
+            StreamConfig,
+        )
 
         try:
             await jetstream.stream_info(JetStreamConstants.STREAM_NAME)
@@ -235,6 +240,14 @@ class JetStreamPublisher:
                 StreamConfig(
                     name=JetStreamConstants.STREAM_NAME,
                     subjects=JetStreamConstants.STREAM_SUBJECTS,
+                    max_bytes=JetStreamConstants.STREAM_MAX_BYTES,
+                    max_msg_size=JetStreamConstants.STREAM_MAX_MSG_SIZE,
+                    max_age=JetStreamConstants.STREAM_MAX_AGE_SECONDS,
+                    retention=RetentionPolicy.LIMITS,
+                    discard=DiscardPolicy.OLD,
+                    storage=StorageType.FILE,
+                    num_replicas=JetStreamConstants.STREAM_REPLICAS,
+                    description=JetStreamConstants.STREAM_DESCRIPTION,
                 )
             )
 
