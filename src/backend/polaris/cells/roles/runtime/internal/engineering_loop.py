@@ -887,6 +887,13 @@ async def run_engineering_loop(
                                 and stage_gate_writes > 0
                                 and writes_since_verification >= stage_gate_writes
                                 and call.name in {"write_file", "edit_file", "repo_tree", "repo_rg", "execute_command"}
+                            ) or (
+                                command.role == "director"
+                                and "browser_observe" in tools.enabled
+                                and stage_gate_writes > 0
+                                and writes_since_verification >= stage_gate_writes
+                                and (command.workspace / "index.html").is_file()
+                                and call.name == "read_file"
                             ):
                                 # Stage gate: the Director must verify before
                                 # writing more OR re-probing the workspace.
