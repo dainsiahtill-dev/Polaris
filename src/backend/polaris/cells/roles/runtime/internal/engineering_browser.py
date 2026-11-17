@@ -101,7 +101,18 @@ try:
                 device_scale_factor=1,
                 accept_downloads=False,
                 service_workers='block',
-                args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-extensions', '--disable-background-networking'],
+                args=[
+                    '--no-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-extensions',
+                    '--disable-background-networking',
+                    # Software WebGL: headless sandboxes have no GPU, so 3D
+                    # pages (Three.js etc.) otherwise fail context creation and
+                    # the model learns to avoid browser_observe entirely.
+                    '--use-gl=angle',
+                    '--use-angle=swiftshader',
+                    '--enable-unsafe-swiftshader',
+                ],
             )
             def route_request(route):
                 global resource_count, resource_bytes, resource_remaining, resource_budget_error
