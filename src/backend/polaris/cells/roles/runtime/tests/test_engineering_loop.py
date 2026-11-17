@@ -570,3 +570,47 @@ async def test_loop_detection_injects_recovery_guidance(
     assert any("do not re-list the workspace" in body for body in bodies)
     # A changed call signature resets the counter: no second detection.
     assert len(detections) == 1
+
+
+async def test_stage_gate_blocks_writes_until_verification(
+    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stage gate forces a build -> verify -> fix rhythm instead of endless writes."""
+    monkeypatch.setenv("KERNELONE_ENGINEERING_STAGE_GATE_WRITES", "2")
+    loop, store, _tools, command, scope, limits = _setup(
+        isolated_workspace, enabled=_ALL_TOOLS | frozenset({"verify_project"})
+    )
+    scripted_provider.enqueue_json(_native(("w1", "write_file", {"file": "a.py", "content": "x = 1\n"})))
+    scripted_provider.enqueue_json(_native(("w2", "write_file", {"file": "b.py", "content": "x = 2\n"})))
+    # Third write must be stage-gated (synthetic observation, no file effect).
+    scripted_provider.enqueue_json(_native(("w3", "write_file", {"file": "c.py", "content": "x = 3\n"})))
+    # Model then verifies; the gate opens for the next stage.
+    scripted_provider.enqueue_json(_native(("v1", "verify_project", {"commands": ["python3 -m py_compile a.py b.py"]})))
+    scripted_provider.enqueue_json(_native(("w4", "write_file", {"file": "c.py", "content": "x = 3\n"})))
+    scripted_provider.enqueue_json(_native(text="Stage complete."))
+    from polaris.cells.roles.runtime.public.contracts.engineering_run import ToolObservation
+
+    async def fake_verify(commands: tuple[str, ...], turn_seq: int, call_id: str) -> ToolObservation:
+        return ToolObservation(
+            call_id=call_id, tool="verify_project", ok=True, content="checks ran", exit_code=0, interrupted=False
+        )
+
+    result = await loop(
+        command,
+        scope=scope,
+        limits=limits,
+        cancel=asyncio.Event(),
+        store=store,
+        client=scripted_provider.client("openai", isolated_workspace, monkeypatch),
+        verify=fake_verify,
+    )
+    assert result.status == "completed"
+    events = store.load_events(command.session_id)
+    gated = [event for event in events if event["kind"] == "stage_gate_enforced"]
+    assert gated, "expected a stage_gate_enforced event"
+    observations = [event["payload"] for event in events if event["kind"] == "tool_observed"]
+    blocked = [obs for obs in observations if obs["call_id"] == "w3"][0]
+    assert blocked["ok"] is False
+    assert "Stage gate" in blocked["content"]
+    # The gated write had no effect; the post-verification write succeeded.
+    assert (isolated_workspace / "c.py").read_text(encoding="utf-8") == "x = 3\n"

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
@@ -468,6 +469,12 @@ async def run_engineering_loop(
     loop_signature: str | None = None
     loop_run_count = 0
     loop_alert: str | None = None
+    # Stage gate (lab-then-assemble, enforced by the host rather than left to
+    # the model): after this many file writes the Director must run
+    # verify_project before it may write again, turning free-form flailing
+    # into a build -> verify -> fix rhythm. 0 disables the gate.
+    stage_gate_writes = int(os.environ.get("KERNELONE_ENGINEERING_STAGE_GATE_WRITES", "5") or "0")
+    writes_since_verification = 0
     try:
         if pending_calls():
             return finish("interrupted", "An earlier dispatch still requires reconciliation.")
@@ -820,7 +827,39 @@ async def run_engineering_loop(
                     try:
                         active_dispatch = (turn_seq, call.id)
                         try:
-                            if output_capture is not None:
+                            if (
+                                command.role == "director"
+                                and "verify_project" in tools.enabled
+                                and stage_gate_writes > 0
+                                and writes_since_verification >= stage_gate_writes
+                                and call.name in {"write_file", "edit_file"}
+                            ):
+                                # Stage gate: the Director must verify before
+                                # writing more. Synthetic observation, no effect.
+                                observation = ToolObservation(
+                                    call_id=call.id,
+                                    tool=call.name,
+                                    ok=False,
+                                    content=(
+                                        f"Stage gate: {writes_since_verification} file writes without a fresh "
+                                        "verification. Call verify_project now with the actual build and test "
+                                        "commands for the current candidate. Fix any failures before adding more "
+                                        "code; do not write more files until verification has run."
+                                    ),
+                                    exit_code=None,
+                                    interrupted=False,
+                                )
+                                store.append_event(
+                                    command.session_id,
+                                    kind="stage_gate_enforced",
+                                    role=command.role,
+                                    payload={
+                                        "turn_seq": turn_seq,
+                                        "call_id": call.id,
+                                        "writes_since_verification": writes_since_verification,
+                                    },
+                                )
+                            elif output_capture is not None:
                                 observation = await tools.execute(
                                     call.id, call.name, call.arguments, output_capture=output_capture
                                 )
@@ -828,6 +867,12 @@ async def run_engineering_loop(
                                 observation = await tools.execute(call.id, call.name, call.arguments)
                         finally:
                             active_dispatch = None
+                        if observation.tool in {"write_file", "edit_file"} and observation.ok:
+                            writes_since_verification += 1
+                        elif observation.tool == "verify_project":
+                            # Any actual verification run (pass or fail) opens
+                            # the next stage; its real output guides the fix.
+                            writes_since_verification = 0
                         advances_revision = (observation.tool in {"write_file", "edit_file"} and observation.ok) or (
                             observation.tool == "execute_command"
                             and bool(
