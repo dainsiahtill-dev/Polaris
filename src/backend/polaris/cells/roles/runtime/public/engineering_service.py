@@ -1852,7 +1852,21 @@ class EngineeringRunService:
         row = self.store.load_run(command.session_id, workspace=self.workspace)
         self._revalidated_scope(row)
         binding = await _observe_in_io(partial(verifier.review_binding, command.session_id))
-        instruction = (
+        # Host-driven render: for browser-page candidates the platform itself
+        # renders the artifact and injects the evidence, so acceptance cannot
+        # hinge on whether the model happens to call browser_observe.
+        render_evidence = ""
+        if (self.workspace / "index.html").is_file() and scope.browser is not None:
+            try:
+                rendered = await self._observe_dispatch({"entry": "index.html"}, 0, "host-render-qa")
+                render_evidence = (
+                    "Host-rendered candidate evidence (this run's actual browser observation, not a model claim):\n"
+                    + str(rendered.content)[:2500]
+                    + "\n\n"
+                )
+            except Exception as render_error:  # noqa: BLE001 - record the failed render as evidence, never fabricate it
+                render_evidence = f"Host render attempt failed with: {render_error}\n\n"
+        instruction = render_evidence + (
             "Original user goal:\n"
             + row["instruction"]
             + "\n\nCurrent actual required checks (these do not establish semantic correctness):\n"
