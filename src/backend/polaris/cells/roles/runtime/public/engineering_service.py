@@ -1866,6 +1866,12 @@ class EngineeringRunService:
             + "\n\nRead the current relevant implementation using native read tools. Check the original requirements, behavior and actual artifacts, including incomplete or hollow implementations. "
             "Then submit report_review with a justified decision. Do not treat Director text as evidence."
         )
+        if (self.workspace / "index.html").is_file():
+            instruction = (
+                "This is a browser-page candidate. Your FIRST action MUST be browser_observe(entry='index.html') "
+                "to render it and inspect for runtime errors. Do NOT review source before rendering; a browser "
+                "page's actual runtime behavior, not only its source, decides acceptance.\n\n"
+            ) + instruction
         pending = self._pending_review(command.session_id)
         reusable = pending is not None and pending["payload"].get("input_binding") == binding
         if not reusable:
