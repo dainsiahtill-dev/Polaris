@@ -866,7 +866,7 @@ async def run_engineering_loop(
                                 and "verify_project" in tools.enabled
                                 and stage_gate_writes > 0
                                 and writes_since_verification >= stage_gate_writes
-                                and call.name in {"write_file", "edit_file", "repo_tree", "repo_rg"}
+                                and call.name in {"write_file", "edit_file", "repo_tree", "repo_rg", "execute_command"}
                             ):
                                 # Stage gate: the Director must verify before
                                 # writing more OR re-probing the workspace.
@@ -879,11 +879,11 @@ async def run_engineering_loop(
                                     ok=False,
                                     content=(
                                         f"Stage gate: {writes_since_verification} file writes without a fresh "
-                                        "verification. Your ONLY next action must be verify_project with the "
-                                        "actual build and test commands for the current candidate. Do NOT write "
-                                        "more files and do NOT list or search the workspace again. If the "
-                                        "candidate is a browser page, also run browser_observe on it and fix any "
-                                        "runtime errors before continuing."
+                                        "verification. Your ONLY allowed next actions are verify_project with "
+                                        "the actual build and test commands, browser_observe to render the "
+                                        "candidate, or read_file to inspect one specific file. Do NOT run "
+                                        "execute_command, write_file, edit_file, repo_tree or repo_rg until "
+                                        "verification has run."
                                     ),
                                     exit_code=None,
                                     interrupted=False,
