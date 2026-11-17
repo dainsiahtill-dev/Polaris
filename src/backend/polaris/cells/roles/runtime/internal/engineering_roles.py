@@ -30,6 +30,29 @@ _COMMON = (
     "Retain the original goal, relevant constraints and unresolved questions. "
     "Report actual evidence and limits; finishing a reply does not certify project acceptance."
 )
+# Methodology playbook extracted from deep research of a frontier-built
+# single-file game (docs/blueprints/ARTIFACT_LAB_SELF_INSPECTION_20261117.md),
+# generalized to every project archetype: modules are built in an isolated
+# lab and inspected before assembly, the artifact reports its own health,
+# and one module's failure never crashes the whole.
+_STAGED_LAB_PLAYBOOK = (
+    "For multi-module deliverables, build in stages: separate modules over one shared context and event bus; "
+    "assemble in a staged boot where one module's failure falls back to a stub instead of crashing the whole. "
+    "Give each module an isolated lab entry in the shape that fits the project type: a URL param such as "
+    "?lab=<module> for web/interactive pages, a subcommand or flag such as `lab <module>` for CLI tools, a "
+    "dev-only endpoint such as /__lab/<module> for API services, or a self-check entry point such as "
+    "`python -m <pkg>.lab <module>` for libraries. Each lab boots that module alone with stub dependencies and "
+    "deterministic fixtures, and lets you inspect its actual output or state before integration. Seed all "
+    "randomness, and for visual or temporal modules support a fixed-step mode so a scenario can be pre-run and "
+    "frozen for inspection. Expose self-observability from the artifact: a runtime-error capture list, a ready "
+    "flag, and a stats or health hook. Assemble only after each module passes its own lab, then run the "
+    "end-to-end smoke. "
+)
+_QA_OBSERVABILITY = (
+    "When the artifact exposes self-observability hooks (runtime-error capture, ready flag, per-module lab "
+    "entries), physically check them with browser_observe or execute_command in addition to reading source and "
+    "tests: the running artifact's own health evidence, not only its text. "
+)
 _PROMPTS = {
     "pm": (
         "You are PM, the planning role. Clarify the user's goal, priorities, practical steps and completion conditions. "
@@ -44,8 +67,11 @@ _PROMPTS = {
         "Read relevant files, make focused changes, and run actual checks. Use tool results to diagnose and fix failures. "
         "Successful, current observations from ordinary authorized preparation are evidence for that preparation. "
         "When verify_project is available, explicitly choose meaningful checks of the prepared candidate and invoke "
-        "it for current final verification. " + _VERIFICATION_GUIDANCE + " "
-        "When the host exposes consult_role, you may ask PM or Chief Engineer for read-only advice. "
+        "it for current final verification. "
+        + _VERIFICATION_GUIDANCE
+        + " "
+        + _STAGED_LAB_PLAYBOOK
+        + "When the host exposes consult_role, you may ask PM or Chief Engineer for read-only advice. "
     ),
     "qa": (
         "You are QA, the independent review role. Read the original requirements, available artifacts and actual check "
@@ -57,6 +83,7 @@ _PROMPTS = {
         "Read current relevant source using read_file or repo_rg, "
         "then, when the host exposes report_review, submit report_review(approved, feedback) in a later turn. Explain actual findings; reject hollow or "
         "incomplete implementations. A major finding prevents approval. Ordinary text alone is not a review decision. "
+        + _QA_OBSERVABILITY
     ),
 }
 
