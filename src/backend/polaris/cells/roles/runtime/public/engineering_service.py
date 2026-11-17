@@ -1931,17 +1931,53 @@ class EngineeringRunService:
             ):
                 verdict, feedback, report_call_id = interpret_review_reports([event["payload"] for event in reports])
                 if verdict == "approved":
-                    report = next(
-                        event for event in reversed(reports) if event["payload"].get("call_id") == report_call_id
-                    )
-                    self._require_visual_input(
-                        command.session_id,
-                        role="qa",
-                        scope=scope,
-                        current_binding=lambda: verifier.review_binding(command.session_id),
-                        frame_seq=frame["seq"],
-                        turn_seq=report["payload"].get("turn_seq"),
-                    )
+                    # A browser-page candidate cannot be accepted on source and
+                    # Node checks alone: QA must have rendered it with
+                    # browser_observe and observed zero page errors.
+                    from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+                    browser_obs = [
+                        event
+                        for event in events
+                        if event["kind"] == "tool_observed"
+                        and event["role"] == "qa"
+                        and event["payload"].get("tool") == "browser_observe"
+                    ]
+                    if (self.workspace / "index.html").is_file() and "browser_observe" in {
+                        ToolSpecRegistry.get_canonical(name) for name in scope.enabled_tools
+                    }:
+                        render_errors: list[str] = []
+                        for event in browser_obs:
+                            content = str(event["payload"].get("content", ""))
+                            try:
+                                parsed = json.loads(content) if content.strip().startswith("{") else {}
+                            except json.JSONDecodeError:
+                                parsed = {}
+                            if parsed.get("page_errors"):
+                                render_errors.extend(str(item)[:200] for item in parsed["page_errors"])
+                        if not browser_obs:
+                            verdict = "unknown"
+                            feedback = (
+                                "Browser-page candidate: QA never rendered it with browser_observe. "
+                                "Rendering evidence is required before approval."
+                            )
+                        elif render_errors:
+                            verdict = "unknown"
+                            feedback = "Browser-page candidate renders with page errors: " + "; ".join(
+                                render_errors[:3]
+                            )
+                    if verdict == "approved":
+                        report = next(
+                            event for event in reversed(reports) if event["payload"].get("call_id") == report_call_id
+                        )
+                        self._require_visual_input(
+                            command.session_id,
+                            role="qa",
+                            scope=scope,
+                            current_binding=lambda: verifier.review_binding(command.session_id),
+                            frame_seq=frame["seq"],
+                            turn_seq=report["payload"].get("turn_seq"),
+                        )
         except (ValueError, OSError, RuntimeError, PathSecurityError) as error:
             verdict = "unknown"
             feedback = f"Current QA evidence cannot establish acceptance: {error}"
