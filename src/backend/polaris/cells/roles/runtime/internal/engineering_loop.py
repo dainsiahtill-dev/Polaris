@@ -462,6 +462,12 @@ async def run_engineering_loop(
         return result
 
     context_window_tokens = _model_context_window(Path(command.workspace), command.role)
+    # Host-side loop detection: a weak model can repeat the same probe forever
+    # while admitting it is looping. Track consecutive identical turn
+    # signatures and inject evidence-based recovery guidance at thresholds.
+    loop_signature: str | None = None
+    loop_run_count = 0
+    loop_alert: str | None = None
     try:
         if pending_calls():
             return finish("interrupted", "An earlier dispatch still requires reconciliation.")
@@ -545,6 +551,10 @@ async def run_engineering_loop(
                 )
             if history_notice_sent:
                 host_parts.append(_CONTINUATION_HISTORY_NOTE)
+            if loop_alert:
+                # One-shot recovery guidance; re-arms at the next threshold.
+                host_parts.append(loop_alert)
+                loop_alert = None
             if host_parts:
                 options["messages"].append({"role": "user", "content": "\n".join(host_parts)})
             if command.role == "qa":
@@ -703,6 +713,52 @@ async def run_engineering_loop(
                     }
                     for call in calls
                 ]
+            # Update consecutive-identical-turn loop detection before dispatch.
+            # An identical signature means the model re-issued the same probe
+            # with the same arguments; a changed signature is real progress.
+            turn_signature = (
+                json.dumps(
+                    sorted(
+                        (call.name, json.dumps(call.arguments, sort_keys=True, ensure_ascii=False)) for call in calls
+                    ),
+                    ensure_ascii=False,
+                )
+                if calls
+                else ""
+            )
+            if calls and turn_signature == loop_signature:
+                loop_run_count += 1
+            else:
+                loop_run_count = 0
+            loop_signature = turn_signature
+            if calls and loop_run_count in (3, 7, 15):
+                tool_names = ", ".join(sorted({call.name for call in calls}))
+                last_observation = ""
+                for event in reversed(store.load_events(command.session_id, kinds=("tool_observed",))):
+                    payload = event.get("payload") or {}
+                    if payload.get("tool") in {call.name for call in calls}:
+                        last_observation = str(payload.get("content", ""))[:1200]
+                        break
+                loop_alert = (
+                    f"Host loop detection: you issued the identical call set ({tool_names}) for the last "
+                    f"{loop_run_count + 1} turns in a row without new progress. You are looping, not building. "
+                    "Do not repeat that probe again. The last observation for it was:\n"
+                    f"{last_observation}\n"
+                    "Now take the NEXT concrete action toward the goal: write the missing implementation or test "
+                    "files, or run the actual build/tests. If you need one specific file's content, read that file "
+                    "once, then act on it; do not re-list the workspace."
+                )
+                store.append_event(
+                    command.session_id,
+                    kind="loop_detected",
+                    role=command.role,
+                    payload={
+                        "turn_seq": turn_seq,
+                        "consecutive_identical_turns": loop_run_count + 1,
+                        "tools": sorted({call.name for call in calls}),
+                        "guidance_injected": True,
+                    },
+                )
             messages.append(assistant)
             store.append_message(command.session_id, role=command.role, message=assistant)
             if not calls:

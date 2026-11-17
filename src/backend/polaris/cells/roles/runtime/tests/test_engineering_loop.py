@@ -539,3 +539,34 @@ def test_provider_connection_failure_is_recoverable_transport_failure() -> None:
         error_category=ErrorCategory.INVALID_RESPONSE,
     )
     assert _is_transport_failure(semantic_failure) is False
+
+
+async def test_loop_detection_injects_recovery_guidance(
+    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A model repeating the same probe gets host recovery guidance, not a silent loop."""
+    (isolated_workspace / "note.txt").write_text("seed\n", encoding="utf-8")
+    loop, store, _tools, command, scope, limits = _setup(isolated_workspace)
+    for _ in range(5):
+        scripted_provider.enqueue_json(_native(("probe", "repo_tree", {"depth": 5})))
+    scripted_provider.enqueue_json(_native(text="Understood; proceeding to implementation."))
+    result = await loop(
+        command,
+        scope=scope,
+        limits=limits,
+        cancel=asyncio.Event(),
+        store=store,
+        client=scripted_provider.client("openai", isolated_workspace, monkeypatch),
+    )
+    assert result.status == "completed"
+    events = store.load_events(command.session_id)
+    detections = [event for event in events if event["kind"] == "loop_detected"]
+    assert detections, "expected a loop_detected runtime event"
+    assert detections[0]["payload"]["consecutive_identical_turns"] == 4
+    assert detections[0]["payload"]["guidance_injected"] is True
+    # The guidance must reach a later provider request as a host message.
+    bodies = [json.dumps(request["body"], ensure_ascii=False) for request in scripted_provider.requests]
+    assert any("Host loop detection" in body for body in bodies)
+    assert any("do not re-list the workspace" in body for body in bodies)
+    # A changed call signature resets the counter: no second detection.
+    assert len(detections) == 1
