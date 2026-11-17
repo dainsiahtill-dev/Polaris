@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import json
 import os
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
@@ -274,6 +275,39 @@ _CONTINUATION_HISTORY_NOTE = (
     "the time they ran, not the current state. Re-read the current files and run the current checks before you "
     "rely on any earlier observation, and do not restart work that those earlier turns already completed."
 )
+
+# Distill the FIRST actionable error out of a long verification log so a weak
+# model fixes one concrete location instead of re-reading the whole suite.
+_ERROR_LINE_PATTERNS = (
+    re.compile(r"^.*?-->\s*([\w./-]+\.(?:rs|py|cpp|cc|c|h|hpp|js|ts|tsx|java|go)):(\d+):(\d+)", re.MULTILINE),
+    re.compile(r"^.*?panicked at '([^']+):(\d+):(\d+)'", re.MULTILINE),
+    re.compile(r"^(?:FAILED|FAIL)\b[^\n]*\[([^\]]+)\]\s*[:.]?\s*(.*)$", re.MULTILINE),
+    re.compile(r"^.*?([\w./-]+\.(?:rs|cpp|cc|c|h|hpp|py|js|ts|tsx|java|go)):(\d+)(?::(\d+))?[:\s]+(.*)$", re.MULTILINE),
+    re.compile(r"^(?:FAILED|FAIL|ERROR|error)\b[^\n]*\[[^\]]+\]\s*[:.]?\s*(.*)$", re.MULTILINE),
+)
+
+
+def _distill_verification_failure(content: str) -> str:
+    """Return a short first-error fix target from a failed verification log."""
+    if not content:
+        return ""
+    for pattern in _ERROR_LINE_PATTERNS:
+        match = pattern.search(content)
+        if match:
+            fragment = match.group(0).strip()
+            return (
+                "Distilled first failing evidence (fix this specific location before broader retesting):\n"
+                + fragment[:500]
+            )
+    # Fall back to the first line that carries an error/failure marker.
+    for line in content.splitlines():
+        lowered = line.lower()
+        if any(token in lowered for token in ("error", "failed", "fail", "panic", "assertion")):
+            return (
+                "Distilled first failing evidence (fix this specific location before broader retesting):\n"
+                + line.strip()[:500]
+            )
+    return ""
 
 
 async def run_engineering_loop(
@@ -948,6 +982,14 @@ async def run_engineering_loop(
                 message = {"role": "user", "content": _VERIFICATION_PASSED_GUIDANCE}
                 messages.append(message)
                 store.append_message(command.session_id, role=command.role, message=message)
+            if command.role == "director" and observation.tool == "verify_project" and not observation.ok:
+                # Distill the first actionable error so a weak model fixes one
+                # concrete location instead of drowning in the full log.
+                distilled = _distill_verification_failure(observation.content)
+                if distilled:
+                    fix_message = {"role": "user", "content": distilled}
+                    messages.append(fix_message)
+                    store.append_message(command.session_id, role=command.role, message=fix_message)
             if review_reports:
                 _verdict, feedback, _call_id = interpret_review_reports(review_reports)
                 return finish("completed", feedback)
