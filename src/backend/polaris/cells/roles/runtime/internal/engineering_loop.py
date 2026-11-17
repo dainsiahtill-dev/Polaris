@@ -866,19 +866,24 @@ async def run_engineering_loop(
                                 and "verify_project" in tools.enabled
                                 and stage_gate_writes > 0
                                 and writes_since_verification >= stage_gate_writes
-                                and call.name in {"write_file", "edit_file"}
+                                and call.name in {"write_file", "edit_file", "repo_tree", "repo_rg"}
                             ):
                                 # Stage gate: the Director must verify before
-                                # writing more. Synthetic observation, no effect.
+                                # writing more OR re-probing the workspace.
+                                # Blocking the loop tools closes the escape
+                                # hatch where a weak model "explores" instead
+                                # of verifying.
                                 observation = ToolObservation(
                                     call_id=call.id,
                                     tool=call.name,
                                     ok=False,
                                     content=(
                                         f"Stage gate: {writes_since_verification} file writes without a fresh "
-                                        "verification. Call verify_project now with the actual build and test "
-                                        "commands for the current candidate. Fix any failures before adding more "
-                                        "code; do not write more files until verification has run."
+                                        "verification. Your ONLY next action must be verify_project with the "
+                                        "actual build and test commands for the current candidate. Do NOT write "
+                                        "more files and do NOT list or search the workspace again. If the "
+                                        "candidate is a browser page, also run browser_observe on it and fix any "
+                                        "runtime errors before continuing."
                                     ),
                                     exit_code=None,
                                     interrupted=False,
