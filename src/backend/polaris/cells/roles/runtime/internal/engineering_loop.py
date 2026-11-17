@@ -287,6 +287,24 @@ _ERROR_LINE_PATTERNS = (
 )
 
 
+def _stage_gate_verification_hint(workspace: Path) -> str:
+    """A concrete, project-typed verification invocation for the stage gate.
+
+    A weak model complies with an exact call, not an abstract instruction.
+    Detect the project type from the workspace and return a copy-paste action.
+    """
+    ws = Path(workspace)
+    if (ws / "Cargo.toml").is_file():
+        return "Run exactly: verify_project(commands=['cargo build && cargo test'])."
+    if (ws / "Makefile").is_file():
+        return "Run exactly: verify_project(commands=['make'])."
+    if (ws / "package.json").is_file():
+        return "Run exactly: verify_project(commands=['npm test'])."
+    if (ws / "index.html").is_file():
+        return "Run exactly: browser_observe(entry='index.html') and fix every runtime error it reports."
+    return "Run verify_project with the build and test commands for this project."
+
+
 def _distill_verification_failure(content: str) -> str:
     """Return a short first-error fix target from a failed verification log."""
     if not content:
@@ -885,7 +903,7 @@ async def run_engineering_loop(
                                         "the actual build and test commands, browser_observe to render the "
                                         "candidate, or read_file to inspect one specific file. Do NOT run "
                                         "execute_command, write_file, edit_file, repo_tree or repo_rg until "
-                                        "verification has run."
+                                        "verification has run. " + _stage_gate_verification_hint(command.workspace)
                                     ),
                                     exit_code=None,
                                     interrupted=False,
