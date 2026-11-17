@@ -503,6 +503,7 @@ async def run_engineering_loop(
     loop_signature: str | None = None
     loop_run_count = 0
     loop_alert: str | None = None
+    loop_tools: set[str] = set()
     # Stage gate (lab-then-assemble, enforced by the host rather than left to
     # the model): after this many file writes the Director must run
     # verify_project before it may write again, turning free-form flailing
@@ -772,6 +773,7 @@ async def run_engineering_loop(
             else:
                 loop_run_count = 0
             loop_signature = turn_signature
+            loop_tools = {call.name for call in calls}
             if calls and loop_run_count in (3, 7, 15):
                 tool_names = ", ".join(sorted({call.name for call in calls}))
                 last_observation = ""
@@ -897,6 +899,31 @@ async def run_engineering_loop(
                                         "call_id": call.id,
                                         "writes_since_verification": writes_since_verification,
                                     },
+                                )
+                            elif loop_run_count >= 3 and call.name in loop_tools:
+                                # Loop enforcement: the 4th identical probe is
+                                # intercepted, not executed, so the model must
+                                # change action instead of looping forever.
+                                observation = ToolObservation(
+                                    call_id=call.id,
+                                    tool=call.name,
+                                    ok=False,
+                                    content=(
+                                        f"Loop break: you repeated the identical {call.name} call for the last "
+                                        f"{loop_run_count + 1} turns. Do NOT repeat it. Take the NEXT concrete "
+                                        "action toward the goal: run verify_project or browser_observe to produce "
+                                        "evidence, or write the missing implementation file. If you need one "
+                                        "specific file's content, read that file once with read_file, then act."
+                                    ),
+                                    exit_code=None,
+                                    interrupted=False,
+                                )
+                                loop_run_count = 0
+                                store.append_event(
+                                    command.session_id,
+                                    kind="loop_enforced",
+                                    role=command.role,
+                                    payload={"turn_seq": turn_seq, "call_id": call.id, "tool": call.name},
                                 )
                             elif output_capture is not None:
                                 observation = await tools.execute(
