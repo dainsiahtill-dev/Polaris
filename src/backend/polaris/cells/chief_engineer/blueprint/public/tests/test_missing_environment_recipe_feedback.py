@@ -140,13 +140,20 @@ def test_missing_environment_finding_reaches_current_full_draft_repair(tmp_path:
         candidate=payload,
     )
     executor = _executor(tmp_path)
-    assert (
-        executor._chief_engineer_semantic_repair_diagnosis(
-            candidate=candidate,
-            output_errors=["chief_engineer.completion_normalization:" + json.dumps(finding)],
-        )
-        is None
+    diagnosis = executor._chief_engineer_semantic_repair_diagnosis(
+        candidate=candidate,
+        output_errors=["chief_engineer.completion_normalization:" + json.dumps(finding)],
     )
+    # A valid guidance-only missing-recipe finding produces an advisory
+    # diagnosis; it is not a typed executable patch, so the draft itself is
+    # revised via the trusted recipe guidance below.
+    assert diagnosis is not None
+    assert diagnosis.diagnostic_codes == ("chief_engineer.verification_recipe.missing",)
+    assert diagnosis.allowed_operations == ("verification_recipe_upsert",)
+    (recipe_diagnostic,) = diagnosis.verification_recipe_diagnostics
+    assert recipe_diagnostic["error_code"] == "missing_required_verification_recipe"
+    assert recipe_diagnostic["guidance_only"] is True
+    assert recipe_diagnostic["execution_authority"] is False
     guidance = executor._chief_engineer_trusted_recipe_guidance(
         tasks=command.tasks,
         authority_carrier=command.authority_carrier,
