@@ -67,3 +67,33 @@ Scope: context plane (context.engine/context.catalog), knowledge pipeline
 - pytest polaris/kernelone/context polaris/cells/cognitive
 - pytest polaris/cells/audit
 - python docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode audit-only
+
+## Session 2 (2026-11-19) — additional convergence
+
+6. **Evidence bundle HEAD sentinel** — `_get_current_commit` caught only
+   (OSError, ValueError); a RuntimeError from CommandExecutionService
+   propagated and broke bundle creation instead of the documented
+   'sha-unknown' sentinel. Broadened to a fail-closed boundary catch.
+7. **pm_planning boundary tests** — the opaque_isinstance hardening
+   (3370b7d56) legitimately adopted polaris.kernelone.type_ops; four AST
+   boundary tests predated it. kernelone is the shared底座; allowlists updated.
+8. **Session workflow matrix** — mock kernel rejected the orchestrator's
+   parent_span_id tracing kwarg (8 case failures); stagnation circuit-breaker
+   case drifted from Phase 5.1 recovery (extra recovery turns); TurnId mypy
+   strict. Added expected_kernel_calls to pin kernel-call counts independently
+   of scripted specs. Matrix now 18/18.
+
+## Full-suite snapshot (10h run, pre-session-2-fixes baseline)
+
+48292 passed / 958 failed / 678 errors. Failure mass is NOT in the cognitive
+layer: 887 of 958 are in polaris/tests/ (legacy root tests + NATS-dependent
+fixtures + retired-factory coverage); 57 in cells/ (34 after re-run on
+current HEAD; all pre-existing, none overlapping this session's changed
+files). Remaining cells/ clusters needing individual root-cause work:
+director adapter failure-closure semantics (7), verifier command profile
+classification, kernel run-ledger scenarios, instances port allocation (env).
+
+## Cognitive layer verification (current HEAD, this session)
+
+context + knowledge + ContextOS + audit + eval-matrix suites:
+2318 passed, 0 failed. Catalog governance gate: new_issue_count=0.
