@@ -348,17 +348,18 @@ def test_raidregister_constructed_once(tmp_path: Path, monkeypatch: pytest.Monke
 
 
 def test_boundary_no_forbidden_imports() -> None:
-    """live_wiring.py imports only stdlib + the three sibling internals."""
+    """live_wiring.py imports only stdlib, kernelone底座, and sibling internals."""
     tree = ast.parse(_MODULE_PATH.read_text(encoding="utf-8"))
     allowed_stdlib = {"__future__", "os", "typing"}
-    allowed_siblings = {".dependency_validator", ".raid_register", ".wsjf"}
+    allowed_siblings = {".dependency_validator", ".raid_register", ".wsjf", ".status_rollup"}
+    allowed_kernelone = {"polaris.kernelone.type_ops"}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 assert alias.name in allowed_stdlib, alias.name
         elif isinstance(node, ast.ImportFrom):
             module = ("." * node.level) + (node.module or "")
-            assert module in allowed_stdlib or module in allowed_siblings, module
+            assert module in allowed_stdlib or module in allowed_siblings or module in allowed_kernelone, module
             assert "polaris.delivery" not in module
             assert "chief_engineer" not in module
             assert "project_report" not in module

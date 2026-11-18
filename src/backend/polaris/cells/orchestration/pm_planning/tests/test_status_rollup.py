@@ -749,7 +749,11 @@ def test_module_does_not_import_delivery_or_other_cells() -> None:
     assert not any(module.startswith(forbidden_delivery) for module in imported)
     for module in imported:
         if module.startswith("polaris."):
-            assert same_cell_internal in module, f"unexpected polaris import: {module}"
+            # kernelone is the shared底座 (AGENTS §4.2.1 KernelOne Foundation):
+            # its utility contracts are allowed cross-cell.
+            assert same_cell_internal in module or module.startswith("polaris.kernelone."), (
+                f"unexpected polaris import: {module}"
+            )
 
 
 def test_module_no_os_environ_or_clock() -> None:

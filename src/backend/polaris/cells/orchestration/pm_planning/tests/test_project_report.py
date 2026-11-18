@@ -577,6 +577,7 @@ def test_ast_import_boundary_relaxed() -> None:
     storage_imports = {
         "polaris." + "kernelone.fs",
         "polaris." + "kernelone.storage",
+        "polaris." + "kernelone.type_ops",
     }
     imported = _imported_module_names(Path(pr.__file__))
     assert not any(module.startswith(forbidden_delivery) for module in imported)

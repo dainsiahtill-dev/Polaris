@@ -568,7 +568,10 @@ def test_module_does_not_import_delivery_or_other_cells() -> None:
     for name in names:
         assert not name.startswith("polaris." + "delivery"), f"forbidden delivery import: {name}"
         if name.startswith("polaris."):
-            assert "orchestration." + "pm_planning.internal" in name, f"unexpected cross-cell polaris import: {name}"
+            # kernelone is the shared底座; its utility contracts are allowed.
+            assert "orchestration." + "pm_planning.internal" in name or name.startswith("polaris.kernelone."), (
+                f"unexpected cross-cell polaris import: {name}"
+            )
 
 
 def test_module_imports_no_raid_register_or_taskboard() -> None:
