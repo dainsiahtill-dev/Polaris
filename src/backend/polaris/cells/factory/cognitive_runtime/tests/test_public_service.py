@@ -116,12 +116,14 @@ def _reset_conversation_runtime_singletons() -> None:
     conv_mod._kernel_dbs_by_workspace.clear()
 
 
-def test_runtime_export_handoff_uses_workspace_bound_role_session_store(monkeypatch, tmp_path) -> None:
+def test_runtime_export_handoff_uses_workspace_bound_role_session_store(tmp_path) -> None:
     from polaris.cells.roles.session.public import RoleSessionService
     from polaris.kernelone.context.context_os import CodeContextDomainAdapter
     from polaris.kernelone.context.context_os.runtime.engine import StateFirstContextOS
 
-    monkeypatch.setenv("KERNELONE_RUNTIME_CACHE_ROOT", str(tmp_path / "kernelone-cache"))
+    # Runtime 单根制 (rule 28): writers use each workspace's canonical
+    # project-local root, so two tmp workspaces are already isolated without
+    # any KERNELONE_RUNTIME_CACHE_ROOT redirect (which writers now reject).
     _reset_conversation_runtime_singletons()
     workspace_a = tmp_path / "workspace-a"
     workspace_b = tmp_path / "workspace-b"
