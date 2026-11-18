@@ -99,10 +99,13 @@ def _json_dumps(value: Any) -> str:
 
 
 def resolve_context_catalog_cache_path(workspace: str | Path) -> Path:
+    # Pure path resolution: read_only keeps this a query (no writable-root
+    # probe); the write path validates through KFS at write time.
     return Path(
         resolve_workspace_persistent_path(
             str(Path(workspace).resolve()),
             "workspace/meta/context_catalog/descriptors.json",
+            read_only=True,
         )
     )
 
@@ -112,6 +115,7 @@ def resolve_context_catalog_index_state_path(workspace: str | Path) -> Path:
         resolve_workspace_persistent_path(
             str(Path(workspace).resolve()),
             "workspace/meta/context_catalog/index_state.json",
+            read_only=True,
         )
     )
 

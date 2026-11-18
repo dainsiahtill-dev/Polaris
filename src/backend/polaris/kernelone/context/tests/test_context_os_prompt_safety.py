@@ -7,13 +7,15 @@ and what gaps remain (no content-level escaping).
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from unittest.mock import MagicMock
 
+import pytest
 from polaris.kernelone.context.control_plane_noise import (
     is_control_plane_noise,
     normalize_control_plane_text,
 )
-from polaris.kernelone.context.projection_engine import ProjectionEngine
+from polaris.kernelone.context.projection_engine import ProjectionEngine, reset_projection_adaptive_state
 from polaris.kernelone.context.prompt_safety import (
     parse_tool_failure_summary,
     prompt_safe_tool_failure_summary,
@@ -21,6 +23,19 @@ from polaris.kernelone.context.prompt_safety import (
     tool_failure_summary_payload,
 )
 from polaris.kernelone.context.receipt_store import ReceiptStore
+
+
+@pytest.fixture(autouse=True)
+def _reset_adaptive_state() -> Iterator[None]:
+    """Every projection test starts from clean adaptive weights.
+
+    ``_ADAPTIVE_STATE_STORE`` is module-global and shared across
+    ``ProjectionEngine`` instances; without a reset, route-priority tests are
+    order-dependent (a prior test's learned outcomes shift later sort keys).
+    """
+    reset_projection_adaptive_state()
+    yield
+    reset_projection_adaptive_state()
 
 
 class TestControlPlaneNoiseDetection:
