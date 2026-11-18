@@ -31,6 +31,7 @@ from typing import Any, Callable, cast
 
 from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnContinuationMode,
+    TurnId,
     TurnOutcomeEnvelope,
     TurnResult,
 )
@@ -91,6 +92,10 @@ class SessionWorkflowCase:
     title: str
     description: str
     turns: list[WorkflowTurnSpec]
+    # When set, pins the expected kernel invocation count independently of the
+    # scripted turn specs (circuit-breaker/recovery cases run recovery turns
+    # beyond the specs).
+    expected_kernel_calls: int | None = None
     final_state_assertions: dict[str, Any] = field(default_factory=dict)
     expected_event_types: list[str] = field(default_factory=list)
     checkpoint_assertions: dict[str, Any] = field(default_factory=dict)
@@ -168,8 +173,13 @@ class MockWorkflowKernel:
         turn_id: str,
         context: list[dict[str, Any]],
         tool_definitions: list[dict[str, Any]],
+        parent_span_id: str | None = None,
     ) -> AsyncIterator[TurnEvent]:
-        """Yield events for the current turn."""
+        """Yield events for the current turn.
+
+        Accepts the production kernel's ``parent_span_id`` tracing kwarg so the
+        orchestrator can drive this mock unchanged.
+        """
         turn_index = self.call_count
         self.call_count += 1
         if turn_index < len(self.turns):
@@ -277,8 +287,8 @@ async def _run_session_workflow_case(
             )
         )
 
-    # Check turn count
-    expected_turn_count = len(case.turns)
+    # Check turn count: pinned expectation wins (recovery cases), else specs.
+    expected_turn_count = case.expected_kernel_calls if case.expected_kernel_calls is not None else len(case.turns)
     checks.append(
         WorkflowJudgeCheck(
             code="turn_count",
@@ -449,7 +459,7 @@ def _envelope(
     """Helper to build TurnOutcomeEnvelope."""
     return TurnOutcomeEnvelope(
         turn_result=TurnResult(
-            turn_id="t0",
+            turn_id=TurnId("t0"),
             kind="final_answer",
             visible_content=visible_content,
             decision={},
@@ -463,7 +473,7 @@ def _envelope(
 def _completion(session_patch: dict[str, Any] | None = None) -> CompletionEvent:
     """Helper to build a CompletionEvent with session_patch."""
     return CompletionEvent(
-        turn_id="t0",
+        turn_id=TurnId("t0"),
         status="success",
         visible_content="",
         session_patch=session_patch or {},
@@ -640,8 +650,11 @@ _CASES.append(
                 ),
             ),
         ],
+        # Phase 5.1 recovery injects one alternative-strategy turn after the
+        # scripted stagnant pair before the circuit breaker terminates.
+        expected_kernel_calls=3,
         final_state_assertions={
-            # Stagnation should stop after 2 turns (hash stays same, no speculative_hints)
+            # Stagnation stops the session (hash stays same, no speculative_hints).
             "turn_count": 2,
             "task_progress": "exploring",
         },
