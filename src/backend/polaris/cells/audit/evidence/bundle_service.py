@@ -387,7 +387,7 @@ class EvidenceBundleService:
                 "bundle base_sha will be set to 'sha-unknown'",
                 workspace,
             )
-        except (OSError, ValueError):
+        except Exception:  # noqa: BLE001 - any HEAD-resolution failure must yield the sentinel, never propagate
             logger.warning(
                 "Failed to resolve HEAD SHA for workspace %s; bundle base_sha will be set to 'sha-unknown'",
                 workspace,
