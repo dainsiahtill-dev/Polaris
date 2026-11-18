@@ -941,7 +941,10 @@ def build_exact_run_causal_report(
         module_attribution = attribute_residual(
             root_cause_signature=root_cause_code,
             failure_category=current_status,
-            failure_reasons=[str((selected or {}).get("reason") or "")],
+            # Include the tool-failure effect classes (e.g. TOOL_RESULT_FAILED)
+            # so effect-path attribution (M03 tools) outranks the downstream
+            # lifecycle symptom (M08) per the module cascade ladder.
+            failure_reasons=[str((selected or {}).get("reason") or ""), *failure_classes],
             error_code=root_cause_code,
             director_detail=" ".join(terminal_failed_rows),
             real_run_gate_ok=False if failed_required else None,
