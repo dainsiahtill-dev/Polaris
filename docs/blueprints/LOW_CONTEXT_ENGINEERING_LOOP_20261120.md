@@ -111,10 +111,12 @@ run_engineering_loop
 - **fidelity 条款源污染**（L1-L12 验收阻断）：内部 adapter 的 instruction =
   平台 notice + `build_requirements_doc`（用户 brief + 平台交付/深度/源码/语言合同）。
   机械抽取把 notice 与平台合同当作条款：L1-01 原始候选 65 条、过滤标题/表格分隔后
-  仍 55 条（`min_files:3`、`ts_syntax` 等），远超 14 上限 → fidelity 永远 unknown，
-  bench 无法 accepted。修法：`FROZEN_REQUIREMENTS_MARKER` 单一来源（adapter 与抽取器
-  共用），抽取器从 marker 之后取**第一个 markdown 小节**（目标/使用体验）作为条款源，
-  非 markdown 目标回退整文。L1-01 实测从 65 → **11** 条真实行为条款，未截断。
+  仍 55 条（`min_files:3`、`ts_syntax` 等）。修法：`FROZEN_REQUIREMENTS_MARKER`
+  单一来源（adapter 与抽取器共用），抽取器从 marker 之后取**第一个 markdown 小节**
+  （目标/使用体验）作为条款源，非 markdown 目标回退整文。L1-01 实测 65 → **11** 条。
+- **条款上限**：全 120 个 catalog 项目的真实条款数 8..25（p50 17，max 25）。原
+  `_MAX_CLAUSES=14` 会截断 85/120 → fidelity 恒 unknown。提高到 **32** 后实测
+  **0/120 截断**（max 25）。截断仍 fail-closed。
 
 未解决/待验证：
 - L1-01 的 EROFS 准备问题是否被新反馈改善，需重跑真实 run。
