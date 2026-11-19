@@ -131,3 +131,29 @@ claim evidence) — a per-test fixture build against the claim chain, recorded
 as the next item. The other clusters (materialization rust bin-paths, quality
 gate guard, r31 html revision, kernel run-ledger, instances ports) remain
 pre-existing and individually triaged.
+
+## Session 3 continued (2026-11-19) — verifier policy + pm_planning
+
+9. **Verifier policy ephemeral-root test** (f06e25fc): the registered+pinned
+   custom-script authorization test ran under pytest's /tmp workspace, which
+   is a policy-ephemeral executable root — authorization always rejected. The
+   pin is the trust mechanism under test; scope the ephemeral prohibition out.
+   declaration suite 23 passed.
+10. **pm_planning R22 semantic-preservation pair**: the pinned R22 provider
+   fixture names `npx --yes markdownlint` verification commands. The verifier
+   profile registry intentionally profiles only `npx tsc` (supply-chain: npx
+   downloads arbitrary packages), so evaluate_pm_task_quality now hard-fails
+   these as verification_command_profile_unsupported. The fixture's sha256 pin
+   prevents text changes; the semantic-preservation intent is orthogonal to
+   command admissibility. Recorded as needing either a scoped evaluation mode
+   (skip command-profile sub-check) or a pin-updated fixture with profiled
+   commands — a design decision, not a safe test-only fix.
+
+## Running tally (cells/ pre-existing failures)
+
+Fixed this goal-session: 4 (director adapter vacuous receipt) + 1 (verifier
+ephemeral) = 5. Remaining clusters: director adapter authority fixtures (3),
+pm_planning R22 profile design (2), materialization rust bin-paths (2),
+quality gate guard (1), r31 html revision (1), kernel run-ledger (2),
+instances ports (2, environment), resident autonomy (1), pm taskboard (1),
+pm_dispatch metadata (1).
