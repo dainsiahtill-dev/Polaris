@@ -210,9 +210,9 @@ _WINDOW_RESERVE_TOKENS = 16384 + 8192
 # outputs invalidates its own passing evidence and forces an endless re-verify
 # cycle, so the run never reaches independent QA. One change-then-reverify cycle
 # is allowed; from the second pass -> write cycle onward, explicit source writes
-# are intercepted, and two blocked attempts end the Director frame so QA reviews
-# the candidate that actually passed. Independent QA is the safety net for a
-# genuinely premature finish.
+# and shell commands are intercepted, and two blocked attempts end the Director
+# frame so QA reviews the candidate that actually passed. Independent QA is the
+# safety net for a genuinely premature finish.
 _WRAP_UP_GATE_ENV = "KERNELONE_ENGINEERING_WRAP_UP_GATE"
 _WRAP_UP_GATE_MAX_BLOCKS = 2
 
@@ -1055,7 +1055,7 @@ async def run_engineering_loop(
                                 and wrap_up_gate_enabled
                                 and post_pass_write_cycles >= 1
                                 and command.role == "director"
-                                and call.name in {"write_file", "edit_file"}
+                                and call.name in {"write_file", "edit_file", "execute_command"}
                             ):
                                 # Wrap-up gate: the current candidate already
                                 # passed verification. An explicit source write
