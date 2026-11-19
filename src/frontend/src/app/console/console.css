@@ -511,3 +511,40 @@
   background-size: 0.9rem;
   padding-right: 2rem;
 }
+
+/* shadcn/ui kit tokens → ink-teal light inside adapted surfaces */
+.cx-adapt {
+  --background: #ffffff;
+  --foreground: var(--cx-ink);
+  --card: #ffffff;
+  --card-foreground: var(--cx-ink);
+  --popover: #ffffff;
+  --popover-foreground: var(--cx-ink);
+  --primary: var(--cx-teal);
+  --primary-foreground: #f4faf7;
+  --secondary: #f1efe7;
+  --secondary-foreground: var(--cx-ink);
+  --muted: #f1efe7;
+  --muted-foreground: var(--cx-ink-faint);
+  --accent: rgba(52, 165, 131, 0.12);
+  --accent-foreground: var(--cx-teal-strong);
+  --destructive: var(--cx-red);
+  --destructive-foreground: #fff5f7;
+  --border: var(--cx-line);
+  --input: #fbfbfc;
+  --ring: var(--cx-teal);
+}
+
+/* Context viewer + kit remnants inside adapted surfaces */
+.cx-adapt .bg-bg-panel { background-color: #ffffff !important; }
+.cx-adapt [class*="bg-bg-panel/"] { background-color: #f6f7f9 !important; }
+.cx-adapt [class*="bg-black/30"] { background-color: #1a2331 !important; } /* code blocks keep navy command surface */
+.cx-adapt [class*="bg-black/20"] { background-color: #f6f7f9 !important; }
+.cx-adapt .text-accent { color: var(--cx-teal-strong) !important; }
+.cx-adapt [class*="bg-accent/"] { background-color: rgba(52, 165, 131, 0.14) !important; }
+.cx-adapt [class*="hover:bg-white/"]:hover { background-color: #eef0f4 !important; }
+.cx-adapt .text-emerald-300 { color: #1c7a4d !important; }
+.cx-adapt .text-amber-100 { color: #9a6b15 !important; }
+.cx-adapt .text-red-300 { color: var(--cx-red) !important; }
+.cx-adapt .bg-emerald-500\/10 { background-color: #e0f3e9 !important; }
+.cx-adapt pre[class*="bg-black/30"], .cx-adapt [class*="bg-black/30"] { color: #cfe0d4 !important; }

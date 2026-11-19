@@ -13,10 +13,11 @@ const GLYPHS = {
 } as const;
 
 /** Tool-and-run journal: selectable rows, one receipt each. */
-export function ToolTimeline({ events, selectedSeq, onSelect, emptyHint }: {
+export function ToolTimeline({ events, selectedSeq, onSelect, onOpenContext, emptyHint }: {
   events: EngineeringEvent[];
   selectedSeq: number | null;
   onSelect: (event: EngineeringEvent) => void;
+  onOpenContext: (ref: string, role: string) => void;
   emptyHint: string;
 }): ReactElement {
   const shown = useMemo(() => events.slice(-100), [events]);
@@ -47,7 +48,17 @@ export function ToolTimeline({ events, selectedSeq, onSelect, emptyHint }: {
                 <span className="truncate text-xs text-[var(--cx-ink-dim)]">{toolLabel(tool)} · {summary}</span>
                 <span className="cx-mono shrink-0 text-[0.64rem] text-[var(--cx-ink-faint)]">{receiptId(event.seq)}</span>
               </span>
-              {ref ? <span className="mt-1 block font-mono text-[0.64rem] text-[#1f7a8c]">最终请求 · {ref.slice(0, 8)}…</span> : null}
+              {ref ? (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className="mt-1 inline-block cursor-pointer font-mono text-[0.64rem] text-[#1f7a8c] hover:text-[#155e6d]"
+                  onClick={(click) => { click.stopPropagation(); onOpenContext(ref, event.role); }}
+                  onKeyDown={(key) => { if (key.key === 'Enter' || key.key === ' ') { key.stopPropagation(); onOpenContext(ref, event.role); } }}
+                >
+                  最终请求 · {ref.slice(0, 8)}…
+                </span>
+              ) : null}
             </span>
             <IconChevronRight className="mt-1 h-4 w-4 shrink-0 text-[var(--cx-ink-faint)]" />
           </button>

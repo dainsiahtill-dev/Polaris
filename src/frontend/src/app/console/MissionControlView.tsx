@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactElement } from 'react';
 import type { EngineeringEvent, EngineeringRole } from '@/services/api.types';
 import type { EngineeringRunBinding } from '@/hooks/useEngineeringRun';
+import { ContextViewerModal } from '@/app/components/contextos/ContextViewerModal';
 import { GoalComposer } from './GoalComposer';
 import { RoleTracks } from './RoleTracks';
 import { ToolTimeline } from './ToolTimeline';
@@ -28,6 +29,8 @@ export function MissionControlView({ workspace, binding, role }: {
   role: EngineeringRole;
 }): ReactElement {
   const [selectedSeq, setSelectedSeq] = useState<number | null>(null);
+  const [selectedContext, setSelectedContext] = useState<{ ref: string; role: string } | null>(null);
+  const openContext = (ref: string, eventRole: string) => setSelectedContext({ ref, role: eventRole });
   const projection = binding.projection;
   const run = projection.snapshot;
   const events = useMemo(() => timelineEvents(projection.events), [projection.events]);
@@ -124,6 +127,7 @@ export function MissionControlView({ workspace, binding, role }: {
               events={events}
               selectedSeq={selectedEvent?.seq ?? null}
               onSelect={(event) => setSelectedSeq(event.seq)}
+              onOpenContext={openContext}
               emptyHint={binding.loading ? '正在读取快照…' : '尚无可展示的运行记录'}
             />
           </div>
@@ -183,6 +187,7 @@ export function MissionControlView({ workspace, binding, role }: {
         <span className="hidden h-3 w-px bg-[var(--cx-line-strong)] sm:block" aria-hidden="true" />
         <span className="flex items-center gap-1.5"><IconShield className="h-3.5 w-3.5" />验证 {VERIFICATION_LABELS[run.verification]} · QA {QA_LABELS[run.qa_verdict ?? 'unknown']} · 项目 {OUTCOME_LABELS[run.project_outcome ?? 'unknown']}</span>
       </footer>
+      {selectedContext ? <ContextViewerModal initialTab="final-request" contextSnapshotRef={selectedContext.ref} roleId={selectedContext.role} workspace={workspace} onClose={() => setSelectedContext(null)} /> : null}
     </div>
   );
 }

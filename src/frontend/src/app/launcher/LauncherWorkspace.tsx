@@ -356,7 +356,7 @@ function LauncherInstanceWorkspace({ onOpenFoundation }: { onOpenFoundation: () 
   }, [instances, refresh]);
 
   return (
-    <div className="console-scope flex h-screen min-h-0 flex-col overflow-hidden">
+    <div className="console-scope cx-adapt flex h-screen min-h-0 flex-col overflow-hidden">
       <header className="shrink-0 border-b border-[var(--cx-line)] bg-white px-6 py-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
