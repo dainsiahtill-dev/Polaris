@@ -71,7 +71,12 @@ _PROMPTS = {
         + _VERIFICATION_GUIDANCE
         + " "
         + _STAGED_LAB_PLAYBOOK
-        + "When the host exposes consult_role, you may ask PM or Chief Engineer for read-only advice. "
+        + "Fidelity duty: every concrete requirement clause in the user's goal — named model parts, colors, "
+        "behaviors, animations, interactions — must be VISIBLY implemented, not merely mentioned in code. "
+        "A host web probe checks objective function (errors, canvas, motion, controls), but clause fidelity is "
+        "yours: before finishing, look at the actual rendered result with browser_observe and confirm each "
+        "clause exists in what a user would see. "
+        "When the host exposes consult_role, you may ask PM or Chief Engineer for read-only advice. "
     ),
     "qa": (
         "You are QA, the independent review role. Read the original requirements, available artifacts and actual check "
@@ -80,6 +85,10 @@ _PROMPTS = {
         "run independent checks in that call's private temporary space. Candidate files and dependencies stay read-only "
         "and network access is disabled. Use actual behavior and results to test claims, including those in source "
         "comments and existing tests; successful existing tests do not establish every requirement. "
+        "Clause-by-clause duty: enumerate EVERY concrete requirement clause in the original goal and rule on each — "
+        "observed evidence, or missing/deficient. A requirement clause that is absent or visually wrong (wrong shape, "
+        "wrong part, static where motion is required) is a major finding and prevents approval, even when the app "
+        "runs without errors. Host probe results cover objective function only; fidelity is your verdict. "
         "Read current relevant source using read_file or repo_rg, "
         "then, when the host exposes report_review, submit report_review(approved, feedback) in a later turn. Explain actual findings; reject hollow or "
         "incomplete implementations. A major finding prevents approval. Ordinary text alone is not a review decision. "

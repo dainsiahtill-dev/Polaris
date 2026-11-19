@@ -22,6 +22,12 @@ from polaris.cells.roles.runtime.internal.engineering_session import (
     EngineeringSessionStore,
     WorkspaceBusyError,
 )
+from polaris.cells.roles.runtime.internal.engineering_web_probe import (
+    WebProbeResult,
+    find_web_entry,
+    probe_feedback,
+    probe_web_deliverable,
+)
 from polaris.cells.roles.runtime.public.contracts.engineering_run import (
     ArtifactObservation,
     BrowserObservationConfig,
@@ -1658,6 +1664,40 @@ class EngineeringRunService:
                     verification="unknown",
                     checks=checks,
                 )
+            # Host web probe: for web deliverables, objective function (page
+            # errors, canvas/WebGL, visible motion, live controls) is graded
+            # by the machine, never by the model that built the artifact. A
+            # failing probe downgrades verification and sends the model the
+            # distilled failure to fix.
+            if find_web_entry(self.workspace) is not None:
+                try:
+                    probe = await probe_web_deliverable(self.workspace)
+                except (OSError, RuntimeError, ValueError) as error:
+                    probe = WebProbeResult(entry="", ran=True, ok=False, probe_error=str(error)[:300])
+                if probe.ran:
+                    checks_list = [
+                        *checks,
+                        ToolObservation(
+                            call_id=f"web-probe-{command.session_id[:8]}",
+                            tool="web_probe",
+                            ok=probe.ok,
+                            content=probe.details
+                            + ("\n" + probe_feedback(probe) if not probe.ok else ""),
+                            exit_code=0 if probe.ok else 1,
+                            interrupted=False,
+                        ),
+                    ]
+                    result = replace(result, checks=tuple(checks_list))
+                    if not probe.ok:
+                        result = replace(result, verification="failed", checks=tuple(checks_list))
+                        result = await self._continue_director(
+                            command,
+                            probe_feedback(probe),
+                            scope=scope,
+                            limits=limits,
+                            cancel=cancel,
+                        )
+                        continue
             if verification != "failed":
                 result = replace(result, verification=verification, checks=checks)
                 if verification == "passed" and not saved["require_qa"]:
