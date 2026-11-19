@@ -250,7 +250,15 @@ async def test_pre_column_legacy_history_remains_readable_without_replay(isolate
 async def test_required_checks_and_independent_qa_keep_policy_across_cold_read(
     isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Required recipes cannot disappear; QA ordinary checks must keep POSIX."""
+    """Required recipes cannot disappear; ordinary checks honour the run policy.
+
+    2026-11-20 correction: the earlier design kept ordinary Director/QA
+    execute_command on POSIX (no pipefail). Real L1-01 showed a piped ordinary
+    build (``npm run build 2>&1 | tail -30``) recorded ok=True/exit 0 while tsc
+    failed, so the model believed the build succeeded and never produced dist/.
+    Ordinary execute_command now uses the run's policy too, so a piped command
+    reports its real status; the QA POSIX assertion is updated accordingly.
+    """
     for response in (
         _response(("selected-check", "verify_project", {"commands": ["printf selected | cat"]})),
         _response(text="Current checks ready for independent review."),
@@ -289,7 +297,7 @@ async def test_required_checks_and_independent_qa_keep_policy_across_cold_read(
         for event in service.store.load_events(command.session_id, kinds=("tool_observed",), role="qa")
         if event["payload"]["tool"] == "execute_command"
     ]
-    assert len(qa_commands) == 1 and qa_commands[0]["exit_code"] == 0
+    assert len(qa_commands) == 1 and qa_commands[0]["exit_code"] == 17
     cold = EngineeringRunService(isolated_workspace, permission_resolver=lambda _row: scope).snapshot(
         command.session_id, workspace=isolated_workspace
     )

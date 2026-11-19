@@ -46,3 +46,18 @@ Verifier将原配方及该resolver生成的实际argv列表写到既有attempt i
 pipefail不处理 `; echo0`、显式吞错、nested shell掩盖或无意义检查；成功退出仍不等于用户目标验收，独立QA保留。未加入-e/-u、编译器输出regex、特例重试或超时增长。提前关闭消费者（如head）可能导致生产者SIGPIPE，不能一律忽略141；tail一般读取全输入。Bash是额外解释器依赖，不可用时明确失败，不能静默降级。
 
 本修改关闭的是一个执行语义边界。PM阶段问题、反复尾部提示、输入绑定性能和资源收尾仍是各自实验/问题，不混入该补丁，不据此声称平台完成或优于其它Agent。
+
+## 2026-11-20 修正：普通 execute_command 也使用 run 策略
+
+原文“普通 Director 和 QA 的 execute_command 仍用 POSIX”被真实运行证伪并修正。
+
+证据（L1-01，agnes-3.0-flash 隔离实例）：模型用普通 `execute_command` 跑
+`npm run build 2>&1 | tail -30`。POSIX 无 pipefail → 观测记录 `ok=True/exit_code=0`，
+而同一输出里 tsc 报 TS2307/TS2580。模型因此认为构建成功，永不修复，`dist/` 始终缺失，
+后续每次 `verify_project` 都以 `Cannot find module dist/...` 失败。
+
+修正：`run_engineering_loop` 解析 `runs.verification_execution_policy`（host 准入时
+耐久写入）并传给**每个**普通 `execute_command`（Director 与 QA）。管道命令现在报告
+真实退出码。回归：`test_ordinary_execute_command_honors_run_pipefail_policy`；
+`test_required_checks_and_independent_qa_keep_policy_across_cold_read` 的 QA 断言
+由 POSIX 0 更新为 17。Verification 路径语义不变（原本就用该策略）。
