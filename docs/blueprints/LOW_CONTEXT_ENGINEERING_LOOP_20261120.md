@@ -102,9 +102,15 @@ run_engineering_loop
   （0 次），说明这是构建型 TS/JS 项目的类问题，不是低上下文改动引入的。
 
 由此暴露并修复的通用缺陷：
+- **普通 execute_command 丢失真实退出码**：run 的 host 策略是 `bash_pipefail_v1`，
+  但 loop 的普通过命令走 `resolve_execution_policy(None)`=`posix_sh_v1`（无 pipefail）。
+  L1-01 实测 `npm run build 2>&1 | tail -30` 记录为 `ok=True/exit 0`，而 tsc 报
+  TS2307/TS2580——模型以为构建成功，永不修复，`dist/` 始终缺失。修复：loop 解析 run
+  策略并传给每个普通 execute_command。测试：`test_ordinary_execute_command_honors_run_pipefail_policy`。
 - **只读失败反馈与实际失败不一致**：原 note 只提“安装/更新依赖”，与“构建输出写失败”
   漂移。改为共享 `read_only_write_targets`（verification 模块单一来源），feedback 与
   状态投影都点名实际写入路径，并给出“先 execute_command 准备、再只读验证”的可执行指引。
+  检测大小写不敏感（coreutils `Read-only file system`；npm `ENOENT ... syscall mkdir`）。
 - 验收维度：`clause_findings` 未出现在 provider 工具 schema（生产 3 次 report_review
   0 次带矩阵的根因），已在 registry schema 暴露并在多条款目标下于 dispatch 边界强制全覆盖；
   目标条款超过上限（32）时 fidelity 保持 unknown（不在前缀上判过）。
