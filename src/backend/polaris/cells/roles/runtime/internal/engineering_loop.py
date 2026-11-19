@@ -260,14 +260,27 @@ def _bounded_request_messages(
     # the image bytes out of the tool content into attachment blocks, so
     # compressing an already projected history and projecting it again would
     # read image blocks without their bytes.
-    bounded = compress_native_tool_history(messages, text_budget)
-    if bounded is None:
-        if built is not None:
-            return built
-        raise ValueError(
-            "required_visual_input_budget_exceeded: the trimmed history still does not fit the model window"
-        )
-    return build(bounded)
+    # The text estimator and the admission estimator are not the same
+    # tokenizer, so a single trim pass can still project over the allowance.
+    # Retry with progressively smaller budgets instead of ending the run:
+    # a long conversation is a trimming question, not a terminal failure.
+    last_error: ValueError | None = None
+    for scale in (1.0, 0.75, 0.5, 0.3):
+        attempt_budget = max(2048, int(text_budget * scale))
+        bounded = compress_native_tool_history(messages, attempt_budget)
+        if bounded is None:
+            continue
+        try:
+            return build(bounded)
+        except ValueError as error:
+            if "required_visual_input_budget_exceeded" not in str(error):
+                raise
+            last_error = error
+    if last_error is not None:
+        raise last_error
+    raise ValueError(
+        "required_visual_input_budget_exceeded: the trimmed history still does not fit the model window"
+    )
 
 
 _CONTINUATION_HISTORY_NOTE = (
