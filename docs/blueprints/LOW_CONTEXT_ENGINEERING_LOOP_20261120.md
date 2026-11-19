@@ -134,3 +134,9 @@ dist/...`）时写 `dist/` → EROFS。正确做法是模型先用 `execute_comm
 （`PreparedProjectVerificationSandbox` 已有此机制）在后置断言中证明输入未被改动；改动
 输入即判失败。这样构建输出可写、输入仍不可伪造。**禁止**把 EROFS 目标自动声明为
 output root——那会让 check 写任意输入路径，破坏只读保证。
+
+**通过后不收尾**：弱模型在 `verify_project` 通过后仍继续改输出，使 `workspace_revision`
+前进、验证证据失效，需要重新验证（L1-01 实测：2 次 passed 都被后续写入作废，106+ 轮
+仍在第二轮 Director 帧）。平台已在通过时注入 `_VERIFICATION_PASSED_GUIDANCE`，但模型
+不照做。潜在通用修法（未实施，需 ADR）：通过后强制一个“收尾确认”回合——要么完成，要么
+明示未完成的需求；未声明则不得再写输出。风险是过早收尾，需谨慎。
