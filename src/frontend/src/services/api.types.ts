@@ -2079,12 +2079,15 @@ export interface EngineeringEvent {
   session_id: string; workspace: string; seq: number; role: string; kind: string;
   payload: Record<string, unknown>; created_at?: number;
 }
+export type AcceptanceDimensionStatus = 'passed' | 'failed' | 'unknown' | 'not_required';
 export interface EngineeringRunSnapshot {
   session_id: string; run_id: string; engine_version: 'engineering_v2'; workspace: string;
   workflow: 'direct' | 'collaborative'; role: EngineeringRole; status: EngineeringRunStatus;
   active_roles: string[]; roles: Record<EngineeringRole, EngineeringRoleStatus>; text: string;
   verification: EngineeringVerification; checks: EngineeringCheck[]; required_checks: string[];
   verification_commands?: string[];
+  acceptance_dimensions?: Record<string, AcceptanceDimensionStatus>;
+  acceptance_fidelity_missing?: string[];
   permission_profile_id: string | null; resource_url: string; last_seq: number; events: EngineeringEvent[];
   event_delivery_error?: unknown; native_observation_error?: unknown; truncated_fields?: string[];
   require_qa?: boolean; qa_verdict?: EngineeringQAVerdict; project_outcome?: EngineeringProjectOutcome;

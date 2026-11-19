@@ -17,6 +17,13 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
 
+from polaris.cells.roles.runtime.internal.engineering_acceptance import (
+    extract_goal_clauses,
+)
+from polaris.cells.roles.runtime.internal.engineering_lessons import (
+    lessons_guidance,
+    record_lesson,
+)
 from polaris.cells.roles.runtime.internal.engineering_session import (
     EngineeringSessionConflictError as EngineeringSessionConflictError,
     EngineeringSessionStore,
@@ -827,8 +834,13 @@ class EngineeringRunService:
                 if command.role == "director"
                 else None
             )
+            guided = command
+            if command.role == "director":
+                guidance = lessons_guidance(self.workspace)
+                if guidance:
+                    guided = replace(command, instruction=guidance + command.instruction)
             return await run_engineering_loop(
-                command,
+                guided,
                 scope=scope,
                 limits=limits,
                 cancel=cancel,
@@ -1745,6 +1757,7 @@ class EngineeringRunService:
                         verification=current["verification"],
                         checks=tuple(ToolObservation(**check) for check in current["checks"]),
                     )
+                record_lesson(self.workspace, feedback.split("\n")[0])
                 result = await self._continue_director(
                     command,
                     "Independent QA rejected the current candidate. Continue the same original goal using actual review findings:\n"
@@ -1917,8 +1930,11 @@ class EngineeringRunService:
                 ],
                 ensure_ascii=False,
             )
+            + "\n\nAcceptance clauses (rule on EVERY clause with report_review clause_findings; each needs status pass|fail plus concrete evidence such as a browser_observe call id or check output):\n"
+            + json.dumps(extract_goal_clauses(row["instruction"]), ensure_ascii=False, indent=1)
             + "\n\nRead the current relevant implementation using native read tools. Check the original requirements, behavior and actual artifacts, including incomplete or hollow implementations. "
-            "Then submit report_review with a justified decision. Do not treat Director text as evidence."
+            "Then submit report_review with a justified decision: approved, feedback, major_findings when rejecting, and clause_findings covering every acceptance clause above. "
+            "Do not treat Director text as evidence."
         )
         if (self.workspace / "index.html").is_file():
             instruction = (

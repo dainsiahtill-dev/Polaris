@@ -15,8 +15,13 @@ function Cell({ label, value, tone, testId, hint }: { label: string; value: stri
   );
 }
 
+const DIMENSION_LABELS: Record<string, string> = { function: '功能', fidelity: '保真' };
+const DIMENSION_TONE: Record<string, Tone> = {
+  passed: 'ok', failed: 'bad', unknown: 'warn', not_required: 'idle',
+};
+
 /** Final four-cell verdict strip: run / verification / QA / project outcome. */
-export function VerdictBoard({ status, verification, qaVerdict, requireQa, projectOutcome, acceptanceBasis, pendingSnapshot, }: {
+export function VerdictBoard({ status, verification, qaVerdict, requireQa, projectOutcome, acceptanceBasis, pendingSnapshot, dimensions }: {
   status: EngineeringRunStatus | undefined;
   verification: EngineeringVerification | undefined;
   qaVerdict: EngineeringQAVerdict | undefined;
@@ -24,6 +29,7 @@ export function VerdictBoard({ status, verification, qaVerdict, requireQa, proje
   projectOutcome: EngineeringProjectOutcome | undefined;
   acceptanceBasis: 'checks_only' | 'independent_qa' | null | undefined;
   pendingSnapshot: boolean;
+  dimensions?: Record<string, string>;
 }): ReactElement {
   const blocked = pendingSnapshot;
   const cells: Array<{ label: string; value: string; tone: Tone; testId?: string; hint?: string }> = [
@@ -39,8 +45,20 @@ export function VerdictBoard({ status, verification, qaVerdict, requireQa, proje
     },
   ];
   return (
-    <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
-      {cells.map((cell) => <Cell key={cell.label} {...cell} />)}
+    <div className="space-y-2.5">
+      <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+        {cells.map((cell) => <Cell key={cell.label} {...cell} />)}
+      </div>
+      {dimensions ? (
+        <div className="flex flex-wrap items-center gap-2" data-testid="acceptance-dimensions">
+          <span className="text-[0.68rem] text-[var(--cx-ink-faint)]">验收维度</span>
+          {Object.entries(dimensions).map(([name, value]) => (
+            <span key={name} className={`cx-pill cx-pill--${DIMENSION_TONE[value] || 'idle'}`}>
+              {DIMENSION_LABELS[name] || name} · {value === 'not_required' ? '不适用' : value === 'passed' ? '通过' : value === 'failed' ? '未过' : '未测'}
+            </span>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

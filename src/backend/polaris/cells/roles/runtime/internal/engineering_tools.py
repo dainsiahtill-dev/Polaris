@@ -13,6 +13,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from polaris.cells.roles.runtime.internal.engineering_acceptance import normalize_clause_findings
 from polaris.cells.roles.runtime.internal.engineering_execution_policy import (
     CommandExecutionPolicy,
     resolve_execution_policy,
@@ -248,7 +249,7 @@ class EngineeringTools:
                     raise ValueError("verify_project requires the active Director session owner")
                 return await self.verify(tuple(commands))
             if name == "report_review":
-                self._keys(args, {"approved", "feedback", "major_findings"})
+                self._keys(args, {"approved", "feedback", "major_findings", "clause_findings"})
                 if self.review is None or type(args.get("approved")) is not bool:
                     raise ValueError("report_review requires an actual QA frame and boolean approved")
                 feedback = self._text(args, "feedback")
@@ -257,6 +258,9 @@ class EngineeringTools:
                     not isinstance(item, str) or not item.strip() for item in findings
                 ):
                     raise ValueError("major_findings must contain nonempty text")
+                clause_findings = normalize_clause_findings(args.get("clause_findings"))
+                if any(f.status == "fail" for f in clause_findings):
+                    raise ValueError("clause_findings with status fail requires approved=false")
                 self.review(args["approved"] and not findings)
                 return self._observation(
                     call_id,

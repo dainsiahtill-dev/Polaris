@@ -927,12 +927,16 @@ async def run_engineering_loop(
                     try:
                         active_dispatch = (turn_seq, call.id)
                         try:
+                            # Single source of truth: the gate message is built
+                            # from these exact sets, so guidance and behavior can
+                            # never drift apart again (run e6a88b2f's storm).
+                            gate_blocked_tools = ("write_file", "edit_file", "repo_tree", "repo_rg", "execute_command")
                             if (
                                 command.role == "director"
                                 and "verify_project" in tools.enabled
                                 and stage_gate_writes > 0
                                 and writes_since_verification >= stage_gate_writes
-                                and call.name in {"write_file", "edit_file", "repo_tree", "repo_rg", "execute_command"}
+                                and call.name in set(gate_blocked_tools)
                             ):
                                 # Stage gate: the Director must verify before
                                 # writing more OR re-probing the workspace.
@@ -948,8 +952,9 @@ async def run_engineering_loop(
                                         "verification. Your ONLY allowed next actions are verify_project with "
                                         "the actual build and test commands, browser_observe to render the "
                                         "candidate, or read_file to inspect one specific file. Do NOT run "
-                                        "execute_command, write_file, edit_file, repo_tree or repo_rg until "
-                                        "verification has run. " + _stage_gate_verification_hint(command.workspace)
+                                        + ", ".join(gate_blocked_tools)
+                                        + " until verification has run. "
+                                        + _stage_gate_verification_hint(command.workspace)
                                     ),
                                     exit_code=None,
                                     interrupted=False,

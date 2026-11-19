@@ -22,6 +22,12 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, cast
 
+from polaris.cells.roles.runtime.internal.engineering_acceptance import (
+    acceptance_dimensions_summary,
+    assess_fidelity,
+    extract_goal_clauses,
+    normalize_clause_findings,
+)
 from polaris.cells.roles.runtime.public.contracts.engineering_run import (
     ArtifactObservation,
     PermissionScope,
@@ -1276,14 +1282,46 @@ class EngineeringSessionStore:
             )
             and not self._has_pending_tools(connection, str(row["session_id"]))
         )
-        accepted = row["status"] == "completed" and evidence and (not required or verdict == "approved")
+        # Acceptance dimensions: a dimension without a passing measurement is
+        # unknown and blocks acceptance — never default a missing measurement
+        # to passed. function is machine-graded; fidelity requires structured
+        # QA clause rulings covering the extracted goal clauses.
+        function_status: str = "passed" if evidence else ("failed" if row["verification"] == "failed" else "unknown")
+        review_row = connection.execute(
+            "SELECT arguments FROM tool_calls WHERE session_id=? AND tool='report_review' AND status='observed'"
+            " ORDER BY started_at DESC, turn_seq DESC LIMIT 1",
+            (row["session_id"],),
+        ).fetchone()
+        findings: list[Any] = []
+        if review_row is not None:
+            try:
+                review_args = json.loads(review_row["arguments"] or "{}")
+                findings = normalize_clause_findings(review_args.get("clause_findings"))
+            except (ValueError, TypeError):
+                findings = []
+        fidelity = assess_fidelity(
+            goal_clauses=extract_goal_clauses(str(row.get("instruction") or "")),
+            findings=findings,
+            qa_verdict=str(verdict),
+        )
+        dimensions = acceptance_dimensions_summary(
+            function_status=function_status,  # type: ignore[arg-type]
+            fidelity=fidelity,
+            require_qa=required,
+        )
+        fidelity_ok = (not required) or fidelity.status == "passed"
+        accepted = (
+            row["status"] == "completed" and evidence and (not required or verdict == "approved") and fidelity_ok
+        )
         outcome = (
             "accepted"
             if accepted
             else "rejected"
             if required and verdict == "rejected"
             else "unknown"
-            if row["verification"] == "unknown" or (required and verdict == "unknown")
+            if row["verification"] == "unknown"
+            or (required and verdict == "unknown")
+            or (required and verdict == "approved" and evidence and not fidelity_ok)
             else "not_accepted"
         )
         return {
@@ -1291,6 +1329,8 @@ class EngineeringSessionStore:
             "qa_verdict": verdict,
             "project_outcome": outcome,
             "acceptance_basis": ("independent_qa" if required else "checks_only") if accepted else None,
+            "acceptance_dimensions": dimensions,
+            "acceptance_fidelity_missing": list(fidelity.missing),
         }
 
     def update_run(self, session_id: str, **fields: object) -> None:

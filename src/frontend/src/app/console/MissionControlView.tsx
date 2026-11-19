@@ -171,6 +171,7 @@ export function MissionControlView({ workspace, binding, role }: {
           projectOutcome={run.project_outcome}
           acceptanceBasis={run.acceptance_basis}
           pendingSnapshot={Boolean(projection.error || projection.snapshotRequiredSeq)}
+          dimensions={run.acceptance_dimensions}
         />
       </section>
       {run.text ? (
