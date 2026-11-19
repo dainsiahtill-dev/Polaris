@@ -491,6 +491,8 @@ async def test_writing_after_verified_candidate_requires_actual_fresh_check(
     isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A prior pass cannot certify the later candidate, even within the same role."""
+    # Isolate the invalidation semantics from the wrap-up gate (tested separately).
+    monkeypatch.setenv("KERNELONE_ENGINEERING_WRAP_UP_GATE", "0")
     (isolated_workspace / "artifact.txt").write_text("1", encoding="utf-8")
     actual = "python3 -c \"from pathlib import Path; value=int(Path('artifact.txt').read_text(encoding='utf-8')); assert value>0; print(value)\""
     for response in (
@@ -522,6 +524,48 @@ async def test_writing_after_verified_candidate_requires_actual_fresh_check(
     assert "stdout:\n1\n" in history[0]["payload"]["checks"][0]["content"]
     assert "stdout:\n2\n" in row["checks"][0]["content"]
     assert all(event["payload"]["input_binding"]["requested_by"] is not None for event in history)
+
+
+async def test_wrap_up_gate_sends_passed_candidate_to_qa(
+    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A repeated pass -> write cycle is intercepted; the candidate that passed
+    goes to independent QA."""
+    (isolated_workspace / "artifact.txt").write_text("1", encoding="utf-8")
+    actual = "python3 -c \"from pathlib import Path; assert int(Path('artifact.txt').read_text(encoding='utf-8')) > 0\""
+    for response in (
+        _response(("verify-one", "verify_project", {"commands": [actual]})),
+        # One legitimate change-then-reverify cycle.
+        _response(("write-two", "write_file", {"file": "artifact.txt", "content": "2"})),
+        _response(("verify-two", "verify_project", {"commands": [actual]})),
+        # The second pass -> write cycle is thrashing; both writes are blocked.
+        _response(("write-three", "write_file", {"file": "artifact.txt", "content": "3"})),
+        _response(("write-four", "write_file", {"file": "artifact.txt", "content": "4"})),
+        _response(("read", "read_file", {"file": "artifact.txt"})),
+        _response(
+            (
+                "review",
+                "report_review",
+                {"approved": True, "feedback": "Read current artifact2 and the passing check output."},
+            )
+        ),
+    ):
+        scripted_provider.enqueue_json(response)
+    service = _service(isolated_workspace, scripted_provider, monkeypatch)
+    command = RoleRunCommand("wrap-up", "director", "Deliver artifact2.", isolated_workspace)
+    await service.start(
+        command, scope=_scope(isolated_workspace), limits=RunLimits(time.time() + 45, 1_000_000, 64_000)
+    )
+    await service.wait(command.session_id, workspace=isolated_workspace)
+    row = service.snapshot(command.session_id, workspace=isolated_workspace)
+    events = service.store.load_events(command.session_id)
+    assert [event["payload"]["blocks"] for event in events if event["kind"] == "wrap_up_enforced"] == [1, 2]
+    # The allowed cycle applied (2); the blocked writes never executed.
+    assert (isolated_workspace / "artifact.txt").read_text(encoding="utf-8") == "2"
+    assert row["verification"] == "passed"
+    assert row["qa_verdict"] == "approved"
+    assert row["project_outcome"] == "accepted"
+    assert "qa" in event_roles(events)
 
 
 @pytest.mark.parametrize("cut", ["before_outer", "after_outer", "before_completion", "before_child_observation"])

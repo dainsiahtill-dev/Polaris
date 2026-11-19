@@ -577,6 +577,8 @@ async def test_stage_gate_blocks_writes_until_verification(
 ) -> None:
     """The stage gate forces a build -> verify -> fix rhythm instead of endless writes."""
     monkeypatch.setenv("KERNELONE_ENGINEERING_STAGE_GATE_WRITES", "2")
+    # Isolate the stage gate from the wrap-up gate (tested separately).
+    monkeypatch.setenv("KERNELONE_ENGINEERING_WRAP_UP_GATE", "0")
     loop, store, _tools, command, scope, limits = _setup(
         isolated_workspace, enabled=_ALL_TOOLS | frozenset({"verify_project"})
     )
@@ -614,3 +616,99 @@ async def test_stage_gate_blocks_writes_until_verification(
     assert "Stage gate" in blocked["content"]
     # The gated write had no effect; the post-verification write succeeded.
     assert (isolated_workspace / "c.py").read_text(encoding="utf-8") == "x = 3\n"
+
+
+async def test_wrap_up_gate_blocks_post_pass_edits(
+    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A passing verification must not be invalidated by endless post-pass edits.
+
+    Weak models pass verify_project and then keep polishing, advancing the
+    candidate revision and forcing an endless re-verify cycle that never reaches
+    independent QA. Explicit source writes after a current pass are intercepted;
+    two blocked attempts end the Director frame so QA reviews the candidate that
+    actually passed.
+    """
+    monkeypatch.setenv("KERNELONE_ENGINEERING_STAGE_GATE_WRITES", "0")
+    loop, store, _tools, command, scope, limits = _setup(
+        isolated_workspace, enabled=_ALL_TOOLS | frozenset({"verify_project"})
+    )
+    (isolated_workspace / "a.py").write_text("x = 1\n", encoding="utf-8")
+    scripted_provider.enqueue_json(_native(("v1", "verify_project", {"commands": ["python3 -m py_compile a.py"]})))
+    # One legitimate change-then-reverify cycle is allowed.
+    scripted_provider.enqueue_json(
+        _native(("w1", "edit_file", {"file": "a.py", "search": "x = 1", "replace": "x = 2"}))
+    )
+    scripted_provider.enqueue_json(_native(("v2", "verify_project", {"commands": ["python3 -m py_compile a.py"]})))
+    # The second pass -> write cycle is thrashing; both edits are intercepted.
+    scripted_provider.enqueue_json(
+        _native(("w2", "edit_file", {"file": "a.py", "search": "x = 2", "replace": "x = 3"}))
+    )
+    scripted_provider.enqueue_json(
+        _native(("w3", "edit_file", {"file": "a.py", "search": "x = 2", "replace": "x = 4"}))
+    )
+    from polaris.cells.roles.runtime.public.contracts.engineering_run import ToolObservation
+
+    async def fake_verify(commands: tuple[str, ...], turn_seq: int, call_id: str) -> ToolObservation:
+        return ToolObservation(
+            call_id=call_id, tool="verify_project", ok=True, content="checks ran", exit_code=0, interrupted=False
+        )
+
+    result = await loop(
+        command,
+        scope=scope,
+        limits=limits,
+        cancel=asyncio.Event(),
+        store=store,
+        client=scripted_provider.client("openai", isolated_workspace, monkeypatch),
+        verify=fake_verify,
+    )
+    assert result.status == "completed", result.text
+    events = store.load_events(command.session_id)
+    blocked = [event for event in events if event["kind"] == "wrap_up_enforced"]
+    assert [event["payload"]["blocks"] for event in blocked] == [1, 2]
+    assert [event["payload"]["call_id"] for event in blocked] == ["w2", "w3"]
+    observations = [event["payload"] for event in events if event["kind"] == "tool_observed"]
+    assert all(
+        obs["ok"] is False and "Wrap-up gate" in obs["content"]
+        for obs in observations
+        if obs["call_id"] in {"w2", "w3"}
+    )
+    # The allowed cycle applied; the blocked edits never executed.
+    assert (isolated_workspace / "a.py").read_text(encoding="utf-8") == "x = 2\n"
+
+
+async def test_wrap_up_gate_can_be_disabled(
+    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("KERNELONE_ENGINEERING_STAGE_GATE_WRITES", "0")
+    monkeypatch.setenv("KERNELONE_ENGINEERING_WRAP_UP_GATE", "0")
+    loop, store, _tools, command, scope, limits = _setup(
+        isolated_workspace, enabled=_ALL_TOOLS | frozenset({"verify_project"})
+    )
+    (isolated_workspace / "a.py").write_text("x = 1\n", encoding="utf-8")
+    scripted_provider.enqueue_json(_native(("v1", "verify_project", {"commands": ["python3 -m py_compile a.py"]})))
+    scripted_provider.enqueue_json(
+        _native(("w1", "edit_file", {"file": "a.py", "search": "x = 1", "replace": "x = 2"}))
+    )
+    scripted_provider.enqueue_json(_native(text="Done."))
+    from polaris.cells.roles.runtime.public.contracts.engineering_run import ToolObservation
+
+    async def fake_verify(commands: tuple[str, ...], turn_seq: int, call_id: str) -> ToolObservation:
+        return ToolObservation(
+            call_id=call_id, tool="verify_project", ok=True, content="checks ran", exit_code=0, interrupted=False
+        )
+
+    result = await loop(
+        command,
+        scope=scope,
+        limits=limits,
+        cancel=asyncio.Event(),
+        store=store,
+        client=scripted_provider.client("openai", isolated_workspace, monkeypatch),
+        verify=fake_verify,
+    )
+    assert result.status == "completed", result.text
+    events = store.load_events(command.session_id)
+    assert not [event for event in events if event["kind"] == "wrap_up_enforced"]
+    assert (isolated_workspace / "a.py").read_text(encoding="utf-8") == "x = 2\n"

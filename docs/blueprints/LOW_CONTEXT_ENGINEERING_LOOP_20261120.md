@@ -107,7 +107,7 @@ run_engineering_loop
   状态投影都点名实际写入路径，并给出“先 execute_command 准备、再只读验证”的可执行指引。
 - 验收维度：`clause_findings` 未出现在 provider 工具 schema（生产 3 次 report_review
   0 次带矩阵的根因），已在 registry schema 暴露并在多条款目标下于 dispatch 边界强制全覆盖；
-  目标条款超过 14 条上限时 fidelity 保持 unknown（不在前缀上判过）。
+  目标条款超过上限（32）时 fidelity 保持 unknown（不在前缀上判过）。
 - **fidelity 条款源污染**（L1-L12 验收阻断）：内部 adapter 的 instruction =
   平台 notice + `build_requirements_doc`（用户 brief + 平台交付/深度/源码/语言合同）。
   机械抽取把 notice 与平台合同当作条款：L1-01 原始候选 65 条、过滤标题/表格分隔后
@@ -136,7 +136,16 @@ dist/...`）时写 `dist/` → EROFS。正确做法是模型先用 `execute_comm
 output root——那会让 check 写任意输入路径，破坏只读保证。
 
 **通过后不收尾**：弱模型在 `verify_project` 通过后仍继续改输出，使 `workspace_revision`
-前进、验证证据失效，需要重新验证（L1-01 实测：2 次 passed 都被后续写入作废，106+ 轮
-仍在第二轮 Director 帧）。平台已在通过时注入 `_VERIFICATION_PASSED_GUIDANCE`，但模型
-不照做。潜在通用修法（未实施，需 ADR）：通过后强制一个“收尾确认”回合——要么完成，要么
-明示未完成的需求；未声明则不得再写输出。风险是过早收尾，需谨慎。
+前进、验证证据失效，需要重新验证（L1-01 实测：2 次 passed 都被后续写入作废，115+ 轮
+仍在第二轮 Director 帧，从未进入 QA）。
+
+已实施 **wrap-up gate**（`KERNELONE_ENGINEERING_WRAP_UP_GATE`，默认开）：跨轮持久
+`candidate_verification_passed` + `post_pass_write_cycles`。**允许 1 次**合法的
+“改→再验”循环；当模型再次通过后又发起第 2 个 pass→write 循环时，`write_file`/`edit_file`
+被拦截（`wrap_up_enforced`），连续 2 次拦截即 `finish("completed")`，把“实际通过的候选”
+交给独立 QA。任何真实写效果使 revision 前进即重置通过标志并计入循环数。QA 是过早收尾的
+安全网（独立逐条复核）。单测：`test_wrap_up_gate_blocks_post_pass_edits`（1 次合法循环后
+2 拦截→完成、被拦截写未执行）、`test_wrap_up_gate_can_be_disabled`、服务级
+`test_wrap_up_gate_sends_passed_candidate_to_qa`（写被拦→QA 复核实际通过候选→accepted）。
+`test_writing_after_verified_candidate_requires_actual_fresh_check` 与 stage-gate 用例
+通过 env 关闭本门以隔离各自语义。

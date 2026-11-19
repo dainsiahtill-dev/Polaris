@@ -205,6 +205,16 @@ _WORKING_SET_TOKENS_ENV = "KERNELONE_ENGINEERING_WORKING_SET_TOKENS"
 _WORKING_SET_TOKENS_DEFAULT = 32000
 _WINDOW_RESERVE_TOKENS = 16384 + 8192
 
+# Wrap-up gate: a weak model that passes verification and then keeps editing
+# outputs invalidates its own passing evidence and forces an endless re-verify
+# cycle, so the run never reaches independent QA. One change-then-reverify cycle
+# is allowed; from the second pass -> write cycle onward, explicit source writes
+# are intercepted, and two blocked attempts end the Director frame so QA reviews
+# the candidate that actually passed. Independent QA is the safety net for a
+# genuinely premature finish.
+_WRAP_UP_GATE_ENV = "KERNELONE_ENGINEERING_WRAP_UP_GATE"
+_WRAP_UP_GATE_MAX_BLOCKS = 2
+
 
 def _history_allowances(window: int) -> list[int]:
     """Ascending candidate budgets for the retained native history."""
@@ -615,6 +625,16 @@ async def run_engineering_loop(
     # into a build -> verify -> fix rhythm. 0 disables the gate.
     stage_gate_writes = int(os.environ.get("KERNELONE_ENGINEERING_STAGE_GATE_WRITES", "5") or "0")
     writes_since_verification = 0
+    wrap_up_gate_enabled = os.environ.get(_WRAP_UP_GATE_ENV, "1") != "0"
+    wrap_up_blocks = 0
+    wrap_up_force_finish = False
+    # Persistent across turns (unlike the per-turn guidance flag): the current
+    # candidate has a passing verification that any explicit source write voids.
+    candidate_verification_passed = False
+    # Pass -> write cycles already spent in this frame. One legitimate
+    # change-then-reverify cycle is allowed; a second means the model is
+    # thrashing its own evidence, so further explicit writes are intercepted.
+    post_pass_write_cycles = 0
     try:
         if pending_calls():
             return finish("interrupted", "An earlier dispatch still requires reconciliation.")
@@ -995,6 +1015,45 @@ async def run_engineering_loop(
                             # never drift apart again (run e6a88b2f's storm).
                             gate_blocked_tools = ("write_file", "edit_file", "repo_tree", "repo_rg", "execute_command")
                             if (
+                                candidate_verification_passed
+                                and wrap_up_gate_enabled
+                                and post_pass_write_cycles >= 1
+                                and command.role == "director"
+                                and call.name in {"write_file", "edit_file"}
+                            ):
+                                # Wrap-up gate: the current candidate already
+                                # passed verification. An explicit source write
+                                # would invalidate that evidence and start a new
+                                # verify cycle; intercept it and require a finish.
+                                wrap_up_blocks += 1
+                                observation = ToolObservation(
+                                    call_id=call.id,
+                                    tool=call.name,
+                                    ok=False,
+                                    content=(
+                                        "Wrap-up gate: the current candidate's verification already passed. "
+                                        "Changing outputs now invalidates that passing evidence and forces a full "
+                                        "re-verification. Finish now with a short report of what was built and what "
+                                        "the checks showed. Continue only if a declared check actually failed or a "
+                                        "requirement is unfinished; host-required checks remain included."
+                                    ),
+                                    exit_code=None,
+                                    interrupted=False,
+                                )
+                                store.append_event(
+                                    command.session_id,
+                                    kind="wrap_up_enforced",
+                                    role=command.role,
+                                    payload={
+                                        "turn_seq": turn_seq,
+                                        "call_id": call.id,
+                                        "tool": call.name,
+                                        "blocks": wrap_up_blocks,
+                                    },
+                                )
+                                if wrap_up_blocks >= _WRAP_UP_GATE_MAX_BLOCKS:
+                                    wrap_up_force_finish = True
+                            elif (
                                 command.role == "director"
                                 and "verify_project" in tools.enabled
                                 and stage_gate_writes > 0
@@ -1080,6 +1139,14 @@ async def run_engineering_loop(
                             )
                             and (observation.exit_code is not None or observation.interrupted or observation.timed_out)
                         )
+                        if advances_revision:
+                            # A durable write advances the candidate revision, so
+                            # the earlier pass no longer describes the current
+                            # outputs and the wrap-up gate must re-arm.
+                            if candidate_verification_passed:
+                                post_pass_write_cycles += 1
+                            verification_passed = False
+                            candidate_verification_passed = False
                         if output_capture is not None:
                             run = store.load_run(command.session_id, workspace=command.workspace)
                             binding = artifact_binding() if artifact_binding is not None else {}
@@ -1118,6 +1185,7 @@ async def run_engineering_loop(
                     # The candidate has a passing current verification. QA has to
                     # review that same candidate, so the turn has to conclude.
                     verification_passed = True
+                    candidate_verification_passed = True
                 message = {
                     "role": "tool",
                     "tool_call_id": call.id,
@@ -1135,6 +1203,12 @@ async def run_engineering_loop(
                     turn_gate_blocks = turn_gate_blocks + 1
                 else:
                     turn_gate_blocks = 0 if observation.ok or observation.exit_code is not None else turn_gate_blocks
+            if wrap_up_force_finish:
+                return finish(
+                    "completed",
+                    "Current candidate verification passed; further output changes are blocked. "
+                    "Finish and let independent QA review this candidate.",
+                )
             if calls and turn_gate_blocks >= len(calls):
                 gate_block_streak += 1
             elif turn_gate_blocks == 0:
