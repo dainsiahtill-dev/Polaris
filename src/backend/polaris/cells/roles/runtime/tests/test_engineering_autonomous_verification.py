@@ -606,6 +606,36 @@ async def test_preparation_gate_requires_writing_execute_before_reverify(
     assert row["project_outcome"] == "accepted"
 
 
+async def test_ordinary_execute_command_honors_run_pipefail_policy(
+    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A piped ordinary command must report the real exit status.
+
+    Real runs showed `npm run build 2>&1 | tail -30` recorded as ok=True/exit 0
+    while tsc failed, because ordinary execute_command used the POSIX default
+    (no pipefail) instead of the host-selected run policy.
+    """
+    for response in (
+        _response(("pipe", "execute_command", {"command": "sh -c 'exit 7' 2>&1 | tail -1"})),
+        _response(text="The piped command failed; that is the real status."),
+    ):
+        scripted_provider.enqueue_json(response)
+    service = _service(isolated_workspace, scripted_provider, monkeypatch)
+    command = RoleRunCommand("pipefail", "director", "Run a failing piped command.", isolated_workspace)
+    await service.start(
+        command, scope=_scope(isolated_workspace), limits=RunLimits(time.time() + 30, 1_000_000, 64_000)
+    )
+    await service.wait(command.session_id, workspace=isolated_workspace)
+    events = service.store.load_events(command.session_id)
+    observations = [
+        event["payload"]
+        for event in events
+        if event["kind"] == "tool_observed" and event["payload"].get("tool") == "execute_command"
+    ]
+    assert observations, events
+    assert observations[0]["ok"] is False and observations[0]["exit_code"] == 7
+
+
 @pytest.mark.parametrize("cut", ["before_outer", "after_outer", "before_completion", "before_child_observation"])
 async def test_real_process_restart_closes_only_durable_verification_and_never_replays(
     isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch, cut: str

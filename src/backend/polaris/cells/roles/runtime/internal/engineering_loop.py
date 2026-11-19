@@ -13,6 +13,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from polaris.cells.roles.runtime.internal.engineering_execution_policy import resolve_execution_policy
 from polaris.cells.roles.runtime.internal.engineering_roles import register_consult_tool, role_instruction, role_scope
 from polaris.cells.roles.runtime.internal.engineering_session import EngineeringSessionStore
 from polaris.cells.roles.runtime.internal.engineering_tools import EngineeringTools, bounded_output
@@ -640,6 +641,13 @@ async def run_engineering_loop(
     # (preparation) before another verify_project may run, instead of letting a
     # weak model re-issue the same doomed check forever.
     preparation_pending = False
+    # The host selected the run's shell policy (bash_pipefail_v1). Ordinary
+    # execute_command must honour it too: under the POSIX default a piped command
+    # such as `npm run build 2>&1 | tail` masks the real exit status, so a failed
+    # build looks successful and the model stops repairing it.
+    execution_policy = resolve_execution_policy(
+        store.load_run(command.session_id, workspace=command.workspace).get("verification_execution_policy")
+    )
     try:
         if pending_calls():
             return finish("interrupted", "An earlier dispatch still requires reconciliation.")
@@ -1146,10 +1154,16 @@ async def run_engineering_loop(
                                 )
                             elif output_capture is not None:
                                 observation = await tools.execute(
-                                    call.id, call.name, call.arguments, output_capture=output_capture
+                                    call.id,
+                                    call.name,
+                                    call.arguments,
+                                    execution_policy=execution_policy,
+                                    output_capture=output_capture,
                                 )
                             else:
-                                observation = await tools.execute(call.id, call.name, call.arguments)
+                                observation = await tools.execute(
+                                    call.id, call.name, call.arguments, execution_policy=execution_policy
+                                )
                         finally:
                             active_dispatch = None
                         if observation.tool in {"write_file", "edit_file"} and observation.ok:
