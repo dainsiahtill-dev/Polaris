@@ -129,6 +129,21 @@ run_engineering_loop
 - 工作集默认 32000 是否最优（模型 re-read 较多）需 A/B。
 - 低上下文对 L1-L12 通过率的净收益尚未量化。
 
+## 7.1 真实闭环验证（2026-11-20，L1-03）
+
+项目：L1-03「迷你行星天气球」（Python 离线 HTML 生成器，无浏览器构建链）。
+隔离 bench 实例（agnes-3.0-flash），95 轮，约 24 分钟。
+
+工程 SQLite 最终事实（`<workspace>/.polaris/runtime/engineering/sessions.sqlite3`）：
+- `status=completed`，`verification=passed`，`qa_verdict=approved`
+- **`project_outcome=accepted`**，`acceptance_basis=independent_qa`
+- `acceptance_dimensions={function: passed, fidelity: passed}`
+- QA `report_review` 提交 **11 条 `clause_findings`（全 pass）**，与抽取的目标条款一一对应
+- 交付 `out/`（36K）
+
+这是「有界工作集 + 状态投影 + 真实退出码 + 两道门禁 + fidelity 契约面」首次端到端
+跑通并 accepted，证明该形态能完成真实项目（非仅单元测试）。
+
 ## 8. 门禁与设计缺口（preparation/wrap-up 已实施；overlay 待 ADR）
 
 **构建型项目的验证只读域 vs 构建输出**：`verify_project` 的 check 在只读验证域运行
