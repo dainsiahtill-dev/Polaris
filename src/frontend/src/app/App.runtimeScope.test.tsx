@@ -219,7 +219,8 @@ describe('App engineering-only production entry', () => {
   it.each(['', '&engine=legacy'])('defaults to Director and creates only an engineering run from a clean URL (%s)', async (suffix) => {
     window.history.replaceState({}, '', window.location.href + suffix);
     render(<App />);
-    expect(screen.getByRole('heading', { name: 'Engineering v2 · Director' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /运行控制台/ })).toBeInTheDocument();
+    expect(screen.getByText('Engineering v2 · Director')).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('工程目标'), { target: { value: 'Implement the requested change' } });
     fireEvent.click(screen.getByRole('button', { name: '开始执行' }));
     await waitFor(() => expect(window.location.search).toContain('engineering_run=engineering-1'));
@@ -238,7 +239,7 @@ describe('App engineering-only production entry', () => {
     fireEvent.click(screen.getByRole('button', { name: 'ContextOS' }));
     fireEvent.click(screen.getByRole('button', { name: '返回工程运行' }));
     fireEvent.click(screen.getByRole('button', { name: 'PM 规划' }));
-    expect(screen.getByRole('heading', { name: 'Engineering v2 · PM' })).toBeInTheDocument();
+    expect(screen.getByText('Engineering v2 · PM')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Director 工程' }));
     fireEvent.click(screen.getByRole('button', { name: '取消' }));
     await waitFor(() => expect(screen.getByRole('button', { name: '继续同一运行' })).toBeInTheDocument());

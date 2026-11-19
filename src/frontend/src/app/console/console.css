@@ -1,0 +1,439 @@
+/**
+ * Polaris Mission Control design system — "Expedition Console" light theme.
+ *
+ * Reference: warm paper workspace + deep forest-green command surfaces.
+ * Light cream content area, dark spruce sidebar/hero with topographic
+ * contour texture, soft white cards with hairline borders, expedition-green
+ * status accents. Data readouts use the mono font; CJK falls back to the
+ * system sans stack.
+ */
+
+.console-scope {
+  --cx-font-display: "Space Grotesk", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --cx-font-mono: "JetBrains Mono", "SFMono-Regular", ui-monospace, "Cascadia Code", Menlo, monospace;
+
+  /* Paper workspace */
+  --cx-paper: #f2f1ea;
+  --cx-paper-deep: #e9e7dd;
+  --cx-card: #ffffff;
+  --cx-line: #e2dfd2;
+  --cx-line-strong: #cfc9b4;
+  --cx-ink: #17251d;
+  --cx-ink-dim: #5c6b60;
+  --cx-ink-faint: #8b968c;
+
+  /* Expedition green */
+  --cx-green: #1f6b47;
+  --cx-green-deep: #12402c;
+  --cx-green-abyss: #0d3323;
+  --cx-green-soft: #e3efe7;
+  --cx-green-mist: #eef5f0;
+  --cx-mint: #3aa873;
+  --cx-gold: #b98218;
+  --cx-gold-soft: #f6ecd4;
+  --cx-red: #c0392b;
+  --cx-red-soft: #f9e9e7;
+  --cx-amber: #d08c1d;
+  --cx-cyan: #1f7a8c;
+
+  --cx-ease: cubic-bezier(0.32, 0.72, 0, 1);
+
+  font-family: var(--cx-font-display);
+  color: var(--cx-ink);
+  background:
+    radial-gradient(900px 480px at 88% -8%, rgba(31, 107, 71, 0.06), transparent 60%),
+    var(--cx-paper);
+}
+
+/* ── Typography helpers ─────────────────────────────────────────────── */
+
+.console-scope .cx-mono {
+  font-family: var(--cx-font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.console-scope .cx-eyebrow {
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--cx-ink-faint);
+}
+
+.console-scope .cx-dim { color: var(--cx-ink-dim); }
+.console-scope .cx-faint { color: var(--cx-ink-faint); }
+
+/* ── Cards ──────────────────────────────────────────────────────────── */
+
+.console-scope .cx-card {
+  background: var(--cx-card);
+  border: 1px solid var(--cx-line);
+  border-radius: 1rem;
+  box-shadow: 0 1px 2px rgba(23, 37, 29, 0.04), 0 10px 28px rgba(23, 37, 29, 0.05);
+}
+
+.console-scope .cx-card-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--cx-ink);
+}
+
+.console-scope .cx-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.85rem 1.05rem;
+  border-bottom: 1px solid var(--cx-line);
+}
+
+.console-scope .cx-divider { border-color: var(--cx-line); }
+
+/* ── Dark green command surfaces (rail / hero) ──────────────────────── */
+
+.console-scope .cx-canopy {
+  background:
+    radial-gradient(640px 420px at 110% -10%, rgba(58, 168, 115, 0.16), transparent 55%),
+    linear-gradient(168deg, #164a32 0%, #113626 60%, #0d3323 100%);
+  color: #f2f7f3;
+}
+
+.console-scope .cx-canopy-soft {
+  background: linear-gradient(160deg, rgba(22, 74, 50, 0.96), rgba(13, 51, 35, 0.98));
+  color: #f2f7f3;
+}
+
+/* ── Status pills ───────────────────────────────────────────────────── */
+
+.console-scope .cx-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  padding: 0.12rem 0.62rem;
+  font-family: var(--cx-font-mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.console-scope .cx-pill--idle { color: var(--cx-ink-dim); background: #efede4; border-color: var(--cx-line); }
+.console-scope .cx-pill--info { color: var(--cx-cyan); background: #e5f2f4; border-color: #c8e2e6; }
+.console-scope .cx-pill--run { color: var(--cx-green); background: var(--cx-green-soft); border-color: #c4dfd0; }
+.console-scope .cx-pill--ok { color: #1c7a4d; background: #e2f3ea; border-color: #bfe3d0; }
+.console-scope .cx-pill--warn { color: var(--cx-amber); background: #faf0da; border-color: #ecd9ae; }
+.console-scope .cx-pill--bad { color: var(--cx-red); background: var(--cx-red-soft); border-color: #eccbc6; }
+.console-scope .cx-pill--gold { color: var(--cx-gold); background: var(--cx-gold-soft); border-color: #e8d5a8; }
+.console-scope .cx-pill--light { color: #dff3e8; background: rgba(255, 255, 255, 0.10); border-color: rgba(255, 255, 255, 0.18); }
+
+/* ── Dots ───────────────────────────────────────────────────────────── */
+
+.console-scope .cx-dot { position: relative; width: 0.5rem; height: 0.5rem; border-radius: 999px; flex: none; }
+.console-scope .cx-dot--ok { background: var(--cx-mint); }
+.console-scope .cx-dot--run { background: var(--cx-mint); }
+.console-scope .cx-dot--warn { background: var(--cx-amber); }
+.console-scope .cx-dot--bad { background: var(--cx-red); }
+.console-scope .cx-dot--idle { background: #b7bfb4; }
+.console-scope .cx-dot--light { background: #7ce3ae; }
+
+.console-scope .cx-dot--pulse::after {
+  content: "";
+  position: absolute;
+  inset: -0.3rem;
+  border-radius: 999px;
+  border: 1.5px solid rgba(58, 168, 115, 0.65);
+  opacity: 0;
+  animation: cx-pulse 2.2s var(--cx-ease) infinite;
+}
+
+@keyframes cx-pulse {
+  0% { transform: scale(0.5); opacity: 0.95; }
+  70%, 100% { transform: scale(1.45); opacity: 0; }
+}
+
+/* ── Buttons ────────────────────────────────────────────────────────── */
+
+.console-scope .cx-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  border-radius: 0.7rem;
+  padding: 0.5rem 1.1rem;
+  font-family: var(--cx-font-display);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: transform 0.3s var(--cx-ease), filter 0.3s var(--cx-ease), background-color 0.3s var(--cx-ease), border-color 0.3s var(--cx-ease), color 0.3s var(--cx-ease);
+  will-change: transform;
+}
+.console-scope .cx-btn:active { transform: scale(0.97); }
+.console-scope .cx-btn:disabled { opacity: 0.42; cursor: not-allowed; transform: none; }
+
+.console-scope .cx-btn--primary {
+  color: #f4faf6;
+  background: linear-gradient(150deg, #1c5c3e, var(--cx-green-deep));
+  box-shadow: 0 8px 20px rgba(18, 64, 44, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+.console-scope .cx-btn--primary:not(:disabled):hover { filter: brightness(1.12); transform: translateY(-1px); }
+
+.console-scope .cx-btn--ghost {
+  color: var(--cx-ink-dim);
+  border-color: var(--cx-line-strong);
+  background: #fff;
+}
+.console-scope .cx-btn--ghost:not(:disabled):hover { color: var(--cx-ink); border-color: #b9b29a; }
+
+.console-scope .cx-btn--danger {
+  color: #a93226;
+  border-color: #e3b8b2;
+  background: #fdf3f1;
+}
+.console-scope .cx-btn--danger:not(:disabled):hover { background: #fbe7e4; border-color: #d69a92; }
+
+.console-scope .cx-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.6rem;
+  color: var(--cx-ink-dim);
+  border: 1px solid var(--cx-line);
+  background: #fff;
+  transition: color 0.25s var(--cx-ease), border-color 0.25s var(--cx-ease), background-color 0.25s var(--cx-ease);
+}
+.console-scope .cx-icon-btn:hover { color: var(--cx-ink); border-color: var(--cx-line-strong); }
+
+.console-scope :focus-visible {
+  outline: 2px solid rgba(31, 107, 71, 0.55);
+  outline-offset: 2px;
+}
+
+/* ── Inputs ─────────────────────────────────────────────────────────── */
+
+.console-scope .cx-input {
+  width: 100%;
+  border-radius: 0.75rem;
+  border: 1px solid var(--cx-line-strong);
+  background: #fbfaf5;
+  color: var(--cx-ink);
+  font-family: var(--cx-font-display);
+  font-size: 0.84rem;
+  line-height: 1.6;
+  padding: 0.65rem 0.85rem;
+  transition: border-color 0.25s var(--cx-ease), box-shadow 0.25s var(--cx-ease), background-color 0.25s var(--cx-ease);
+  resize: vertical;
+}
+.console-scope .cx-input::placeholder { color: #a4aca2; }
+.console-scope .cx-input:focus { outline: none; border-color: var(--cx-green); background: #fff; box-shadow: 0 0 0 3px rgba(31, 107, 71, 0.12); }
+
+/* ── Left rail ──────────────────────────────────────────────────────── */
+
+.console-scope .cx-rail {
+  background:
+    radial-gradient(420px 300px at 120% 0%, rgba(58, 168, 115, 0.12), transparent 60%),
+    linear-gradient(178deg, #16482f 0%, #103723 55%, #0c2f1f 100%);
+  color: #e8f1ea;
+}
+
+.console-scope .cx-rail-section { border-top: 1px solid rgba(255, 255, 255, 0.08); }
+
+.console-scope .cx-rail-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: rgba(232, 241, 234, 0.72);
+  font-family: var(--cx-font-display);
+  font-size: 0.82rem;
+  font-weight: 500;
+  padding: 0.52rem 0.8rem;
+  border-radius: 0.65rem;
+  cursor: pointer;
+  transition: color 0.25s var(--cx-ease), background-color 0.25s var(--cx-ease);
+}
+.console-scope .cx-rail-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.06); }
+.console-scope .cx-rail-btn[aria-pressed="true"] { color: #d9f5e4; background: rgba(124, 227, 174, 0.14); }
+
+.console-scope .cx-rail-pill {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  border-radius: 0.65rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.05);
+  color: #e8f1ea;
+  font-size: 0.78rem;
+  padding: 0.45rem 0.7rem;
+  cursor: pointer;
+  transition: background-color 0.25s var(--cx-ease), border-color 0.25s var(--cx-ease);
+}
+.console-scope .cx-rail-pill:hover { background: rgba(255, 255, 255, 0.09); border-color: rgba(255, 255, 255, 0.22); }
+
+/* ── Role tracks ────────────────────────────────────────────────────── */
+
+.console-scope .cx-lane {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  border-radius: 0.85rem;
+  border: 1px solid transparent;
+  padding: 0.62rem 0.8rem;
+  transition: background-color 0.3s var(--cx-ease), border-color 0.3s var(--cx-ease);
+}
+.console-scope .cx-lane--idle { color: var(--cx-ink-dim); }
+.console-scope .cx-lane--running { background: var(--cx-green-mist); border-color: #c4dfd0; }
+.console-scope .cx-lane--done { background: #f2f8f4; border-color: #d5e8dd; }
+.console-scope .cx-lane--bad { background: var(--cx-red-soft); border-color: #eccbc6; }
+
+.console-scope .cx-lane-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.15rem;
+  height: 2.15rem;
+  border-radius: 0.7rem;
+  flex: none;
+  background: #efede4;
+  color: var(--cx-ink-dim);
+  border: 1px solid var(--cx-line);
+}
+.console-scope .cx-lane--running .cx-lane-glyph { background: var(--cx-green-soft); color: var(--cx-green); border-color: #c4dfd0; }
+.console-scope .cx-lane--done .cx-lane-glyph { background: #e2f3ea; color: #1c7a4d; border-color: #bfe3d0; }
+.console-scope .cx-lane--bad .cx-lane-glyph { background: var(--cx-red-soft); color: var(--cx-red); border-color: #eccbc6; }
+
+.console-scope .cx-rail-line {
+  position: absolute;
+  left: 1.72rem;
+  top: -0.4rem;
+  bottom: -0.4rem;
+  width: 2px;
+  background: var(--cx-line);
+  z-index: 0;
+}
+
+/* ── Receipt timeline ───────────────────────────────────────────────── */
+
+.console-scope .cx-receipt {
+  display: flex;
+  gap: 0.8rem;
+  align-items: flex-start;
+  border: 1px solid var(--cx-line);
+  border-radius: 0.85rem;
+  background: #fdfcf8;
+  padding: 0.7rem 0.85rem;
+  cursor: pointer;
+  transition: border-color 0.25s var(--cx-ease), box-shadow 0.25s var(--cx-ease), transform 0.25s var(--cx-ease);
+}
+.console-scope .cx-receipt:hover { border-color: var(--cx-line-strong); box-shadow: 0 6px 18px rgba(23, 37, 29, 0.07); }
+.console-scope .cx-receipt--ok { border-left: 3px solid var(--cx-mint); }
+.console-scope .cx-receipt--bad { border-left: 3px solid var(--cx-red); background: #fdf7f6; }
+.console-scope .cx-receipt--info { border-left: 3px solid #7fb6c2; }
+
+.console-scope .cx-receipt-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.15rem;
+  height: 2.15rem;
+  border-radius: 0.65rem;
+  flex: none;
+  background: var(--cx-green-mist);
+  color: var(--cx-green);
+  border: 1px solid #d5e8dd;
+}
+.console-scope .cx-receipt--bad .cx-receipt-glyph { background: var(--cx-red-soft); color: var(--cx-red); border-color: #eccbc6; }
+
+.console-scope .cx-terminal {
+  background: #14231c;
+  color: #c9e8d4;
+  border-radius: 0.65rem;
+  font-family: var(--cx-font-mono);
+  font-size: 0.74rem;
+  line-height: 1.65;
+  padding: 0.6rem 0.8rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.console-scope .cx-terminal .cx-terminal-ok { color: #7ce3ae; }
+.console-scope .cx-terminal .cx-terminal-bad { color: #ff9d8a; }
+
+/* ── Stage gate meter ───────────────────────────────────────────────── */
+
+.console-scope .cx-meter {
+  display: flex;
+  gap: 0.3rem;
+}
+.console-scope .cx-meter-seg {
+  height: 0.42rem;
+  flex: 1;
+  border-radius: 999px;
+  background: #e7e4d7;
+  transition: background-color 0.4s var(--cx-ease);
+}
+.console-scope .cx-meter-seg--fill { background: linear-gradient(90deg, #3aa873, #1f6b47); }
+
+/* ── Verdict cells ──────────────────────────────────────────────────── */
+
+.console-scope .cx-verdict-cell {
+  border: 1px solid var(--cx-line);
+  border-radius: 0.85rem;
+  background: #fdfcf8;
+  padding: 0.7rem 0.85rem;
+}
+
+/* ── Terminal-style dark chips inside hero ──────────────────────────── */
+
+.console-scope .cx-hero-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.08);
+  color: #eaf5ee;
+  font-family: var(--cx-font-mono);
+  font-size: 0.7rem;
+  padding: 0.18rem 0.6rem;
+}
+
+/* ── Entry motion ───────────────────────────────────────────────────── */
+
+.console-scope .cx-enter { opacity: 0; animation: cx-fade-up 0.6s var(--cx-ease) forwards; }
+.console-scope .cx-enter-1 { animation-delay: 0.03s; }
+.console-scope .cx-enter-2 { animation-delay: 0.08s; }
+.console-scope .cx-enter-3 { animation-delay: 0.14s; }
+.console-scope .cx-enter-4 { animation-delay: 0.2s; }
+.console-scope .cx-enter-5 { animation-delay: 0.27s; }
+.console-scope .cx-enter-6 { animation-delay: 0.34s; }
+
+@keyframes cx-fade-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .console-scope .cx-enter { animation: none; opacity: 1; }
+  .console-scope .cx-dot--pulse::after { animation: none; }
+}
+
+/* ── Scrollbars ─────────────────────────────────────────────────────── */
+
+.console-scope .cx-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+.console-scope .cx-scroll::-webkit-scrollbar-track { background: transparent; }
+.console-scope .cx-scroll::-webkit-scrollbar-thumb { background: #d5d1c0; border-radius: 999px; }
+.console-scope .cx-scroll::-webkit-scrollbar-thumb:hover { background: #c0ba9f; }

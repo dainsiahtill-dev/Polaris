@@ -4,27 +4,38 @@ import { useEngineeringRun } from '@/hooks/useEngineeringRun';
 import { useFactoryBench } from '@/hooks/useFactoryBench';
 import type { EngineeringRole } from '@/services/api.types';
 import { RuntimeTransportProvider } from '@/runtime/transport';
-import { LegacyRunHistory } from '@/app/components/factory/LegacyRunHistory';
-import { EngineeringRunWorkspace } from '@/app/components/factory/EngineeringRunWorkspace';
 import { EngineeringContextView } from '@/app/components/contextos/ContextOSWorkspace';
-import { BenchPanel } from '@/app/components/factory/BenchPanel';
 import { WorkspaceFilesPage } from '@/app/components/workspace-files/WorkspaceFilesPage';
 import { RuntimeDiagnosticsWorkspace } from '@/app/components/RuntimeDiagnosticsWorkspace';
+import { LegacyRunHistory } from '@/app/components/factory/LegacyRunHistory';
+import { BenchPanel } from '@/app/components/factory/BenchPanel';
 import { ErrorBoundaryClass } from '@/app/components/ErrorBoundary';
 import { Toaster } from '@/app/components/ui/sonner';
 import { LauncherWorkspace } from '@/app/launcher/LauncherWorkspace';
 import { shouldEnableGlobalBenchObserver } from '@/app/runtimeScope';
 import { useRuntime } from './hooks/useRuntime';
+import { ConsoleShell, EvidenceLedgerView, MissionControlView } from './console';
+import { ROLE_NAV_LABELS } from './console/format';
+import {
+  IconCompass, IconContext, IconFlask, IconFolder, IconGauge, IconInbox,
+  IconLedger, IconMonitor, IconSliders,
+} from './console/icons';
 import { devLogger } from '@/app/utils/devLogger';
 
 const SettingsModal = lazy(() => import('./components/SettingsModal').then((module) => ({ default: module.SettingsModal })));
-const roles: { id: EngineeringRole; label: string }[] = [
-  { id: 'director', label: 'Director 工程' },
-  { id: 'pm', label: 'PM 规划' },
-  { id: 'chief_engineer', label: 'CE 设计' },
-  { id: 'qa', label: 'QA 审阅' },
-];
-type View = EngineeringRole | 'contextos' | 'files' | 'history' | 'diagnostics' | 'bench';
+
+const VIEW_LABELS: Record<View, string> = {
+  console: '运行控制台',
+  ledger: '证据账本',
+  contextos: 'ContextOS',
+  files: '文件',
+  history: '运行记录',
+  diagnostics: '运行诊断',
+  bench: '内部 Bench 观测',
+};
+
+type View = 'console' | 'ledger' | 'contextos' | 'files' | 'history' | 'diagnostics' | 'bench';
+const ROLE_IDS: EngineeringRole[] = ['pm', 'chief_engineer', 'director', 'qa'];
 
 function readInitialRuntimeScope() {
   const params = new URLSearchParams(window.location.search);
@@ -36,7 +47,7 @@ function readInitialRuntimeScope() {
     instance: readBinding(params.get('instance'), params.get('instanceId'), params.get('polarisInstance'), import.meta.env.VITE_POLARIS_INSTANCE_ID),
     globalObserverRequested: readBinding(params.get('globalObserver') ?? import.meta.env.VITE_POLARIS_GLOBAL_BENCH_OBSERVER) === '1',
     run: params.get('engineering_run') || '',
-    role: roles.find(({ id }) => id === params.get('engineering_role'))?.id || 'director',
+    role: (['pm', 'chief_engineer', 'director', 'qa'] as const).find((id) => id === params.get('engineering_role')) || 'director',
   };
 }
 
@@ -52,7 +63,7 @@ function AppContent() {
     ? '实例缺少 workspace 绑定。请从 Launcher 重新打开该实例。'
     : !workspace ? '尚未绑定工作区。请检查实例入口或系统配置。' : '';
   const [role, setRole] = useState<EngineeringRole>(initial.role);
-  const [view, setView] = useState<View>(initial.role);
+  const [view, setView] = useState<View>('console');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsError, setSettingsError] = useState('');
   const engineering = useEngineeringRun({ workspace, sessionId: initial.run, enabled: !bindingError });
@@ -80,38 +91,54 @@ function AppContent() {
     url.searchParams.delete('engineering_role');
     return `${url.pathname}${url.search}`;
   }, []);
-  const returnToEngineering = () => setView(role);
-  const navClass = 'rounded-lg px-3 py-3 text-sm text-slate-300 hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400';
+  const railIcon = 'h-4.5 w-4.5 shrink-0';
+  const railTop = ROLE_IDS.map((id) => ({
+    id: `role-${id}`,
+    label: ROLE_NAV_LABELS[id],
+    icon: <IconMonitor className={railIcon} />,
+    pressed: view === 'console' && role === id,
+    onClick: () => { setRole(id); setView('console'); },
+  }));
+  const railMid = [
+    { id: 'ledger', label: '证据账本', icon: <IconLedger className={railIcon} />, pressed: view === 'ledger', onClick: () => setView('ledger') },
+    { id: 'contextos', label: 'ContextOS', icon: <IconContext className={railIcon} />, pressed: view === 'contextos', onClick: () => setView('contextos') },
+    { id: 'files', label: '文件', icon: <IconFolder className={railIcon} />, pressed: view === 'files', onClick: () => setView('files') },
+    { id: 'history', label: '运行记录', icon: <IconInbox className={railIcon} />, pressed: view === 'history', onClick: () => setView('history') },
+    { id: 'diagnostics', label: '运行诊断', icon: <IconGauge className={railIcon} />, pressed: view === 'diagnostics', onClick: () => setView('diagnostics') },
+    ...(globalBenchObserverEnabled ? [{ id: 'bench', label: '内部 Bench 观测', icon: <IconFlask className={railIcon} />, pressed: view === 'bench', onClick: () => setView('bench' as View) }] : []),
+  ];
+  const returnToConsole = () => setView('console');
   return <ErrorBoundaryClass onError={(error) => devLogger.error(error.message)}>
-    <div className="polaris-soft-scope soft-app-bg flex size-full min-h-0 flex-col overflow-hidden text-slate-100">
-      <nav aria-label="工作区导航" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-white/10 px-4 py-2">
-        {roles.map((entry) => <button key={entry.id} type="button" aria-pressed={view === entry.id} className={navClass} onClick={() => { setRole(entry.id); setView(entry.id); }}>{entry.label}</button>)}
-        <button type="button" className={navClass} onClick={() => setView('contextos')}>ContextOS</button>
-        <button type="button" className={navClass} onClick={() => setView('files')}>文件</button>
-        <button type="button" className={navClass} onClick={() => setView('history')}>历史记录（只读）</button>
-        <button type="button" className={navClass} onClick={() => setView('diagnostics')}>运行诊断</button>
-        {globalBenchObserverEnabled && <button type="button" className={navClass} onClick={() => setView('bench')}>内部 Bench 观测</button>}
-        <button type="button" className={navClass} onClick={() => setSettingsOpen(true)}>系统配置</button>
-        <a className={navClass} href={launcherUrl}>Launcher</a>
-      </nav>
-      <div className="min-h-0 flex-1">
-        {bindingError ? <p role="alert" className="p-6 text-red-200">{bindingError}</p>
-          : view === 'contextos' ? <EngineeringContextView engineering={engineering} workspace={workspace} onBackToMain={returnToEngineering} />
-          : view === 'files' ? <WorkspaceFilesPage workspace={workspace} onBackToMain={returnToEngineering} />
-          : view === 'diagnostics' ? <RuntimeDiagnosticsWorkspace workspace={workspace} connectionState={{ live: engineering.connected, reconnecting: engineering.reconnecting, attemptCount: 0 }} onBackToMain={returnToEngineering} />
-          : view === 'history' ? <LegacyRunHistory workspace={workspace} onBackToMain={returnToEngineering} />
-          : view === 'bench' && globalBenchObserverEnabled ? <BenchPanel enabled bench={bench} />
-          : <EngineeringRunWorkspace workspace={workspace} binding={engineering} role={role} onBackToMain={returnToEngineering} />}
-      </div>
-      {settingsError && <p role="alert" className="p-3 text-red-200">{settingsError}</p>}
-      <Suspense fallback={<p role="status">正在载入系统配置…</p>}>
+    <ConsoleShell
+      workspace={workspace}
+      viewLabel={VIEW_LABELS[view]}
+      connected={engineering.connected}
+      reconnecting={engineering.reconnecting}
+      footerStatus={engineering.connected ? '运行中' : '连接断开'}
+      railTop={railTop}
+      railMid={railMid}
+      railBottom={[
+        { id: 'settings', label: '系统配置', icon: <IconSliders className={railIcon} />, pressed: settingsOpen, onClick: () => setSettingsOpen(true) },
+        { id: 'launcher', label: 'Launcher', icon: <IconCompass className={railIcon} />, href: launcherUrl },
+      ]}
+    >
+      {bindingError ? <p role="alert" className="p-6 text-sm text-[var(--cx-red)]">{bindingError}</p>
+        : view === 'ledger' ? <div className="min-h-0 flex-1 overflow-y-auto cx-scroll"><EvidenceLedgerView binding={engineering} /></div>
+          : view === 'contextos' ? <EngineeringContextView engineering={engineering} workspace={workspace} onBackToMain={returnToConsole} />
+            : view === 'files' ? <WorkspaceFilesPage workspace={workspace} onBackToMain={returnToConsole} />
+              : view === 'diagnostics' ? <RuntimeDiagnosticsWorkspace workspace={workspace} connectionState={{ live: engineering.connected, reconnecting: engineering.reconnecting, attemptCount: 0 }} onBackToMain={returnToConsole} />
+                : view === 'history' ? <LegacyRunHistory workspace={workspace} onBackToMain={returnToConsole} />
+                  : view === 'bench' && globalBenchObserverEnabled ? <BenchPanel enabled bench={bench} />
+                    : <MissionControlView workspace={workspace} binding={engineering} role={role} onRoleChange={setRole} />}
+      {settingsError && <p role="alert" className="border-t border-[var(--cx-line)] bg-[#fbfaf5] px-5 py-2 text-sm text-[var(--cx-red)]">{settingsError}</p>}
+      <Suspense fallback={<p role="status" className="border-t border-[var(--cx-line)] bg-[#fbfaf5] px-5 py-2 text-xs text-[var(--cx-ink-dim)]">正在载入系统配置…</p>}>
         {settingsOpen && <SettingsModal isOpen settings={settings} onClose={() => setSettingsOpen(false)} onSave={async (updates) => {
           try { setSettingsError(''); await updateSettings(updates); setSettingsOpen(false); }
           catch (error) { setSettingsError(error instanceof Error ? error.message : '保存配置失败'); }
         }} />}
       </Suspense>
       <Toaster position="bottom-right" />
-    </div>
+    </ConsoleShell>
   </ErrorBoundaryClass>;
 }
 
