@@ -117,9 +117,17 @@ overlap with this session's changed files). Findings:
 - Verified no regression: closure_a + closure_b + build_evidence together
   120 passed / 7 pre-existing failed.
 
-Conclusion: this cluster needs a dedicated change to the adapter's
-existing-scope fallback semantics (fail-closed on provider guard violations
-for requires_fresh tasks), which is a behavior change beyond safe test-only
-convergence and must be designed against the settlement authority chain
-(claim receipt, task completion projection, JobToken) — recorded as the next
-convergence work item.
+Root cause FOUND and FIXED (a2997fa4c): `_task_completion_projection`
+returns `{}` (not None) for absent projections, so the vacuous-success guard
+`is not None` was always True — minting ok=True receipt evidence for tasks
+with NO projection. Any requires_fresh task whose declared files merely
+existed on disk then preflight-completed without delivery proof, bypassing
+provider guard violations. Fixed with `bool(...)`. Four closure_b tests now
+reject correctly; adapters suite 2310 passed with no regressions.
+
+Remaining 3 closure_b failures need the full settlement authority fixture
+(task completion projection + JobToken + execution-broker sealed receipts +
+claim evidence) — a per-test fixture build against the claim chain, recorded
+as the next item. The other clusters (materialization rust bin-paths, quality
+gate guard, r31 html revision, kernel run-ledger, instances ports) remain
+pre-existing and individually triaged.
