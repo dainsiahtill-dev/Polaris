@@ -144,10 +144,13 @@ dist/...`）时写 `dist/` → EROFS。正确做法是模型先用 `execute_comm
 （coreutils 输出 `Read-only file system`，无 `EROFS` 字样，原检测会漏）。
 服务级测试：`test_preparation_gate_requires_writing_execute_before_reverify`。
 
-安全的非对称修法（未实施，需 ADR）：验证域允许工作区可写，但用**输入快照哈希**
-（`PreparedProjectVerificationSandbox` 已有此机制）在后置断言中证明输入未被改动；改动
-输入即判失败。这样构建输出可写、输入仍不可伪造。**禁止**把 EROFS 目标自动声明为
-output root——那会让 check 写任意输入路径，破坏只读保证。
+**已评估并否决的 overlay 方案**：让验证域可写、仅 ro-bind 预存顶层条目以允许新构建输出。
+实现后发现它**削弱既有的确定性 containment 不变量**：check 仍能创建新的顶层源文件
+（`test_strict_verifier_still_contains_source_writes` 红线）。bwrap 无法区分“新构建输出
+目录”和“新源文件”，除非知道声明输出根——而这正是原设计（仅声明 output roots 可写）已封闭的
+边界。故**放弃 overlay**，保留 containment；构建型项目的正确路径是 preparation gate
+强制模型先用 `execute_command`（可写）准备，再只读验证。若未来要重开此方案，必须先给出
+不削弱 containment 的声明输出发现机制并走 ADR。
 
 **通过后不收尾**：弱模型在 `verify_project` 通过后仍继续改输出，使 `workspace_revision`
 前进、验证证据失效，需要重新验证（L1-01 实测：2 次 passed 都被后续写入作废，115+ 轮
