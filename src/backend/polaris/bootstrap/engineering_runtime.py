@@ -200,6 +200,8 @@ def observe_engineering_run(service: EngineeringRunService, session_id: str, wor
         "qa_verdict": row["qa_verdict"],
         "project_outcome": row["project_outcome"],
         "acceptance_basis": row["acceptance_basis"],
+        "acceptance_dimensions": row.get("acceptance_dimensions"),
+        "acceptance_fidelity_missing": row.get("acceptance_fidelity_missing"),
         "checks": row["checks"],
         "required_checks": row["required_checks"],
         "verification_commands": row["verification_commands"],

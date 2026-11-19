@@ -88,3 +88,19 @@ Run 4 的 accepted 是假阳性：verification=passed 的实际内容是
   修复后（运行时状态探针 frontWheelSpin 由 0 变为正常）→ approved →
   accepted。弱模型艺术的审美上限仍在，但"能跑+条款全真+有证据"成为
   平台可认证的底线。
+
+
+## 第五层：系统性缺陷修复（D1-D5 + 跨运行学习）
+
+生产验证（v4, pelican-bike-v3, collaborative）：QA approved、verification
+passed，但 outcome=**unknown** —— fidelity 维度未测（QA 未提交
+clause_findings 矩阵），平台列出全部缺失目标条款并阻断 accepted。
+"未知即通过"被堵死；维度徽章（功能·通过 / 保真·未测）已在控制台渲染。
+
+落地机制：
+- 验收维度本体论（function/fidelity），无通过测量 = unknown，阻断 accepted
+- 目标条款机械化提取 + QA 指令内嵌条款清单 + report_review 结构化
+  clause_findings（fail 条款强制 approved=false）
+- 门禁消息与拦截集单源化（引导与行为不可能再漂移）
+- 压缩-准入计价对账协议锁（系统性测试模块）
+- workspace 级跨运行教训回流（QA 拒绝沉淀，下轮 Director 注入）
