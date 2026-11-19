@@ -1214,13 +1214,13 @@ async def run_engineering_loop(
                     # review that same candidate, so the turn has to conclude.
                     verification_passed = True
                     candidate_verification_passed = True
-                content_text = str(observation.content or "").lower()
-                if (
-                    observation.tool == "verify_project"
-                    and not observation.ok
-                    and ("read-only file system" in content_text or "erofs" in content_text)
-                ):
-                    preparation_pending = True
+                if observation.tool == "verify_project" and not observation.ok:
+                    from polaris.cells.roles.runtime.internal.engineering_verification import (
+                        is_read_only_failure,
+                    )
+
+                    if is_read_only_failure(str(observation.content or "")):
+                        preparation_pending = True
                 if advances_revision and observation.tool == "execute_command":
                     # An actual writing preparation step clears the EROFS gate.
                     preparation_pending = False

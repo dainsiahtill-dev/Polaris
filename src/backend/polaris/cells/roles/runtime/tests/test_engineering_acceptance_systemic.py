@@ -334,6 +334,7 @@ def test_fidelity_truncated_goal_stays_unknown_even_with_full_prefix() -> None:
 def test_read_only_write_targets_names_build_output() -> None:
     """The read-only corrective note must name the path the check tried to write
     (a build output), not a generic dependency-install hint."""
+    from polaris.cells.roles.runtime.internal.engineering_verification import is_read_only_failure
     from polaris.cells.roles.runtime.public.contracts.engineering_run import ToolObservation
     from polaris.cells.roles.runtime.public.engineering_service import read_only_write_targets
 
@@ -363,6 +364,20 @@ def test_read_only_write_targets_names_build_output() -> None:
         ),
     )
     assert read_only_write_targets(capitalized) == ["dist"]
+    # npm reports a failed mkdir as ENOENT with a `syscall mkdir` line.
+    npm_style = (
+        ToolObservation(
+            "verification-3-0",
+            "execute_command",
+            False,
+            "npm ERR! code ENOENT\nnpm ERR! syscall mkdir\nnpm ERR! path /ws/node_modules\n",
+            1,
+            False,
+        ),
+    )
+    assert is_read_only_failure(str(npm_style[0].content))
+    assert read_only_write_targets(npm_style) == []
+    assert not is_read_only_failure("AssertionError: expected 1 got 2")
 
 
 def test_distilled_verification_failure_names_read_only_write() -> None:

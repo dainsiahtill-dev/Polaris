@@ -220,6 +220,15 @@ def read_only_write_targets(checks: tuple[ToolObservation, ...]) -> list[str]:
     return targets[:3]
 
 
+def is_read_only_failure(checks: tuple[ToolObservation, ...]) -> bool:
+    """True when any failed check could not write/create in the read-only scope."""
+    from polaris.cells.roles.runtime.internal.engineering_verification import (
+        is_read_only_failure as failure_for_content,
+    )
+
+    return any(failure_for_content(str(check.content or "")) for check in checks)
+
+
 class EngineeringRunService:
     """Own live handles; persistent facts belong only to EngineeringSessionStore.
 
@@ -1805,11 +1814,7 @@ class EngineeringRunService:
                 }
                 for actual, check in zip(commands, checks, strict=False)
             ]
-            read_only_failure = any(
-                "read-only file system" in str(check.content or "").lower()
-                or "erofs" in str(check.content or "").lower()
-                for check in checks
-            )
+            read_only_failure = is_read_only_failure(checks)
             read_only_targets = read_only_write_targets(checks) if read_only_failure else []
             target_note = (
                 " Your check tried to write " + ", ".join(read_only_targets) + "." if read_only_targets else ""

@@ -46,6 +46,17 @@ class CandidateObservationUnavailableError(ValueError):
 _MAX_CAPTURE_ROOT_ENTRIES = 10_000
 
 _EROFS_PATH = re.compile(r"(?:Could not write file|cannot create directory|mkdir)\D{0,40}?'([^']+)'")
+# A failed check tried to create/write inside the read-only verification scope.
+# Coreutils prints "Read-only file system"; tsc prints "EROFS: read-only file
+# system"; npm reports a failed mkdir as "npm ERR! code ENOENT ... syscall
+# mkdir". All three mean the same thing: the check must be prepared first.
+READ_ONLY_MARKERS = ("read-only file system", "erofs", "syscall mkdir")
+
+
+def is_read_only_failure(content: str) -> bool:
+    """True when a failed check's output says it could not write/create."""
+    lowered = content.lower()
+    return any(marker in lowered for marker in READ_ONLY_MARKERS)
 
 
 def read_only_write_targets(content: str) -> list[str]:
@@ -56,8 +67,7 @@ def read_only_write_targets(content: str) -> list[str]:
     tried to create), not a generic dependency-install hint, so a weak model can
     act on it instead of repeating the same write.
     """
-    lowered = content.lower()
-    if "read-only file system" not in lowered and "erofs" not in lowered:
+    if not is_read_only_failure(content):
         return []
     targets: list[str] = []
     for match in _EROFS_PATH.finditer(content):
