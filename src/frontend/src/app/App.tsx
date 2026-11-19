@@ -14,10 +14,10 @@ import { Toaster } from '@/app/components/ui/sonner';
 import { LauncherWorkspace } from '@/app/launcher/LauncherWorkspace';
 import { shouldEnableGlobalBenchObserver } from '@/app/runtimeScope';
 import { useRuntime } from './hooks/useRuntime';
-import { ConsoleShell, EvidenceLedgerView, MissionControlView } from './console';
+import { ConsoleShell, MissionControlView } from './console';
 import {
   IconCompass, IconContext, IconFlask, IconFolder, IconGauge, IconInbox,
-  IconLedger, IconMonitor, IconSliders,
+  IconMonitor, IconSliders,
 } from './console/icons';
 import { devLogger } from '@/app/utils/devLogger';
 
@@ -25,7 +25,6 @@ const SettingsModal = lazy(() => import('./components/SettingsModal').then((modu
 
 const VIEW_LABELS: Record<View, string> = {
   console: '工程工作台',
-  ledger: '证据账本',
   contextos: 'ContextOS',
   files: '项目文件',
   history: '运行历史',
@@ -33,7 +32,7 @@ const VIEW_LABELS: Record<View, string> = {
   bench: '内部 Bench 观测',
 };
 
-type View = 'console' | 'ledger' | 'contextos' | 'files' | 'history' | 'diagnostics' | 'bench';
+type View = 'console' | 'contextos' | 'files' | 'history' | 'diagnostics' | 'bench';
 
 function readInitialRuntimeScope() {
   const params = new URLSearchParams(window.location.search);
@@ -95,7 +94,6 @@ function AppContent() {
   ];
   const railMid = [
     { id: 'contextos', label: 'ContextOS', icon: <IconContext className={railIcon} />, pressed: view === 'contextos', onClick: () => setView('contextos') },
-    { id: 'ledger', label: '证据账本', icon: <IconLedger className={railIcon} />, pressed: view === 'ledger', onClick: () => setView('ledger') },
     { id: 'files', label: '项目文件', icon: <IconFolder className={railIcon} />, pressed: view === 'files', onClick: () => setView('files') },
     { id: 'history', label: '运行历史', icon: <IconInbox className={railIcon} />, pressed: view === 'history', onClick: () => setView('history') },
     { id: 'diagnostics', label: '运行诊断', icon: <IconGauge className={railIcon} />, pressed: view === 'diagnostics', onClick: () => setView('diagnostics') },
@@ -117,8 +115,7 @@ function AppContent() {
       ]}
     >
       {bindingError ? <p role="alert" className="p-6 text-sm text-[var(--cx-red)]">{bindingError}</p>
-        : view === 'ledger' ? <div className="min-h-0 flex-1 overflow-y-auto cx-scroll"><EvidenceLedgerView binding={engineering} /></div>
-          : view === 'contextos' ? <EngineeringContextView engineering={engineering} workspace={workspace} onBackToMain={returnToConsole} />
+        : view === 'contextos' ? <EngineeringContextView engineering={engineering} workspace={workspace} onBackToMain={returnToConsole} />
             : view === 'files' ? <WorkspaceFilesPage workspace={workspace} onBackToMain={returnToConsole} />
               : view === 'diagnostics' ? <RuntimeDiagnosticsWorkspace workspace={workspace} connectionState={{ live: engineering.connected, reconnecting: engineering.reconnecting, attemptCount: 0 }} onBackToMain={returnToConsole} />
                 : view === 'history' ? <LegacyRunHistory workspace={workspace} onBackToMain={returnToConsole} />

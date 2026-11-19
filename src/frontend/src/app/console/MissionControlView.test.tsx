@@ -71,8 +71,8 @@ describe('MissionControlView', () => {
     expect(screen.getByRole('heading', { name: '工程运行实况' })).toBeInTheDocument();
     expect(screen.getByTestId('engineering-role-director')).toHaveTextContent('进行中');
     expect(screen.getByTestId('engineering-role-pm')).toHaveTextContent('not_called');
-    expect(screen.getByText('验证未通过，Director 正在根据命令收据修复。')).toBeInTheDocument();
-    expect(screen.getByTestId('timeline-row-1')).toBeInTheDocument();
+    expect(screen.getByText('验证未通过，Director 正在根据验证输出修复。')).toBeInTheDocument();
+    expect(screen.getByTestId('story-tool-1')).toBeInTheDocument();
     expect(screen.getByTestId('engineering-verification')).toHaveTextContent('未运行验证');
     expect(screen.getByTestId('engineering-project-outcome')).toHaveTextContent('未知');
     expect(screen.getByRole('button', { name: '取消运行' })).toBeInTheDocument();
@@ -82,11 +82,11 @@ describe('MissionControlView', () => {
     const events = [event(2, 'tool_observed', { tool: 'execute_command', ok: false, content: 'FAIL playback\nexit code 1' })];
     const binding = makeBinding({ projection: { snapshot: snapshot(), events, error: null, snapshotRequiredSeq: null, historyWindowed: false } });
     render(<MissionControlView workspace="/workspace/pelican" binding={binding} role="director" />);
-    fireEvent.click(screen.getByTestId('timeline-row-2'));
+    fireEvent.click(screen.getByTestId('story-tool-2'));
     expect(screen.getByText('工具 · execute_command')).toBeInTheDocument();
-    expect(screen.getByText('验证失败')).toBeInTheDocument();
+    expect(screen.getByText('检查未通过')).toBeInTheDocument();
     expect(screen.getByText(/FAIL playback/)).toBeInTheDocument();
-    expect(screen.getByText('已取得收据 · 检查未通过')).toBeInTheDocument();
+    expect(screen.getByText('检查未通过，已回到修复流程')).toBeInTheDocument();
   });
 
   it('switches to acceptance title and banner once the project is accepted', () => {
@@ -106,7 +106,7 @@ describe('MissionControlView', () => {
     const binding = makeBinding({ projection: { snapshot: done, events: [], error: null, snapshotRequiredSeq: null, historyWindowed: false } });
     render(<MissionControlView workspace="/workspace/pelican" binding={binding} role="director" />);
     expect(screen.getByRole('heading', { name: '交付验收' })).toBeInTheDocument();
-    expect(screen.getByText('项目已验收（独立QA）。已知缺陷与收据保持可见。')).toBeInTheDocument();
+    expect(screen.getByText('项目已验收（独立QA）。完整运行记录保持可回看。')).toBeInTheDocument();
     expect(screen.getByTestId('engineering-verification')).toHaveTextContent('已通过');
     expect(screen.getByTestId('engineering-qa-verdict')).toHaveTextContent('已批准');
     expect(screen.getByTestId('engineering-project-outcome')).toHaveTextContent('已验收');

@@ -40,6 +40,26 @@ def compact_engineering_payload(kind: str, payload: dict[str, Any]) -> dict[str,
         selected["payload_omitted"] = True
     elif kind == "message":
         selected = {"payload_omitted": True}
+        # Surface a bounded human-readable excerpt so live consoles can
+        # narrate what the role is doing; the full message stays in SQLite.
+        message = payload.get("message")
+        if isinstance(message, dict):
+            content = message.get("content")
+            text = ""
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                parts = [
+                    str(block.get("text") or "")
+                    for block in content
+                    if isinstance(block, dict) and block.get("type") == "text"
+                ]
+                text = "\n".join(part for part in parts if part)
+            if text:
+                selected["text"] = text
+            role_value = message.get("role")
+            if isinstance(role_value, str) and role_value:
+                selected["author_role"] = role_value
         if "native_turn_rejection" in payload:
             selected["native_turn_rejection"] = payload["native_turn_rejection"]
     elif kind == "tool_started":

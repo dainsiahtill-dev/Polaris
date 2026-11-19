@@ -1,7 +1,6 @@
 import './console.css';
 export { ConsoleShell, type RailItem, type RailLink } from './ConsoleShell';
 export { MissionControlView } from './MissionControlView';
-export { EvidenceLedgerView } from './EvidenceLedgerView';
 export { GoalComposer } from './GoalComposer';
 export { RoleTracks } from './RoleTracks';
 export { ToolTimeline } from './ToolTimeline';
