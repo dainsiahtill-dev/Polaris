@@ -380,9 +380,25 @@ class EngineeringTools:
             if name == "read_file":
                 self._keys(args, {"file", "max_bytes", "start_line", "end_line", "range_required"})
                 target = self._path(self._text(args, "file"), write=False)
+                if not target.is_file():
+                    return self._observation(
+                        call_id,
+                        name,
+                        False,
+                        "文件不存在（尚未创建）："
+                        f"{target.relative_to(self.workspace)}。"
+                        "如需创建该文件，请用 write_file 写入完整内容。",
+                        None,
+                    )
                 content = self.filesystem.workspace_read_text(str(target), encoding="utf-8")
                 if args.get("range_required") and not {"start_line", "end_line"}.issubset(args):
-                    raise ValueError("read_file requires a start_line and end_line range")
+                    # Tolerant defaults for weak models: a partial range still
+                    # means "read bounded" — default the missing bound instead
+                    # of burning a turn on a pedantic error.
+                    if "start_line" not in args and isinstance(args.get("end_line"), int):
+                        args = {**args, "start_line": 1}
+                    if "end_line" not in args and isinstance(args.get("start_line"), int):
+                        args = {**args, "end_line": max(1, len(content.splitlines()))}
                 start = self._integer(args, "start_line", 1, minimum=1)
                 end = self._integer(args, "end_line", max(1, len(content.splitlines())), minimum=start)
                 content = "".join(content.splitlines(keepends=True)[start - 1 : end])
@@ -408,6 +424,16 @@ class EngineeringTools:
                     raise ValueError("edit_file supports one unique exact replacement only")
                 target = self._path(self._text(args, "file"), write=True)
                 self._path(str(target), write=False)
+                if not target.is_file():
+                    return self._observation(
+                        call_id,
+                        name,
+                        False,
+                        "文件不存在，无法编辑："
+                        f"{target.relative_to(self.workspace)}。"
+                        "如需创建该文件，请用 write_file 写入完整内容。",
+                        None,
+                    )
                 old, new = self._text(args, "search"), self._text(args, "replace", allow_empty=True)
                 content = self.filesystem.workspace_read_text(str(target), encoding="utf-8")
                 count = content.count(old)

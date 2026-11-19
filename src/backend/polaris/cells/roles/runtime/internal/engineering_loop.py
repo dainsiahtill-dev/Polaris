@@ -522,6 +522,11 @@ async def run_engineering_loop(
     loop_run_count = 0
     loop_alert: str | None = None
     loop_tools: set[str] = set()
+    # Gate-block streak: turns whose every call was intercepted by the stage
+    # gate. Weak models keep re-issuing blocked probes; after a short streak
+    # inject an explicit pivot alert (read_file stays allowed, but only
+    # verify_project / browser_observe unblocks the gate).
+    gate_block_streak = 0
     # Stage gate (lab-then-assemble, enforced by the host rather than left to
     # the model): after this many file writes the Director must run
     # verify_project before it may write again, turning free-form flailing
@@ -829,6 +834,7 @@ async def run_engineering_loop(
                 return finish("completed", response.output)
             review_reports: list[dict[str, Any]] = []
             verification_passed = False
+            turn_gate_blocks = 0
             for call in calls:
                 if cancel.is_set():
                     return finish(
@@ -887,13 +893,6 @@ async def run_engineering_loop(
                                 and stage_gate_writes > 0
                                 and writes_since_verification >= stage_gate_writes
                                 and call.name in {"write_file", "edit_file", "repo_tree", "repo_rg", "execute_command"}
-                            ) or (
-                                command.role == "director"
-                                and "browser_observe" in tools.enabled
-                                and stage_gate_writes > 0
-                                and writes_since_verification >= stage_gate_writes
-                                and (command.workspace / "index.html").is_file()
-                                and call.name == "read_file"
                             ):
                                 # Stage gate: the Director must verify before
                                 # writing more OR re-probing the workspace.
@@ -1024,6 +1023,33 @@ async def run_engineering_loop(
                     # A nested read role can also lose a durable observation.
                     # No later parent effect may run while that dispatch is unknown.
                     return finish("cancelled" if cancel.is_set() else "interrupted", observation.content)
+                if observation.content.startswith("Stage gate:"):
+                    turn_gate_blocks = turn_gate_blocks + 1
+                else:
+                    turn_gate_blocks = 0 if observation.ok or observation.exit_code is not None else turn_gate_blocks
+            if calls and turn_gate_blocks >= len(calls):
+                gate_block_streak += 1
+            elif turn_gate_blocks == 0:
+                gate_block_streak = 0
+            if gate_block_streak in (2, 4):
+                loop_alert = (
+                    f"Host stage-gate notice: the last {gate_block_streak} turns were ALL intercepted by the "
+                    "write/verify stage gate — repeating more probes will be intercepted again and changes "
+                    "nothing. read_file stays allowed for one specific file, but ONLY verify_project (with the "
+                    "real build/test commands) or browser_observe unlocks the gate. Run one of them now, then "
+                    "continue building."
+                )
+                store.append_event(
+                    command.session_id,
+                    kind="loop_detected",
+                    role=command.role,
+                    payload={
+                        "turn_seq": turn_seq,
+                        "consecutive_identical_turns": gate_block_streak,
+                        "tools": ["stage_gate_block"],
+                        "guidance_injected": True,
+                    },
+                )
             store.append_event(
                 command.session_id, kind="turn_finished", role=command.role, payload={"turn_seq": turn_seq}
             )
