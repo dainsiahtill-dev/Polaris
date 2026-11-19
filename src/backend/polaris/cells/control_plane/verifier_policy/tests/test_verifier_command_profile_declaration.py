@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from polaris.cells.control_plane.verifier_policy import public as policy
+from polaris.cells.control_plane.verifier_policy.public import service as service_module
 
 
 def _query(workspace: Path, argv: tuple[str, ...]) -> policy.EvaluateVerifierCommandPolicyQueryV1:
@@ -115,6 +116,10 @@ def test_absent_workspace_binding_is_uncertain_for_registered_candidates() -> No
 def test_registered_current_pinned_script_retains_runtime_profile_admissibility(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # pytest tmp_path lives under /tmp, which is an ephemeral executable root by
+    # policy; the pin is the trust mechanism under test here, so scope the
+    # ephemeral prohibition away for this authorization-path assertion.
+    monkeypatch.setattr(service_module, "_EPHEMERAL_EXECUTABLE_ROOTS", ())
     _registered(tmp_path, monkeypatch)
     target = tmp_path / "scripts/check.sh"
     target.parent.mkdir()
