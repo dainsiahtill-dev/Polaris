@@ -228,7 +228,11 @@ async def test_no_browser_history_never_requires_observing_current_candidate(iso
         visual_binding=lambda: verifier.review_binding(command.session_id),
     )
     assert result.status == "completed", result.text
-    assert client.requests[0].options["messages"][-1]["content"] == "Previous failure feedback must stay available."
+    # The host working-state note is appended per request; the durable failure
+    # feedback must still be present, not necessarily the final message.
+    assert "Previous failure feedback must stay available." in [
+        message.get("content") for message in client.requests[0].options["messages"]
+    ]
     assert result.verification == "not_run"
 
 
@@ -407,7 +411,7 @@ async def test_real_loop_projects_old_pixels_and_retains_all_current_views(isola
         _image(label).data_base64
         for label in ("original-user-reference", "current-desktop", "current-mobile", "current-later-time")
     ]
-    assert request.options["messages"][-1] == before[-1]
+    assert before[-1] in request.options["messages"]
     assert store.load_message_history("projection", role="director")[:-1] == before
     prepared = next(
         event["payload"] for event in store.load_events("projection") if event["kind"] == "request_prepared"

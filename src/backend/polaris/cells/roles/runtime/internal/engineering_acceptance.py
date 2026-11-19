@@ -19,15 +19,62 @@ its measurement tool — never another implicit default.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
 DimensionStatus = Literal["passed", "failed", "unknown", "not_required"]
 
 _CLAUSE_STRIP = re.compile(r"^\s*(?:[-*•+]|\d+[.、)])\s*")
+_TABLE_SEPARATOR = re.compile(r"^\|[\s\-|:]+\|$")
 _MAX_CLAUSES = 14
 _CLAUSE_MAX_CHARS = 120
 _FINDING_STATUSES = {"pass", "fail"}
+
+# The internal acceptance adapter prepends a platform notice and appends platform
+# delivery contracts around the frozen user requirements. Fidelity is about the
+# user's goal, so the clause source starts after this marker and, for markdown
+# requirement docs, uses the opening goal/use-experience section rather than the
+# platform contract sections that follow it.
+FROZEN_REQUIREMENTS_MARKER = "--- Frozen original requirements (verbatim) ---"
+
+
+def _goal_clause_source(instruction: str) -> str:
+    text = instruction or ""
+    if FROZEN_REQUIREMENTS_MARKER in text:
+        text = text.split(FROZEN_REQUIREMENTS_MARKER, 1)[1]
+    lines = text.splitlines()
+    start = 0
+    for index, line in enumerate(lines):
+        if line.strip().startswith("## "):
+            start = index + 1
+            break
+    else:
+        return text
+    end = len(lines)
+    for index in range(start, len(lines)):
+        stripped = lines[index].strip()
+        if stripped.startswith("## ") or stripped.startswith("# "):
+            end = index
+            break
+    return "\n".join(lines[start:end])
+
+
+def _goal_clause_candidates(instruction: str) -> list[str]:
+    clauses: list[str] = []
+    seen: set[str] = set()
+    for raw in _goal_clause_source(instruction).splitlines():
+        line = _CLAUSE_STRIP.sub("", raw.strip()).strip()
+        if not line or len(line) < 6:
+            continue
+        if line.startswith("#") or _TABLE_SEPARATOR.match(line):
+            continue
+        line = line[:_CLAUSE_MAX_CHARS]
+        if line in seen:
+            continue
+        seen.add(line)
+        clauses.append(line)
+    return clauses
 
 
 def extract_goal_clauses(instruction: str) -> list[str]:
@@ -37,20 +84,16 @@ def extract_goal_clauses(instruction: str) -> list[str]:
     dropped. This is deliberately mechanical — it exists to give QA and the
     acceptance ledger a stable clause list, not to understand semantics.
     """
-    clauses: list[str] = []
-    seen: set[str] = set()
-    for raw in (instruction or "").splitlines():
-        line = _CLAUSE_STRIP.sub("", raw.strip()).strip()
-        if not line or len(line) < 6:
-            continue
-        line = line[:_CLAUSE_MAX_CHARS]
-        if line in seen:
-            continue
-        seen.add(line)
-        clauses.append(line)
-        if len(clauses) >= _MAX_CLAUSES:
-            break
-    return clauses
+    return _goal_clause_candidates(instruction)[:_MAX_CLAUSES]
+
+
+def has_truncated_goal_clauses(instruction: str) -> bool:
+    """True when the mechanical extractor capped the clause list.
+
+    A capped list cannot certify fidelity for the whole goal, so the ledger must
+    treat the fidelity dimension as unknown instead of passing on a prefix.
+    """
+    return len(_goal_clause_candidates(instruction)) > _MAX_CLAUSES
 
 
 @dataclass(frozen=True)
@@ -88,49 +131,73 @@ class FidelityVerdict:
     failures: tuple[str, ...]
 
 
+def clause_coverage_gap(goal_clauses: Sequence[str], findings: list[ClauseFinding]) -> list[str]:
+    """Return the goal clauses that no finding covers.
+
+    Matching is deliberately forgiving about formatting drift (a finding covers
+    a clause when either text contains the other), but it never invents coverage:
+    a clause with no finding stays in the gap. Both the dispatch-boundary gate
+    and the acceptance ledger call this one helper, so the corrective message
+    and the grade cannot drift apart.
+    """
+    by_clause = {finding.clause: finding for finding in findings}
+    gap: list[str] = []
+    for clause in goal_clauses:
+        finding = by_clause.get(clause)
+        if finding is None:
+            finding = next((f for f in findings if f.clause in clause or clause in f.clause), None)
+        if finding is None:
+            gap.append(clause)
+    return gap
+
+
+_TRUNCATION_NOTE = "[目标条款多于验收清单上限，无法证明全部条款保真]"
+
+
 def assess_fidelity(
     *,
     goal_clauses: list[str],
     findings: list[ClauseFinding],
     qa_verdict: str,
+    goal_truncated: bool = False,
 ) -> FidelityVerdict:
     """Grade the fidelity dimension from structured QA clause rulings.
 
     approved + full pass coverage -> passed; any fail -> failed; approved
     without complete structured coverage -> unknown (never defaults to
-    passed). rejected QA already implies failed fidelity.
+    passed). rejected QA already implies failed fidelity. A goal whose clause
+    list was capped cannot be certified for the whole goal, so it stays unknown
+    even when the visible prefix passes.
     """
     if qa_verdict == "rejected":
         return FidelityVerdict("failed", 0, max(1, len(goal_clauses)), (), ("qa rejected",))
     if qa_verdict != "approved":
         return FidelityVerdict("unknown", 0, max(1, len(goal_clauses)), tuple(goal_clauses), ())
-    if not findings:
-        if len(goal_clauses) < 2:
-            # Single-clause goals carry no decomposition to be faithful to; the
-            # QA verdict itself is the fidelity measurement. Clause matrices are
-            # enforced for multi-clause (decomposed) goals.
-            return FidelityVerdict("passed", len(goal_clauses), len(goal_clauses), (), ())
-        return FidelityVerdict("unknown", 0, len(goal_clauses), tuple(goal_clauses), ())
-    by_clause = {finding.clause: finding for finding in findings}
-    covered: list[str] = []
-    missing: list[str] = []
-    failures: list[str] = []
-    for clause in goal_clauses:
-        finding = by_clause.get(clause)
-        if finding is None:
-            # Tolerate minor formatting drift: match by containment.
-            finding = next((f for f in findings if f.clause in clause or clause in f.clause), None)
-        if finding is None:
-            missing.append(clause)
-        elif finding.status == "fail":
-            failures.append(clause)
-        else:
-            covered.append(clause)
+    if not findings and len(goal_clauses) < 2 and not goal_truncated:
+        # Single-clause goals carry no decomposition to be faithful to; the
+        # QA verdict itself is the fidelity measurement. Clause matrices are
+        # enforced for multi-clause (decomposed) goals.
+        return FidelityVerdict("passed", len(goal_clauses), len(goal_clauses), (), ())
+    missing = clause_coverage_gap(goal_clauses, findings)
+    missing_set = set(missing)
+    failures = tuple(
+        clause
+        for clause in goal_clauses
+        if clause not in missing_set
+        and any(
+            (finding.clause == clause or finding.clause in clause or clause in finding.clause)
+            and finding.status == "fail"
+            for finding in findings
+        )
+    )
+    covered = len(goal_clauses) - len(missing) - len(failures)
     if failures:
-        return FidelityVerdict("failed", len(covered), len(goal_clauses), tuple(missing), tuple(failures))
+        return FidelityVerdict("failed", covered, len(goal_clauses), tuple(missing), failures)
     if missing:
-        return FidelityVerdict("unknown", len(covered), len(goal_clauses), tuple(missing), ())
-    return FidelityVerdict("passed", len(covered), len(goal_clauses), (), ())
+        return FidelityVerdict("unknown", covered, len(goal_clauses), tuple(missing), ())
+    if goal_truncated:
+        return FidelityVerdict("unknown", covered, len(goal_clauses), (_TRUNCATION_NOTE,), ())
+    return FidelityVerdict("passed", covered, len(goal_clauses), (), ())
 
 
 def acceptance_dimensions_summary(

@@ -26,6 +26,7 @@ from polaris.cells.roles.runtime.internal.engineering_acceptance import (
     acceptance_dimensions_summary,
     assess_fidelity,
     extract_goal_clauses,
+    has_truncated_goal_clauses,
     normalize_clause_findings,
 )
 from polaris.cells.roles.runtime.public.contracts.engineering_run import (
@@ -1299,10 +1300,12 @@ class EngineeringSessionStore:
                 findings = normalize_clause_findings(review_args.get("clause_findings"))
             except (ValueError, TypeError):
                 findings = []
+        instruction = str(row.get("instruction") or "")
         fidelity = assess_fidelity(
-            goal_clauses=extract_goal_clauses(str(row.get("instruction") or "")),
+            goal_clauses=extract_goal_clauses(instruction),
             findings=findings,
             qa_verdict=str(verdict),
+            goal_truncated=has_truncated_goal_clauses(instruction),
         )
         dimensions = acceptance_dimensions_summary(
             function_status=function_status,  # type: ignore[arg-type]
@@ -1310,9 +1313,7 @@ class EngineeringSessionStore:
             require_qa=required,
         )
         fidelity_ok = (not required) or fidelity.status == "passed"
-        accepted = (
-            row["status"] == "completed" and evidence and (not required or verdict == "approved") and fidelity_ok
-        )
+        accepted = row["status"] == "completed" and evidence and (not required or verdict == "approved") and fidelity_ok
         outcome = (
             "accepted"
             if accepted

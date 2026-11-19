@@ -14,6 +14,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import stat
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
@@ -43,6 +44,26 @@ class CandidateObservationUnavailableError(ValueError):
 # declared candidate input; it is excluded from capture identity (see
 # EngineeringVerification._capture_roots).
 _MAX_CAPTURE_ROOT_ENTRIES = 10_000
+
+_EROFS_PATH = re.compile(r"(?:Could not write file|mkdir)\s+'([^']+)'")
+
+
+def read_only_write_targets(content: str) -> list[str]:
+    """Name the workspace paths a failed check tried to write.
+
+    Single source for both the dispatch feedback and the read-only corrective
+    note: the message must describe the actual failure (a build output the check
+    tried to create), not a generic dependency-install hint, so a weak model can
+    act on it instead of repeating the same write.
+    """
+    if "read-only file system" not in content and "EROFS" not in content:
+        return []
+    targets: list[str] = []
+    for match in _EROFS_PATH.finditer(content):
+        path = match.group(1)
+        if path not in targets:
+            targets.append(path)
+    return targets[:3]
 
 
 def verification_observation(call_id: str, payload: dict[str, Any], max_output_bytes: int) -> ToolObservation:
@@ -311,9 +332,7 @@ class EngineeringVerification:
         return {
             root
             for root in roots
-            if root.resolve(strict=False) == self.workspace
-            or not root.is_dir()
-            or self._within_capture_budget(root)
+            if root.resolve(strict=False) == self.workspace or not root.is_dir() or self._within_capture_budget(root)
         }
 
     @staticmethod

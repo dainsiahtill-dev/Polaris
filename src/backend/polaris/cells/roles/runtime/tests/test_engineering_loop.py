@@ -609,7 +609,7 @@ async def test_stage_gate_blocks_writes_until_verification(
     gated = [event for event in events if event["kind"] == "stage_gate_enforced"]
     assert gated, "expected a stage_gate_enforced event"
     observations = [event["payload"] for event in events if event["kind"] == "tool_observed"]
-    blocked = [obs for obs in observations if obs["call_id"] == "w3"][0]
+    blocked = next(obs for obs in observations if obs["call_id"] == "w3")
     assert blocked["ok"] is False
     assert "Stage gate" in blocked["content"]
     # The gated write had no effect; the post-verification write succeeded.

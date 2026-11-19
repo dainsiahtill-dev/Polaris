@@ -206,6 +206,20 @@ def _native_client(
     )
 
 
+def read_only_write_targets(checks: tuple[ToolObservation, ...]) -> list[str]:
+    """Aggregate the write targets of failed checks via the shared extractor."""
+    from polaris.cells.roles.runtime.internal.engineering_verification import (
+        read_only_write_targets as targets_for_content,
+    )
+
+    targets: list[str] = []
+    for check in checks:
+        for path in targets_for_content(str(check.content or "")):
+            if path not in targets:
+                targets.append(path)
+    return targets[:3]
+
+
 class EngineeringRunService:
     """Own live handles; persistent facts belong only to EngineeringSessionStore.
 
@@ -839,6 +853,14 @@ class EngineeringRunService:
                 guidance = lessons_guidance(self.workspace)
                 if guidance:
                     guided = replace(command, instruction=guidance + command.instruction)
+            # QA reviews the original goal, not the review instruction built for
+            # it. Hand the acceptance clauses to the tool surface so a
+            # multi-clause goal requires a complete structured clause matrix
+            # instead of relying on the model to notice an optional argument.
+            review_clauses: tuple[str, ...] = ()
+            if command.role == "qa":
+                goal = str(self.store.load_run(command.session_id, workspace=self.workspace).get("instruction") or "")
+                review_clauses = tuple(extract_goal_clauses(goal))
             return await run_engineering_loop(
                 guided,
                 scope=scope,
@@ -876,6 +898,7 @@ class EngineeringRunService:
                 )
                 if scope.browser is not None
                 else None,
+                review_clauses=review_clauses,
                 pending_ancestors=self._pending_ancestors.get(),
                 # Only _drive owns run terminal state, including final checks.
                 project_run=False,
@@ -1693,8 +1716,7 @@ class EngineeringRunService:
                             call_id=f"web-probe-{command.session_id[:8]}",
                             tool="web_probe",
                             ok=probe.ok,
-                            content=probe.details
-                            + ("\n" + probe_feedback(probe) if not probe.ok else ""),
+                            content=probe.details + ("\n" + probe_feedback(probe) if not probe.ok else ""),
                             exit_code=0 if probe.ok else 1,
                             interrupted=False,
                         ),
@@ -1787,10 +1809,15 @@ class EngineeringRunService:
                 "read-only file system" in str(check.content or "") or "EROFS" in str(check.content or "")
                 for check in checks
             )
+            read_only_targets = read_only_write_targets(checks) if read_only_failure else []
+            target_note = (
+                " Your check tried to write " + ", ".join(read_only_targets) + "." if read_only_targets else ""
+            )
             read_only_note = (
-                "\nThe verification scope keeps the workspace inputs read-only and writes only the declared "
-                "output roots. A check that installs or updates dependencies fails on the read-only workspace: "
-                "run that preparation with execute_command first, then verify the prepared candidate.\n"
+                "\nThe verification scope keeps workspace inputs (source, manifests, dependencies) read-only "
+                "and writes only host-declared output roots." + target_note + " Run the build or preparation "
+                "with execute_command first (ordinary authorized tools can write the workspace), then verify "
+                "the prepared candidate with a read-only command. Do not repeat the build inside verify_project.\n"
                 if read_only_failure
                 else ""
             )

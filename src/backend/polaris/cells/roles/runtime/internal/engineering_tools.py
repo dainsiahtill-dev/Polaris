@@ -13,7 +13,10 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from polaris.cells.roles.runtime.internal.engineering_acceptance import normalize_clause_findings
+from polaris.cells.roles.runtime.internal.engineering_acceptance import (
+    clause_coverage_gap,
+    normalize_clause_findings,
+)
 from polaris.cells.roles.runtime.internal.engineering_execution_policy import (
     CommandExecutionPolicy,
     resolve_execution_policy,
@@ -73,8 +76,14 @@ class EngineeringTools:
         observe: Callable[[dict[str, Any]], Awaitable[ToolObservation]] | None = None,
         authorize: Callable[[], None] | None = None,
         artifact_binding: Callable[[], dict[str, Any]] | None = None,
+        review_clauses: tuple[str, ...] = (),
     ) -> None:
         self.workspace = workspace.resolve(strict=True)
+        # Acceptance clauses of the original goal, when this session is a QA
+        # review. They make the structured clause matrix a dispatch-boundary
+        # requirement for multi-clause goals instead of an optional argument a
+        # weak model can silently omit.
+        self.review_clauses = tuple(review_clauses)
         self.scope = replace(
             scope,
             toolchain_bin_dirs=resolve_toolchain_bin_dirs(
@@ -187,6 +196,24 @@ class EngineeringTools:
                     minimum=COMMAND_TIMEOUT_MINIMUM,
                     maximum=COMMAND_TIMEOUT_MAXIMUM,
                 )
+            if name == "report_review" and len(self.review_clauses) >= 2:
+                # The clause matrix is the fidelity measurement for a
+                # decomposed goal. Expose it as required so a function-calling
+                # model is told the argument exists and must be filled, and so
+                # the dispatch boundary can reject an incomplete report.
+                function = schema["function"]
+                parameters = function["parameters"]
+                properties = parameters.setdefault("properties", {})
+                clause_property = properties.get("clause_findings")
+                if isinstance(clause_property, dict):
+                    clause_property["description"] = (
+                        "Required for this multi-clause goal: one entry per acceptance clause "
+                        f"({len(self.review_clauses)} clauses). Each entry needs clause, status pass|fail, "
+                        "and concrete evidence. A fail entry forces approved=false."
+                    )
+                required = [item for item in (parameters.get("required") or []) if item != "clause_findings"]
+                required.append("clause_findings")
+                parameters["required"] = required
             schemas.append(schema)
         return schemas
 
@@ -261,13 +288,36 @@ class EngineeringTools:
                 clause_findings = normalize_clause_findings(args.get("clause_findings"))
                 if any(f.status == "fail" for f in clause_findings):
                     raise ValueError("clause_findings with status fail requires approved=false")
+                if len(self.review_clauses) >= 2:
+                    # Dispatch-boundary gate: a decomposed goal cannot be ruled
+                    # on by a partial matrix. The same coverage helper grades the
+                    # acceptance ledger, so the corrective message and the final
+                    # verdict cannot drift apart.
+                    gap = clause_coverage_gap(self.review_clauses, clause_findings)
+                    if gap:
+                        raise ValueError(
+                            "report_review clause_findings must cover every acceptance clause. "
+                            f"Missing {len(gap)} of {len(self.review_clauses)} clauses: "
+                            + json.dumps(gap, ensure_ascii=False)
+                        )
                 self.review(args["approved"] and not findings)
+                # The structured clause matrix is part of the durable review
+                # judgment, not only the call arguments, so an auditor can read
+                # the ruling from the observation alone.
                 return self._observation(
                     call_id,
                     name,
                     True,
                     json.dumps(
-                        {"approved": args["approved"], "feedback": feedback, "major_findings": findings},
+                        {
+                            "approved": args["approved"],
+                            "feedback": feedback,
+                            "major_findings": findings,
+                            "clause_findings": [
+                                {"clause": item.clause, "status": item.status, "evidence": item.evidence}
+                                for item in clause_findings
+                            ],
+                        },
                         ensure_ascii=False,
                     ),
                 )
@@ -513,7 +563,7 @@ class EngineeringTools:
                 write_roots=writes,
                 network_allowed=self.scope.network_allowed,
                 toolchain_bin_dirs=self.scope.toolchain_bin_dirs,
-            toolchain_env=dict(self.scope.toolchain_env),
+                toolchain_env=dict(self.scope.toolchain_env),
                 command_cache=command_cache,
                 capture_output_root=capture_output_root,
             )

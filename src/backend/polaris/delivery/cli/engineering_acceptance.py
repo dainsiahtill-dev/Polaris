@@ -23,6 +23,7 @@ from typing import Any, Protocol, cast
 from urllib.parse import quote, urlencode, urlparse
 from uuid import uuid4
 
+from polaris.cells.roles.runtime.internal.engineering_acceptance import FROZEN_REQUIREMENTS_MARKER
 from polaris.cells.roles.runtime.public.engineering_resource_state import query_engineering_resource_state
 from polaris.kernelone.fs.text_ops import write_text_atomic
 
@@ -41,7 +42,8 @@ _HOST_KEYS = frozenset(
         "max_tool_output_bytes",
     }
 )
-_NOTICE = """Use the current engineering_v2 execution loop for the frozen requirements below.
+_NOTICE = (
+    """Use the current engineering_v2 execution loop for the frozen requirements below.
 Preserve every original business goal, numeric depth threshold, real build/test,
 dependency preparation and executable-entry requirement verbatim. Historical
 references to PM task-contract JSON, CE blueprint records, target_files, hashes,
@@ -50,8 +52,10 @@ not a model output protocol or authority. Use ordinary planning/design and real
 native tools; current platform verification and independent QA retain all actual
 product obligations. Do not manufacture old contracts, receipts or ledger facts.
 
---- Frozen original requirements (verbatim) ---
 """
+    + FROZEN_REQUIREMENTS_MARKER
+    + "\n"
+)
 
 
 @dataclass(frozen=True)

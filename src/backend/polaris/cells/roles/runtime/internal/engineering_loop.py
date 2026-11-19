@@ -195,6 +195,27 @@ def _model_context_window(workspace: Path, role: str) -> int:
     return window if window > 0 else 0
 
 
+# A long native tool working set has no natural budget: left unchecked it grows
+# until the provider window refuses the request, so a weak model spends its life
+# inside a saturated context and keeps redoing finished work. The working set is
+# therefore bounded by design. The tight budget is the intended operating point;
+# the window-derived ceiling is only a fallback for a final turn that cannot fit
+# the tight budget. The durable journal keeps every observation either way.
+_WORKING_SET_TOKENS_ENV = "KERNELONE_ENGINEERING_WORKING_SET_TOKENS"
+_WORKING_SET_TOKENS_DEFAULT = 32000
+_WINDOW_RESERVE_TOKENS = 16384 + 8192
+
+
+def _history_allowances(window: int) -> list[int]:
+    """Ascending candidate budgets for the retained native history."""
+    window_allowance = int(window * 0.95) - _WINDOW_RESERVE_TOKENS
+    if window_allowance <= 0:
+        return [max(2048, int(window * 0.5))]
+    configured = int(os.environ.get(_WORKING_SET_TOKENS_ENV, str(_WORKING_SET_TOKENS_DEFAULT)) or 0)
+    tight = min(configured, window_allowance) if configured > 0 else window_allowance
+    return sorted({tight, window_allowance})
+
+
 def _bounded_request_messages(
     messages: list[dict[str, Any]],
     *,
@@ -250,8 +271,8 @@ def _bounded_request_messages(
     from polaris.kernelone.llm.engine.visual_working_set import visual_payload_cost
 
     cost = visual_payload_cost(built) if built is not None else None
-    allowance = int(window * 0.95) - 16384 - 8192
-    if built is not None and cost is not None and cost["admission_proxy_tokens"] <= allowance:
+    allowances = _history_allowances(window)
+    if built is not None and cost is not None and cost["admission_proxy_tokens"] <= allowances[0]:
         return built
     from polaris.kernelone.llm.engine.prompt_budget import compress_native_tool_history
     from polaris.kernelone.llm.engine.token_estimator import TokenEstimator
@@ -292,22 +313,28 @@ def _bounded_request_messages(
     # With the aligned cost, group prices already include image bytes, so the
     # retry budget is the full allowance, not the text-only remainder.
     last_error: ValueError | None = None
-    for scale in (1.0, 0.75, 0.5, 0.3):
-        attempt_budget = max(2048, int(allowance * scale))
-        bounded = compress_native_tool_history(messages, attempt_budget, message_cost=_visual_aligned_cost)
-        if bounded is None:
-            continue
-        try:
-            return build(bounded)
-        except ValueError as error:
-            if "required_visual_input_budget_exceeded" not in str(error):
-                raise
-            last_error = error
+    for allowance in allowances:
+        for scale in (1.0, 0.75, 0.5, 0.3):
+            attempt_budget = max(2048, int(allowance * scale))
+            bounded = compress_native_tool_history(messages, attempt_budget, message_cost=_visual_aligned_cost)
+            if bounded is None:
+                continue
+            try:
+                return build(bounded)
+            except ValueError as error:
+                message = str(error)
+                # A tighter working set must never drop required visual evidence.
+                # Fall back to the window-derived ceiling for this request
+                # instead of failing the run or losing pinned pixels.
+                if (
+                    "required_visual_input_budget_exceeded" not in message
+                    and "pinned visual input is unavailable" not in message
+                ):
+                    raise
+                last_error = error
     if last_error is not None:
         raise last_error
-    raise ValueError(
-        "required_visual_input_budget_exceeded: the trimmed history still does not fit the model window"
-    )
+    raise ValueError("required_visual_input_budget_exceeded: the trimmed history still does not fit the model window")
 
 
 _CONTINUATION_HISTORY_NOTE = (
@@ -349,6 +376,19 @@ def _distill_verification_failure(content: str) -> str:
     """Return a short first-error fix target from a failed verification log."""
     if not content:
         return ""
+    if "read-only file system" in content or "EROFS" in content:
+        from polaris.cells.roles.runtime.internal.engineering_verification import (
+            read_only_write_targets,
+        )
+
+        targets = read_only_write_targets(content)
+        target_note = f" to {', '.join(targets)}" if targets else ""
+        return (
+            "Verification runs with workspace inputs read-only: your check tried to write"
+            f"{target_note}. Run the build or preparation with execute_command first (ordinary "
+            "authorized tools can write the workspace), then verify the prepared candidate with a "
+            "read-only command. Do not repeat the build inside verify_project."
+        )
     for pattern in _ERROR_LINE_PATTERNS:
         match = pattern.search(content)
         if match:
@@ -386,6 +426,7 @@ async def run_engineering_loop(
     pending_ancestors: frozenset[tuple[int, str]] = frozenset(),
     project_run: bool = True,
     purpose: str = "role",
+    review_clauses: tuple[str, ...] = (),
 ) -> RoleRunResult:
     """Run one role while the public service holds the workspace writer lock.
 
@@ -466,6 +507,7 @@ async def run_engineering_loop(
         observe=observe_current if observe is not None and command.role in {"director", "qa"} else None,
         authorize=authorize,
         artifact_binding=artifact_binding,
+        review_clauses=review_clauses,
     )
     events = store.load_events(command.session_id)
     starts = [event for event in events if event["kind"] == "role_started" and event["role"] == command.role]
@@ -634,13 +676,13 @@ async def run_engineering_loop(
                 if prior_turns:
                     history_notice_sent = True
 
-            # Combine the host continuation note and budget observation into a
-            # single user message so protocol-native merging (e.g. Anthropic's
-            # _merge_same_role_messages) produces exactly one trailing text
-            # block, not two separate user turns.  Budget observation comes
-            # first so protocol-native merging preserves its _MARKER prefix;
-            # a single "\n" separator keeps the pair in one text block while
-            # still letting _tail_observation find the budget facts.
+            # Combine the host continuation note, budget observation and the
+            # Director working-state projection into a single user message so
+            # protocol-native merging (e.g. Anthropic's _merge_same_role_messages)
+            # produces exactly one trailing text block, not separate user turns.
+            # Budget observation comes first so protocol-native merging preserves
+            # its _MARKER prefix; a single "\n" separator keeps the parts in one
+            # text block while still letting _tail_observation find the budget facts.
             host_parts: list[str] = []
             if command.role == "director" and limits.deadline is not None:
                 observed_at = time.time()
@@ -660,6 +702,27 @@ async def run_engineering_loop(
                 # One-shot recovery guidance; re-arms at the next threshold.
                 host_parts.append(loop_alert)
                 loop_alert = None
+            if command.role == "director":
+                # StateFirst context: the bounded working set above drops older
+                # turns by design, so the current state must travel with each
+                # request. Derived from the same journal only; never persisted.
+                from polaris.cells.roles.runtime.internal.engineering_state_projection import (
+                    STATE_EVENT_KINDS,
+                    working_state_message,
+                )
+
+                run = store.load_run(command.session_id, workspace=command.workspace)
+                state_events = store.load_events(command.session_id, kinds=STATE_EVENT_KINDS)
+                host_parts.append(
+                    working_state_message(
+                        run,
+                        state_events,
+                        role=command.role,
+                        frame_seq=frame_seq,
+                        observed_at=time.time(),
+                        deadline=limits.deadline,
+                    )["content"]
+                )
             if host_parts:
                 options["messages"].append({"role": "user", "content": "\n".join(host_parts)})
             if command.role == "qa":

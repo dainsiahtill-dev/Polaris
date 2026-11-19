@@ -363,18 +363,50 @@ def collaborative_instruction(
 
 
 def register_review_tool() -> None:
-    """A pure native QA judgment, recorded as an ordinary tool observation."""
+    """A pure native QA judgment, recorded as an ordinary tool observation.
+
+    ``clause_findings`` is part of the registered schema on purpose: production
+    runs showed a function-calling QA never submitted the structured clause
+    matrix because the provider-facing schema (not the prose prompt) omitted the
+    argument. A channel the model cannot see is a channel that does not exist,
+    so the fidelity dimension stayed ``unknown`` for every multi-clause goal.
+    """
     ToolSpecRegistry.register(
         "report_review",
         {
             "aliases": [],
             "arg_aliases": {},
             "category": "read",
-            "description": "Submit independent QA judgment after reading current source in a previous turn. No file or command effects.",
+            "description": (
+                "Submit independent QA judgment after reading current source in a previous turn. "
+                "No file or command effects. Rule on EVERY acceptance clause of the original goal: "
+                "pass a clause only when it is visibly implemented with concrete evidence; a missing or "
+                "visually wrong clause is a fail entry and requires approved=false."
+            ),
             "arguments": [
                 {"name": "approved", "type": "boolean", "required": True},
                 {"name": "feedback", "type": "string", "required": True},
                 {"name": "major_findings", "type": "array", "items": {"type": "string"}},
+                {
+                    "name": "clause_findings",
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "clause": {"type": "string", "description": "The acceptance clause text."},
+                            "status": {
+                                "type": "string",
+                                "enum": ["pass", "fail"],
+                                "description": "pass only when the clause is visibly implemented; fail when missing or wrong.",
+                            },
+                            "evidence": {
+                                "type": "string",
+                                "description": "Concrete evidence: a tool call id, check output, or observed behavior.",
+                            },
+                        },
+                        "required": ["clause", "status", "evidence"],
+                    },
+                },
             ],
         },
     )
