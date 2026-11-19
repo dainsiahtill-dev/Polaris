@@ -155,11 +155,11 @@ output root——那会让 check 写任意输入路径，破坏只读保证。
 
 已实施 **wrap-up gate**（`KERNELONE_ENGINEERING_WRAP_UP_GATE`，默认开）：跨轮持久
 `candidate_verification_passed` + `post_pass_write_cycles`。**允许 1 次**合法的
-“改→再验”循环；当模型再次通过后又发起第 2 个 pass→write 循环时，`write_file`/`edit_file`
-被拦截（`wrap_up_enforced`），连续 2 次拦截即 `finish("completed")`，把“实际通过的候选”
-交给独立 QA。任何真实写效果使 revision 前进即重置通过标志并计入循环数。QA 是过早收尾的
-安全网（独立逐条复核）。单测：`test_wrap_up_gate_blocks_post_pass_edits`（1 次合法循环后
-2 拦截→完成、被拦截写未执行）、`test_wrap_up_gate_can_be_disabled`、服务级
-`test_wrap_up_gate_sends_passed_candidate_to_qa`（写被拦→QA 复核实际通过候选→accepted）。
+“改→再验”循环；当模型再次通过后又发起第 2 个 pass→write 循环时，`write_file`/`edit_file`/
+`execute_command` 被拦截（`wrap_up_enforced`），连续 2 次拦截即 `finish("completed")`，
+把“实际通过的候选”交给独立 QA。任何真实写效果使 revision 前进即重置通过标志并计入循环数。
+QA 是过早收尾的安全网（独立逐条复核）。单测：`test_wrap_up_gate_blocks_post_pass_edits`、
+`test_wrap_up_gate_blocks_post_pass_shell`（shell 分支）、`test_wrap_up_gate_can_be_disabled`、
+服务级 `test_wrap_up_gate_sends_passed_candidate_to_qa`。
 `test_writing_after_verified_candidate_requires_actual_fresh_check` 与 stage-gate 用例
 通过 env 关闭本门以隔离各自语义。
