@@ -1806,7 +1806,8 @@ class EngineeringRunService:
                 for actual, check in zip(commands, checks, strict=False)
             ]
             read_only_failure = any(
-                "read-only file system" in str(check.content or "") or "EROFS" in str(check.content or "")
+                "read-only file system" in str(check.content or "").lower()
+                or "erofs" in str(check.content or "").lower()
                 for check in checks
             )
             read_only_targets = read_only_write_targets(checks) if read_only_failure else []

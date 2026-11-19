@@ -635,6 +635,11 @@ async def run_engineering_loop(
     # change-then-reverify cycle is allowed; a second means the model is
     # thrashing its own evidence, so further explicit writes are intercepted.
     post_pass_write_cycles = 0
+    # A check that tried to write during read-only verification (EROFS) will fail
+    # deterministically again. Require an actual writing execute_command
+    # (preparation) before another verify_project may run, instead of letting a
+    # weak model re-issue the same doomed check forever.
+    preparation_pending = False
     try:
         if pending_calls():
             return finish("interrupted", "An earlier dispatch still requires reconciliation.")
@@ -1014,7 +1019,30 @@ async def run_engineering_loop(
                             # from these exact sets, so guidance and behavior can
                             # never drift apart again (run e6a88b2f's storm).
                             gate_blocked_tools = ("write_file", "edit_file", "repo_tree", "repo_rg", "execute_command")
-                            if (
+                            if preparation_pending and command.role == "director" and call.name == "verify_project":
+                                # Preparation gate: the same writing check fails
+                                # deterministically under read-only verification.
+                                observation = ToolObservation(
+                                    call_id=call.id,
+                                    tool=call.name,
+                                    ok=False,
+                                    content=(
+                                        "Preparation gate: the previous verification failed because its check tried "
+                                        "to write inside the read-only verification scope (EROFS). Re-running the same "
+                                        "check will fail the same way. Run the build or preparation with "
+                                        "execute_command first (ordinary authorized tools can write the workspace), "
+                                        "then verify the prepared candidate with a read-only command."
+                                    ),
+                                    exit_code=None,
+                                    interrupted=False,
+                                )
+                                store.append_event(
+                                    command.session_id,
+                                    kind="preparation_gate_enforced",
+                                    role=command.role,
+                                    payload={"turn_seq": turn_seq, "call_id": call.id},
+                                )
+                            elif (
                                 candidate_verification_passed
                                 and wrap_up_gate_enabled
                                 and post_pass_write_cycles >= 1
@@ -1186,6 +1214,16 @@ async def run_engineering_loop(
                     # review that same candidate, so the turn has to conclude.
                     verification_passed = True
                     candidate_verification_passed = True
+                content_text = str(observation.content or "").lower()
+                if (
+                    observation.tool == "verify_project"
+                    and not observation.ok
+                    and ("read-only file system" in content_text or "erofs" in content_text)
+                ):
+                    preparation_pending = True
+                if advances_revision and observation.tool == "execute_command":
+                    # An actual writing preparation step clears the EROFS gate.
+                    preparation_pending = False
                 message = {
                     "role": "tool",
                     "tool_call_id": call.id,

@@ -119,16 +119,24 @@ run_engineering_loop
   **0/120 截断**（max 25）。截断仍 fail-closed。
 
 未解决/待验证：
-- L1-01 的 EROFS 准备问题是否被新反馈改善，需重跑真实 run。
+- L1-01 的 EROFS 准备问题：preparation gate 已强制“先写后验”，需重跑真实 run 确认。
 - 工作集默认 32000 是否最优（模型 re-read 较多）需 A/B。
 - 低上下文对 L1-L12 通过率的净收益尚未量化。
 
-## 8. 已记录的设计缺口（不是本批修复）
+## 8. 门禁与设计缺口（preparation/wrap-up 已实施；overlay 待 ADR）
 
 **构建型项目的验证只读域 vs 构建输出**：`verify_project` 的 check 在只读验证域运行
 （仅 host 声明的 output roots 可写）。当 check 本身构建（如 `npm test` = `tsc && node
 dist/...`）时写 `dist/` → EROFS。正确做法是模型先用 `execute_command` 准备构建，再只读
 验证；弱模型不照做时会无限重复同一 check（L1-01 实测 24+ 次）。
+
+已实施 **preparation gate**（无需放宽 containment）：任一 verify_project 观测含
+`read-only file system`/`erofs`（大小写不敏感）即置 `preparation_pending`；此后
+`verify_project` 被拦截（`preparation_gate_enforced`），直到一次**真实写入的**
+`execute_command`（`advances_revision`）清除。确定性失败的 check 不能再被反复重跑。
+注意：`read_only_write_targets` 与 service 的 `read_only_failure` 检测同时改为大小写不敏感
+（coreutils 输出 `Read-only file system`，无 `EROFS` 字样，原检测会漏）。
+服务级测试：`test_preparation_gate_requires_writing_execute_before_reverify`。
 
 安全的非对称修法（未实施，需 ADR）：验证域允许工作区可写，但用**输入快照哈希**
 （`PreparedProjectVerificationSandbox` 已有此机制）在后置断言中证明输入未被改动；改动

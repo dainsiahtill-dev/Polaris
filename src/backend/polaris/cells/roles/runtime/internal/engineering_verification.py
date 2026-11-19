@@ -45,7 +45,7 @@ class CandidateObservationUnavailableError(ValueError):
 # EngineeringVerification._capture_roots).
 _MAX_CAPTURE_ROOT_ENTRIES = 10_000
 
-_EROFS_PATH = re.compile(r"(?:Could not write file|mkdir)\s+'([^']+)'")
+_EROFS_PATH = re.compile(r"(?:Could not write file|cannot create directory|mkdir)\D{0,40}?'([^']+)'")
 
 
 def read_only_write_targets(content: str) -> list[str]:
@@ -56,7 +56,8 @@ def read_only_write_targets(content: str) -> list[str]:
     tried to create), not a generic dependency-install hint, so a weak model can
     act on it instead of repeating the same write.
     """
-    if "read-only file system" not in content and "EROFS" not in content:
+    lowered = content.lower()
+    if "read-only file system" not in lowered and "erofs" not in lowered:
         return []
     targets: list[str] = []
     for match in _EROFS_PATH.finditer(content):

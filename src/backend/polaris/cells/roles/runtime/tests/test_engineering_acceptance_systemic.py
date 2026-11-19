@@ -350,6 +350,19 @@ def test_read_only_write_targets_names_build_output() -> None:
     )
     assert read_only_write_targets(checks) == ["/ws/dist/main.js", "/ws/dist"]
     assert read_only_write_targets((ToolObservation("c2", "read_file", False, "missing", None, False),)) == []
+    # Detection and path extraction are case-insensitive: coreutils prints
+    # "Read-only file system" with a capital R and no EROFS token.
+    capitalized = (
+        ToolObservation(
+            "verification-2-0",
+            "execute_command",
+            False,
+            "stdout:\nstderr:\nmkdir: cannot create directory 'dist': Read-only file system\n",
+            1,
+            False,
+        ),
+    )
+    assert read_only_write_targets(capitalized) == ["dist"]
 
 
 def test_distilled_verification_failure_names_read_only_write() -> None:

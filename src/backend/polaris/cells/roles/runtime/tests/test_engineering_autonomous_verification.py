@@ -568,6 +568,44 @@ async def test_wrap_up_gate_sends_passed_candidate_to_qa(
     assert "qa" in event_roles(events)
 
 
+async def test_preparation_gate_requires_writing_execute_before_reverify(
+    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A check that wrote during read-only verification cannot be re-run until a
+    writing execute_command prepares the candidate (build-type projects)."""
+    build = "mkdir -p dist && echo built > dist/out.txt"
+    read_only = "test -f dist/out.txt"
+    for response in (
+        _response(("v1", "verify_project", {"commands": [build]})),
+        _response(("v2", "verify_project", {"commands": [build]})),
+        _response(("prepare", "execute_command", {"command": build})),
+        _response(("v3", "verify_project", {"commands": [read_only]})),
+        _response(text="Prepared and verified."),
+        _response(("read", "read_file", {"file": "dist/out.txt"})),
+        _response(
+            (
+                "review",
+                "report_review",
+                {"approved": True, "feedback": "Read the prepared dist/out.txt and the passing check."},
+            )
+        ),
+    ):
+        scripted_provider.enqueue_json(response)
+    service = _service(isolated_workspace, scripted_provider, monkeypatch)
+    command = RoleRunCommand("prep-gate", "director", "Produce dist/out.txt.", isolated_workspace)
+    await service.start(
+        command, scope=_scope(isolated_workspace), limits=RunLimits(time.time() + 45, 1_000_000, 64_000)
+    )
+    await service.wait(command.session_id, workspace=isolated_workspace)
+    row = service.snapshot(command.session_id, workspace=isolated_workspace)
+    events = service.store.load_events(command.session_id)
+    assert [event["payload"]["call_id"] for event in events if event["kind"] == "preparation_gate_enforced"] == ["v2"]
+    assert len([event for event in events if event["kind"] == "verification_started"]) == 2
+    assert (isolated_workspace / "dist/out.txt").read_text(encoding="utf-8") == "built\n"
+    assert row["verification"] == "passed"
+    assert row["project_outcome"] == "accepted"
+
+
 @pytest.mark.parametrize("cut", ["before_outer", "after_outer", "before_completion", "before_child_observation"])
 async def test_real_process_restart_closes_only_durable_verification_and_never_replays(
     isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch, cut: str
