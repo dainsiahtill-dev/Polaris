@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, cast
 
@@ -655,6 +656,7 @@ def compress_native_tool_history(
     allowed_prompt_tokens: int,
     *,
     content_type: str = "general",
+    message_cost: Callable[[Mapping[str, Any]], int] | None = None,
 ) -> list[dict[str, Any]] | None:
     """Drop the oldest complete native turns until the history fits.
 
@@ -667,6 +669,13 @@ def compress_native_tool_history(
     kept, the leading goal and the final turn survive, and the dropped span
     is replaced by one marked turn so the model knows that context was
     elided. The durable journal keeps every observation.
+
+    ``message_cost`` lets callers align the accounting with the admission
+    cost model: by default this function scores ``content`` as plain text,
+    so base64 image bytes embedded in a JSON tool observation are counted
+    as text and no budget can ever fit a visual history. A caller whose
+    admission model prices images separately can pass a per-message total
+    (text + image serialization) so both views agree.
     """
     if allowed_prompt_tokens <= 0 or not isinstance(chat_messages, list):
         return None
@@ -710,26 +719,27 @@ def compress_native_tool_history(
     final = groups[-1]
     middle = groups[:-1]
 
-    def group_tokens(group: list[dict[str, Any]]) -> int:
-        return sum(
-            _estimate_message_tokens(
-                message["content"]
-                if isinstance(message["content"], str)
-                else json.dumps(message["content"], ensure_ascii=False),
-                content_type,
+    def message_tokens(message: Mapping[str, Any]) -> int:
+        if message_cost is not None:
+            return max(0, int(message_cost(message)))
+        return _estimate_message_tokens(
+            message["content"]
+            if isinstance(message["content"], str)
+            else json.dumps(message.get("content"), ensure_ascii=False),
+            content_type,
+        ) + (
+            TokenEstimator.estimate(
+                json.dumps(message["tool_calls"], ensure_ascii=False), content_type=content_type
             )
-            + (
-                TokenEstimator.estimate(
-                    json.dumps(message["tool_calls"], ensure_ascii=False), content_type=content_type
-                )
-                if message.get("tool_calls")
-                else 0
-            )
-            for message in group
+            if message.get("tool_calls")
+            else 0
         )
 
-    lead_tokens = sum(_estimate_message_tokens(str(message["content"]), content_type) for message in lead)
-    goal_tokens = sum(_estimate_message_tokens(str(message["content"]), content_type) for message in goal)
+    def group_tokens(group: list[dict[str, Any]]) -> int:
+        return sum(message_tokens(message) for message in group)
+
+    lead_tokens = sum(message_tokens(message) for message in lead)
+    goal_tokens = sum(message_tokens(message) for message in goal)
     budget = int(allowed_prompt_tokens) - lead_tokens - goal_tokens - _COMPRESSION_MARKER_RESERVE_TOKENS
     if budget <= 0:
         return None

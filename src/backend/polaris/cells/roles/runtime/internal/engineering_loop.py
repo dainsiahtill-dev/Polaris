@@ -8,7 +8,7 @@ import json
 import os
 import re
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -254,8 +254,33 @@ def _bounded_request_messages(
     if built is not None and cost is not None and cost["admission_proxy_tokens"] <= allowance:
         return built
     from polaris.kernelone.llm.engine.prompt_budget import compress_native_tool_history
+    from polaris.kernelone.llm.engine.token_estimator import TokenEstimator
 
-    text_budget = max(2048, allowance - int((cost or {}).get("image_serialization_proxy_tokens", 0)))
+    # Align compression accounting with admission accounting. The default
+    # compressor scores message content as plain text, so base64 image bytes
+    # embedded in browser_observation JSON are counted as text and no budget
+    # can ever fit a visual history (run 6e61f355 died this way). This cost
+    # strips data_base64 payloads for the text side and prices the stripped
+    # bytes separately, matching the conservative serialization proxy.
+    _data_base64_pattern = re.compile(r'("data_base64"\s*:\s*")[^"]*(")')
+
+    def _visual_aligned_cost(message: Mapping[str, Any]) -> int:
+        content = message.get("content")
+        extra = 0
+        if isinstance(content, str):
+            stripped, count = _data_base64_pattern.subn(r"\1\2", content)
+            if count:
+                removed = sum(len(match.group(0)) for match in _data_base64_pattern.finditer(content))
+                extra = TokenEstimator.estimate("x" * min(removed, 4_000_000))
+            text = stripped
+        elif content is None:
+            text = ""
+        else:
+            text = json.dumps(content, ensure_ascii=False)
+        if message.get("tool_calls"):
+            text = f"{text}{json.dumps(message['tool_calls'], ensure_ascii=False)}"
+        return TokenEstimator.estimate(text) + extra + 8
+
     # The compression works on the raw history. The visual projection moves
     # the image bytes out of the tool content into attachment blocks, so
     # compressing an already projected history and projecting it again would
@@ -264,10 +289,12 @@ def _bounded_request_messages(
     # tokenizer, so a single trim pass can still project over the allowance.
     # Retry with progressively smaller budgets instead of ending the run:
     # a long conversation is a trimming question, not a terminal failure.
+    # With the aligned cost, group prices already include image bytes, so the
+    # retry budget is the full allowance, not the text-only remainder.
     last_error: ValueError | None = None
     for scale in (1.0, 0.75, 0.5, 0.3):
-        attempt_budget = max(2048, int(text_budget * scale))
-        bounded = compress_native_tool_history(messages, attempt_budget)
+        attempt_budget = max(2048, int(allowance * scale))
+        bounded = compress_native_tool_history(messages, attempt_budget, message_cost=_visual_aligned_cost)
         if bounded is None:
             continue
         try:
