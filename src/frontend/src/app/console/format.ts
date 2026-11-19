@@ -179,10 +179,11 @@ export function toolGlyph(tool: string | undefined): ToolGlyph {
   const name = (tool || '').toLowerCase();
   if (!name) return 'generic';
   if (name.includes('browser') || name.includes('render') || name.includes('screenshot')) return 'browser';
-  if (name.includes('repo_tree') || name.includes('list') || name.includes('tree')) return 'folder';
-  if (name.includes('write') || name.includes('edit') || name.includes('file') || name.includes('patch')) return 'file';
+  if (name.includes('repo_tree') || name.includes('tree')) return 'folder';
+  if (name.includes('rg') || name.includes('grep') || name.includes('search') || name.includes('read')) return 'search';
+  if (name.includes('write') || name.includes('edit') || name.includes('patch')) return 'file';
   if (name.includes('execute') || name.includes('command') || name.includes('shell') || name.includes('run_')) return 'terminal';
-  if (name.includes('read') || name.includes('rg') || name.includes('grep') || name.includes('find')) return 'search';
+  if (name.includes('list')) return 'folder';
   return 'generic';
 }
 
@@ -204,10 +205,11 @@ export function receiptSummary(event: EngineeringEvent): string {
 export function writesSinceVerification(events: EngineeringEvent[], gateThreshold: number): { count: number; threshold: number } {
   let writes = 0;
   for (let index = events.length - 1; index >= 0; index -= 1) {
-    const kind = events[index].kind;
-    if (kind === 'verification_started' || kind === 'verification_completed') break;
-    if (kind !== 'tool_started') continue;
-    const glyph = toolGlyph(typeof events[index].payload.tool === 'string' ? events[index].payload.tool : '');
+    const event = events[index];
+    if (!event) continue;
+    if (event.kind === 'verification_started' || event.kind === 'verification_completed') break;
+    if (event.kind !== 'tool_started') continue;
+    const glyph = toolGlyph(typeof event.payload.tool === 'string' ? event.payload.tool : '');
     if (glyph === 'file' || glyph === 'terminal') writes += 1;
   }
   return { count: writes, threshold: gateThreshold };
@@ -216,4 +218,29 @@ export function writesSinceVerification(events: EngineeringEvent[], gateThreshol
 /** Count loop-intervention style events emitted by the engineering stage gate. */
 export function loopInterventions(events: EngineeringEvent[]): number {
   return events.filter((event) => event.kind.includes('loop') || event.kind.includes('stage_gate') || event.payload.loop_enforced === true).length;
+}
+
+/** Chinese action label for a tool/event name (timeline second line). */
+export function toolLabel(tool: string | undefined): string {
+  const name = (tool || '').toLowerCase();
+  if (name.includes('repo_tree')) return '扫描仓库结构';
+  if (name.includes('write')) return '写入文件';
+  if (name.includes('edit')) return '编辑文件';
+  if (name.includes('read')) return '读取文件';
+  if (name.includes('execute') || name.includes('command')) return '执行命令';
+  if (name.includes('browser') || name.includes('render')) return '浏览器渲染';
+  if (name.includes('rg') || name.includes('grep') || name.includes('search')) return '检索代码';
+  if (name.includes('list') || name.includes('tree')) return '列出文件';
+  return '工具调用';
+}
+
+/** Sequential receipt id for display, e.g. `rcpt_042`. */
+export function receiptId(seqOrIndex: number): string {
+  return `rcpt_${String(Math.max(1, seqOrIndex)).padStart(3, '0')}`;
+}
+
+/** Extract a workspace-relative file path from free text, when unambiguous. */
+export function firstFilePath(content: string): string | null {
+  const match = content.match(/(?:src|tests?|lib|app|pkg|cmd|internal)\/[\w\-./]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|rs|go|java|kt|cs|cpp|c|h|vue|svelte|css|scss|html|json|toml|yaml|yml|md)/);
+  return match ? match[0] : null;
 }

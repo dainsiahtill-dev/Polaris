@@ -4,11 +4,9 @@ export { MissionControlView } from './MissionControlView';
 export { EvidenceLedgerView } from './EvidenceLedgerView';
 export { GoalComposer } from './GoalComposer';
 export { RoleTracks } from './RoleTracks';
-export { RunHero } from './RunHero';
-export { StageGateBoard } from './StageGateBoard';
-export { StatusDock } from './StatusDock';
 export { ToolTimeline } from './ToolTimeline';
 export { VerdictBoard } from './VerdictBoard';
-export { BrowserQaCard } from './BrowserQaCard';
-export { ContextRefCard } from './ContextRefCard';
-export * as consoleFormat from './format';
+export {
+  ROLE_LABELS, ROLE_NAV_LABELS, RUN_STATUS_LABELS, ROLE_STATUS_LABELS,
+  VERIFICATION_LABELS, QA_LABELS, OUTCOME_LABELS,
+} from './format';

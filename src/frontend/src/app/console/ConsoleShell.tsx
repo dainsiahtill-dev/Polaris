@@ -38,7 +38,7 @@ export function ConsoleShell({ workspace, viewLabel, connected, reconnecting, ra
           <span className="text-lg font-bold tracking-wide text-[#f2f7f3]">Polaris</span>
         </div>
         <div className="px-4">
-          <span className="cx-rail-pill" title={workspace}>
+          <span className="cx-rail-pill">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="h-4 w-4 shrink-0 opacity-70"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /></svg>
             <span className="truncate">{workspaceBase}</span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="ml-auto h-3.5 w-3.5 shrink-0 opacity-50"><path d="m6 9 6 6 6-6" /></svg>

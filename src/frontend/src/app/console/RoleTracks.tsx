@@ -10,42 +10,31 @@ const ROLE_GLYPHS: Record<EngineeringRole, (props: { className?: string }) => Re
   qa: ({ className }) => <IconShield className={className} />,
 };
 
-const LANE_CLASS: Record<string, string> = {
-  running: 'cx-lane--running',
-  completed: 'cx-lane--done',
-  failed: 'cx-lane--bad',
-  cancelled: 'cx-lane--bad',
-  interrupted: 'cx-lane--bad',
+const CARD_CLASS: Record<string, string> = {
+  running: 'cx-rolecard--running',
+  completed: 'cx-rolecard--done',
+  failed: 'cx-rolecard--bad',
+  cancelled: 'cx-rolecard--bad',
+  interrupted: 'cx-rolecard--bad',
 };
 
-const DOT_CLASS: Record<string, string> = {
-  running: 'cx-dot--run cx-dot--pulse',
-  completed: 'cx-dot--ok',
-  failed: 'cx-dot--bad',
-  cancelled: 'cx-dot--warn',
-  interrupted: 'cx-dot--warn',
-};
-
-/** Four engineering role lanes on a vertical expedition rail. */
+/** Four engineering role cards in a horizontal track. */
 export function RoleTracks({ roles }: { roles: Record<EngineeringRole, EngineeringRoleStatus> }): ReactElement {
   return (
-    <div className="relative space-y-1.5" role="list" aria-label="角色轨道">
-      {ROLE_ORDER.map((role, index) => {
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" role="list" aria-label="角色轨道">
+      {ROLE_ORDER.map((role) => {
         const status = roles[role];
         const tone = roleStatusTone(status);
         const Glyph = ROLE_GLYPHS[role];
-        const label = role === 'qa' && status === 'not_called' ? '等待复核' : ROLE_STATUS_LABELS[status];
+        const label = ROLE_STATUS_LABELS[status];
         return (
-          <div key={role} role="listitem" data-testid={`engineering-role-${role}`} className={`cx-lane ${LANE_CLASS[status] || 'cx-lane--idle'} ${index > 0 ? '' : ''}`}>
-            {index < ROLE_ORDER.length - 1 ? <span aria-hidden="true" className="cx-rail-line" /> : null}
-            <span className="cx-lane-glyph"><Glyph className="h-4.5 w-4.5" /></span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-semibold leading-tight">{ROLE_LABELS[role]}</span>
-              <span className="mt-0.5 block">
-                <span className={`cx-pill cx-pill--${tone}`}>
-                  {status === 'running' ? <span className={`cx-dot ${DOT_CLASS[status] || ''}`} /> : null}
-                  {label}
-                </span>
+          <div key={role} role="listitem" data-testid={`engineering-role-${role}`} className={`cx-rolecard ${CARD_CLASS[status] || ''}`}>
+            <span className="text-[var(--cx-ink-dim)]"><Glyph className="h-5 w-5" /></span>
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-bold text-[var(--cx-ink)]">{ROLE_LABELS[role]}</span>
+              <span className={`cx-pill cx-pill--${tone} mt-1`}>
+                {status === 'running' ? <span className="cx-dot cx-dot--run cx-dot--pulse" /> : null}
+                {label}
               </span>
             </span>
           </div>

@@ -11,9 +11,20 @@ function Glyph({ children, ...props }: SVGProps<SVGSVGElement> & { children: Rea
 
 export function PolarisMark(props: SVGProps<SVGSVGElement>): ReactElement {
   return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
-      <path d="M12 1.6 14.1 9.9 22.4 12 14.1 14.1 12 22.4 9.9 14.1 1.6 12 9.9 9.9Z" fill="currentColor" />
-      <circle cx="12" cy="12" r="1.6" fill="rgba(0,0,0,0.35)" />
+    <svg viewBox="0 0 48 48" fill="none" aria-hidden="true" {...props}>
+      <circle cx="24" cy="24" r="21" stroke="currentColor" strokeWidth="1.4" />
+      <circle cx="24" cy="24" r="16.5" stroke="currentColor" strokeWidth="0.7" opacity="0.6" />
+      <circle cx="24" cy="24" r="12" stroke="currentColor" strokeWidth="0.5" opacity="0.35" strokeDasharray="2 3" />
+      {Array.from({ length: 8 }, (_, i) => {
+        const angle = (i * 45 * Math.PI) / 180;
+        const long = i % 2 === 0;
+        const r1 = long ? 6 : 9.5;
+        const r2 = long ? 16.5 : 13;
+        return <line key={i} x1={24 + r1 * Math.sin(angle)} y1={24 - r1 * Math.cos(angle)} x2={24 + r2 * Math.sin(angle)} y2={24 - r2 * Math.cos(angle)} stroke="currentColor" strokeWidth={long ? 1.3 : 0.7} opacity={long ? 0.95 : 0.6} />;
+      })}
+      <path d="M24 10 26.6 21.4 38 24 26.6 26.6 24 38 21.4 26.6 10 24 21.4 21.4Z" fill="currentColor" />
+      <circle cx="24" cy="24" r="2.2" fill="var(--cx-sidebar, #131722)" />
+      <circle cx="24" cy="24" r="2.2" stroke="currentColor" strokeWidth="0.8" />
     </svg>
   );
 }
@@ -98,4 +109,16 @@ export function IconGauge(props: SVGProps<SVGSVGElement>): ReactElement {
 }
 export function IconX(props: SVGProps<SVGSVGElement>): ReactElement {
   return <Glyph {...props}><path d="m6 6 12 12M18 6 6 18" /></Glyph>;
+}
+export function IconInfo(props: SVGProps<SVGSVGElement>): ReactElement {
+  return <Glyph {...props}><circle cx="12" cy="12" r="8.5" /><path d="M12 11v5" /><circle cx="12" cy="8" r="0.9" fill="currentColor" stroke="none" /></Glyph>;
+}
+export function IconLayers(props: SVGProps<SVGSVGElement>): ReactElement {
+  return <Glyph {...props}><path d="m12 3 9 5-9 5-9-5Z" /><path d="m3 13 9 5 9-5" /></Glyph>;
+}
+export function IconUser(props: SVGProps<SVGSVGElement>): ReactElement {
+  return <Glyph {...props}><circle cx="12" cy="8" r="4" /><path d="M4.5 20.5c1.4-3.2 4.2-5 7.5-5s6.1 1.8 7.5 5" /></Glyph>;
+}
+export function IconBox(props: SVGProps<SVGSVGElement>): ReactElement {
+  return <Glyph {...props}><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9Z" /><path d="M4 7.5 12 12l8-4.5M12 12v9" /></Glyph>;
 }

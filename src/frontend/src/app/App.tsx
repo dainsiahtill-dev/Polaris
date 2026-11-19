@@ -15,7 +15,6 @@ import { LauncherWorkspace } from '@/app/launcher/LauncherWorkspace';
 import { shouldEnableGlobalBenchObserver } from '@/app/runtimeScope';
 import { useRuntime } from './hooks/useRuntime';
 import { ConsoleShell, EvidenceLedgerView, MissionControlView } from './console';
-import { ROLE_NAV_LABELS } from './console/format';
 import {
   IconCompass, IconContext, IconFlask, IconFolder, IconGauge, IconInbox,
   IconLedger, IconMonitor, IconSliders,
@@ -25,17 +24,16 @@ import { devLogger } from '@/app/utils/devLogger';
 const SettingsModal = lazy(() => import('./components/SettingsModal').then((module) => ({ default: module.SettingsModal })));
 
 const VIEW_LABELS: Record<View, string> = {
-  console: '运行控制台',
+  console: '工程工作台',
   ledger: '证据账本',
   contextos: 'ContextOS',
-  files: '文件',
-  history: '运行记录',
+  files: '项目文件',
+  history: '运行历史',
   diagnostics: '运行诊断',
   bench: '内部 Bench 观测',
 };
 
 type View = 'console' | 'ledger' | 'contextos' | 'files' | 'history' | 'diagnostics' | 'bench';
-const ROLE_IDS: EngineeringRole[] = ['pm', 'chief_engineer', 'director', 'qa'];
 
 function readInitialRuntimeScope() {
   const params = new URLSearchParams(window.location.search);
@@ -62,7 +60,7 @@ function AppContent() {
   const bindingError = initial.instance && !initial.workspace
     ? '实例缺少 workspace 绑定。请从 Launcher 重新打开该实例。'
     : !workspace ? '尚未绑定工作区。请检查实例入口或系统配置。' : '';
-  const [role, setRole] = useState<EngineeringRole>(initial.role);
+  const [role] = useState<EngineeringRole>(initial.role);
   const [view, setView] = useState<View>('console');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsError, setSettingsError] = useState('');
@@ -92,18 +90,14 @@ function AppContent() {
     return `${url.pathname}${url.search}`;
   }, []);
   const railIcon = 'h-4.5 w-4.5 shrink-0';
-  const railTop = ROLE_IDS.map((id) => ({
-    id: `role-${id}`,
-    label: ROLE_NAV_LABELS[id],
-    icon: <IconMonitor className={railIcon} />,
-    pressed: view === 'console' && role === id,
-    onClick: () => { setRole(id); setView('console'); },
-  }));
+  const railTop = [
+    { id: 'console', label: '工程工作台', icon: <IconMonitor className={railIcon} />, pressed: view === 'console', onClick: () => setView('console') },
+  ];
   const railMid = [
-    { id: 'ledger', label: '证据账本', icon: <IconLedger className={railIcon} />, pressed: view === 'ledger', onClick: () => setView('ledger') },
     { id: 'contextos', label: 'ContextOS', icon: <IconContext className={railIcon} />, pressed: view === 'contextos', onClick: () => setView('contextos') },
-    { id: 'files', label: '文件', icon: <IconFolder className={railIcon} />, pressed: view === 'files', onClick: () => setView('files') },
-    { id: 'history', label: '运行记录', icon: <IconInbox className={railIcon} />, pressed: view === 'history', onClick: () => setView('history') },
+    { id: 'ledger', label: '证据账本', icon: <IconLedger className={railIcon} />, pressed: view === 'ledger', onClick: () => setView('ledger') },
+    { id: 'files', label: '项目文件', icon: <IconFolder className={railIcon} />, pressed: view === 'files', onClick: () => setView('files') },
+    { id: 'history', label: '运行历史', icon: <IconInbox className={railIcon} />, pressed: view === 'history', onClick: () => setView('history') },
     { id: 'diagnostics', label: '运行诊断', icon: <IconGauge className={railIcon} />, pressed: view === 'diagnostics', onClick: () => setView('diagnostics') },
     ...(globalBenchObserverEnabled ? [{ id: 'bench', label: '内部 Bench 观测', icon: <IconFlask className={railIcon} />, pressed: view === 'bench', onClick: () => setView('bench' as View) }] : []),
   ];
@@ -129,7 +123,7 @@ function AppContent() {
               : view === 'diagnostics' ? <RuntimeDiagnosticsWorkspace workspace={workspace} connectionState={{ live: engineering.connected, reconnecting: engineering.reconnecting, attemptCount: 0 }} onBackToMain={returnToConsole} />
                 : view === 'history' ? <LegacyRunHistory workspace={workspace} onBackToMain={returnToConsole} />
                   : view === 'bench' && globalBenchObserverEnabled ? <BenchPanel enabled bench={bench} />
-                    : <MissionControlView workspace={workspace} binding={engineering} role={role} onRoleChange={setRole} />}
+                    : <MissionControlView workspace={workspace} binding={engineering} role={role} />}
       {settingsError && <p role="alert" className="border-t border-[var(--cx-line)] bg-[#fbfaf5] px-5 py-2 text-sm text-[var(--cx-red)]">{settingsError}</p>}
       <Suspense fallback={<p role="status" className="border-t border-[var(--cx-line)] bg-[#fbfaf5] px-5 py-2 text-xs text-[var(--cx-ink-dim)]">正在载入系统配置…</p>}>
         {settingsOpen && <SettingsModal isOpen settings={settings} onClose={() => setSettingsOpen(false)} onSave={async (updates) => {
