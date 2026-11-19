@@ -27,7 +27,10 @@ DimensionStatus = Literal["passed", "failed", "unknown", "not_required"]
 
 _CLAUSE_STRIP = re.compile(r"^\s*(?:[-*•+]|\d+[.、)])\s*")
 _TABLE_SEPARATOR = re.compile(r"^\|[\s\-|:]+\|$")
-_MAX_CLAUSES = 14
+# The frozen catalog's real requirement clauses run 8..25 (p50 17, max 25 across
+# all 120 projects). A 14-clause cap silently truncated 85 of them, making the
+# fidelity dimension permanently unknown; 32 covers the catalog with headroom.
+_MAX_CLAUSES = 32
 _CLAUSE_MAX_CHARS = 120
 _FINDING_STATUSES = {"pass", "fail"}
 

@@ -39,9 +39,9 @@ def test_extract_goal_clauses_splits_bullets() -> None:
 
 
 def test_extract_goal_clauses_dedupes_and_caps() -> None:
-    instruction = "\n".join(f"- 第{i}条要求条目内容" for i in range(30))
+    instruction = "\n".join(f"- 第{i}条要求条目内容" for i in range(40))
     clauses = extract_goal_clauses(instruction)
-    assert len(clauses) == 14
+    assert len(clauses) == 32
 
 
 def test_normalize_clause_findings_validation() -> None:
@@ -264,10 +264,13 @@ def test_multi_clause_report_review_accepts_full_matrix(tmp_path: Path) -> None:
 
 def test_extract_goal_clauses_truncation_is_flagged() -> None:
     short = "\n".join(f"- 第{i}条要求条目内容" for i in range(10))
-    long = "\n".join(f"- 第{i}条要求条目内容" for i in range(30))
+    catalog_scale = "\n".join(f"- 第{i}条要求条目内容" for i in range(25))
+    long = "\n".join(f"- 第{i}条要求条目内容" for i in range(40))
     assert has_truncated_goal_clauses(short) is False
+    # The frozen catalog's largest real goal is 25 clauses; it must fit.
+    assert has_truncated_goal_clauses(catalog_scale) is False
     assert has_truncated_goal_clauses(long) is True
-    assert len(extract_goal_clauses(long)) == 14
+    assert len(extract_goal_clauses(long)) == 32
 
 
 def test_goal_clauses_use_frozen_user_requirements_only() -> None:
@@ -313,12 +316,17 @@ def test_fidelity_truncated_goal_stays_unknown_even_with_full_prefix() -> None:
     """A capped clause list cannot certify the whole goal: passing on the visible
     prefix would be exactly the self-deception the fidelity dimension exists to
     prevent."""
-    instruction = "\n".join(f"- 第{i}条要求条目内容" for i in range(30))
+    instruction = "\n".join(f"- 第{i}条要求条目内容" for i in range(40))
     clauses = extract_goal_clauses(instruction)
     findings = normalize_clause_findings(
         [{"clause": clause, "status": "pass", "evidence": "call_x"} for clause in clauses]
     )
-    verdict = assess_fidelity(goal_clauses=clauses, findings=findings, qa_verdict="approved", goal_truncated=True)
+    verdict = assess_fidelity(
+        goal_clauses=clauses,
+        findings=findings,
+        qa_verdict="approved",
+        goal_truncated=has_truncated_goal_clauses(instruction),
+    )
     assert verdict.status == "unknown"
     assert verdict.missing
 
