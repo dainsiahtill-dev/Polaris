@@ -440,6 +440,8 @@ def build_current_task_project_artifact_receipt_evidence(
         workspace=workspace,
         lookup=lookup,
     )
+    # _task_completion_projection returns {} for absent projections, not None.
+    has_projection = bool(_task_completion_projection(task))
     stale_paths: list[str] = []
     for path, receipt in receipts.items():
         try:
@@ -468,7 +470,7 @@ def build_current_task_project_artifact_receipt_evidence(
         # Vacuous success when CE assigned zero owned artifacts (L2-19 TASK-2
         # remint: files already on disk, required_artifact_count=0).  Missing
         # or stale required receipts still fail closed.
-        "ok": not missing and len(receipt_paths) == len(queries),
+        "ok": not missing and len(receipt_paths) == len(queries) and (bool(queries) or has_projection),
     }
 
 

@@ -488,6 +488,12 @@ def _phase_existing_scope_preflight(
                             existing_contract_evidence=preflight_existing_contract_evidence,
                         )
                     )
+    import sys as _sys
+    print("PFC evidence_ok=", preflight_existing_contract_evidence.get("ok"),
+          "receipt_ev=", project_artifact_receipt_evidence,
+          "requires_fresh=", requires_fresh_materialization,
+          "ev_reason=", preflight_existing_contract_evidence.get("reason"),
+          file=_sys.stderr)
     preflight_can_accept_existing_scope = bool(
         preflight_existing_contract_evidence.get("ok")
     ) and _can_accept_existing_workspace_scope(

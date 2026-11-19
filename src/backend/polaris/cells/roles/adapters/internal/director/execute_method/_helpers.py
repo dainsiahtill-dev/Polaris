@@ -86,6 +86,10 @@ def _attach_current_task_project_receipt_evidence(
             "error_code": exc.code,
             "error_details": dict(exc.details),
         }
+    import sys as _sys
+    print("ATTACH receipt_ok=", receipt_evidence.get("ok"), "req_count=", receipt_evidence.get("required_artifact_count"),
+          "receipt_count=", receipt_evidence.get("receipt_count"), "missing=", receipt_evidence.get("missing_or_stale_paths"),
+          file=_sys.stderr)
     combined = dict(existing_contract_evidence)
     combined["project_artifact_receipt_evidence"] = receipt_evidence
     return combined, receipt_evidence.get("ok") is True
