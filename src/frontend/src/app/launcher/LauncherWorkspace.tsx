@@ -8,7 +8,6 @@ import {
   Play,
   RefreshCw,
   RotateCcw,
-  Server,
   Square,
   TerminalSquare,
   Trash2,
@@ -16,6 +15,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { StatusBadge } from '@/app/components/ui/badge';
+import { PolarisMark } from '@/app/console/icons';
 import { FoundationWorkspace } from './foundation/FoundationWorkspace';
 import {
   useConnectionState,
@@ -356,20 +356,20 @@ function LauncherInstanceWorkspace({ onOpenFoundation }: { onOpenFoundation: () 
   }, [instances, refresh]);
 
   return (
-    <div className="flex h-screen min-h-0 flex-col overflow-hidden bg-slate-950 text-slate-100">
-      <header className="shrink-0 border-b border-cyan-400/20 bg-slate-950/95 px-6 py-4">
+    <div className="console-scope flex h-screen min-h-0 flex-col overflow-hidden">
+      <header className="shrink-0 border-b border-[var(--cx-line)] bg-white px-6 py-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-cyan-400/30 bg-cyan-400/10 text-cyan-200">
-              <Server className="h-5 w-5" />
+            <div className="flex h-10 w-10 items-center justify-center text-[var(--cx-gold)]">
+              <PolarisMark className="h-8 w-8" />
             </div>
             <div>
-              <h1 className="text-lg font-semibold tracking-tight">Polaris Launcher</h1>
-              <p className="text-xs text-slate-400">多实例总控 · 每个实例保持唯一 workspace</p>
+              <h1 className="text-lg font-bold tracking-tight text-[var(--cx-ink)]">Polaris Launcher</h1>
+              <p className="text-xs text-[var(--cx-ink-faint)]">多实例总控 · 每个实例保持唯一 workspace</p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" size="sm" onClick={onOpenFoundation}>
+            <Button variant="outline" size="sm" className="!border-[var(--cx-line-strong)] !bg-white !text-[var(--cx-ink-dim)] hover:!bg-[#f7f8fa]" onClick={onOpenFoundation}>
               <BookOpen className="h-4 w-4" aria-hidden="true" />
               原理研究
             </Button>
@@ -379,7 +379,7 @@ function LauncherInstanceWorkspace({ onOpenFoundation }: { onOpenFoundation: () 
             <StatusBadge color={connection.connected ? 'success' : connection.reconnecting ? 'warning' : 'default'} variant="dot" pulse={connection.reconnecting}>
               {connection.connected ? 'WS live' : connection.reconnecting ? 'WS reconnect' : 'WS idle'}
             </StatusBadge>
-            <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={loading}>
+            <Button variant="outline" size="sm" className="!border-[var(--cx-line-strong)] !bg-white !text-[var(--cx-ink-dim)] hover:!bg-[#f7f8fa]" onClick={() => void refresh()} disabled={loading}>
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               刷新
             </Button>
@@ -402,8 +402,8 @@ function LauncherInstanceWorkspace({ onOpenFoundation }: { onOpenFoundation: () 
         className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto p-4 xl:grid-cols-[360px_minmax(0,1fr)]"
         data-testid="launcher-scroll-root"
       >
-        <section className="h-fit rounded-lg border border-white/10 bg-white/[0.035] p-4 xl:sticky xl:top-0">
-          <h2 className="text-sm font-semibold text-cyan-100">启动实例</h2>
+        <section className="cx-card h-fit p-4 xl:sticky xl:top-0">
+          <h2 className="text-sm font-bold text-[var(--cx-ink)]">启动实例</h2>
           <div className="mt-4 space-y-3">
             <label className="block">
               <span className="text-[11px] uppercase text-slate-500">workspace</span>
@@ -414,7 +414,7 @@ function LauncherInstanceWorkspace({ onOpenFoundation }: { onOpenFoundation: () 
                   setForm((prev) => ({ ...prev, workspace: event.target.value }));
                 }}
                 placeholder="/path/to/project"
-                className="mt-1 w-full rounded-md border border-white/10 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400/60"
+                className="cx-input mt-1 text-sm"
               />
             </label>
             <label className="block">
@@ -426,7 +426,7 @@ function LauncherInstanceWorkspace({ onOpenFoundation }: { onOpenFoundation: () 
                   setForm((prev) => ({ ...prev, name: event.target.value }));
                 }}
                 placeholder="默认使用 workspace 名称"
-                className="mt-1 w-full rounded-md border border-white/10 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400/60"
+                className="cx-input mt-1 text-sm"
               />
             </label>
             <div className="grid grid-cols-2 gap-3">
@@ -436,7 +436,7 @@ function LauncherInstanceWorkspace({ onOpenFoundation }: { onOpenFoundation: () 
                   value={form.backend_port ?? ''}
                   onChange={(event) => setForm((prev) => ({ ...prev, backend_port: event.target.value ? Number(event.target.value) : null }))}
                   placeholder="auto"
-                  className="mt-1 w-full rounded-md border border-white/10 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400/60"
+                  className="cx-input mt-1 text-sm"
                 />
               </label>
               <label className="block">
@@ -445,7 +445,7 @@ function LauncherInstanceWorkspace({ onOpenFoundation }: { onOpenFoundation: () 
                   value={form.frontend_port ?? ''}
                   onChange={(event) => setForm((prev) => ({ ...prev, frontend_port: event.target.value ? Number(event.target.value) : null }))}
                   placeholder="auto"
-                  className="mt-1 w-full rounded-md border border-white/10 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400/60"
+                  className="cx-input mt-1 text-sm"
                 />
               </label>
             </div>
@@ -454,15 +454,15 @@ function LauncherInstanceWorkspace({ onOpenFoundation }: { onOpenFoundation: () 
               <select
                 value={form.kind || 'project'}
                 onChange={(event) => setForm((prev) => ({ ...prev, kind: event.target.value }))}
-                className="mt-1 w-full rounded-md border border-white/10 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400/60"
+                className="cx-input mt-1 text-sm"
               >
                 <option value="project">project</option>
                 <option value="bench_project">bench_project</option>
                 <option value="internal_test">internal_test</option>
               </select>
             </label>
-            <div className="space-y-2 rounded-md border border-white/10 bg-slate-950/60 p-3">
-              <label className="flex items-center justify-between gap-3 text-sm text-slate-300">
+            <div className="space-y-2 rounded-md border border-[var(--cx-line)] bg-[#fbfbfc] p-3">
+              <label className="flex items-center justify-between gap-3 text-sm text-[var(--cx-ink-dim)]">
                 backend --reload
                 <input
                   type="checkbox"
@@ -470,7 +470,7 @@ function LauncherInstanceWorkspace({ onOpenFoundation }: { onOpenFoundation: () 
                   onChange={(event) => setForm((prev) => ({ ...prev, backend_reload: event.target.checked }))}
                 />
               </label>
-              <label className="flex items-center justify-between gap-3 text-sm text-slate-300">
+              <label className="flex items-center justify-between gap-3 text-sm text-[var(--cx-ink-dim)]">
                 frontend Vite
                 <input
                   type="checkbox"
@@ -491,22 +491,22 @@ function LauncherInstanceWorkspace({ onOpenFoundation }: { onOpenFoundation: () 
             </Button>
           </div>
           {error ? (
-            <div className="mt-4 rounded-md border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+            <div className="mt-4 rounded-md border border-[#eeccc9] bg-[var(--cx-red-soft)] px-3 py-2 text-sm text-[var(--cx-red)]">
               {error}
             </div>
           ) : null}
         </section>
 
         <section
-          className="flex min-h-[520px] min-w-0 flex-col overflow-hidden rounded-lg border border-white/10 bg-white/[0.035]"
+          className="cx-card flex min-h-[520px] min-w-0 flex-col overflow-hidden"
           data-testid="launcher-instance-panel"
         >
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--cx-line)] px-4 py-3">
             <div>
-              <h2 className="text-sm font-semibold text-slate-100">实例</h2>
-              <p className="mt-0.5 text-[11px] text-slate-500">最新创建/启动优先</p>
+              <h2 className="text-sm font-bold text-[var(--cx-ink)]">实例</h2>
+              <p className="mt-0.5 text-[11px] text-[var(--cx-ink-faint)]">最新创建/启动优先</p>
             </div>
-            <span className="text-xs text-slate-500">共 {instances.length} 个</span>
+            <span className="cx-mono text-xs text-[var(--cx-ink-faint)]">共 {instances.length} 个</span>
           </div>
           <div
             className="min-h-0 flex-1 overflow-y-auto p-4"
@@ -514,7 +514,7 @@ function LauncherInstanceWorkspace({ onOpenFoundation }: { onOpenFoundation: () 
           >
             <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
             {instances.length === 0 ? (
-              <div className="col-span-full rounded-lg border border-dashed border-white/10 p-8 text-center text-sm text-slate-500">
+              <div className="col-span-full rounded-lg border border-dashed border-[var(--cx-line-strong)] p-8 text-center text-sm text-[var(--cx-ink-faint)]">
                 暂无实例
               </div>
             ) : orderedInstances.map((instance) => {
@@ -542,11 +542,11 @@ function LauncherInstanceWorkspace({ onOpenFoundation }: { onOpenFoundation: () 
               const statusLabel = isStopping ? 'stopping...' : instance.status;
               const statusTone = isStopping ? 'warning' : launcherInstanceStatusTone(instance);
               return (
-              <article key={instance.instance_id} className="rounded-lg border border-cyan-300/10 bg-slate-950/80 p-4">
+              <article key={instance.instance_id} className="rounded-xl border border-[var(--cx-line)] bg-[#fdfcf8] p-4 shadow-sm">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <h3 className="truncate text-sm font-semibold text-slate-100">{instance.name}</h3>
+                      <h3 className="truncate text-sm font-bold text-[var(--cx-ink)]">{instance.name}</h3>
                       <StatusBadge
                         color={statusTone}
                         variant="dot"
@@ -556,27 +556,27 @@ function LauncherInstanceWorkspace({ onOpenFoundation }: { onOpenFoundation: () 
                         {statusLabel}
                       </StatusBadge>
                     </div>
-                    <p className="mt-1 truncate text-[11px] uppercase text-slate-500" title={instance.workspace}>
+                    <p className="mt-1 truncate font-mono text-[11px] text-[var(--cx-ink-faint)]" title={instance.workspace}>
                       {instanceSubtitle(instance)}
                     </p>
                   </div>
                 </div>
                 <dl className="mt-4 grid grid-cols-2 gap-2 text-xs">
-                  <div className="rounded-md bg-white/[0.04] px-2 py-2">
-                    <dt className="text-[10px] uppercase text-slate-500">backend</dt>
-                    <dd className="mt-1 font-mono text-cyan-100">{instance.backend_port}</dd>
+                  <div className="rounded-md bg-[#f1efe7] px-2 py-2">
+                    <dt className="text-[10px] uppercase text-[var(--cx-ink-faint)]">backend</dt>
+                    <dd className="cx-mono mt-1 text-[var(--cx-ink)]">{instance.backend_port}</dd>
                   </div>
-                  <div className="rounded-md bg-white/[0.04] px-2 py-2">
-                    <dt className="text-[10px] uppercase text-slate-500">frontend</dt>
-                    <dd className="mt-1 font-mono text-cyan-100">{instance.frontend_port}</dd>
+                  <div className="rounded-md bg-[#f1efe7] px-2 py-2">
+                    <dt className="text-[10px] uppercase text-[var(--cx-ink-faint)]">frontend</dt>
+                    <dd className="cx-mono mt-1 text-[var(--cx-ink)]">{instance.frontend_port}</dd>
                   </div>
-                  <div className="col-span-2 rounded-md bg-white/[0.04] px-2 py-2">
-                    <dt className="text-[10px] uppercase text-slate-500">workspace</dt>
-                    <dd className="mt-1 truncate text-slate-300" title={instance.workspace}>{instance.workspace}</dd>
+                  <div className="col-span-2 rounded-md bg-[#f1efe7] px-2 py-2">
+                    <dt className="text-[10px] uppercase text-[var(--cx-ink-faint)]">workspace</dt>
+                    <dd className="mt-1 truncate text-xs text-[var(--cx-ink-dim)]" title={instance.workspace}>{instance.workspace}</dd>
                   </div>
-                  <div className="col-span-2 rounded-md bg-white/[0.04] px-2 py-2">
-                    <dt className="text-[10px] uppercase text-slate-500">recent</dt>
-                    <dd className="mt-1 font-mono text-[11px] text-slate-300">{launcherInstanceRecencyLabel(instance)}</dd>
+                  <div className="col-span-2 rounded-md bg-[#f1efe7] px-2 py-2">
+                    <dt className="text-[10px] uppercase text-[var(--cx-ink-faint)]">recent</dt>
+                    <dd className="cx-mono mt-1 text-[11px] text-[var(--cx-ink-dim)]">{launcherInstanceRecencyLabel(instance)}</dd>
                   </div>
                 </dl>
                 <div className="mt-4 flex flex-wrap gap-2">
@@ -707,7 +707,7 @@ function LauncherInstanceWorkspace({ onOpenFoundation }: { onOpenFoundation: () 
                 ['open_url', buildInstanceWorkspaceUrl(selectedInstance)],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-md border border-white/10 bg-slate-900/80 p-3">
-                  <dt className="text-[10px] uppercase text-slate-500">{label}</dt>
+                  <dt className="text-[10px] uppercase text-[var(--cx-ink-faint)]">{label}</dt>
                   <dd className="mt-1 break-all font-mono text-slate-200">{value}</dd>
                 </div>
               ))}
