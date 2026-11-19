@@ -19,6 +19,7 @@ deterministic judge，不需要 LLM）。运行产出每用例 PASS/FAIL + 聚�
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, Mapping
 
@@ -75,9 +76,15 @@ class _HugePlanSignal:
 
 def _case_role_signal_byte_identical() -> dict[str, Any]:
     """逐字节 + 绝对索引一致：seed-only 注入 == 旧硬编码实现。"""
+    ctx = _signal_ctx("director")
+    # BlueprintOverviewSignal defaults to on for the director (D-10 degraded
+    # fallback synthesizes guidance when CE has not run), which is a deliberate
+    # later addition — exclude it here so this case keeps guarding SEED byte
+    # stability exactly as originally intended.
+    ctx = replace(ctx, policy_flags={**ctx.policy_flags, "include_blueprint_overview": False})
     res = allocate_role_signals(
         registry=RoleSignalRegistry(),
-        ctx=_signal_ctx("director"),
+        ctx=ctx,
         receipt_store=ReceiptStore(),
         per_signal_char_cap=None,
         total_char_budget=None,
