@@ -68,3 +68,23 @@ range 读。用户感知的"总是整文件读取"实际是门禁风暴的表象
 3. **压缩器与准入模型计价不一致** → 任何含图像的历史必死（已修：message_cost 注入，data_base64 文本/图像分离计价，与保守序列化代理对齐）。
 
 产物：/home/dains/pelican-bike/index.html（708 行/30KB，含鹈鹕/单车/海浪/相机按钮，离线可开）。
+
+
+## 第四层：验收自欺（用户质询"完成质量太糟糕"后追加）
+
+Run 4 的 accepted 是假阳性：verification=passed 的实际内容是
+`node --check assets/three.min.js`（对第三方库做语法检查），QA 是同弱模型
+家族看截图自我盖章。平台缺陷：**验收回路自评，无目标保真度核对**。
+
+修复与验证（Run 5）：
+- **宿主 Web 探针**（engineering_web_probe）：机器客观判定页面错误、
+  canvas/WebGL、两帧像素差证明动画真实在动、按钮点击真实生效；失败则
+  降级 verification 并回流给 Director。
+- **条款保真职责**注入 Director/QA 提示词：每个具体需求条款必须可见实现，
+  QA 须逐条裁决——缺条/视觉错误即 major finding，即使应用无报错。
+- Run 5 实证：QA 首次复核**逐条列举证据**（颈/橙喙喉囊/翅膀/菱形车架/
+  10 辐条轮/脚蹬/腿/海面浮标/太阳）并发现真实源码缺陷（车轮不转，
+  `bike.add()` 返回值被丢弃，index.html:392/423-24）→ **reject**；Director
+  修复后（运行时状态探针 frontWheelSpin 由 0 变为正常）→ approved →
+  accepted。弱模型艺术的审美上限仍在，但"能跑+条款全真+有证据"成为
+  平台可认证的底线。
