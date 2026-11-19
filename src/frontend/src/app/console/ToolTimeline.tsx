@@ -107,6 +107,8 @@ export function ToolTimeline({ events, selectedSeq, onSelect, onOpenContext, emp
       {story.map((event) => {
         const kind = storyKindOf(event);
         if (kind === 'narration') {
+          const author = textOf(event.payload.author_role);
+          if (author && author !== 'assistant') return null;
           const text = narrationText(event);
           if (!text.trim()) return null;
           const isOpen = expanded[event.seq] === true;

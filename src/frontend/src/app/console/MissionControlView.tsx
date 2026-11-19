@@ -67,7 +67,7 @@ export function MissionControlView({ workspace, binding, role }: {
     : (failedCheck || failedEvent) && run.status === 'running'
       ? { tone: 'warn' as const, text: '验证未通过，Director 正在根据验证输出修复。' }
       : run.status === 'running'
-        ? { tone: 'ok' as const, text: '运行进行中，证据链随工具调用实时更新。' }
+        ? { tone: 'ok' as const, text: '运行进行中，进展随工具调用实时更新。' }
         : run.project_outcome === 'accepted'
           ? { tone: 'ok' as const, text: `项目已验收（${run.acceptance_basis === 'independent_qa' ? '独立QA' : '检查'}）。完整运行记录保持可回看。` }
           : run.status === 'failed'
@@ -177,6 +177,14 @@ export function MissionControlView({ workspace, binding, role }: {
         <section className="cx-card">
           <div className="cx-card-head"><h2 className="cx-card-title"><IconClapper className="h-4.5 w-4.5 text-[var(--cx-teal)]" />最终回复</h2></div>
           <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap p-4 text-sm leading-relaxed cx-scroll">{run.text}</pre>
+        </section>
+      ) : null}
+      {['failed', 'cancelled', 'interrupted', 'completed'].includes(run.status) ? (
+        <section className="cx-card">
+          <div className="cx-card-head"><h2 className="cx-card-title">新建运行 · NEW RUN</h2></div>
+          <div className="p-4">
+            <GoalComposer binding={binding} workspace={workspace} role={role} onStarted={(instruction) => setGoal(instruction)} />
+          </div>
         </section>
       ) : null}
       <footer className="flex flex-wrap items-center gap-x-6 gap-y-1.5 border-t border-[var(--cx-line)] pb-1 pt-3 font-mono text-[0.68rem] text-[var(--cx-ink-dim)]">
