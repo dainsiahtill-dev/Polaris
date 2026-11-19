@@ -65,15 +65,15 @@ const safeJsonStringify = (obj: unknown, space?: number): string => {
 
 function DeferredSectionFallback({ label, overlay = false }: { label: string; overlay?: boolean }) {
   const content = (
-    <div className="flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-[rgba(35,25,14,0.55)] px-4 py-5 text-xs text-text-muted">
-      <Loader2 className="size-4 animate-spin text-cyan-300" />
+    <div className="flex items-center justify-center gap-2 rounded-lg border border-[var(--cx-line)] bg-[#fbfbfc] px-4 py-5 text-xs text-text-muted">
+      <Loader2 className="size-4 animate-spin text-[var(--cx-teal-strong)]" />
       <span>正在载入{label}...</span>
     </div>
   );
 
   if (overlay) {
     return (
-      <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[rgba(35,25,14,0.7)] backdrop-blur-sm px-6">
+      <div className="console-scope cx-adapt fixed inset-0 z-[70] flex items-center justify-center bg-[#f6f7f9] backdrop-blur-sm px-6">
         {content}
       </div>
     );
@@ -171,7 +171,7 @@ interface ProviderValidationResult {
 }
 
 const ROLE_META: Record<string, { label: string; color: string; badge: string }> = {
-  pm: { label: 'PM', color: 'text-cyan-300', badge: 'bg-cyan-500/20 text-cyan-200 border-cyan-500/30' },
+  pm: { label: 'PM', color: 'text-[var(--cx-teal-strong)]', badge: 'bg-cyan-500/20 text-cyan-200 border-cyan-500/30' },
   director: { label: 'Director', color: 'text-purple-300', badge: 'bg-purple-500/20 text-purple-200 border-purple-500/30' },
   qa: { label: 'QA', color: 'text-blue-200', badge: 'bg-blue-500/20 text-blue-200 border-blue-500/30' },
   architect: { label: 'Architect', color: 'text-emerald-300', badge: 'bg-emerald-500/20 text-emerald-200 border-emerald-500/30' },
@@ -1893,12 +1893,12 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#020610]/78 backdrop-blur-xl">
+    <div className="console-scope cx-adapt fixed inset-0 z-50 flex items-center justify-center bg-[#020610]/78 backdrop-blur-xl">
       <div className="relative isolate">
         <div
           data-settings-modal
           data-testid="settings-modal"
-          className="soft-panel relative isolate flex w-full max-w-none max-h-none flex-col overflow-hidden rounded-xl"
+          className="console-scope cx-adapt soft-panel relative isolate flex w-full max-w-none max-h-none flex-col overflow-hidden rounded-xl"
           style={{
             width: settingsModalSize.width,
             height: settingsModalSize.height,
@@ -1946,7 +1946,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
 
               <TabsContent value="general" className="mt-6 space-y-6 flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-1">
                 {/* Prompt 模板 */}
-                <div className="bg-white/5 rounded-xl p-4 border border-white/5">
+                <div className="bg-[#f6f7f9] rounded-xl p-4 border border-[var(--cx-line)]">
                   <h3 className="text-sm font-semibold text-text-main mb-3 flex items-center gap-2">
                     <span className="size-1.5 rounded-full bg-accent"></span>
                     诏令模板
@@ -1956,7 +1956,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                     <select
                       value={promptProfile}
                       onChange={(e) => setPromptProfile(e.target.value)}
-                      className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
+                      className="w-full bg-[#fbfbfc] text-text-main px-3 py-2 rounded border border-[var(--cx-line)] text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
                     >
                       <option value="zhenguan_governance">zhenguan_governance (贞观治理架构)</option>
                       <option value="demo_ming_armada">demo_ming_armada (兼容旧配置)</option>
@@ -1969,7 +1969,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                 </div>
 
                 {/* 刷新设置 */}
-                <div className="bg-white/5 rounded-xl p-4 border border-white/5">
+                <div className="bg-[#f6f7f9] rounded-xl p-4 border border-[var(--cx-line)]">
                   <h3 className="text-sm font-semibold text-text-main mb-3 flex items-center gap-2">
                     <span className="size-1.5 rounded-full bg-accent"></span>
                     刷新设置
@@ -1981,7 +1981,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                         id="auto-refresh"
                         checked={autoRefresh}
                         onChange={(e) => setAutoRefresh(e.target.checked)}
-                        className="w-4 h-4 rounded bg-[rgba(35,25,14,0.55)] border-white/10 checked:bg-accent checked:border-accent focus:ring-accent/50 text-accent transition-colors"
+                        className="w-4 h-4 rounded bg-[#fbfbfc] border-[var(--cx-line)] checked:bg-accent checked:border-accent focus:ring-accent/50 text-accent transition-colors"
                       />
                       <label htmlFor="auto-refresh" className="text-sm text-text-muted cursor-pointer select-none">
                         自动刷新
@@ -1996,7 +1996,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                         value={refreshInterval}
                         onChange={(e) => setRefreshInterval(Math.max(1, Number(e.target.value) || 1))}
                         disabled={!autoRefresh}
-                        className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 disabled:opacity-50 transition-all"
+                        className="cx-input text-sm"
                       />
                       <p className="text-[10px] text-text-dim mt-1.5">建议 1-10 秒。</p>
                     </div>
@@ -2004,7 +2004,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                 </div>
 
                 {/* 桌面行为 */}
-                <div className="bg-white/5 rounded-xl p-4 border border-white/5">
+                <div className="bg-[#f6f7f9] rounded-xl p-4 border border-[var(--cx-line)]">
                   <h3 className="text-sm font-semibold text-text-main mb-3 flex items-center gap-2">
                     <span className="size-1.5 rounded-full bg-accent"></span>
                     桌面行为
@@ -2016,7 +2016,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                       data-testid="settings-close-to-tray-checkbox"
                       checked={closeToTray}
                       onChange={(e) => setCloseToTray(e.target.checked)}
-                      className="mt-0.5 w-4 h-4 rounded bg-[rgba(35,25,14,0.55)] border-white/10 checked:bg-accent checked:border-accent focus:ring-accent/50 text-accent transition-colors"
+                      className="mt-0.5 w-4 h-4 rounded bg-[#fbfbfc] border-[var(--cx-line)] checked:bg-accent checked:border-accent focus:ring-accent/50 text-accent transition-colors"
                     />
                     <div>
                       <label htmlFor="close-to-tray" className="text-sm text-text-muted cursor-pointer select-none">
@@ -2030,7 +2030,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                 </div>
 
                 {/* PM 运行设置 */}
-                <div className="bg-white/5 rounded-xl p-4 border border-white/5">
+                <div className="bg-[#f6f7f9] rounded-xl p-4 border border-[var(--cx-line)]">
                   <h3 className="text-sm font-semibold text-text-main mb-3 flex items-center gap-2">
                     <span className="size-1.5 rounded-full bg-accent"></span>
                     PM 运行设置
@@ -2044,7 +2044,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                           min="1"
                           value={pmInterval}
                           onChange={(e) => setPmInterval(Math.max(1, Number(e.target.value) || 1))}
-                          className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
+                          className="w-full bg-[#fbfbfc] text-text-main px-3 py-2 rounded border border-[var(--cx-line)] text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
                         />
                       </div>
                       <div>
@@ -2054,7 +2054,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                           min="0"
                           value={pmTimeout}
                           onChange={(e) => setPmTimeout(Math.max(0, Number(e.target.value) || 0))}
-                          className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
+                          className="w-full bg-[#fbfbfc] text-text-main px-3 py-2 rounded border border-[var(--cx-line)] text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
                         />
                       </div>
                     </div>
@@ -2066,7 +2066,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                           id="pm-show-output"
                           checked={pmShowOutput}
                           onChange={(e) => setPmShowOutput(e.target.checked)}
-                          className="w-4 h-4 rounded bg-[rgba(35,25,14,0.55)] border-white/10 checked:bg-accent text-accent focus:ring-accent/50"
+                          className="w-4 h-4 rounded bg-[#fbfbfc] border-[var(--cx-line)] checked:bg-accent text-accent focus:ring-accent/50"
                         />
                         <label htmlFor="pm-show-output" className="text-sm text-text-muted cursor-pointer select-none">
                           显示 PM 输出
@@ -2079,7 +2079,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                           id="pm-runs-director"
                           checked={pmRunsDirector}
                           onChange={(e) => setPmRunsDirector(e.target.checked)}
-                          className="w-4 h-4 rounded bg-[rgba(35,25,14,0.55)] border-white/10 checked:bg-accent text-accent focus:ring-accent/50"
+                          className="w-4 h-4 rounded bg-[#fbfbfc] border-[var(--cx-line)] checked:bg-accent text-accent focus:ring-accent/50"
                         />
                         <label htmlFor="pm-runs-director" className="text-sm text-text-muted cursor-pointer select-none">
                           PM→Chief Engineer→Director
@@ -2093,7 +2093,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                           checked={pmDirectorShowOutput}
                           onChange={(e) => setPmDirectorShowOutput(e.target.checked)}
                           disabled={!pmRunsDirector}
-                          className="w-4 h-4 rounded bg-[rgba(35,25,14,0.55)] border-white/10 checked:bg-accent text-accent focus:ring-accent/50 disabled:opacity-50"
+                          className="w-4 h-4 rounded bg-[#fbfbfc] border-[var(--cx-line)] checked:bg-accent text-accent focus:ring-accent/50 disabled:opacity-50"
                         />
                         <label htmlFor="pm-director-output" className="text-sm text-text-muted cursor-pointer select-none">
                           显示 Director 输出
@@ -2110,7 +2110,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                           value={pmDirectorTimeout}
                           onChange={(e) => setPmDirectorTimeout(Math.max(1, Number(e.target.value) || 1))}
                           disabled={!pmRunsDirector}
-                          className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 disabled:opacity-50 transition-all"
+                          className="cx-input text-sm"
                         />
                       </div>
                       <div>
@@ -2121,7 +2121,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                           value={pmDirectorIterations}
                           onChange={(e) => setPmDirectorIterations(Math.max(1, Number(e.target.value) || 1))}
                           disabled={!pmRunsDirector}
-                          className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 disabled:opacity-50 transition-all"
+                          className="cx-input text-sm"
                         />
                       </div>
                     </div>
@@ -2132,7 +2132,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                         value={pmDirectorMatchMode}
                         onChange={(e) => setPmDirectorMatchMode(e.target.value)}
                         disabled={!pmRunsDirector}
-                        className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 disabled:opacity-50 transition-all"
+                        className="cx-input text-sm"
                       >
                         <option value="latest">最新回执（推荐）</option>
                         <option value="run_id">按 run_id</option>
@@ -2144,7 +2144,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                 </div>
 
                 {/* PM 限制 */}
-                <div className="bg-white/5 rounded-xl p-4 border border-white/5">
+                <div className="bg-[#f6f7f9] rounded-xl p-4 border border-[var(--cx-line)]">
                   <h3 className="text-sm font-semibold text-text-main mb-3 flex items-center gap-2">
                     <span className="size-1.5 rounded-full bg-accent"></span>
                     PM 限制
@@ -2157,7 +2157,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                         min="1"
                         value={pmMaxFailures}
                         onChange={(e) => setPmMaxFailures(Math.max(1, Number(e.target.value) || 1))}
-                        className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
+                        className="w-full bg-[#fbfbfc] text-text-main px-3 py-2 rounded border border-[var(--cx-line)] text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
                       />
                     </div>
                     <div>
@@ -2167,7 +2167,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                         min="1"
                         value={pmMaxBlocked}
                         onChange={(e) => setPmMaxBlocked(Math.max(1, Number(e.target.value) || 1))}
-                        className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
+                        className="w-full bg-[#fbfbfc] text-text-main px-3 py-2 rounded border border-[var(--cx-line)] text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
                       />
                     </div>
                     <div className="col-span-2">
@@ -2177,14 +2177,14 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                         min="1"
                         value={pmMaxSame}
                         onChange={(e) => setPmMaxSame(Math.max(1, Number(e.target.value) || 1))}
-                        className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
+                        className="w-full bg-[#fbfbfc] text-text-main px-3 py-2 rounded border border-[var(--cx-line)] text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
                       />
                     </div>
                   </div>
                 </div>
 
                 {/* Director阻塞处理策略 */}
-                <div className="bg-white/5 rounded-xl p-4 border border-white/5">
+                <div className="bg-[#f6f7f9] rounded-xl p-4 border border-[var(--cx-line)]">
                   <h3 className="text-sm font-semibold text-text-main mb-3 flex items-center gap-2">
                     <span className="size-1.5 rounded-full bg-accent"></span>
                     Director阻塞处理策略
@@ -2195,7 +2195,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                       <select
                         value={pmBlockedStrategy}
                         onChange={(e) => setPmBlockedStrategy(e.target.value as 'skip' | 'manual' | 'degrade_retry' | 'auto')}
-                        className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
+                        className="w-full bg-[#fbfbfc] text-text-main px-3 py-2 rounded border border-[var(--cx-line)] text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
                       >
                         <option value="auto">自动决策 (推荐)</option>
                         <option value="skip">跳过任务并继续</option>
@@ -2215,7 +2215,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                           max="5"
                           value={pmBlockedDegradeMaxRetries}
                           onChange={(e) => setPmBlockedDegradeMaxRetries(Math.max(0, Math.min(5, Number(e.target.value) || 0)))}
-                          className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
+                          className="w-full bg-[#fbfbfc] text-text-main px-3 py-2 rounded border border-[var(--cx-line)] text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
                         />
                         <p className="text-xs text-text-muted/70 mt-1.5">
                           使用降级设置重试的最大次数 (0-5)
@@ -2226,7 +2226,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                 </div>
 
                 {/* Director 设置 */}
-                <div className="bg-white/5 rounded-xl p-4 border border-white/5">
+                <div className="bg-[#f6f7f9] rounded-xl p-4 border border-[var(--cx-line)]">
                   <h3 className="text-sm font-semibold text-text-main mb-3 flex items-center gap-2">
                     <span className="size-1.5 rounded-full bg-accent"></span>
                     Director 设置
@@ -2238,7 +2238,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                         id="director-qa"
                         checked={qaEnabled}
                         onChange={(e) => setQaEnabled(e.target.checked)}
-                        className="w-4 h-4 rounded bg-[rgba(35,25,14,0.55)] border-white/10 checked:bg-accent text-accent focus:ring-accent/50"
+                        className="w-4 h-4 rounded bg-[#fbfbfc] border-[var(--cx-line)] checked:bg-accent text-accent focus:ring-accent/50"
                       />
                       <label htmlFor="director-qa" className="text-sm text-text-muted cursor-pointer select-none">
                         启用 QA 审核
@@ -2251,7 +2251,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                         id="director-forever"
                         checked={directorForever}
                         onChange={(e) => setDirectorForever(e.target.checked)}
-                        className="w-4 h-4 rounded bg-[rgba(35,25,14,0.55)] border-white/10 checked:bg-accent text-accent focus:ring-accent/50"
+                        className="w-4 h-4 rounded bg-[#fbfbfc] border-[var(--cx-line)] checked:bg-accent text-accent focus:ring-accent/50"
                       />
                       <label htmlFor="director-forever" className="text-sm text-text-muted cursor-pointer select-none">
                         持续运行（忽略迭代次数）
@@ -2266,7 +2266,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                         value={directorIterations}
                         onChange={(e) => setDirectorIterations(Math.max(1, Number(e.target.value) || 1))}
                         disabled={directorForever}
-                        className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 disabled:opacity-50 transition-all"
+                        className="cx-input text-sm"
                       />
                       <p className="text-[10px] text-text-dim mt-1.5">关闭“持续运行”后生效。</p>
                     </div>
@@ -2277,7 +2277,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                         <select
                           value={directorExecutionMode}
                           onChange={(e) => setDirectorExecutionMode(e.target.value === 'serial' ? 'serial' : 'parallel')}
-                          className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
+                          className="w-full bg-[#fbfbfc] text-text-main px-3 py-2 rounded border border-[var(--cx-line)] text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
                         >
                           <option value="parallel">并行</option>
                           <option value="serial">串行</option>
@@ -2291,7 +2291,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                           value={directorMaxParallelTasks}
                           onChange={(e) => setDirectorMaxParallelTasks(Math.max(1, Number(e.target.value) || 1))}
                           disabled={directorExecutionMode === 'serial'}
-                          className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 disabled:opacity-50 transition-all"
+                          className="cx-input text-sm"
                         />
                         {directorExecutionMode === 'serial' ? (
                           <p className="text-[10px] text-text-dim mt-1.5">串行模式下固定为 1。</p>
@@ -2304,7 +2304,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                           min="1"
                           value={directorReadyTimeoutSeconds}
                           onChange={(e) => setDirectorReadyTimeoutSeconds(Math.max(1, Number(e.target.value) || 1))}
-                          className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
+                          className="w-full bg-[#fbfbfc] text-text-main px-3 py-2 rounded border border-[var(--cx-line)] text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
                         />
                       </div>
                       <div>
@@ -2314,7 +2314,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                           min="1"
                           value={directorClaimTimeoutSeconds}
                           onChange={(e) => setDirectorClaimTimeoutSeconds(Math.max(1, Number(e.target.value) || 1))}
-                          className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
+                          className="w-full bg-[#fbfbfc] text-text-main px-3 py-2 rounded border border-[var(--cx-line)] text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
                         />
                       </div>
                       <div>
@@ -2324,7 +2324,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                           min="1"
                           value={directorPhaseTimeoutSeconds}
                           onChange={(e) => setDirectorPhaseTimeoutSeconds(Math.max(1, Number(e.target.value) || 1))}
-                          className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
+                          className="w-full bg-[#fbfbfc] text-text-main px-3 py-2 rounded border border-[var(--cx-line)] text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
                         />
                       </div>
                       <div>
@@ -2334,7 +2334,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                           min="1"
                           value={directorCompleteTimeoutSeconds}
                           onChange={(e) => setDirectorCompleteTimeoutSeconds(Math.max(1, Number(e.target.value) || 1))}
-                          className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
+                          className="w-full bg-[#fbfbfc] text-text-main px-3 py-2 rounded border border-[var(--cx-line)] text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
                         />
                       </div>
                       <div className="col-span-2">
@@ -2344,7 +2344,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                           min="1"
                           value={directorTaskTimeoutSeconds}
                           onChange={(e) => setDirectorTaskTimeoutSeconds(Math.max(1, Number(e.target.value) || 1))}
-                          className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
+                          className="w-full bg-[#fbfbfc] text-text-main px-3 py-2 rounded border border-[var(--cx-line)] text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
                         />
                       </div>
                     </div>
@@ -2355,7 +2355,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                         id="director-output"
                         checked={directorShowOutput}
                         onChange={(e) => setDirectorShowOutput(e.target.checked)}
-                        className="w-4 h-4 rounded bg-[rgba(35,25,14,0.55)] border-white/10 checked:bg-accent text-accent focus:ring-accent/50"
+                        className="w-4 h-4 rounded bg-[#fbfbfc] border-[var(--cx-line)] checked:bg-accent text-accent focus:ring-accent/50"
                       />
                       <label htmlFor="director-output" className="text-sm text-text-muted cursor-pointer select-none">
                         显示 Director 输出
@@ -2368,7 +2368,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                         id="director-slm-enabled"
                         checked={slmEnabled}
                         onChange={(e) => setSlmEnabled(e.target.checked)}
-                        className="w-4 h-4 rounded bg-[rgba(35,25,14,0.55)] border-white/10 checked:bg-accent text-accent focus:ring-accent/50"
+                        className="w-4 h-4 rounded bg-[#fbfbfc] border-[var(--cx-line)] checked:bg-accent text-accent focus:ring-accent/50"
                       />
                       <label htmlFor="director-slm-enabled" className="text-sm text-text-muted cursor-pointer select-none">
                         启用 SLM 前置分流（可选）
@@ -2381,7 +2381,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                 </div>
 
                 {/* 不变量策略 */}
-                <div className="bg-white/5 rounded-xl p-4 border border-white/5">
+                <div className="bg-[#f6f7f9] rounded-xl p-4 border border-[var(--cx-line)]">
                   <h3 className="text-sm font-semibold text-text-main mb-3 flex items-center gap-2">
                     <span className="size-1.5 rounded-full bg-accent"></span>
                     不变量策略
@@ -2392,7 +2392,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                       <select
                         value={ioFsyncMode}
                         onChange={(e) => setIoFsyncMode(e.target.value as 'strict' | 'relaxed')}
-                        className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
+                        className="w-full bg-[#fbfbfc] text-text-main px-3 py-2 rounded border border-[var(--cx-line)] text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
                       >
                         <option value="strict">严格：fsync + 原子替换</option>
                         <option value="relaxed">宽松：跳过 fsync（仍原子替换）</option>
@@ -2407,7 +2407,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                       <select
                         value={memoryRefsMode}
                         onChange={(e) => setMemoryRefsMode(e.target.value as 'strict' | 'soft' | 'off')}
-                        className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
+                        className="w-full bg-[#fbfbfc] text-text-main px-3 py-2 rounded border border-[var(--cx-line)] text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
                       >
                         <option value="strict">严格：缺 refs 直接丢弃</option>
                         <option value="soft">软性：保留但标记未验证</option>
@@ -2421,7 +2421,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                 </div>
 
                 {/* 存储与日志 */}
-                <div className="bg-white/5 rounded-xl p-4 border border-white/5">
+                <div className="bg-[#f6f7f9] rounded-xl p-4 border border-[var(--cx-line)]">
                   <h3 className="text-sm font-semibold text-text-main mb-3 flex items-center gap-2">
                     <span className="size-1.5 rounded-full bg-accent"></span>
                     存储与日志
@@ -2434,7 +2434,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                         value={ramdiskRoot}
                         onChange={(e) => setRamdiskRoot(e.target.value)}
                         placeholder="X:\\"
-                        className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all font-mono"
+                        className="w-full bg-[#fbfbfc] text-text-main px-3 py-2 rounded border border-[var(--cx-line)] text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all font-mono"
                       />
                       <p className="text-[10px] text-text-dim mt-1.5">留空禁用；示例：X:\</p>
                     </div>
@@ -2445,7 +2445,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                         type="text"
                         value={jsonLogPath}
                         onChange={(e) => setJsonLogPath(e.target.value)}
-                        className="w-full bg-[rgba(35,25,14,0.55)] text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all font-mono"
+                        className="w-full bg-[#fbfbfc] text-text-main px-3 py-2 rounded border border-[var(--cx-line)] text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all font-mono"
                       />
                       <p className="text-[10px] text-text-dim mt-1.5">
                         相对 Workspace 的路径。默认：{DEFAULT_JSON_LOG_PATH}
@@ -2458,7 +2458,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                         id="show-memory"
                         checked={showMemory}
                         onChange={(e) => setShowMemory(e.target.checked)}
-                        className="w-4 h-4 rounded bg-[rgba(35,25,14,0.55)] border-white/10 checked:bg-accent text-accent focus:ring-accent/50"
+                        className="w-4 h-4 rounded bg-[#fbfbfc] border-[var(--cx-line)] checked:bg-accent text-accent focus:ring-accent/50"
                       />
                       <label htmlFor="show-memory" className="text-sm text-text-muted cursor-pointer select-none">
                         显示记忆面板
@@ -2471,7 +2471,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                         id="debug-tracing"
                         checked={debugTracing}
                         onChange={(e) => setDebugTracing(e.target.checked)}
-                        className="w-4 h-4 rounded bg-[rgba(35,25,14,0.55)] border-white/10 checked:bg-accent text-accent focus:ring-accent/50"
+                        className="w-4 h-4 rounded bg-[#fbfbfc] border-[var(--cx-line)] checked:bg-accent text-accent focus:ring-accent/50"
                       />
                       <label htmlFor="debug-tracing" className="text-sm text-text-muted cursor-pointer select-none">
                         启用后端请求/响应调试日志
@@ -2525,7 +2525,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                   </Suspense>
                 </div>
                 {reportDrawer.open ? (
-                  <div className="mt-3 shrink-0 rounded-lg border border-white/10 bg-[rgba(35,25,14,0.7)] p-3">
+                  <div className="mt-3 shrink-0 rounded-lg border border-[var(--cx-line)] bg-[#f6f7f9] p-3">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-xs font-semibold text-text-main">LLM 测试回执</span>
                       <button

@@ -400,3 +400,114 @@
 .console-scope .cx-scroll::-webkit-scrollbar-track { background: transparent; }
 .console-scope .cx-scroll::-webkit-scrollbar-thumb { background: #d3d8e0; border-radius: 999px; }
 .console-scope .cx-scroll::-webkit-scrollbar-thumb:hover { background: #b9c0cc; }
+
+/* ════════════════════════════════════════════════════════════════════
+   .cx-adapt — retheme legacy dark surfaces to the ink-teal console
+   language. Applied on the console shell root; portal overlays opt in
+   by adding `console-scope cx-adapt` to their fixed inset-0 root.
+   ════════════════════════════════════════════════════════════════════ */
+
+.cx-adapt.soft-app-bg { background: var(--cx-paper) !important; }
+.cx-adapt .soft-app-bg { background: var(--cx-paper) !important; }
+
+/* Dark page/card surfaces → paper workspace cards */
+.cx-adapt [class*="bg-slate-950"],
+.cx-adapt [class*="bg-slate-900"],
+.cx-adapt .bg-\[\#080c18\],
+.cx-adapt .bg-\[\#0b0f14\],
+.cx-adapt .bg-bg { background-color: #ffffff !important; }
+.cx-adapt [class*="bg-white/"] { background-color: #f6f7f9 !important; }
+.cx-adapt [class*="bg-white/\["] { background-color: #f6f7f9 !important; }
+
+/* Text */
+.cx-adapt [class*="text-slate-100"],
+.cx-adapt [class*="text-slate-200"],
+.cx-adapt [class*="text-slate-300"],
+.cx-adapt .text-text-main { color: var(--cx-ink) !important; }
+.cx-adapt .text-slate-400,
+.cx-adapt [class*="text-slate-400"] { color: var(--cx-ink-dim) !important; }
+.cx-adapt [class*="text-slate-500"],
+.cx-adapt .text-text-dim,
+.cx-adapt .text-text-muted { color: var(--cx-ink-faint) !important; }
+.cx-adapt [class*="text-cyan-100"],
+.cx-adapt [class*="text-cyan-200"],
+.cx-adapt [class*="text-cyan-300"],
+.cx-adapt [class*="text-cyan-400"],
+.cx-adapt .text-accent-secondary { color: var(--cx-teal-strong) !important; }
+
+/* Borders */
+.cx-adapt [class*="border-white/"] { border-color: var(--cx-line) !important; }
+.cx-adapt [class*="border-cyan-4"],
+.cx-adapt [class*="border-accent-secondary"] { border-color: #bfe0d2 !important; }
+.cx-adapt .border-border { border-color: var(--cx-line) !important; }
+
+/* Semantic status tokens */
+.cx-adapt .bg-status-error { background-color: var(--cx-red) !important; }
+.cx-adapt .bg-status-success { background-color: var(--cx-teal-bright) !important; }
+.cx-adapt .text-status-error { color: var(--cx-red) !important; }
+.cx-adapt .text-status-success { color: #1c7a4d !important; }
+.cx-adapt [class*="bg-accent-secondary"] { background-color: rgba(52, 165, 131, 0.14) !important; }
+
+/* Inputs sitting on dark backgrounds */
+.cx-adapt input[class*="bg-slate-950"],
+.cx-adapt textarea[class*="bg-slate-950"],
+.cx-adapt select[class*="bg-slate-950"],
+.cx-adapt [class*="bg-slate-950/50"],
+.cx-adapt [class*="bg-slate-950/60"] { background-color: #fbfbfc !important; color: var(--cx-ink) !important; border-color: var(--cx-line-strong) !important; }
+
+/* Scrollbar coherence for adapted panes */
+.cx-adapt ::-webkit-scrollbar { width: 6px; height: 6px; }
+.cx-adapt ::-webkit-scrollbar-thumb { background: #d3d8e0; border-radius: 999px; }
+
+/* Legacy soft panels (dark gradients) → light cards */
+.cx-adapt .soft-panel,
+.cx-adapt .soft-panel-subtle {
+  background: #ffffff !important;
+  border: 1px solid var(--cx-line) !important;
+  box-shadow: 0 1px 2px rgba(26, 34, 48, 0.04), 0 8px 24px rgba(26, 34, 48, 0.05);
+  color: var(--cx-ink);
+}
+.cx-adapt .soft-panel::before, .cx-adapt .soft-panel::after,
+.cx-adapt .soft-panel-subtle::before, .cx-adapt .soft-panel-subtle::after { display: none !important; }
+.cx-adapt .bg-accent { background-color: var(--cx-teal) !important; }
+.cx-adapt .hover\:bg-white\/70:hover { background-color: #eef0f4 !important; }
+.cx-adapt .bg-status-error\/10 { background-color: var(--cx-red-soft) !important; }
+.cx-adapt .border-status-error\/20 { border-color: #eeccc9 !important; }
+
+.cx-adapt .soft-inset,
+.cx-adapt .soft-chip {
+  background: #f6f7f9 !important;
+  border-color: var(--cx-line) !important;
+  color: var(--cx-ink) !important;
+  box-shadow: none !important;
+}
+.cx-adapt .bg-input { background-color: #fbfbfc !important; color: var(--cx-ink) !important; border-color: var(--cx-line-strong) !important; }
+.cx-adapt input, .cx-adapt select, .cx-adapt textarea { color-scheme: light; }
+
+.cx-adapt input:not([type="checkbox"]):not([type="radio"]):not(.cx-code-area),
+.cx-adapt select:not(.cx-code-area),
+.cx-adapt textarea:not(.cx-code-area) {
+  background-color: #fbfbfc !important;
+  color: var(--cx-ink) !important;
+  border-color: var(--cx-line-strong) !important;
+}
+
+/* shadcn/ui kit input tokens → light inside adapted surfaces */
+.cx-adapt { --input-background: #fbfbfc; --input: #fbfbfc; --gradient-input: #fbfbfc; color-scheme: light; }
+.cx-adapt input:not([type="checkbox"]):not([type="radio"]):not(.cx-code-area),
+.cx-adapt select:not(.cx-code-area),
+.cx-adapt textarea:not(.cx-code-area) {
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: #fbfbfc !important;
+  color: var(--cx-ink) !important;
+  border: 1px solid var(--cx-line-strong) !important;
+  border-radius: 0.65rem;
+}
+.cx-adapt select:not(.cx-code-area) {
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235b6675' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  background-size: 0.9rem;
+  padding-right: 2rem;
+}

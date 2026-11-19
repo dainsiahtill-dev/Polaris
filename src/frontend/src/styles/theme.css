@@ -901,26 +901,28 @@
     background-color: rgba(255, 77, 255, 0.12) !important;
   }
 
-  [data-settings-modal] input,
-  [data-settings-modal] select,
-  [data-settings-modal] textarea {
+  /* Scoped out under .cx-adapt: the ink-teal console console-scope owns
+     settings inputs there (light surfaces). */
+  [data-settings-modal]:not(.cx-adapt) input,
+  [data-settings-modal]:not(.cx-adapt) select,
+  [data-settings-modal]:not(.cx-adapt) textarea {
     background: rgba(6, 15, 28, 0.88) !important;
     border-color: var(--soft-border-strong) !important;
     color: var(--foreground) !important;
     box-shadow: var(--soft-shadow-inner);
   }
 
-  [data-settings-modal] input:focus,
-  [data-settings-modal] select:focus,
-  [data-settings-modal] textarea:focus {
+  [data-settings-modal]:not(.cx-adapt) input:focus,
+  [data-settings-modal]:not(.cx-adapt) select:focus,
+  [data-settings-modal]:not(.cx-adapt) textarea:focus {
     border-color: rgba(0, 216, 255, 0.58) !important;
     box-shadow:
       0 0 0 3px rgba(0, 216, 255, 0.18),
       var(--soft-shadow-inner) !important;
   }
 
-  [data-settings-modal] input::placeholder,
-  [data-settings-modal] textarea::placeholder {
+  [data-settings-modal]:not(.cx-adapt) input::placeholder,
+  [data-settings-modal]:not(.cx-adapt) textarea::placeholder {
     color: #6f96a5 !important;
   }
 

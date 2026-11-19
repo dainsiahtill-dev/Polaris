@@ -1116,7 +1116,7 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worksp
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      className="console-scope cx-adapt fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}

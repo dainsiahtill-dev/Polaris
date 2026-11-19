@@ -31,7 +31,7 @@ export function ConsoleShell({ workspace, viewLabel, connected, reconnecting, ra
 }): ReactElement {
   const workspaceBase = workspace.split(/[\\/]/).filter(Boolean).pop() || workspace || '未绑定';
   return (
-    <div className="console-scope flex h-full min-h-0 flex-col overflow-hidden md:flex-row">
+    <div className="console-scope cx-adapt flex h-full min-h-0 flex-col overflow-hidden md:flex-row">
       <aside className="cx-rail hidden w-56 shrink-0 flex-col md:flex" aria-label="主导航">
         <div className="flex items-center gap-2.5 px-5 pb-5 pt-6">
           <PolarisMark className="h-6 w-6 text-[#dff3e8]" />
