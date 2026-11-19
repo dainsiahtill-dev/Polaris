@@ -97,3 +97,29 @@ classification, kernel run-ledger scenarios, instances port allocation (env).
 
 context + knowledge + ContextOS + audit + eval-matrix suites:
 2318 passed, 0 failed. Catalog governance gate: new_issue_count=0.
+
+## Session 3 (2026-11-19) — director adapter cluster triage
+
+Deep-traced the 7 test_director_adapter_failure_closure_b failures (all
+3+ months stale since the 2026-08-12 authority hardening bbf9bb83e, zero
+overlap with this session's changed files). Findings:
+
+- The preflight gate IS entered (can_accept=True, quality clean) for the
+  read-only-mutation-guard test, so the adapter preflight-completes
+  (success=True) instead of rejecting after the provider's contract-violation
+  failure. The receipt builder (build_current_task_project_artifact_receipt_evidence)
+  and _can_accept_existing_workspace_scope are NOT on the deciding path for
+  this flow, ruling out the vacuous-receipt hypothesis.
+- The deciding path is the adapter's existing-scope fallback: a provider
+  contract-violation on a requires_fresh task whose declared file exists on
+  disk completes as "existing scope accepted" rather than fail-closed.
+- Two vacuous-success probes were reverted (no behavioral change; tree clean).
+- Verified no regression: closure_a + closure_b + build_evidence together
+  120 passed / 7 pre-existing failed.
+
+Conclusion: this cluster needs a dedicated change to the adapter's
+existing-scope fallback semantics (fail-closed on provider guard violations
+for requires_fresh tasks), which is a behavior change beyond safe test-only
+convergence and must be designed against the settlement authority chain
+(claim receipt, task completion projection, JobToken) — recorded as the next
+convergence work item.
