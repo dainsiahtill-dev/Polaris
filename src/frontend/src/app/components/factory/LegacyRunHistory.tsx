@@ -54,14 +54,26 @@ export function LegacyRunHistory({ workspace, onBackToMain }: { workspace: strin
     finally { if (generation.current === current) setLoading(false); }
   }
   return <section aria-label="历史记录" className="flex h-full min-h-0 flex-col gap-4 overflow-auto p-6">
-    <h1 className="text-lg font-semibold">历史记录（只读）</h1>
-    <p className="text-sm text-slate-400">旧运行与角色会话保留原始结果；新工程任务请返回工程入口。</p>
-    <div className="flex flex-wrap items-center gap-3"><button type="button" onClick={onBackToMain} className="rounded-lg border border-white/15 px-4 py-3 text-sm">返回工程运行</button><label htmlFor="legacy-history-kind" className="text-sm">历史类型</label><select id="legacy-history-kind" value={kind} onChange={(event) => setKind(event.target.value as HistoryKind)} className="rounded-lg bg-slate-950 px-3 py-3 text-sm">{kinds.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select>{kind !== 'factory' && <><label htmlFor="legacy-history-host" className="text-sm">历史宿主</label><select id="legacy-history-host" value={host} onChange={(event) => setHost(event.target.value)} className="rounded-lg bg-slate-950 px-3 py-3 text-sm">{['electron_workbench', 'workflow', 'tui', 'cli', 'api_server', 'headless'].map((value) => <option key={value} value={value}>{value}</option>)}</select></>}<button type="button" disabled={loading} onClick={() => setRefreshKey((value) => value + 1)} className="rounded-lg border border-white/15 px-4 py-3 text-sm disabled:opacity-40">刷新历史</button></div>
-    <p className="break-all text-xs text-slate-400">{workspace}</p>
-    {loading && <p role="status">正在读取历史…</p>}
-    {error && <p role="alert" className="text-red-200">{error}</p>}
-    <div className="flex flex-wrap gap-2">{items.map((item) => <button key={String(item.run_id || item.id)} type="button" onClick={() => void open(item)} className="rounded-lg border border-white/15 px-4 py-3 text-sm">{String(item.title || item.run_id || item.id)} · {String(item.status || item.state || 'unknown')}</button>)}</div>
-    {!loading && !error && !items.length && <p className="text-sm text-slate-400">当前工作区暂无此类历史记录</p>}
-    {detail && <pre className="whitespace-pre-wrap break-words rounded-lg bg-black/20 p-4 text-xs leading-relaxed">{JSON.stringify(detail, null, 2)}</pre>}
+    <div>
+      <p className="cx-eyebrow">READ ONLY</p>
+      <h1 className="mt-1 text-xl font-bold tracking-tight">历史记录（只读）</h1>
+      <p className="mt-1 text-sm text-[var(--cx-ink-dim)]">旧运行与角色会话保留原始结果；新工程任务请返回工程入口。</p>
+    </div>
+    <div className="flex flex-wrap items-center gap-2.5">
+      <button type="button" onClick={onBackToMain} className="cx-btn cx-btn--ghost">返回工程运行</button>
+      <label htmlFor="legacy-history-kind" className="text-sm text-[var(--cx-ink-dim)]">历史类型</label>
+      <select id="legacy-history-kind" value={kind} onChange={(event) => setKind(event.target.value as HistoryKind)} className="cx-input cx-input-auto text-sm">{kinds.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
+      {kind !== 'factory' && <>
+        <label htmlFor="legacy-history-host" className="text-sm text-[var(--cx-ink-dim)]">历史宿主</label>
+        <select id="legacy-history-host" value={host} onChange={(event) => setHost(event.target.value)} className="cx-input cx-input-auto cx-mono text-xs">{['electron_workbench', 'workflow', 'tui', 'cli', 'api_server', 'headless'].map((value) => <option key={value} value={value}>{value}</option>)}</select>
+      </>}
+      <button type="button" disabled={loading} onClick={() => setRefreshKey((value) => value + 1)} className="cx-btn cx-btn--ghost disabled:opacity-40">刷新历史</button>
+    </div>
+    <p className="cx-mono break-all text-xs text-[var(--cx-ink-faint)]">{workspace}</p>
+    {loading && <p role="status" className="text-sm text-[var(--cx-ink-dim)]">正在读取历史…</p>}
+    {error && <p role="alert" className="rounded-lg border border-[#eeccc9] bg-[var(--cx-red-soft)] px-3 py-2 text-sm text-[var(--cx-red)]">{error}</p>}
+    <div className="flex flex-wrap gap-2">{items.map((item) => <button key={String(item.run_id || item.id)} type="button" onClick={() => void open(item)} className="rounded-xl border border-[var(--cx-line)] bg-white px-4 py-3 text-sm shadow-sm transition-colors hover:border-[var(--cx-line-strong)]">{String(item.title || item.run_id || item.id)} · {String(item.status || item.state || 'unknown')}</button>)}</div>
+    {!loading && !error && !items.length && <p className="text-sm text-[var(--cx-ink-faint)]">当前工作区暂无此类历史记录</p>}
+    {detail && <pre className="whitespace-pre-wrap break-words rounded-xl border border-[rgba(148,170,200,0.16)] bg-[#1a2331] p-4 text-xs leading-relaxed text-[#cfe0d4]">{JSON.stringify(detail, null, 2)}</pre>}
   </section>;
 }

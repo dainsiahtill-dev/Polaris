@@ -15,7 +15,7 @@ import {
 } from './icons';
 
 function timelineEvents(events: EngineeringEvent[]): EngineeringEvent[] {
-  return events.filter((event) => !['message', 'run_updated'].includes(event.kind));
+  return events.filter((event) => !['message', 'run_updated', 'llm_request_observed'].includes(event.kind));
 }
 
 function firstLine(text: string | undefined): string {
@@ -30,6 +30,7 @@ export function MissionControlView({ workspace, binding, role }: {
 }): ReactElement {
   const [selectedSeq, setSelectedSeq] = useState<number | null>(null);
   const [selectedContext, setSelectedContext] = useState<{ ref: string; role: string } | null>(null);
+  const [goal, setGoal] = useState<string | null>(null);
   const openContext = (ref: string, eventRole: string) => setSelectedContext({ ref, role: eventRole });
   const projection = binding.projection;
   const run = projection.snapshot;
@@ -53,7 +54,7 @@ export function MissionControlView({ workspace, binding, role }: {
           <h1 className="mt-1 text-2xl font-bold tracking-tight">新建工程运行</h1>
           <p className="mt-1 text-sm text-[var(--cx-ink-dim)]">为当前工作区创建一次工程运行，执行实现、验证与验收。</p>
         </div>
-        <GoalComposer binding={binding} workspace={workspace} role={role} />
+        <GoalComposer binding={binding} workspace={workspace} role={role} onStarted={(instruction) => setGoal(instruction)} />
         <p className="cx-faint text-xs">示例工作区 · 工作区 {workspace || '未绑定'}</p>
       </div>
     );
@@ -72,7 +73,7 @@ export function MissionControlView({ workspace, binding, role }: {
           : run.status === 'failed'
             ? { tone: 'bad' as const, text: '运行失败。沿下方事件记录可定位终止位置。' }
             : { tone: 'warn' as const, text: `运行${RUN_STATUS_LABELS[run.status]}，可继续同一运行或新建运行。` };
-  const title = firstLine(run.text) || '工程运行';
+  const title = firstLine(goal ?? undefined) || firstLine(run.text) || '工程运行';
   const workflowLabel = run.workflow === 'collaborative' ? 'collaborative' : 'direct';
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4 cx-scroll" data-testid="engineering-run-workspace">
@@ -116,8 +117,8 @@ export function MissionControlView({ workspace, binding, role }: {
           {binding.projection.historyWindowed ? ' · 仅展示最近记录窗口' : ''}
         </p>
       </div>
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 xl:grid-cols-12">
-        <section className="cx-card flex min-h-[24rem] flex-col overflow-hidden xl:col-span-7">
+      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-12">
+        <section className="cx-card flex min-h-[20rem] flex-col overflow-hidden xl:col-span-7">
           <div className="cx-card-head">
             <h2 className="cx-card-title"><IconInbox className="h-4.5 w-4.5 text-[var(--cx-teal)]" />工具与运行记录</h2>
             <span className="cx-pill cx-pill--idle">{events.length} 条收据</span>
@@ -132,7 +133,7 @@ export function MissionControlView({ workspace, binding, role }: {
             />
           </div>
         </section>
-        <section className="cx-card flex min-h-[24rem] flex-col overflow-hidden xl:col-span-5">
+        <section className="cx-card flex min-h-[20rem] flex-col overflow-hidden xl:col-span-5">
           <div className="cx-card-head">
             <h2 className="cx-card-title"><IconTerminal className="h-4.5 w-4.5 text-[var(--cx-teal)]" />命令收据</h2>
             {selectedEvent ? (

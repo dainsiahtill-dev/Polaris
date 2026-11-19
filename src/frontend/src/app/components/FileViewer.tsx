@@ -17,7 +17,7 @@ interface FileViewerProps {
 export function FileViewer({ selectedFile, content, mtime, loading, error, badge }: FileViewerProps) {
   if (!selectedFile) {
     return (
-      <div className="h-full bg-[var(--ink-indigo)] flex items-center justify-center">
+      <div className="h-full bg-[#1a2331] flex items-center justify-center">
         <div className="text-center text-gray-500">
           <FileCode className="size-16 mx-auto mb-4 opacity-20" />
           <p className="text-sm">选择左侧文件查看内容</p>
@@ -29,9 +29,9 @@ export function FileViewer({ selectedFile, content, mtime, loading, error, badge
   const isJsonl = selectedFile.name.endsWith('.jsonl');
 
   return (
-    <div className="h-full bg-[var(--ink-indigo)] flex flex-col">
+    <div className="h-full bg-[#1a2331] flex flex-col">
       {/* 文件头 */}
-      <div className="px-4 py-3 border-b border-gray-800 bg-[#252526]">
+      <div className="px-4 py-3 border-b border-[rgba(148,170,200,0.16)] bg-[#161e2b]">
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-sm font-semibold text-gray-200">{selectedFile.name}</h3>
@@ -79,7 +79,7 @@ export function FileViewer({ selectedFile, content, mtime, loading, error, badge
                 try {
                   const event = JSON.parse(line);
                   return (
-                    <div key={idx} className="p-3 bg-gray-800/50 rounded border border-gray-700">
+                    <div key={idx} className="p-3 bg-[#1a2331] rounded border border-[rgba(148,170,200,0.16)]">
                       <div className="flex items-center gap-2 mb-2">
                         {event.seq !== undefined && (
                           <span className="text-xs px-2 py-0.5 rounded bg-blue-500/20 text-blue-400">

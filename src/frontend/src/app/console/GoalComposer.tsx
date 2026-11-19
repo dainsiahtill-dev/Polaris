@@ -18,10 +18,11 @@ function EnvRow({ icon, label, value }: { icon: ReactElement; label: string; val
 }
 
 /** ② New-run page: one goal sentence starts an unattended, evidence-chained run. */
-export function GoalComposer({ binding, workspace, role }: {
+export function GoalComposer({ binding, workspace, role, onStarted }: {
   binding: EngineeringRunBinding;
   workspace: string;
   role: EngineeringRole;
+  onStarted?: (instruction: string) => void;
 }): ReactElement {
   const [instruction, setInstruction] = useState('');
   const [checks, setChecks] = useState('');
@@ -31,13 +32,14 @@ export function GoalComposer({ binding, workspace, role }: {
   const canStart = !snapshot || (snapshot.status !== 'running' && snapshot.status !== 'pending');
   const checkLines = useMemo(() => checks.split('\n').length, [checks]);
   const start = async () => {
+    const trimmed = instruction.trim();
     const ok = await binding.start({
-      instruction: instruction.trim(),
+      instruction: trimmed,
       role,
       workflow: role === 'director' ? workflow : 'direct',
       required_checks: checks.split('\n').map((line) => line.trim()).filter(Boolean),
     });
-    if (ok) setInstruction('');
+    if (ok) { setInstruction(''); onStarted?.(trimmed); }
   };
   const discussionObservation = binding.discussionMetadata?.native_request_observation;
   const discussionRef = binding.discussionMetadata?.context_snapshot_ref;

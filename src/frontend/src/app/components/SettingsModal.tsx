@@ -1944,7 +1944,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                 <TabsTrigger value="services" data-testid="settings-tab-services" className="text-accent data-[state=active]:text-accent-text">内务司</TabsTrigger>
               </TabsList>
 
-              <TabsContent value="general" className="mt-6 space-y-6 flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-1">
+              <TabsContent value="general" className="mt-6 space-y-6 flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-1 pb-6">
                 {/* Prompt 模板 */}
                 <div className="bg-[#f6f7f9] rounded-xl p-4 border border-[var(--cx-line)]">
                   <h3 className="text-sm font-semibold text-text-main mb-3 flex items-center gap-2">

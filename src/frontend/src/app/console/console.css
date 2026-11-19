@@ -547,4 +547,12 @@
 .cx-adapt .text-amber-100 { color: #9a6b15 !important; }
 .cx-adapt .text-red-300 { color: var(--cx-red) !important; }
 .cx-adapt .bg-emerald-500\/10 { background-color: #e0f3e9 !important; }
+/* Error text stays readable on light surfaces (navy code surfaces keep their own tone) */
+.cx-adapt [class*="text-red-200"], .cx-adapt [class*="text-red-300"], .cx-adapt [class*="text-red-400"] { color: var(--cx-red) !important; }
+
 .cx-adapt pre[class*="bg-black/30"], .cx-adapt [class*="bg-black/30"] { color: #cfe0d4 !important; }
+
+/* Amber/warning text readable on light surfaces */
+.cx-adapt [class*="text-amber-200"], .cx-adapt [class*="text-amber-300"],
+.cx-adapt [class*="text-yellow-200"], .cx-adapt [class*="text-yellow-300"] { color: #9a6b15 !important; }
+.console-scope .cx-input-auto { width: auto; }
