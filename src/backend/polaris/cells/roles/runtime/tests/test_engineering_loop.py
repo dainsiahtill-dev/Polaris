@@ -715,6 +715,39 @@ async def test_wrap_up_gate_can_be_disabled(
     assert (isolated_workspace / "a.py").read_text(encoding="utf-8") == "x = 2\n"
 
 
+async def test_qa_review_is_bounded_by_an_effort_budget(
+    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """QA cannot explore the workspace forever without submitting a verdict.
+
+    Real run: 69 QA execute_commands (find/ls/build) and no report_review, so the
+    shared run budget was exhausted. The QA frame ends at its effort budget with
+    an honest interrupted state instead.
+    """
+    monkeypatch.setenv("KERNELONE_ENGINEERING_STAGE_GATE_WRITES", "0")
+    monkeypatch.setenv("KERNELONE_ENGINEERING_QA_MAX_TURNS", "2")
+    from polaris.cells.roles.runtime.tests.test_engineering_loop import _components
+
+    loop, store_type, _tools, scope_type, command_type, limits_type = _components()
+    store = store_type(isolated_workspace)
+    (isolated_workspace / "a.py").write_text("x = 1\n", encoding="utf-8")
+    scope = scope_type((isolated_workspace,), (), frozenset({"read_file", "report_review"}), False)
+    limits = limits_type(time.time() + 30, 1_000_000, 64_000)
+    command = command_type("qa-budget", "qa", "Review the candidate.", isolated_workspace)
+    store.create_run(command, scope=scope, limits=limits, engine_version="engineering_v2", request_key=None)
+    for index in range(8):
+        scripted_provider.enqueue_json(_native((f"r{index}", "read_file", {"file": "a.py"})))
+    result = await loop(
+        command,
+        scope=scope,
+        limits=limits,
+        cancel=asyncio.Event(),
+        store=store,
+        client=scripted_provider.client("openai", isolated_workspace, monkeypatch),
+    )
+    assert result.status == "interrupted", result.text
+
+
 async def test_stage_gate_allows_build_preparation_shell(
     isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:

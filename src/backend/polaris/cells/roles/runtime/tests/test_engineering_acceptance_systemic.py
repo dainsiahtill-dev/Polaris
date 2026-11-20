@@ -392,3 +392,25 @@ def test_distilled_verification_failure_names_read_only_write() -> None:
     assert "read-only" in message and "/ws/dist" in message and "execute_command" in message
     code_failure = _distill_verification_failure("src/main.ts:12: error TS2304: Cannot find name 'x'")
     assert "src/main.ts" in code_failure
+
+
+def test_report_review_fail_finding_with_approved_true_is_treated_as_rejected(tmp_path: Path) -> None:
+    """A fail clause means the candidate is not acceptable; do not burn a QA turn
+    rejecting the call when the model contradicts itself (measured 17 retries)."""
+    tools = _review_tools(tmp_path, ("clause one", "clause two"))
+    observation = asyncio.run(
+        tools.execute(
+            "call_contradiction",
+            "report_review",
+            {
+                "approved": True,
+                "feedback": "looks fine",
+                "clause_findings": [
+                    {"clause": "clause one", "status": "pass", "evidence": "call_x"},
+                    {"clause": "clause two", "status": "fail", "evidence": "call_y"},
+                ],
+            },
+        )
+    )
+    assert observation.ok is True
+    assert json.loads(observation.content)["approved"] is False

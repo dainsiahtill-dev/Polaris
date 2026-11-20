@@ -286,8 +286,13 @@ class EngineeringTools:
                 ):
                     raise ValueError("major_findings must contain nonempty text")
                 clause_findings = normalize_clause_findings(args.get("clause_findings"))
-                if any(f.status == "fail" for f in clause_findings):
-                    raise ValueError("clause_findings with status fail requires approved=false")
+                approved = args["approved"]
+                if approved and any(f.status == "fail" for f in clause_findings):
+                    # A fail finding means the candidate is not acceptable, so the
+                    # model's approved=true contradicts itself. Treat it as a
+                    # rejection instead of rejecting the call and burning a QA turn
+                    # on a retry (measured 17 such retries in real runs).
+                    approved = False
                 if len(self.review_clauses) >= 2:
                     # Dispatch-boundary gate: a decomposed goal cannot be ruled
                     # on by a partial matrix. The same coverage helper grades the
@@ -300,7 +305,7 @@ class EngineeringTools:
                             f"Missing {len(gap)} of {len(self.review_clauses)} clauses: "
                             + json.dumps(gap, ensure_ascii=False)
                         )
-                self.review(args["approved"] and not findings)
+                self.review(approved and not findings)
                 # The structured clause matrix is part of the durable review
                 # judgment, not only the call arguments, so an auditor can read
                 # the ruling from the observation alone.
@@ -310,7 +315,7 @@ class EngineeringTools:
                     True,
                     json.dumps(
                         {
-                            "approved": args["approved"],
+                            "approved": approved,
                             "feedback": feedback,
                             "major_findings": findings,
                             "clause_findings": [

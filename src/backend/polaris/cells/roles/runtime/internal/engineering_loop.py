@@ -230,6 +230,16 @@ def _wrap_up_cycle_allowance() -> int:
         return 0
 
 
+# Independent QA is a review, not an open-ended exploration. A weak model can
+# spend the whole shared run budget re-listing the workspace without ever
+# submitting report_review (observed: 69 QA execute_commands, no report, run
+# cancelled at budget). Bound the QA frame's turns: warn at the limit, hard
+# finish shortly after so the run keeps an honest terminal state.
+_QA_TURN_LIMIT_ENV = "KERNELONE_ENGINEERING_QA_MAX_TURNS"
+_QA_TURN_LIMIT_DEFAULT = 50
+_QA_TURN_GRACE = 5
+
+
 def _history_allowances(window: int) -> list[int]:
     """Ascending candidate budgets for the retained native history."""
     window_allowance = int(window * 0.95) - _WINDOW_RESERVE_TOKENS
@@ -657,6 +667,8 @@ async def run_engineering_loop(
     # (preparation) before another verify_project may run, instead of letting a
     # weak model re-issue the same doomed check forever.
     preparation_pending = False
+    qa_turn_limit = int(os.environ.get(_QA_TURN_LIMIT_ENV, str(_QA_TURN_LIMIT_DEFAULT)) or 0)
+    qa_turns = 0
     # The host selected the run's shell policy (bash_pipefail_v1). Ordinary
     # execute_command must honour it too: under the POSIX default a piped command
     # such as `npm run build 2>&1 | tail` masks the real exit status, so a failed
@@ -673,6 +685,14 @@ async def run_engineering_loop(
             if limits.deadline is not None and time.time() >= limits.deadline:
                 return finish("failed", "Engineering run deadline exceeded.")
             turn_seq = store.append_event(command.session_id, kind="turn_started", role=command.role, payload={})
+            if command.role == "qa" and qa_turn_limit > 0:
+                qa_turns += 1
+                if qa_turns > qa_turn_limit + _QA_TURN_GRACE:
+                    return finish(
+                        "interrupted",
+                        "QA review exceeded its effort budget without submitting report_review; "
+                        "the candidate keeps its current verdict (unknown).",
+                    )
             visual_projection: dict[str, Any] = {}
             request_messages = _bounded_request_messages(
                 messages,
@@ -733,6 +753,11 @@ async def run_engineering_loop(
             # its _MARKER prefix; a single "\n" separator keeps the parts in one
             # text block while still letting _tail_observation find the budget facts.
             host_parts: list[str] = []
+            if command.role == "qa" and qa_turn_limit > 0 and qa_turns >= qa_turn_limit:
+                host_parts.append(
+                    "QA effort budget: you have reached the review turn limit. Submit report_review now with "
+                    "your clause findings; further exploration ends the review without a verdict."
+                )
             if command.role == "director" and limits.deadline is not None:
                 observed_at = time.time()
                 # Keep the original system/history prefix and durable messages
