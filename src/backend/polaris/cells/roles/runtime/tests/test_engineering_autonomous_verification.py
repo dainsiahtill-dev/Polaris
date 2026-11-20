@@ -531,6 +531,7 @@ async def test_wrap_up_gate_sends_passed_candidate_to_qa(
 ) -> None:
     """A repeated pass -> write cycle is intercepted; the candidate that passed
     goes to independent QA."""
+    monkeypatch.setenv("KERNELONE_ENGINEERING_WRAP_UP_CYCLES", "1")
     (isolated_workspace / "artifact.txt").write_text("1", encoding="utf-8")
     actual = "python3 -c \"from pathlib import Path; assert int(Path('artifact.txt').read_text(encoding='utf-8')) > 0\""
     for response in (

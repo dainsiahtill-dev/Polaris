@@ -26,6 +26,7 @@ async def test_source_change_requires_new_native_verification_instead_of_implici
     isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A stale selected recipe must not gain a second effect from text completion."""
+    monkeypatch.setenv("KERNELONE_ENGINEERING_WRAP_UP_CYCLES", "1")
     (isolated_workspace / "dist").mkdir()
     (isolated_workspace / "source.txt").write_text("v1", encoding="utf-8")
     required = (
