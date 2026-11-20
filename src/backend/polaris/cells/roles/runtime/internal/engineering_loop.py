@@ -256,6 +256,8 @@ def _wrap_up_cycle_allowance() -> int:
 # submitting report_review (observed: 69 QA execute_commands, no report, run
 # cancelled at budget). Bound the QA frame's turns: warn at the limit, hard
 # finish shortly after so the run keeps an honest terminal state.
+_FIRST_VERIFICATION_FRACTION_ENV = "KERNELONE_ENGINEERING_FIRST_VERIFICATION_FRACTION"
+_FIRST_VERIFICATION_FRACTION_DEFAULT = 0.4
 _QA_TURN_LIMIT_ENV = "KERNELONE_ENGINEERING_QA_MAX_TURNS"
 _QA_TURN_LIMIT_DEFAULT = 50
 _QA_TURN_GRACE = 5
@@ -736,6 +738,9 @@ async def run_engineering_loop(
     # (preparation) before another verify_project may run, instead of letting a
     # weak model re-issue the same doomed check forever.
     preparation_pending = False
+    first_verification_fraction = float(
+        os.environ.get(_FIRST_VERIFICATION_FRACTION_ENV, str(_FIRST_VERIFICATION_FRACTION_DEFAULT)) or 0
+    )
     qa_turn_limit = int(os.environ.get(_QA_TURN_LIMIT_ENV, str(_QA_TURN_LIMIT_DEFAULT)) or 0)
     qa_turns = 0
     # The host selected the run's shell policy (bash_pipefail_v1). Ordinary
@@ -762,6 +767,18 @@ async def run_engineering_loop(
                         "QA review exceeded its effort budget without submitting report_review; "
                         "the candidate keeps its current verdict (unknown).",
                     )
+            run_now = store.load_run(command.session_id, workspace=command.workspace)
+            first_verification_due = False
+            if (
+                command.role == "director"
+                and "verify_project" in tools.enabled
+                and first_verification_fraction > 0
+                and limits.deadline is not None
+                and run_now.get("verification") == "not_run"
+            ):
+                created_at = float(run_now["created_at"])
+                budget = max(0.0, float(limits.deadline) - created_at)
+                first_verification_due = time.time() >= created_at + budget * first_verification_fraction
             visual_projection: dict[str, Any] = {}
             request_messages = _bounded_request_messages(
                 messages,
@@ -776,6 +793,16 @@ async def run_engineering_loop(
                 "messages": request_messages,
                 "tools": tools.schemas(),
             }
+            if first_verification_due:
+                # The first verification may not be postponed until the run is
+                # about to expire. Keep build preparation available, but stop
+                # advertising more source writes/repository exploration.
+                allowed = {"verify_project", "execute_command", "read_file", "browser_observe"}
+                options["tools"] = [
+                    schema
+                    for schema in options["tools"]
+                    if ((schema.get("function") or {}).get("name") or schema.get("name")) in allowed
+                ]
             if options["tools"]:
                 options["tool_choice"] = "auto"
             if command.role == "director" and "verify_project" in tools.enabled:
@@ -841,6 +868,13 @@ async def run_engineering_loop(
                 # One-shot recovery guidance; re-arms at the next threshold.
                 host_parts.append(loop_alert)
                 loop_alert = None
+            if first_verification_due:
+                host_parts.append(
+                    "First-verification budget: no verify_project result exists after "
+                    f"{first_verification_fraction:.0%} of the run budget. Run verify_project now with the actual "
+                    "build/test commands. execute_command remains available only for build/dependency preparation; "
+                    "do not write more source or re-probe the repository before the first verification."
+                )
             if command.role == "director":
                 # StateFirst context: the bounded working set above drops older
                 # turns by design, so the current state must travel with each
@@ -1283,8 +1317,10 @@ async def run_engineering_loop(
                             elif (
                                 command.role == "director"
                                 and "verify_project" in tools.enabled
-                                and stage_gate_writes > 0
-                                and writes_since_verification >= stage_gate_writes
+                                and (
+                                    first_verification_due
+                                    or (stage_gate_writes > 0 and writes_since_verification >= stage_gate_writes)
+                                )
                                 and call.name in set(gate_blocked_tools)
                             ):
                                 # Stage gate: the Director must verify before
@@ -1297,8 +1333,13 @@ async def run_engineering_loop(
                                     tool=call.name,
                                     ok=False,
                                     content=(
-                                        f"Stage gate: {writes_since_verification} file writes without a fresh "
-                                        "verification. Your ONLY allowed next actions are verify_project with "
+                                        (
+                                            "First-verification budget: no verification has completed by the host's "
+                                            f"{first_verification_fraction:.0%} budget point. "
+                                            if first_verification_due
+                                            else f"Stage gate: {writes_since_verification} file writes without a fresh verification. "
+                                        )
+                                        + "Your ONLY allowed next actions are verify_project with "
                                         "the actual build and test commands, execute_command to prepare or "
                                         "build the candidate (install/compile), browser_observe to render it, "
                                         "or read_file to inspect one specific file. Do NOT run "
@@ -1317,6 +1358,7 @@ async def run_engineering_loop(
                                         "turn_seq": turn_seq,
                                         "call_id": call.id,
                                         "writes_since_verification": writes_since_verification,
+                                        "first_verification_due": first_verification_due,
                                     },
                                 )
                             elif loop_run_count >= 3:

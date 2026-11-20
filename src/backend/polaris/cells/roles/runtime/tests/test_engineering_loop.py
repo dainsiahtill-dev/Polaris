@@ -743,6 +743,66 @@ async def test_qa_forced_report_limits_wire_and_rejects_ignored_provider_choice(
     assert observed_calls == {"qa-read-1", "qa-report"}
 
 
+async def test_first_verification_budget_stops_late_source_writes(
+    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first verification cannot be deferred until the run deadline."""
+
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from polaris.cells.roles.runtime.internal import engineering_loop
+    from polaris.cells.roles.runtime.public.contracts.engineering_run import ToolObservation
+
+    monkeypatch.setenv("KERNELONE_ENGINEERING_FIRST_VERIFICATION_FRACTION", "0.5")
+    monkeypatch.setenv("KERNELONE_ENGINEERING_WRAP_UP_GATE", "0")
+    loop, store, _tools, command, scope, limits = _setup(
+        isolated_workspace, enabled=_ALL_TOOLS | frozenset({"verify_project"})
+    )
+    created = store.load_run(command.session_id, workspace=isolated_workspace)["created_at"]
+    limits = replace(limits, deadline=created + 100)
+    monkeypatch.setattr(engineering_loop, "time", SimpleNamespace(time=lambda: created + 60, monotonic=time.monotonic))
+    scripted_provider.enqueue_json(_native(("late-write", "write_file", {"file": "late.py", "content": "x = 1\n"})))
+    scripted_provider.enqueue_json(
+        _native(("first-verify", "verify_project", {"commands": ["python3 -m py_compile late.py"]}))
+    )
+    scripted_provider.enqueue_json(_native(text="Verified."))
+
+    async def fake_verify(commands: tuple[str, ...], turn_seq: int, call_id: str) -> ToolObservation:
+        return ToolObservation(
+            call_id=call_id, tool="verify_project", ok=True, content="checks ran", exit_code=0, interrupted=False
+        )
+
+    result = await loop(
+        command,
+        scope=scope,
+        limits=limits,
+        cancel=asyncio.Event(),
+        store=store,
+        client=scripted_provider.client("openai", isolated_workspace, monkeypatch),
+        verify=fake_verify,
+    )
+    assert result.status == "completed", result.text
+    first_tools = {
+        ((tool.get("function") or {}).get("name") or tool.get("name"))
+        for tool in scripted_provider.requests[0]["body"]["tools"]
+    }
+    assert "write_file" not in first_tools and "verify_project" in first_tools and "execute_command" in first_tools
+    blocked = next(
+        event
+        for event in store.load_events(command.session_id, kinds=("stage_gate_enforced",))
+        if event["payload"]["call_id"] == "late-write"
+    )
+    assert blocked["payload"]["first_verification_due"] is True
+    observation = next(
+        event
+        for event in store.load_events(command.session_id, kinds=("tool_observed",))
+        if event["payload"].get("call_id") == "late-write"
+    )
+    assert "First-verification budget" in observation["payload"]["content"]
+    assert not (isolated_workspace / "late.py").exists()
+
+
 async def test_stage_gate_blocks_writes_until_verification(
     isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:

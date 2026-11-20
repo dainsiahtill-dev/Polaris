@@ -18,3 +18,11 @@ L1-04 run `9bd1cfe73dee41d1b59cc74fec040280`：Director 在 2072 秒 verificatio
 - `test_qa_reserves_last_minute_of_240s_for_evidence_bound_report`（OpenAI + Anthropic）
 - `test_execute_timeout_above_host_ceiling_is_clamped_during_normalization`
 - 目标测试 60 passed。
+
+## 首次验证预算（L1-06 后续修复）
+
+L1-06 run `3ee2e82d5e3144c4958f618580ef4094` 在 5352/5400 秒才第一次 verify，随后 Director deadline exceeded；验证还选择了不存在的 cmake/ctest，并写 `build/verify_out` 触发 EROFS。
+
+新增 `KERNELONE_ENGINEERING_FIRST_VERIFICATION_FRACTION`（默认 0.4）：当 Director 到 run 预算 40% 仍无 verify_project 结果时，wire 停止广告 write_file/edit_file/repo_tree/repo_rg，只保留 verify_project、execute_command、read_file、browser_observe；即使 provider 仍生成写入调用，也在 dispatch 前拦截。execute_command 始终保留用于构建/依赖准备，避免 EROFS 死锁。
+
+新增 `test_first_verification_budget_stops_late_source_writes`；目标测试 61 passed。
