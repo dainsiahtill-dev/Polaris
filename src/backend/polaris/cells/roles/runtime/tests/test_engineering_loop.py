@@ -715,6 +715,53 @@ async def test_wrap_up_gate_can_be_disabled(
     assert (isolated_workspace / "a.py").read_text(encoding="utf-8") == "x = 2\n"
 
 
+async def test_stage_gate_allows_build_preparation_shell(
+    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """execute_command must stay usable under the stage gate.
+
+    It is the only way to prepare/build the candidate outside the read-only
+    verification scope; blocking it deadlocks build-type projects (the gate
+    demands verify_project while verify_project cannot build).
+    """
+    monkeypatch.setenv("KERNELONE_ENGINEERING_STAGE_GATE_WRITES", "1")
+    monkeypatch.setenv("KERNELONE_ENGINEERING_WRAP_UP_GATE", "0")
+    loop, store, _tools, command, scope, limits = _setup(
+        isolated_workspace, enabled=_ALL_TOOLS | frozenset({"verify_project"})
+    )
+    (isolated_workspace / "a.py").write_text("x = 1\n", encoding="utf-8")
+    scripted_provider.enqueue_json(_native(("w1", "write_file", {"file": "a.py", "content": "x = 2\n"})))
+    scripted_provider.enqueue_json(_native(("build", "execute_command", {"command": "python3 -m py_compile a.py"})))
+    scripted_provider.enqueue_json(_native(("v1", "verify_project", {"commands": ["python3 -m py_compile a.py"]})))
+    scripted_provider.enqueue_json(_native(text="Built and verified."))
+    from polaris.cells.roles.runtime.public.contracts.engineering_run import ToolObservation
+
+    async def fake_verify(commands: tuple[str, ...], turn_seq: int, call_id: str) -> ToolObservation:
+        return ToolObservation(
+            call_id=call_id, tool="verify_project", ok=True, content="checks ran", exit_code=0, interrupted=False
+        )
+
+    result = await loop(
+        command,
+        scope=scope,
+        limits=limits,
+        cancel=asyncio.Event(),
+        store=store,
+        client=scripted_provider.client("openai", isolated_workspace, monkeypatch),
+        verify=fake_verify,
+    )
+    assert result.status == "completed", result.text
+    events = store.load_events(command.session_id)
+    gated = [event for event in events if event["kind"] == "stage_gate_enforced"]
+    assert not any(event["payload"]["call_id"] == "build" for event in gated)
+    observations = [
+        event["payload"]
+        for event in events
+        if event["kind"] == "tool_observed" and event["payload"].get("call_id") == "build"
+    ]
+    assert observations and observations[0]["ok"] is True
+
+
 async def test_wrap_up_cycle_budget_is_run_scoped(
     isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:

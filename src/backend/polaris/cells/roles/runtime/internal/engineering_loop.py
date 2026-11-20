@@ -1042,7 +1042,16 @@ async def run_engineering_loop(
                             # Single source of truth: the gate message is built
                             # from these exact sets, so guidance and behavior can
                             # never drift apart again (run e6a88b2f's storm).
-                            gate_blocked_tools = ("write_file", "edit_file", "repo_tree", "repo_rg", "execute_command")
+                            # Only whole-file source writes and workspace probing
+                            # are gated. execute_command stays allowed: it is the
+                            # ONLY way to prepare/build the candidate (dependency
+                            # install, compile) outside the read-only verification
+                            # scope. Blocking it deadlocks build-type projects:
+                            # the gate demands verify_project while verify_project
+                            # cannot build (EROFS) and the preparation path is
+                            # blocked (observed 23 execute_command interceptions
+                            # across real L1 runs).
+                            gate_blocked_tools = ("write_file", "edit_file", "repo_tree", "repo_rg")
                             if preparation_pending and command.role == "director" and call.name == "verify_project":
                                 # Preparation gate: the same writing check fails
                                 # deterministically under read-only verification.
@@ -1124,8 +1133,9 @@ async def run_engineering_loop(
                                     content=(
                                         f"Stage gate: {writes_since_verification} file writes without a fresh "
                                         "verification. Your ONLY allowed next actions are verify_project with "
-                                        "the actual build and test commands, browser_observe to render the "
-                                        "candidate, or read_file to inspect one specific file. Do NOT run "
+                                        "the actual build and test commands, execute_command to prepare or "
+                                        "build the candidate (install/compile), browser_observe to render it, "
+                                        "or read_file to inspect one specific file. Do NOT run "
                                         + ", ".join(gate_blocked_tools)
                                         + " until verification has run. "
                                         + _stage_gate_verification_hint(command.workspace)
