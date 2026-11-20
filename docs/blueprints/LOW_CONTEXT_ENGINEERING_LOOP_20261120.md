@@ -195,6 +195,16 @@ Director 自失效，过早收尾由 QA 拒绝兜底。
 
 结论：平台侧可修的根因已全部处理；剩余为模型侧参数错误（信息已明确）与弱模型能力上限。
 
+**stage gate 默认关闭**：stage gate 以「原始写次数」为单位，弱模型搭多文件脚手架
+必然写满 5 次触发封锁，造成大量 write_file/edit_file 失败；而「未验证不得交付」已由
+completion gate（`_verify_director`）保证，stage gate 冗余。故 `KERNELONE_ENGINEERING_STAGE_GATE_WRITES`
+默认 **0（关）**，仅 opt-in。
+
+**工具调用提供商无关**：`_native_calls` 对 OpenAI `choices`/`Anthropic` `content` 做协议校验，
+其余信封统一委托 `parse_tool_calls(response=..., provider="auto")`（覆盖 Gemini/Ollama/
+Mistral/Groq/Cohere/Vertex/Bedrock），新增提供商不再需要改工程 loop。测试
+`test_native_calls_accept_other_provider_envelopes`。
+
 ## 8. 门禁与设计缺口（preparation/wrap-up 已实施；overlay 待 ADR）
 
 **构建型项目的验证只读域 vs 构建输出**：`verify_project` 的 check 在只读验证域运行
