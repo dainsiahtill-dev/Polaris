@@ -1966,8 +1966,9 @@ class EngineeringRunService:
             + "\n\nAcceptance clauses (rule on EVERY clause with report_review clause_findings; each needs status pass|fail plus concrete evidence such as a browser_observe call id or check output):\n"
             + json.dumps(extract_goal_clauses(row["instruction"]), ensure_ascii=False, indent=1)
             + "\n\nRead the current relevant implementation using native read tools. Check the original requirements, behavior and actual artifacts, including incomplete or hollow implementations. "
-            "Then submit report_review with a justified decision: approved, feedback, major_findings when rejecting, and clause_findings covering every acceptance clause above. "
-            "Do not treat Director text as evidence."
+            "Then submit report_review with a justified decision: approved, feedback, major_findings when rejecting, and clause_findings. "
+            "clause_findings is REQUIRED: exactly one entry per acceptance clause listed above, each with status pass|fail and concrete evidence. "
+            "A report is rejected if any clause is missing, and a fail entry requires approved=false. Do not treat Director text as evidence."
         )
         if (self.workspace / "index.html").is_file():
             instruction = (
