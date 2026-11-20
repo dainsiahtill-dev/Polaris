@@ -714,6 +714,51 @@ async def test_wrap_up_gate_can_be_disabled(
     assert (isolated_workspace / "a.py").read_text(encoding="utf-8") == "x = 2\n"
 
 
+async def test_wrap_up_cycle_budget_is_run_scoped(
+    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A frame restart must not give an over-working model a fresh write budget."""
+    monkeypatch.setenv("KERNELONE_ENGINEERING_STAGE_GATE_WRITES", "0")
+    loop, store, _tools, command, scope, limits = _setup(
+        isolated_workspace, enabled=_ALL_TOOLS | frozenset({"verify_project"})
+    )
+    store.append_event(
+        command.session_id,
+        kind="wrap_up_enforced",
+        role="director",
+        payload={"blocks": 1, "call_id": "old-frame", "tool": "write_file"},
+    )
+    (isolated_workspace / "a.py").write_text("x = 1\n", encoding="utf-8")
+    scripted_provider.enqueue_json(_native(("v1", "verify_project", {"commands": ["python3 -m py_compile a.py"]})))
+    scripted_provider.enqueue_json(
+        _native(("w1", "edit_file", {"file": "a.py", "search": "x = 1", "replace": "x = 2"}))
+    )
+    from polaris.cells.roles.runtime.public.contracts.engineering_run import ToolObservation
+
+    async def fake_verify(commands: tuple[str, ...], turn_seq: int, call_id: str) -> ToolObservation:
+        return ToolObservation(
+            call_id=call_id, tool="verify_project", ok=True, content="checks ran", exit_code=0, interrupted=False
+        )
+
+    result = await loop(
+        command,
+        scope=scope,
+        limits=limits,
+        cancel=asyncio.Event(),
+        store=store,
+        client=scripted_provider.client("openai", isolated_workspace, monkeypatch),
+        verify=fake_verify,
+    )
+    assert result.status == "completed", result.text
+    events = store.load_events(command.session_id)
+    blocked = [event for event in events if event["kind"] == "wrap_up_enforced"]
+    # The prior frame already spent the cycle, so this frame's first post-pass
+    # write is intercepted and the run-scoped count reaches the finish threshold.
+    assert blocked[-1]["payload"]["call_id"] == "w1"
+    assert blocked[-1]["payload"]["blocks"] >= 2
+    assert (isolated_workspace / "a.py").read_text(encoding="utf-8") == "x = 1\n"
+
+
 async def test_wrap_up_gate_blocks_post_pass_shell(
     isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:

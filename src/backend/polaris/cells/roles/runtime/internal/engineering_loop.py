@@ -627,15 +627,17 @@ async def run_engineering_loop(
     stage_gate_writes = int(os.environ.get("KERNELONE_ENGINEERING_STAGE_GATE_WRITES", "5") or "0")
     writes_since_verification = 0
     wrap_up_gate_enabled = os.environ.get(_WRAP_UP_GATE_ENV, "1") != "0"
-    wrap_up_blocks = 0
     wrap_up_force_finish = False
     # Persistent across turns (unlike the per-turn guidance flag): the current
     # candidate has a passing verification that any explicit source write voids.
     candidate_verification_passed = False
-    # Pass -> write cycles already spent in this frame. One legitimate
-    # change-then-reverify cycle is allowed; a second means the model is
-    # thrashing its own evidence, so further explicit writes are intercepted.
-    post_pass_write_cycles = 0
+    # Pass -> write cycles already spent. One legitimate change-then-reverify
+    # cycle is allowed; a second means the model is thrashing its own evidence,
+    # so further explicit writes are intercepted. The count is run-scoped: a
+    # frame restart must not give an over-working model a fresh budget.
+    prior_wrap_blocks = sum(1 for _event in store.load_events(command.session_id, kinds=("wrap_up_enforced",)))
+    post_pass_write_cycles = 1 if prior_wrap_blocks >= 1 else 0
+    wrap_up_blocks = prior_wrap_blocks
     # A check that tried to write during read-only verification (EROFS) will fail
     # deterministically again. Require an actual writing execute_command
     # (preparation) before another verify_project may run, instead of letting a
