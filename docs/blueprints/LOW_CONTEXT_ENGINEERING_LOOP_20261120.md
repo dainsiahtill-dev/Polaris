@@ -144,6 +144,13 @@ run_engineering_loop
 这是「有界工作集 + 状态投影 + 真实退出码 + 两道门禁 + fidelity 契约面」首次端到端
 跑通并 accepted，证明该形态能完成真实项目（非仅单元测试）。
 
+**L1-01（TypeScript 浏览器模拟，agnes 曾 0 passed 卡死）换 MiniMax-M3.1-Flash 后**：
+159 轮、约 90 分钟预算耗尽 `interrupted`，`verification=failed`、`outcome=not_accepted`。
+但能力显著更强：**3 次 verification passed**（agnes 为 0）。失败模式变为**过度工作**：
+passed → 改写 → 再验证（passed/failed 交替），wrap-up 门在每帧内拦截写入并强制收尾，
+但帧重启后计数重置、且 verification 一旦 failed 门即失效，模型反复"再改再验"，始终未进 QA。
+→ 候选改进：把 pass→write 循环计数**提升到 run 级持久**，跨帧累计，超过阈值即强制交 QA。
+
 **L1-06（C++ CLI「月球邮局明信片生成器」，同批）**：预算耗尽 `interrupted`。过程：
 3 次 verification passed → QA 按 13 条条款矩阵 **rejected** → Director 修复 → 5 次
 failed → 修复回 passed，但 5400s 预算用尽，**未及再 QA**。终态 `outcome=unknown`、
