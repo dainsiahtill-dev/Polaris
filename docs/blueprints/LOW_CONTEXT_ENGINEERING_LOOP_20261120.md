@@ -175,6 +175,26 @@ accepted；复杂构建型项目在 90 分钟预算内弱模型收敛不足，�
 原则：策略由真实对照数据选定，不靠直觉；QA 是独立终态裁决器，freeze 消除
 Director 自失效，过早收尾由 QA 拒绝兜底。
 
+## 7.2 全角色上下文/历史/工具失败审计（真实 bench journal）
+
+上下文轨迹（1434 Director + 209 QA 请求）：Director `p50=30,031 / p90=31,698`
+（有界，符合设计；旧基线长期贴 ~100k）；QA `p50=26,305 / p90=29,315`。两者
+`max` 分别 359k / 98k，均为 **browser_observe 图像**（独立有界通道），非文本历史。
+
+工具调用失败根因（按可修性）：
+| 根因 | 计数 | 处置 |
+|---|---|---|
+| stage gate 封 `execute_command` → 构建准备死锁 | 23 | **已修**（移出封锁集） |
+| QA 无界探索（69 命令不提交 report_review） | 124 轮 | **已修**（QA 努力预算） |
+| QA `fail` 条款 + approved=true 自相矛盾被拒 | 17 | **已修**（自动按拒绝解释） |
+| QA 条款矩阵覆盖不全被拒 | 7 | 强化 QA 指令（要求逐条、缺一不可） |
+| Director `write_file` content 含 NUL | 7 | 模型侧（错误信息明确），不平台改 |
+| `edit_file` search 无唯一匹配 | 5 | 模型侧（错误信息明确） |
+| `read_file` 读未创建文件 | 18 | 模型侧（提示改用 write_file） |
+| EROFS 构建输出（验证域只读） | 34 | preparation gate 强制先 execute_command 准备 |
+
+结论：平台侧可修的根因已全部处理；剩余为模型侧参数错误（信息已明确）与弱模型能力上限。
+
 ## 8. 门禁与设计缺口（preparation/wrap-up 已实施；overlay 待 ADR）
 
 **构建型项目的验证只读域 vs 构建输出**：`verify_project` 的 check 在只读验证域运行
