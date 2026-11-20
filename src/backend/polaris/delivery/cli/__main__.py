@@ -355,8 +355,8 @@ def create_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument(
         "--port",
         type=int,
-        default=49977,
-        help="Bind port (default: 49977)",
+        default=9420,
+        help="Bind port (default: 9420)",
     )
 
     # ── cell ───────────────────────────────────────────────────────────────

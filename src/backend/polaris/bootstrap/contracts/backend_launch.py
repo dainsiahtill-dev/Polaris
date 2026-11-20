@@ -255,9 +255,9 @@ class BackendLaunchRequest:
             return self.cors_origins
         # Default origins
         return [
-            "http://localhost:5173",
-            "http://127.0.0.1:5173",
-            "http://localhost:49977",
+            "http://localhost:6688",
+            "http://127.0.0.1:6688",
+            "http://localhost:9420",
         ]
 
     def to_dict(self) -> dict[str, Any]:

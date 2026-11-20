@@ -7,8 +7,8 @@ import react from "@vitejs/plugin-react";
 // ═══════════════════════════════════════════════════════════════════════════════
 // Default Configuration Constants
 // ═══════════════════════════════════════════════════════════════════════════════
-const DEFAULT_BACKEND_PORT = 49977;
-const DEFAULT_RENDERER_PORT = 5173;
+const DEFAULT_BACKEND_PORT = 9420;
+const DEFAULT_RENDERER_PORT = 6688;
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const rendererPortRaw = Number(process.env.KERNELONE_RENDERER_PORT || DEFAULT_RENDERER_PORT);

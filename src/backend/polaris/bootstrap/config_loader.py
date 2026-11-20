@@ -57,8 +57,8 @@ class ConfigLoader:
     DEFAULTS: dict[str, Any] = {
         "self_upgrade_mode": False,
         "server.host": "127.0.0.1",
-        "server.port": 49977,
-        "server.cors_origins": ["http://localhost:5173", "http://127.0.0.1:5173"],
+        "server.port": 9420,
+        "server.cors_origins": ["http://localhost:6688", "http://127.0.0.1:6688"],
         "logging.level": "INFO",
         "logging.enable_debug_tracing": False,
         "pm.backend": "auto",

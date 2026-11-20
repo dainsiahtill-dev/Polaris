@@ -315,7 +315,7 @@ def _session_clear(host: Any, args: argparse.Namespace) -> int:
 def _route_serve(args: argparse.Namespace) -> int:
     """Start the backend HTTP server."""
     host = str(getattr(args, "host", "127.0.0.1") or "127.0.0.1").strip()
-    port = int(getattr(args, "port", 49977) or 49977)
+    port = int(getattr(args, "port", 9420) or 9420)
     workspace = WorkspaceGuard.ensure_workspace(getattr(args, "workspace", None))
 
     try:

@@ -127,7 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--workspace", default="", help="Single workspace bound to this backend instance")
     serve_parser.add_argument("--runtime-root", default="", help="Instance-specific runtime root")
     serve_parser.add_argument("--host", default="127.0.0.1")
-    serve_parser.add_argument("--port", type=int, default=49977)
+    serve_parser.add_argument("--port", type=int, default=9420)
     serve_parser.add_argument("--token", default="")
     serve_parser.add_argument("--reload", action="store_true")
     serve_parser.add_argument("--reload-dir", default=str(Path.cwd()))

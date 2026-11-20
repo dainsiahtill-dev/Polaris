@@ -41,8 +41,8 @@ from polaris.kernelone.process import signal_process_tree, wait_for_process_exit
 from polaris.kernelone.storage import resolve_storage_roots_read_only
 
 SCHEMA_VERSION = 1
-DEFAULT_BACKEND_PORT = 49977
-DEFAULT_FRONTEND_PORT = 5173
+DEFAULT_BACKEND_PORT = 9420
+DEFAULT_FRONTEND_PORT = 6688
 DEFAULT_HOST = "127.0.0.1"
 INSTANCE_BIND_HOST_ENV = "KERNELONE_INSTANCE_BIND_HOST"
 INSTANCE_PUBLIC_HOST_ENV = "KERNELONE_INSTANCE_PUBLIC_HOST"
@@ -1293,10 +1293,10 @@ class InstanceSupervisor:
         if (
             record.instance_id == "main"
             or self._record_is_current_backend(record)
-            or record.backend_port in {49977, 5173, 59977}
+            or record.backend_port in {9420, 6688, 59977}
             or (
                 (record.start_frontend or record.frontend_pid is not None)
-                and record.frontend_port in {49977, 5173, 59977}
+                and record.frontend_port in {9420, 6688, 59977}
             )
             or record.metadata.get("backend_binding") == "shared_backend_workspace_switch"
         ):
@@ -1670,7 +1670,7 @@ class InstanceSupervisor:
                 record.public_frontend_url,
                 record.frontend_url,
                 f"http://{public_host}:{DEFAULT_FRONTEND_PORT}",
-                "http://localhost:5173",
+                "http://localhost:6688",
             ]
         )
         with self._open_instance_log(record, log_path, "backend") as log:

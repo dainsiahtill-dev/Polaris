@@ -3450,8 +3450,8 @@ def test_automatic_settlement_disabled_frontend_ignores_reserved_unowned_port(tm
     supervisor, registry, record, _, settlement = _settlement_fixture(tmp_path)
     record.start_frontend = False
     record.frontend_pid = None
-    record.frontend_port = 5173
-    record.frontend_url = "http://127.0.0.1:5173"
+    record.frontend_port = instance_service.DEFAULT_FRONTEND_PORT
+    record.frontend_url = f"http://127.0.0.1:{instance_service.DEFAULT_FRONTEND_PORT}"
     registry.save(record)
     settlement["instance"] = record.to_dict()
     attempted: list[int] = []
@@ -3484,8 +3484,8 @@ def test_automatic_settlement_reserved_frontend_requires_disabled_and_explicitly
     supervisor, registry, record, _, settlement = _settlement_fixture(tmp_path)
     record.start_frontend = enabled
     record.frontend_pid = pid
-    record.frontend_port = 5173
-    record.frontend_url = "http://127.0.0.1:5173"
+    record.frontend_port = instance_service.DEFAULT_FRONTEND_PORT
+    record.frontend_url = f"http://127.0.0.1:{instance_service.DEFAULT_FRONTEND_PORT}"
     settlement["instance"] = record.to_dict()
     before = registry.registry_path.read_bytes()
     # Registry rejects PID zero already. Exercise the owner's boundary directly
@@ -3804,8 +3804,8 @@ def test_generic_project_settlement_preserves_protected_instance_fences(
     elif protected == "current":
         record.backend_pid = os.getpid()
     elif protected == "reserved":
-        record.backend_port = 49977
-        record.backend_url = "http://127.0.0.1:49977"
+        record.backend_port = instance_service.DEFAULT_BACKEND_PORT
+        record.backend_url = f"http://127.0.0.1:{instance_service.DEFAULT_BACKEND_PORT}"
     else:
         record.metadata["backend_binding"] = "shared_backend_workspace_switch"
     registry.save(record)

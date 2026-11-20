@@ -108,7 +108,7 @@ def _create_parser() -> argparse.ArgumentParser:
 
 环境变量:
   KERNELONE_RUNTIME_BASE    # 自动检测 runtime 目录
-  KERNELONE_BACKEND_PORT    # 后端端口 (默认 49977)
+  KERNELONE_BACKEND_PORT    # 后端端口 (默认 9420)
         """,
     )
 

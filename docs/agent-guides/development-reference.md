@@ -12,17 +12,17 @@ npm run dev:renderer
 npm run dev:electron
 
 # 后端单独运行（旧根 src/backend/server.py shim 已退役；唯一服务入口为 polaris.delivery.server）
-# 仅用于 main 开发实例；bench/临时项目实例不得占用 49977。
-cd src/backend && python -m polaris.delivery.server --host 127.0.0.1 --port 49977
+# 仅用于 main 开发实例；bench/临时项目实例不得占用 9420。
+cd src/backend && python -m polaris.delivery.server --host 127.0.0.1 --port 9420
 
 # 后端实例运行（main 开发实例；会注册到 Launcher）
 cd src/backend
 KERNELONE_CONTEXT_ADMIN_ENABLED=1 python -m polaris.delivery.cli.backend serve \
   --workspace /path/to/workspace \
   --runtime-root /path/to/workspace/runtime \
-  --port 49977 \
+  --port 9420 \
   --token polaris-local-dev \
-  --frontend-port 5173 \
+  --frontend-port 6688 \
   --register-instance \
   --instance-id main \
   --instance-name "Main Polaris Dev" \
@@ -30,11 +30,11 @@ KERNELONE_CONTEXT_ADMIN_ENABLED=1 python -m polaris.delivery.cli.backend serve \
 # 单人调试后端热重载时才追加 --reload；多 Agent/bench 观测阶段不要默认开启。
 
 # Web 前端单独运行（绑定当前后端实例）
-VITE_POLARIS_BACKEND_URL=http://127.0.0.1:49977 \
+VITE_POLARIS_BACKEND_URL=http://127.0.0.1:9420 \
 VITE_POLARIS_BACKEND_TOKEN=polaris-local-dev \
 VITE_POLARIS_INSTANCE_ID=main \
 VITE_POLARIS_WORKSPACE=/path/to/workspace \
-npm run dev:renderer -- --host 127.0.0.1 --port 5173
+npm run dev:renderer -- --host 127.0.0.1 --port 6688
 
 # PM CLI (项目管理) - 控制台脚本 pm = polaris.delivery.cli.pm.cli:main
 pm --workspace <repo> --run-director --director-iterations 1

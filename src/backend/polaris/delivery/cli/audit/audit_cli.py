@@ -311,7 +311,7 @@ def build_parser() -> argparse.ArgumentParser:
         conflict_handler="resolve",
         epilog="""
 Environment Variables:
-  KERNELONE_BACKEND_PORT   - Backend API port (default: 49977)
+  KERNELONE_BACKEND_PORT   - Backend API port (default: 9420)
   KERNELONE_RUNTIME_BASE   - Runtime root directory
   KERNELONE_WORKSPACE      - Workspace path
 

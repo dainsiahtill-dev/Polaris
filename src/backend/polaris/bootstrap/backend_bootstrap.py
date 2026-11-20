@@ -645,8 +645,8 @@ class BackendBootstrapper:
             "port": 0,  # Auto-select
             "log_level": "info",
             "cors_origins": [
-                "http://localhost:5173",
-                "http://127.0.0.1:5173",
+                "http://localhost:6688",
+                "http://127.0.0.1:6688",
             ],
         }
 

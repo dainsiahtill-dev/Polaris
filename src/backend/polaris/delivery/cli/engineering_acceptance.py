@@ -30,7 +30,7 @@ from polaris.kernelone.fs.text_ops import write_text_atomic
 PROJECT_BUDGET_SECONDS = 5400
 OVERALL_BUDGET_SECONDS = 6000
 _TERMINAL = frozenset({"completed", "failed", "cancelled", "interrupted"})
-_PROTECTED_PORTS = frozenset({49977, 5173, 59977})
+_PROTECTED_PORTS = frozenset({9420, 6688, 59977})
 _HOST_KEYS = frozenset(
     {
         "permission_profiles",

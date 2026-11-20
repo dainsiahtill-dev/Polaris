@@ -97,8 +97,8 @@ def resolve_ramdisk_root(configured_root: str | None = None) -> Path | None:
 # ═══════════════════════════════════════════════════════════════════════════════
 # Default Constants - Single Source of Truth
 # ═══════════════════════════════════════════════════════════════════════════════
-DEFAULT_BACKEND_PORT: int = 49977
-DEFAULT_RENDERER_PORT: int = 5173
+DEFAULT_BACKEND_PORT: int = 9420
+DEFAULT_RENDERER_PORT: int = 6688
 
 
 class JSONLConfig(BaseModel):
