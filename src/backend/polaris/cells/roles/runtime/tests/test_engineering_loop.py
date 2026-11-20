@@ -923,3 +923,33 @@ async def test_wrap_up_gate_blocks_post_pass_shell(
     assert [event["payload"]["call_id"] for event in blocked] == ["s1", "s2"]
     # The allowed edit cycle applied; the blocked shell commands never ran.
     assert (isolated_workspace / "a.py").read_text(encoding="utf-8") == "x = 2\n"
+
+
+def test_native_calls_accept_other_provider_envelopes() -> None:
+    """Unknown envelopes delegate to the unified parser (Gemini/Ollama/...).
+
+    Engineering providers are OpenAI/Anthropic-compatible today, but adding a
+    provider must not require a new branch in the loop.
+    """
+    from types import SimpleNamespace
+    from typing import cast
+
+    from polaris.cells.roles.runtime.internal.engineering_loop import _native_calls
+
+    raw = {
+        "candidates": [
+            {
+                "content": {
+                    "role": "model",
+                    "parts": [
+                        {"functionCall": {"name": "write_file", "args": {"file": "a.py", "content": "x"}}},
+                        {"text": "done"},
+                    ],
+                },
+                "finishReason": "STOP",
+            }
+        ]
+    }
+    calls = _native_calls(cast("Any", SimpleNamespace(raw=raw)))
+    assert [call.name for call in calls] == ["write_file"]
+    assert calls[0].arguments == {"file": "a.py", "content": "x"}

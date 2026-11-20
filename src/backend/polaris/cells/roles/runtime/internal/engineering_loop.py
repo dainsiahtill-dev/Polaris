@@ -112,7 +112,27 @@ def _native_calls(response: AIResponse) -> list[ToolCall]:
             raise ValueError("native provider content must be an object list")
         calls = [block for block in blocks if block.get("type") == "tool_use"]
     else:
-        raise ValueError("unsupported native provider response envelope")
+        # Provider-agnostic fallback. The two envelopes above carry explicit
+        # terminal/call-id protocol facts; anything else is delegated to the
+        # unified parser, which already covers Gemini (functionCall parts),
+        # Ollama, Mistral, Groq, Cohere, Vertex and Bedrock. A newly added
+        # provider must not require a new branch in the engineering loop.
+        unified = parse_tool_calls(response=raw, provider="auto", allow_text_fallback=False)
+        if not unified:
+            raise ValueError("unsupported native provider response envelope")
+        calls = [
+            {
+                "id": call.id,
+                "type": "function",
+                "function": {
+                    "name": call.name,
+                    "arguments": json.dumps(call.arguments, ensure_ascii=False),
+                },
+            }
+            for call in unified
+            if not call.parse_error
+        ]
+        terminal = "tool_calls"
     if not isinstance(calls, list):
         raise ValueError("native tool_calls must be a list")
     if terminal in {"tool_calls", "tool_use"} and not calls:
