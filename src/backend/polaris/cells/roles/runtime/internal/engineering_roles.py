@@ -6,6 +6,10 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
+from polaris.cells.roles.runtime.internal.engineering_acceptance import (
+    current_browser_capture,
+    normalize_clause_findings,
+)
 from polaris.cells.roles.runtime.public.contracts.engineering_run import PermissionScope
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
@@ -50,8 +54,8 @@ _STAGED_LAB_PLAYBOOK = (
 )
 _QA_OBSERVABILITY = (
     "When the artifact exposes self-observability hooks (runtime-error capture, ready flag, per-module lab "
-    "entries), physically check them with browser_observe or execute_command in addition to reading source and "
-    "tests: the running artifact's own health evidence, not only its text. "
+    "entries), check them using the tools available in this run. Review the source and "
+    "tests alongside the running artifact's observable behavior. "
 )
 _PROMPTS = {
     "pm": (
@@ -73,9 +77,7 @@ _PROMPTS = {
         + _STAGED_LAB_PLAYBOOK
         + "Fidelity duty: every concrete requirement clause in the user's goal — named model parts, colors, "
         "behaviors, animations, interactions — must be VISIBLY implemented, not merely mentioned in code. "
-        "A host web probe checks objective function (errors, canvas, motion, controls), but clause fidelity is "
-        "yours: before finishing, look at the actual rendered result with browser_observe and confirm each "
-        "clause exists in what a user would see. "
+        "Use the available tools to check the actual result against those clauses. "
         "When the host exposes consult_role, you may ask PM or Chief Engineer for read-only advice. "
     ),
     "qa": (
@@ -88,13 +90,19 @@ _PROMPTS = {
         "Clause-by-clause duty: enumerate EVERY concrete requirement clause in the original goal and rule on each — "
         "observed evidence, or missing/deficient. A requirement clause that is absent or visually wrong (wrong shape, "
         "wrong part, static where motion is required) is a major finding and prevents approval, even when the app "
-        "runs without errors. Host probe results cover objective function only; fidelity is your verdict. "
+        "runs without errors. Mark a clause unknown when current evidence is inconclusive. "
         "Read current relevant source using read_file or repo_rg, "
         "then, when the host exposes report_review, submit report_review(approved, feedback) in a later turn. Explain actual findings; reject hollow or "
         "incomplete implementations. A major finding prevents approval. Ordinary text alone is not a review decision. "
         + _QA_OBSERVABILITY
     ),
 }
+
+
+def qa_review_reserve_seconds(*, deadline: float, created_at: float, observed_at: float) -> float:
+    """Limit the shared QA reserve to a quarter of this run, capped at ten minutes."""
+    start = created_at if created_at > 0 else observed_at
+    return min(600.0, max(0.0, deadline - start) * 0.25)
 
 
 def role_instruction(
@@ -165,6 +173,7 @@ def role_scope(role: str, scope: PermissionScope) -> PermissionScope:
             scope.browser,
             toolchain_bin_dirs=scope.toolchain_bin_dirs,
             command_cache=scope.command_cache,
+            verification_fixture_sha256=scope.verification_fixture_sha256,
         )
     allowed = _READ_TOOLS
     if role == "qa":
@@ -179,6 +188,7 @@ def role_scope(role: str, scope: PermissionScope) -> PermissionScope:
         scope.browser if role == "qa" else None,
         toolchain_bin_dirs=scope.toolchain_bin_dirs,
         command_cache="disabled" if scope.command_cache == "disabled" else "read_only",
+        verification_fixture_sha256=scope.verification_fixture_sha256,
     )
 
 
@@ -396,12 +406,12 @@ def register_review_tool() -> None:
                             "clause": {"type": "string", "description": "The acceptance clause text."},
                             "status": {
                                 "type": "string",
-                                "enum": ["pass", "fail"],
-                                "description": "pass only when the clause is visibly implemented; fail when missing or wrong.",
+                                "enum": ["pass", "fail", "unknown"],
+                                "description": "pass only when the clause is visibly implemented; fail when missing or wrong; unknown when evidence is unavailable or inconclusive.",
                             },
                             "evidence": {
                                 "type": "string",
-                                "description": "Concrete evidence: a tool call id, check output, or observed behavior.",
+                                "description": "For pass, the exact call ID of one current check or earlier successful QA observation. For fail or unknown, describe the defect or missing evidence.",
                             },
                         },
                         "required": ["clause", "status", "evidence"],
@@ -436,16 +446,18 @@ def register_verification_tool() -> None:
 
 def interpret_review_reports(
     reports: Sequence[Mapping[str, Any]],
-) -> tuple[Literal["approved", "rejected", "unknown"], str, str | None]:
+) -> tuple[Literal["approved", "rejected", "unknown"], str, int | None]:
     """One current-frame judgment: a negative cannot be erased by another report.
 
     Callers provide the successful durable report observations from this QA
-    invocation. Both live completion and cold recovery use this same fold;
-    distinct native calls remain intact in the journal, including duplicates.
+    invocation. Both live completion and cold recovery use this same fold.
+    The returned index identifies the actual observation, including when a provider
+    reuses the same call ID in distinct turns.
     """
-    valid: list[tuple[str, dict[str, Any]]] = []
+    valid: list[tuple[int, dict[str, Any]]] = []
     malformed = False
-    for observation in reports:
+    inconclusive: set[int] = set()
+    for index, observation in enumerate(reports):
         try:
             content = observation.get("content")
             call_id = observation.get("call_id")
@@ -461,11 +473,18 @@ def interpret_review_reports(
                 or any(not isinstance(item, str) or not item.strip() for item in report.get("major_findings", []))
             ):
                 raise ValueError("incomplete review judgment")
-            valid.append((call_id, report))
+            findings = normalize_clause_findings(report.get("clause_findings"))
+            if any(item.status == "fail" for item in findings):
+                report["approved"] = False
+            elif any(item.status == "unknown" for item in findings):
+                inconclusive.add(index)
+            valid.append((index, report))
         except (ValueError, TypeError):
             malformed = True
     rejected = [
-        (call_id, report) for call_id, report in valid if not report["approved"] or report.get("major_findings")
+        (index, report)
+        for index, report in valid
+        if (not report["approved"] and index not in inconclusive) or report.get("major_findings")
     ]
     feedback = list(
         dict.fromkeys(
@@ -475,7 +494,7 @@ def interpret_review_reports(
                 if report.get("major_findings")
                 else ""
             )
-            for _call_id, report in valid
+            for _index, report in valid
         )
     )
     if malformed:
@@ -484,6 +503,32 @@ def interpret_review_reports(
         )
     if rejected:
         return "rejected", "\n\n".join(feedback), rejected[0][0]
+    if inconclusive:
+        return "unknown", "\n\n".join(feedback), min(inconclusive)
     if not valid or malformed:
         return "unknown", "\n\n".join(feedback) or "No complete observed QA judgment.", None
     return "approved", "\n\n".join(feedback), valid[0][0]
+
+
+def browser_review_gap(
+    events: Sequence[Mapping[str, Any]], *, frame_seq: int, report_turn_seq: int, entry: str
+) -> str | None:
+    """Require a successful render of the deliverable seen before QA made its judgment."""
+    rendered = False
+    for event in events:
+        if not (
+            frame_seq < event["seq"] < report_turn_seq and event["kind"] == "tool_observed" and event["role"] == "qa"
+        ):
+            continue
+        result = current_browser_capture(event["payload"])
+        if result is None or result["entry"] != entry or result.get("saved_artifact") is not None:
+            continue
+        errors = result["page_errors"]
+        if errors:
+            return "Browser-page candidate renders with page errors: " + "; ".join(
+                str(error)[:200] for error in errors[:3]
+            )
+        rendered = True
+    if not rendered:
+        return f"QA needs a successful current-frame browser observation of {entry} before submitting its approval."
+    return None

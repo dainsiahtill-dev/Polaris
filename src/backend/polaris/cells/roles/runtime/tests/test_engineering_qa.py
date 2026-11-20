@@ -100,6 +100,11 @@ async def test_required_qa_reads_actual_file_cannot_write_and_reports_native_dec
         )
     )
     row, _limits = await _run(service)
+    first_wire = scripted_provider.requests[0]["body"]["messages"]
+    projection = next(
+        message["content"] for message in first_wire if "Host working-state projection" in str(message.get("content"))
+    )
+    assert json.dumps(row["required_checks"], ensure_ascii=False) in projection
     assert row["status"] == "completed" and row["verification"] == "passed", row
     assert row["require_qa"] is True and row["qa_verdict"] == "approved"
     assert row["project_outcome"] == "accepted" and row["acceptance_basis"] == "independent_qa"

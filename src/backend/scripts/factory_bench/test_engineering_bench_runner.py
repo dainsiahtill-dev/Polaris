@@ -287,6 +287,12 @@ def test_cli_dry_run_all120_keeps_targets_absent(tmp_path: Path) -> None:
     report = json.loads(next((tmp_path / "batch" / "reports").glob("*/summary.json")).read_text(encoding="utf-8"))
     assert report["selected_count"] == 120 and len(report["records"]) == 120
     assert report["internal_test_only"] is True and report["delivery_proven"] is False
+    metrics = report["reliability"]
+    assert metrics["planned"] == 120 and metrics["attempted"] == 0
+    assert metrics["observed_acceptance_coverage"] is None
+    assert metrics["catalog_floor_error_among_reviewed_releases"] is None
+    assert metrics["fixed_selection_complete"] is False
+    assert len(report["selected_project_ids"]) == 120
     assert not (tmp_path / "batch" / "workspaces").exists()
 
 
@@ -613,3 +619,132 @@ def test_unknown_prepost_instance_return_uses_same_synthetic_owner_without_http(
     assert not factories and not http.calls
     assert len(supervisor.starts) == 1 and supervisor.stops == [inputs.instance_id]
     assert report["exit_code"] != 0
+
+
+def test_partial_batch_metrics_keep_unknown_and_unrun_out_of_review_denominator() -> None:
+    from scripts.factory_bench._bench_lib.reliability import batch_reliability
+
+    def record(project: str, status: str, floor: str, elapsed: int) -> dict[str, Any]:
+        return {
+            "project_id": project,
+            "observation": {
+                "platform": {"status": "completed", "project_outcome": status},
+                "elapsed_seconds": elapsed,
+            },
+            "catalog_quality": floor,
+        }
+
+    records = [
+        record("a", "accepted", "PASS", 2),
+        record("b", "accepted", "FAIL", 4),
+        record("c", "accepted", "UNKNOWN", 8),
+        record("d", "rejected", "FAIL", 16),
+    ]
+    metrics = batch_reliability(["a", "b", "c", "d", "e"], records)
+    assert metrics["planned"] == 5 and metrics["attempted"] == 4
+    assert metrics["fixed_selection_complete"] is False
+    assert metrics["observed_acceptance_coverage"] == 3 / 4
+    assert metrics["reviewed_releases"] == 2
+    assert metrics["catalog_floor_error_among_reviewed_releases"] == 0.5
+    assert metrics["release_review_coverage"] == 2 / 3
+    assert metrics["unit_cost_per_independent_success"] is None
+    assert metrics["p95_observed_elapsed_seconds"] == 16
+
+
+def test_empty_catalog_floor_has_unknown_verdict(tmp_path: Path) -> None:
+    from scripts.factory_bench._bench_lib.catalog_quality import evaluate_catalog_checks
+
+    assert evaluate_catalog_checks({"checks": [" "]}, tmp_path)["verdict"] == "UNKNOWN"
+
+
+def test_structural_only_floor_does_not_compile_other_languages(tmp_path: Path) -> None:
+    from scripts.factory_bench._bench_lib.catalog_quality import evaluate_catalog_checks
+
+    (tmp_path / "main.py").write_text("value = 1", encoding="utf-8")
+    assert evaluate_catalog_checks({"checks": ["min_files:1"]}, tmp_path)["verdict"] == "PASS"
+    assert not (tmp_path / "__pycache__").exists()
+
+
+def test_compile_floor_runs_on_disposable_candidate(tmp_path: Path) -> None:
+    from scripts.factory_bench._bench_lib.catalog_quality import evaluate_catalog_checks
+
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    source = candidate / "main.py"
+    source.write_text("answer = 42", encoding="utf-8")
+    assert evaluate_catalog_checks({"checks": ["py_compile"]}, candidate)["verdict"] == "PASS"
+    source.write_text("broken(", encoding="utf-8")
+    assert evaluate_catalog_checks({"checks": ["py_compile"]}, candidate)["verdict"] == "FAIL"
+    assert list(candidate.iterdir()) == [source]
+
+
+def test_floor_excludes_unsettled_or_stale_candidate(tmp_path: Path) -> None:
+    from scripts.factory_bench._bench_lib.cli import _observed_catalog_quality
+
+    project = {"checks": ["min_files:1"]}
+    source = tmp_path / "main.py"
+    source.write_text("first", encoding="utf-8")
+    observed = {"artifact_inventory": acceptance._inventory(tmp_path)}
+    record = {"resources_closed": False, "observation": observed}
+    assert _observed_catalog_quality(project, tmp_path, record)["catalog_quality"] == "UNKNOWN"
+    record["resources_closed"] = True
+    assert _observed_catalog_quality(project, tmp_path, record)["catalog_quality"] == "PASS"
+    source.write_text("changed", encoding="utf-8")
+    assert _observed_catalog_quality(project, tmp_path, record)["catalog_quality"] == "UNKNOWN"
+
+
+def test_catalog_floor_only_uses_regular_delivered_files(tmp_path: Path) -> None:
+    from scripts.factory_bench._bench_lib.catalog_quality import evaluate_catalog_checks
+
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    external = tmp_path / "external.json"
+    external.write_text('{"scripts":{"test":"node test.js"}}', encoding="utf-8")
+    (candidate / "package.json").symlink_to(external)
+    (candidate / "dir.py").mkdir()
+    result = evaluate_catalog_checks({"checks": ["package_scripts", "source_target_coverage:*.py"]}, candidate)
+    assert set(result["failed"]) == {"package_scripts", "source_target_coverage:*.py"}
+
+
+@pytest.mark.parametrize(("floor", "code"), [("FAIL", 1), ("UNKNOWN", 1), ("PASS", 0)])
+def test_cli_exit_requires_independent_floor_after_platform_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, floor: str, code: int
+) -> None:
+    host, llm = _configs(tmp_path)
+    monkeypatch.setattr(
+        cli,
+        "run_engineering_case",
+        lambda _: {"exit_code": 0, "resources_closed": True, "observation": {"harness_status": "OBSERVED_ACCEPTED"}},
+    )
+    monkeypatch.setattr(cli, "_observed_catalog_quality", lambda *_: {"catalog_quality": floor})
+    work = tmp_path / "batch"
+    assert (
+        cli.main(
+            ["--case", "L1-01", "--work-dir", str(work), "--host-config-file", str(host), "--llm-config-file", str(llm)]
+        )
+        == code
+    )
+    report = json.loads(next(work.glob("reports/*/summary.json")).read_text(encoding="utf-8"))
+    record = report["records"][0]
+    assert record["exit_code"] == 0 and record["bench_gate"] == floor
+    assert report["delivery_proven"] is False
+
+
+def test_unconfirmed_verifier_drain_retains_scratch_and_marks_resource_unknown(tmp_path, monkeypatch):
+    from polaris.kernelone.process import ProcessTreeDrainError
+    from scripts.factory_bench._bench_lib import catalog_quality as quality
+
+    monkeypatch.setenv("HOME", str(tmp_path / "private-home"))
+    target = tmp_path / "candidate"
+    target.mkdir()
+    (target / "main.py").write_text("pass", encoding="utf-8")
+
+    def uncertain(*args, **kwargs):
+        raise ProcessTreeDrainError("synthetic unknown drain")
+
+    monkeypatch.setattr(quality, "build_workspace_sandbox_argv", lambda command, **kwargs: command)
+    monkeypatch.setattr(quality, "run_process_tree_safe", uncertain)
+    result = quality.catalog_quality_report({"checks": ["py_compile"]}, target)
+    assert result["catalog_quality"] == "UNKNOWN"
+    assert result["verifier_resources_closed"] is False
+    assert Path(result["catalog_quality_detail"]["retained_scratch"]).is_dir()

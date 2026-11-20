@@ -17,8 +17,9 @@ from uuid import uuid4
 import pytest
 from jsonschema import Draft202012Validator
 from polaris.cells.roles.runtime.internal.engineering_roles import register_browser_observation_tool
+from polaris.cells.roles.runtime.internal.engineering_session import EngineeringSessionConflictError
 from polaris.cells.roles.runtime.internal.engineering_tools import EngineeringTools
-from polaris.cells.roles.runtime.internal.engineering_visual import build_visual_messages
+from polaris.cells.roles.runtime.internal.engineering_visual import build_visual_messages, original_visual_capture
 from polaris.cells.roles.runtime.public.contracts.engineering_run import RoleRunCommand, RunLimits
 from polaris.cells.roles.runtime.public.engineering_service import EngineeringRunService
 from polaris.cells.roles.runtime.tests.engineering_support import (
@@ -26,7 +27,7 @@ from polaris.cells.roles.runtime.tests.engineering_support import (
     scripted_provider as scripted_provider,
 )
 from polaris.cells.roles.runtime.tests.test_engineering_autonomous_verification import _response
-from polaris.cells.roles.runtime.tests.test_engineering_browser_complete_flow import _dispatch, _scope
+from polaris.cells.roles.runtime.tests.test_engineering_browser_complete_flow import _scope
 from polaris.cells.roles.runtime.tests.test_engineering_browser_static_origin import (
     READY,
     built_workspace as built_workspace,
@@ -145,10 +146,29 @@ async def test_static_origin_registry_json_native_service_and_cold_original_pixe
         pytest.fail("cold historical reinspection attempted native/browser replay")
 
     monkeypatch.setattr(EngineeringTools, "_process", forbidden)
-    revisited = await _dispatch(cold, command, scope, limits, {"revisit_call_ids": ["static-capture"]})
-    assert revisited.ok, revisited.content
-    assert not revisited.images  # The journal stores references, never duplicate pixel bytes.
-    projected = build_visual_messages([], events=cold.store.load_events(command.session_id), role="director")
+    # Cold inspection resolves the original dispatch and its byte-bound capture.
+    # A completed role cannot dispatch a new browser action just to inspect it.
+    journal = cold.store.load_events(command.session_id)
+    with pytest.raises(EngineeringSessionConflictError, match="terminal engineering run"):
+        cold.store.record_tool_dispatch(
+            command.session_id,
+            turn_seq=saved_dispatch["payload"]["turn_seq"],
+            call_id="terminal-revisit",
+            tool="browser_observe",
+            arguments={"revisit_call_ids": ["static-capture"]},
+            role="director",
+        )
+    capture = original_visual_capture(journal, "director", "static-capture")
+    assert capture["dispatch"] == saved_dispatch
+    assert capture["capture"]["payload"]["input_binding"] == original_binding
+    assert [frame.sha256 for frame in capture["images"]] == [image["sha256"]]
+    assert base64.b64decode(capture["images"][0].data_base64, validate=True) == pixels
+    projected = build_visual_messages(
+        cold.store.load_message_history(command.session_id, role="director"),
+        events=journal,
+        role="director",
+        pinned_call_ids=frozenset({"static-capture"}),
+    )
     restored_images = [
         block["source"]["data"]
         for message in projected
@@ -165,19 +185,16 @@ async def test_static_origin_registry_json_native_service_and_cold_original_pixe
         == original_binding
     )
     assert not cold.store.pending_tool_calls(command.session_id)
-    mixed = await _dispatch(
-        cold, command, scope, limits, {"revisit_call_ids": ["static-capture"], "web_root": "public/dist"}
-    )
-    assert not mixed.ok and not mixed.images
     narrowed = replace(scope, read_roots=(built_workspace / "public/dist/nested", *scope.read_roots[1:]))
-    restricted = EngineeringRunService(built_workspace, permission_resolver=lambda _row: narrowed)
-    denied_root = await _dispatch(restricted, command, scope, limits, {"revisit_call_ids": ["static-capture"]})
-    assert not denied_root.ok and "saved scope exceeds current permission policy" in denied_root.content
-    revoked = EngineeringRunService(
-        built_workspace, permission_resolver=lambda _row: replace(scope, enabled_tools=frozenset())
-    )
-    denied_empty = await _dispatch(revoked, command, scope, limits, {"revisit_call_ids": ["static-capture"]})
-    assert not denied_empty.ok and not denied_empty.images
+    revoked = replace(scope, enabled_tools=frozenset())
+    for restricted in (
+        EngineeringRunService(built_workspace, permission_resolver=lambda _row: narrowed),
+        EngineeringRunService(built_workspace, permission_resolver=lambda _row: revoked),
+    ):
+        with pytest.raises(PermissionError, match="saved scope exceeds current permission policy"):
+            await restricted.resume(command.session_id, workspace=built_workspace)
+    assert cold.store.load_events(command.session_id) == journal
+    assert len(scripted_provider.requests) == 2
 
     artifact = Path(
         os.environ.get("POLARIS_TEST_AUDIT_ROOT", str(Path(__file__).resolve().parents[7] / ".polaris/test-workspaces"))

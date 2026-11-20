@@ -12,16 +12,19 @@ becomes the platform's execution or acceptance authority.
 
 from __future__ import annotations
 
-import glob
 import json
 import os
 import re
 import shlex
 import shutil
 import subprocess
-import sys
+import tempfile
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, Mapping
+
+from polaris.kernelone.process import ProcessTreeDrainError, ProcessTreeRunControl, run_process_tree_safe
+from polaris.kernelone.process.sandbox import build_workspace_sandbox_argv
 
 #: Directories that never hold the delivered product source.
 _EXCLUDED_DIR_NAMES = frozenset(
@@ -140,16 +143,18 @@ def _source_target_coverage_check(workspace: Path, pattern: str) -> tuple[bool, 
     # ``PurePath.match`` does not expand ``**`` recursively, so the frozen
     # pattern is resolved with glob semantics against the workspace root.
     try:
-        candidates = glob.glob(pattern, root_dir=str(workspace), recursive=True)
+        if not pattern or Path(pattern).is_absolute() or ".." in Path(pattern).parts:
+            return False, "source target must be a relative project pattern"
+        delivered = set(_product_files(workspace))
+        matches = delivered.intersection(workspace.glob(pattern))
     except (OSError, ValueError) as exc:
         return False, f"pattern {pattern!r} is not resolvable: {exc}"
-    matches = [Path(candidate) for candidate in candidates if not _is_excluded(workspace / candidate, workspace)]
     return bool(matches), f"{len(matches)} source files match {pattern}"
 
 
 def _package_scripts_check(workspace: Path) -> tuple[bool, str]:
     package_path = workspace / "package.json"
-    if not package_path.is_file():
+    if package_path.is_symlink() or not package_path.is_file():
         return False, "package.json is missing"
     try:
         package = json.loads(package_path.read_text(encoding="utf-8"))
@@ -168,54 +173,55 @@ def _package_scripts_check(workspace: Path) -> tuple[bool, str]:
     return True, f"scripts: {sorted(str(name) for name in scripts)}"
 
 
-def _compile_check_by_suffix(workspace: Path) -> dict[str, bool]:
-    """Run the language compile/syntax check for every delivered source family.
-
-    The frozen floor asks whether the delivered source compiles, so the
-    delivered workspace is compiled here rather than inferred from the run's
-    own output.
-    """
-    verdicts: dict[str, bool] = {}
-    sources = _source_files(workspace)
-    families = {
-        "js_syntax": [path for path in sources if path.suffix.lower() in {".js", ".jsx", ".mjs"}],
-        "py_compile": [path for path in sources if path.suffix.lower() == ".py"],
-        "ts_syntax": [path for path in sources if path.suffix.lower() in {".ts", ".tsx"}],
-        "go_compile": [path for path in sources if path.suffix.lower() == ".go"],
-        "java_compile": [path for path in sources if path.suffix.lower() == ".java"],
-        "rust_compile": [path for path in sources if path.suffix.lower() == ".rs"],
-        "cpp_compile": [path for path in sources if path.suffix.lower() in {".c", ".cc", ".cpp"}],
-    }
-    if families["js_syntax"]:
-        verdicts["js_syntax"] = _run_syntax_check("node", ["--check"], families["js_syntax"])
-    if families["py_compile"]:
-        verdicts["py_compile"] = _run_syntax_check(sys.executable, ["-m", "py_compile"], families["py_compile"])
-    if families["ts_syntax"]:
-        verdicts["ts_syntax"] = _run_typescript_check(workspace)
-    if families["go_compile"]:
-        verdicts["go_compile"] = _run_project_build(workspace, ["go", "build", "./..."])
-    if families["java_compile"]:
-        verdicts["java_compile"] = _run_java_check(workspace, families["java_compile"])
-    if families["rust_compile"]:
-        verdicts["rust_compile"] = _run_rust_check(workspace)
-    if families["cpp_compile"]:
-        verdicts["cpp_compile"] = _run_cpp_check(workspace, families["cpp_compile"])
-    return verdicts
+class _CheckUnavailableError(RuntimeError):
+    """The harness could not obtain a verdict from the requested checker."""
 
 
-def _toolchain_executable(name: str) -> str | None:
-    """The host toolchain binary, when this host provides one."""
-    return shutil.which(name)
+class _CompilerFailureError(RuntimeError):
+    """A running checker rejected the candidate."""
 
 
-def _run_rust_check(workspace: Path, *, timeout_s: int = 900) -> bool:
-    """Build the delivered Rust crate with cargo."""
-    if (workspace / "Cargo.toml").is_file():
-        return _run_project_build(workspace, ["cargo", "build", "--offline"], timeout_s=timeout_s)
-    cargo = _toolchain_executable("cargo")
-    if cargo is None:
+class _UnsettledVerifierError(RuntimeError):
+    def __init__(self, directory: Path) -> None:
+        super().__init__("isolated verifier process settlement unknown")
+        self.directory = directory
+
+
+def _compile_in_scratch(workspace: Path, name: str) -> bool:
+    """Give each requested compiler a disposable candidate and no network."""
+    base = Path.home() / ".polaris" / "tmp"
+    if base.resolve().is_relative_to(workspace.resolve()):
+        raise _CheckUnavailableError("scratch directory overlaps the delivered workspace")
+    base.mkdir(parents=True, exist_ok=True)
+    with ExitStack() as cleanup:
+        directory = Path(tempfile.mkdtemp(prefix="catalog-check-", dir=base))
+        cleanup.callback(shutil.rmtree, directory)
+        candidate = directory / "candidate"
+        shutil.copytree(workspace, candidate, symlinks=True, ignore=shutil.ignore_patterns(".git", ".polaris"))
+        try:
+            return _compile_requested_sources(candidate, name)
+        except ProcessTreeDrainError as error:
+            cleanup.pop_all()
+            raise _UnsettledVerifierError(directory) from error
+
+
+def _compile_requested_sources(candidate: Path, name: str) -> bool:
+    sources = [p for p in _source_files(candidate) if _COMPILE_CHECK_BY_SUFFIX.get(p.suffix.lower()) == name]
+    if not sources:
         return False
-    return _run_project_build(workspace, [cargo, "build", "--offline"], timeout_s=timeout_s)
+    if name == "js_syntax":
+        return all(_run_command(["node", "--check", str(p)], cwd=candidate) for p in sources)
+    if name == "py_compile":
+        return _run_command(["python3", "-I", "-m", "py_compile", *map(str, sources)], cwd=candidate)
+    if name == "ts_syntax":
+        return _run_typescript_check(candidate)
+    if name == "go_compile":
+        return _run_command(["go", "build", "./..."], cwd=candidate)
+    if name == "java_compile":
+        return _run_java_check(candidate, sources)
+    if name == "rust_compile":
+        return _run_command(["cargo", "build", "--offline"], cwd=candidate, timeout_s=900)
+    return _run_cpp_check(candidate, sources)
 
 
 def _run_cpp_check(workspace: Path, sources: list[Path], *, timeout_s: int = 600) -> bool:
@@ -227,12 +233,10 @@ def _run_cpp_check(workspace: Path, sources: list[Path], *, timeout_s: int = 600
     are honoured, so a source that includes its own headers relative to the
     project layout compiles exactly as the project intends.
     """
-    compiler = _toolchain_executable("g++") or _toolchain_executable("c++")
-    if compiler is None:
-        return False
+    compiler = "c++"
     makefile = workspace / "Makefile"
     if makefile.is_file():
-        return _run_project_build(workspace, ["make"], timeout_s=timeout_s)
+        return _run_command(["make"], cwd=workspace, timeout_s=timeout_s)
     for source in sources:
         include_flags: list[str] = []
         for parent in source.parents:
@@ -249,39 +253,9 @@ def _run_cpp_check(workspace: Path, sources: list[Path], *, timeout_s: int = 600
             candidate = workspace / root
             if candidate.is_dir():
                 include_flags.append(f"-I{candidate}")
-        completed = subprocess.run(
-            [compiler, "-fsyntax-only", *include_flags, str(source)],
-            cwd=str(workspace),
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-            check=False,
-        )
-        if completed.returncode != 0:
-            return False
-    return True
-
-
-def _run_syntax_check(
-    executable: str,
-    prefix: list[str],
-    paths: list[Path],
-    *,
-    timeout_s: int = 180,
-) -> bool:
-    """Check every file with the language's own parser."""
-    for path in paths:
-        try:
-            completed = subprocess.run(
-                [executable, *prefix, str(path)],
-                capture_output=True,
-                text=True,
-                timeout=timeout_s,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return False
-        if completed.returncode != 0:
+        if not _run_command(
+            [compiler, "-fsyntax-only", *include_flags, str(source)], cwd=workspace, timeout_s=timeout_s
+        ):
             return False
     return True
 
@@ -290,48 +264,47 @@ def _run_typescript_check(workspace: Path, *, timeout_s: int = 300) -> bool:
     """Type-check the delivered TypeScript sources when a toolchain exists."""
     tsc = workspace / "node_modules" / ".bin" / "tsc"
     if tsc.is_file():
-        try:
-            completed = subprocess.run(
-                [str(tsc), "--noEmit"],
-                cwd=str(workspace),
-                capture_output=True,
-                text=True,
-                timeout=timeout_s,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return False
-        return completed.returncode == 0
+        return _run_command([str(tsc), "--noEmit"], cwd=workspace, timeout_s=timeout_s)
     package = workspace / "package.json"
-    if package.is_file():
+    if package.is_file() and not package.is_symlink():
         try:
             payload = json.loads(package.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return False
         scripts = payload.get("scripts") if isinstance(payload, dict) else None
         if isinstance(scripts, dict) and "build" in scripts:
-            return _run_project_build(workspace, ["npm", "run", "build"])
-    return False
+            return _run_command(["npm", "run", "build"], cwd=workspace, timeout_s=timeout_s)
+    raise _CheckUnavailableError("TypeScript toolchain and build recipe unavailable")
 
 
 def _run_command(command: list[str], *, cwd: Path, timeout_s: int = 600) -> bool:
-    """Run one command and report whether it succeeded."""
+    """Run a compiler inside KernelOne confinement with only the scratch copy writable."""
     try:
-        completed = subprocess.run(
+        # Only system-mounted toolchains may extend the clean sandbox PATH.
+        system_tool = shutil.which(command[0])
+        tool_dirs: list[Path] = []
+        if system_tool and Path(system_tool).resolve().is_relative_to("/usr"):
+            tool_dirs.append(Path(system_tool).resolve().parent)
+        argv = build_workspace_sandbox_argv(
             command,
-            cwd=str(cwd),
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-            check=False,
+            workspace=cwd,
+            cwd=cwd,
+            read_roots=[cwd],
+            write_roots=[cwd],
+            network_allowed=False,
+            toolchain_bin_dirs=tool_dirs,
         )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return completed.returncode == 0
-
-
-def _run_project_build(workspace: Path, command: list[str], *, timeout_s: int = 600) -> bool:
-    return _run_command(command, cwd=workspace, timeout_s=timeout_s)
+        completed = run_process_tree_safe(argv, timeout=timeout_s, cancel_control=ProcessTreeRunControl())
+    except ProcessTreeDrainError:
+        raise
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+        raise _CheckUnavailableError(f"isolated verifier unavailable: {type(exc).__name__}") from exc
+    if completed.stderr.startswith("bwrap:") or completed.returncode in {126, 127}:
+        raise _CheckUnavailableError("isolated verifier or toolchain unavailable")
+    if completed.returncode:
+        diagnostic = (completed.stderr or completed.stdout).strip()[-1500:]
+        raise _CompilerFailureError(f"{Path(command[0]).name} exited {completed.returncode}: {diagnostic}")
+    return True
 
 
 def _run_java_check(workspace: Path, sources: list[Path], *, timeout_s: int = 600) -> bool:
@@ -342,9 +315,6 @@ def _run_java_check(workspace: Path, sources: list[Path], *, timeout_s: int = 60
     test sources belong to the project's own test framework, which the
     project resolves through its build.
     """
-    javac = _toolchain_executable("javac")
-    if javac is None:
-        return False
     main_root = workspace / "src" / "main" / "java"
     if main_root.is_dir():
         production = [path for path in sources if path.is_relative_to(main_root)]
@@ -352,7 +322,7 @@ def _run_java_check(workspace: Path, sources: list[Path], *, timeout_s: int = 60
             sources = production
     # Java compiles as a unit: one translation unit alone cannot resolve the
     # other classes of the project.
-    return _run_command([javac, *[str(path) for path in sources]], cwd=workspace, timeout_s=timeout_s)
+    return _run_command(["javac", *[str(path) for path in sources]], cwd=workspace, timeout_s=timeout_s)
 
 
 def evaluate_catalog_checks(
@@ -371,8 +341,9 @@ def evaluate_catalog_checks(
     if not isinstance(raw_checks, list):
         return {"verdict": "UNKNOWN", "checks": {}, "failed": [], "reason": "project declares no checks"}
     workspace = Path(workspace)
-    compile_verdicts = _compile_check_by_suffix(workspace)
-    results: dict[str, bool] = {}
+    if not workspace.is_dir() or not any(str(item or "").strip() for item in raw_checks):
+        return {"verdict": "UNKNOWN", "checks": {}, "failed": [], "reason": "no candidate or declared checks"}
+    results: dict[str, bool | None] = {}
     details: dict[str, str] = {}
     for raw in raw_checks:
         check = str(raw or "").strip()
@@ -396,19 +367,42 @@ def evaluate_catalog_checks(
         elif name == "package_scripts":
             passed, detail = _package_scripts_check(workspace)
         elif name in _COMPILE_CHECK_NAMES:
-            passed = compile_verdicts.get(name, False)
+            try:
+                passed = _compile_in_scratch(workspace, name)
+            except _UnsettledVerifierError as error:
+                results[check] = None
+                details[check] = str(error)
+                return {
+                    "verdict": "UNKNOWN",
+                    "checks": results,
+                    "details": details,
+                    "failed": [key for key, value in results.items() if value is False],
+                    "unknown": [check],
+                    "verifier_resources_closed": False,
+                    "retained_scratch": str(error.directory),
+                }
+            except _CompilerFailureError as error:
+                results[check] = False
+                details[check] = str(error)
+                continue
+            except (OSError, _CheckUnavailableError) as error:
+                results[check] = None
+                details[check] = f"could not evaluate {name}: {error}"
+                continue
             detail = (
                 f"the delivered {name} source compiles" if passed else f"the delivered {name} source does not compile"
             )
         else:
-            results[check] = False
+            results[check] = None
             details[check] = f"unsupported deterministic check: {name}"
             continue
         results[check] = passed
         details[check] = detail
-    failed = sorted(check for check, passed in results.items() if not passed)
+    failed = sorted(check for check, passed in results.items() if passed is False)
+    unknown = sorted(check for check, passed in results.items() if passed is None)
     return {
-        "verdict": "PASS" if not failed else "FAIL",
+        "verdict": "FAIL" if failed else "UNKNOWN" if unknown else "PASS",
+        "unknown": unknown,
         "checks": results,
         "details": details,
         "failed": failed,
@@ -425,10 +419,14 @@ def catalog_quality_report(
     evaluation = evaluate_catalog_checks(project, workspace, verification_checks=verification_checks)
     return {
         "catalog_quality": evaluation["verdict"],
+        "verifier_resources_closed": evaluation.get("verifier_resources_closed", True),
         "catalog_quality_detail": {
             "checks": evaluation.get("checks", {}),
             "details": evaluation.get("details", {}),
             "failed": evaluation.get("failed", []),
+            "unknown": evaluation.get("unknown", []),
+            "reason": evaluation.get("reason"),
+            "retained_scratch": evaluation.get("retained_scratch"),
         },
     }
 
@@ -444,7 +442,6 @@ def workspace_from_env(workspace: str) -> Path:
 _STRUCTURAL_CHECK_NAMES = frozenset({"min_files", "content_any", "source_target_coverage", "package_scripts"})
 
 _STRUCTURAL_CHECK_SCRIPT = """
-import glob
 import json
 import sys
 from pathlib import Path
@@ -484,16 +481,15 @@ for check in checks:
         if not any(word.lower() in haystack for word in words):
             problems.append("content_any: the domain vocabulary is absent from the real source")
     elif name == "source_target_coverage":
-        hits = [
-            candidate
-            for candidate in glob.glob(argument, root_dir=".", recursive=True)
-            if not any(part in excluded for part in Path(candidate).parts[:-1])
-        ]
+        hits = set()
+        if argument and not Path(argument).is_absolute() and ".." not in Path(argument).parts:
+            hits = set(_files()).intersection(root.glob(argument))
         if not hits:
             problems.append(f"source_target_coverage: no source file matches {argument}")
     elif name == "package_scripts":
         try:
-            package = json.loads(Path("package.json").read_text(encoding="utf-8"))
+            manifest = Path("package.json")
+            package = {} if manifest.is_symlink() else json.loads(manifest.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             package = {}
         scripts = package.get("scripts") if isinstance(package, dict) else None

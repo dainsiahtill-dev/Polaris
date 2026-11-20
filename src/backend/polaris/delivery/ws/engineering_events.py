@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -30,6 +31,30 @@ def compact_engineering_payload(kind: str, payload: dict[str, Any]) -> dict[str,
     selected = without_pixels(payload)
     if kind == "request_prepared":
         selected = {key: payload[key] for key in ("turn_seq", "evidence_kind") if key in payload}
+        route = payload.get("binding_selection")
+        if isinstance(route, dict):
+            order = route.get("qualified_order")
+            if (
+                type(route.get("activated")) is bool
+                and all(
+                    isinstance(route.get(k), str) and re.fullmatch("[0-9a-f]{64}", route[k])
+                    for k in ("qualification_record_sha256", "conditions_sha256")
+                )
+                and isinstance(order, (tuple, list))
+                and len(order) <= 32
+                and all(
+                    isinstance(pair, (tuple, list))
+                    and len(pair) == 2
+                    and all(isinstance(part, str) and 0 < len(part) <= 256 for part in pair)
+                    for pair in order
+                )
+            ):
+                selected["binding_selection"] = {
+                    "activated": route["activated"],
+                    "qualification_record_sha256": route["qualification_record_sha256"],
+                    "conditions_sha256": route["conditions_sha256"],
+                    "qualified_order": [list(pair) for pair in order],
+                }
         selected["payload_omitted"] = True
     elif kind == "provider_response":
         selected = {

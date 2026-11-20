@@ -257,6 +257,7 @@ class EngineeringSessionStore:
         require_qa: bool = False,
         verification_output_roots: tuple[Path, ...] | None = None,
         verification_execution_policy: str | None = None,
+        retain_verified_candidate: bool = False,
     ) -> str:
         from polaris.cells.roles.runtime.internal.engineering_execution_policy import resolve_execution_policy
 
@@ -292,6 +293,7 @@ class EngineeringSessionStore:
                     "write_roots": [str(Path(p).expanduser().resolve()) for p in scope.write_roots],
                     "enabled_tools": sorted(scope.enabled_tools),
                     "network_allowed": scope.network_allowed,
+                    **({"retain_verified_candidate": True} if retain_verified_candidate else {}),
                     **(
                         {
                             "browser": {
@@ -304,6 +306,11 @@ class EngineeringSessionStore:
                         else {}
                     ),
                     **({"toolchain_bin_dirs": [str(path) for path in bins]} if bins else {}),
+                    **(
+                        {"verification_fixture_sha256": dict(scope.verification_fixture_sha256)}
+                        if scope.verification_fixture_sha256
+                        else {}
+                    ),
                     **({"command_cache": scope.command_cache} if scope.command_cache != "disabled" else {}),
                 }
             ),
@@ -381,12 +388,20 @@ class EngineeringSessionStore:
         return str(row["session_id"]) if row is not None else None
 
     def load_run(self, session_id: str, *, workspace: Path) -> dict[str, Any]:
+        row, _ = self.load_projection_inputs(session_id, workspace=workspace, kinds=())
+        return row
+
+    def load_projection_inputs(
+        self, session_id: str, *, workspace: Path, kinds: tuple[str, ...]
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Read the run and selected context facts from the same SQLite snapshot."""
         self._assert_workspace(workspace)
         with self._connection() as connection:
             connection.execute("BEGIN")
             row = dict(self._require_run(connection, session_id))
             acceptance = self._acceptance(connection, row)
             commands = self._verification_commands(connection, row)
+            events = self._selected_event_rows(connection, session_id, kinds=kinds)
         if row["workspace"] != str(self.workspace):
             raise PermissionError("stored engineering session workspace mismatch")
         for field in ("required_checks", "scope", "limits", "checks"):
@@ -396,7 +411,7 @@ class EngineeringSessionStore:
         row["verification_output_roots"] = (
             json.loads(row["verification_output_roots"]) if row["verification_output_roots"] is not None else None
         )
-        return row
+        return row, [{**dict(event), "payload": json.loads(event["payload"])} for event in events]
 
     def load_snapshot(self, session_id: str, *, workspace: Path, event_limit: int = 200) -> dict[str, Any]:
         """Read row, history window and its watermark from one SQLite snapshot.
@@ -550,23 +565,27 @@ class EngineeringSessionStore:
     ) -> list[dict[str, Any]]:
         with self._connection() as connection:
             self._require_run(connection, session_id)
-            predicates = ["session_id=?"]
-            parameters = [session_id]
-            if kinds is not None:
-                if not kinds:
-                    return []
-                predicates.append("kind IN (" + ",".join("?" for _ in kinds) + ")")
-                parameters.extend(kinds)
-            if role is not None:
-                predicates.append("role=?")
-                parameters.append(role)
-            rows = connection.execute(
-                "SELECT seq,kind,role,payload,created_at FROM events WHERE "
-                + " AND ".join(predicates)
-                + " ORDER BY seq",
-                parameters,
-            ).fetchall()
+            rows = self._selected_event_rows(connection, session_id, kinds=kinds, role=role)
         return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    @staticmethod
+    def _selected_event_rows(
+        connection: sqlite3.Connection, session_id: str, *, kinds: tuple[str, ...] | None, role: str | None = None
+    ) -> list[sqlite3.Row]:
+        predicates = ["session_id=?"]
+        parameters = [session_id]
+        if kinds is not None:
+            if not kinds:
+                return []
+            predicates.append("kind IN (" + ",".join("?" for _ in kinds) + ")")
+            parameters.extend(kinds)
+        if role is not None:
+            predicates.append("role=?")
+            parameters.append(role)
+        return connection.execute(
+            "SELECT seq,kind,role,payload,created_at FROM events WHERE " + " AND ".join(predicates) + " ORDER BY seq",
+            parameters,
+        ).fetchall()
 
     def append_message(self, session_id: str, *, role: str, message: Mapping[str, object]) -> int:
         return self.append_event(session_id, kind="message", role=role, payload={"message": dict(message)})
@@ -593,21 +612,58 @@ class EngineeringSessionStore:
         if turn_seq < 1 or not call_id or not tool:
             raise ValueError("tool dispatch requires a positive turn_seq, call_id and tool")
         with self._transaction() as connection:
+            row = self._require_run(connection, session_id)
+            if row["status"] not in {"pending", "running"}:
+                raise EngineeringSessionConflictError("terminal engineering run cannot dispatch a new tool")
+            self._insert_dispatch(connection, session_id, turn_seq, call_id, tool, arguments, role)
+
+    def begin_write_readback(
+        self, session_id: str, *, original_turn: int, original_call: str, arguments: Mapping[str, object]
+    ) -> tuple[int, str]:
+        """Journal a host-authorized readback of an unresolved write, including after interruption."""
+        with self._transaction() as connection:
             self._require_run(connection, session_id)
-            try:
-                connection.execute(
-                    "INSERT INTO tool_calls VALUES (?,?,?,?,?,'started',NULL,?,NULL)",
-                    (session_id, turn_seq, call_id, tool, self._json(dict(arguments)), time.time()),
-                )
-            except sqlite3.IntegrityError as error:
-                raise EngineeringSessionConflictError("engineering tool dispatch conflict") from error
-            self._append_event(
+            pending = connection.execute(
+                "SELECT 1 FROM tool_calls WHERE session_id=? AND turn_seq=? AND call_id=? AND status='started'",
+                (session_id, original_turn, original_call),
+            ).fetchone()
+            if pending is None:
+                raise EngineeringSessionConflictError("original dispatch is no longer pending")
+            turn = self._append_event(
                 connection,
                 session_id,
-                kind="tool_started",
-                role=role,
-                payload={"turn_seq": turn_seq, "call_id": call_id, "tool": tool, "arguments": dict(arguments)},
+                kind="reconciliation_started",
+                role="director",
+                payload={"original_turn_seq": original_turn, "original_call_id": original_call},
             )
+            call_id = f"readback-{turn}"
+            self._insert_dispatch(connection, session_id, turn, call_id, "read_file", arguments, "director")
+            return turn, call_id
+
+    def _insert_dispatch(
+        self,
+        connection: sqlite3.Connection,
+        session_id: str,
+        turn_seq: int,
+        call_id: str,
+        tool: str,
+        arguments: Mapping[str, object],
+        role: str,
+    ) -> None:
+        try:
+            connection.execute(
+                "INSERT INTO tool_calls VALUES (?,?,?,?,?,'started',NULL,?,NULL)",
+                (session_id, turn_seq, call_id, tool, self._json(dict(arguments)), time.time()),
+            )
+        except sqlite3.IntegrityError as error:
+            raise EngineeringSessionConflictError("engineering tool dispatch conflict") from error
+        self._append_event(
+            connection,
+            session_id,
+            kind="tool_started",
+            role=role,
+            payload={"turn_seq": turn_seq, "call_id": call_id, "tool": tool, "arguments": dict(arguments)},
+        )
 
     def record_tool_observation(
         self,
@@ -881,6 +937,8 @@ class EngineeringSessionStore:
             raise ValueError("verification commands must be nonempty command strings")
         with self._transaction() as connection:
             row = self._require_run(connection, session_id)
+            if row["status"] not in {"pending", "running"}:
+                raise EngineeringSessionConflictError("terminal engineering run cannot start verification")
             if type(workspace_revision) is not int or row["workspace_revision"] != workspace_revision:
                 raise ValueError("verification workspace revision changed")
             effective = (
@@ -1016,6 +1074,51 @@ class EngineeringSessionStore:
         with self._connection() as connection:
             return self._completion_observed(connection, session_id, payload)
 
+    def comparable_failed_verification(self, target_id: str, source_id: str, event_seq: int) -> dict[str, Any] | None:
+        """Resolve one pinned historical failure for an identically scoped run."""
+        if source_id == target_id:
+            return None
+        with self._connection() as connection:
+            connection.execute("BEGIN")
+            target = self._require_run(connection, target_id)
+            source = connection.execute("SELECT * FROM runs WHERE session_id=?", (source_id,)).fetchone()
+            immutable = (
+                "workspace",
+                "instruction",
+                "engine_version",
+                "role",
+                "workflow",
+                "scope",
+                "require_qa",
+                "required_checks",
+                "permission_profile_id",
+                "verification_output_roots",
+                "verification_execution_policy",
+            )
+            if source is None or any(source[key] != target[key] for key in immutable):
+                return None
+            row = connection.execute(
+                "SELECT payload FROM events WHERE session_id=? AND seq=? AND kind='verification_completed' "
+                "AND role='director' AND created_at<?",
+                (source_id, event_seq, target["created_at"]),
+            ).fetchone()
+            if row is None:
+                return None
+            payload = json.loads(row["payload"])
+            if not isinstance(payload, dict):
+                return None
+            binding = payload.get("input_binding")
+            if (
+                payload.get("verification") != "failed"
+                or not isinstance(binding, dict)
+                or type(payload.get("workspace_revision")) is not int
+                or payload["workspace_revision"] != binding.get("workspace_revision")
+                or binding.get("commands") != self._verification_commands(connection, target)
+                or not self._completion_observed(connection, source_id, payload)
+            ):
+                return None
+        return payload
+
     def reconcile_verification_calls(self, session_id: str, *, max_output_bytes: int) -> None:
         """Recover only durable composite responses; never execute or infer a check."""
         from polaris.cells.roles.runtime.internal.engineering_verification import verification_observation
@@ -1089,10 +1192,6 @@ class EngineeringSessionStore:
             current = row["workspace_revision"] == workspace_revision
             projected = verification if current else "unknown"
             commands = self._verification_commands(connection, row)
-            if projected in {"passed", "failed"} and (
-                not commands or input_binding.get("commands") != commands or len(checks) != len(commands)
-            ):
-                raise ValueError("passed verification requires every saved check")
             payload = {
                 "workspace_revision": workspace_revision,
                 "verification": projected,
@@ -1103,6 +1202,19 @@ class EngineeringSessionStore:
             }
             if projected in {"passed", "failed"} and not self._completion_observed(connection, session_id, payload):
                 raise ValueError("verification requires actual matching observed commands from its exact attempt")
+            latest_attempt = connection.execute(
+                "SELECT MAX(seq) FROM events WHERE session_id=? AND kind='verification_started'", (session_id,)
+            ).fetchone()[0]
+            attempt = input_binding.get("attempt_seq")
+            if (attempt is not None and attempt != latest_attempt) or row["status"] not in {"pending", "running"}:
+                self._append_event(
+                    connection, session_id, kind="verification_late_result", role="director", payload=payload
+                )
+                return False
+            if projected in {"passed", "failed"} and (
+                not commands or input_binding.get("commands") != commands or len(checks) != len(commands)
+            ):
+                raise ValueError("passed verification requires every saved check")
             connection.execute(
                 "UPDATE runs SET verification=?,checks=?,updated_at=? WHERE session_id=?",
                 (projected, self._json(payload["checks"]), time.time(), session_id),
@@ -1224,19 +1336,83 @@ class EngineeringSessionStore:
             if (row["turn_seq"], row["call_id"]) not in reconciled
         ]
 
+    @staticmethod
+    def _approved_report(
+        connection: sqlite3.Connection, session_id: str, decision: Mapping[str, Any], decision_seq: int
+    ) -> dict[str, Any] | None:
+        """Resolve the host decision to one successful observation inside its QA frame."""
+        frame = decision.get("frame_seq")
+        call_id = decision.get("report_call_id")
+        if type(frame) is not int or not isinstance(call_id, str) or not call_id:
+            return None
+        latest_frame = connection.execute(
+            "SELECT MAX(seq) FROM events WHERE session_id=? AND seq<? AND kind='role_started' AND role='qa'",
+            (session_id, decision_seq),
+        ).fetchone()[0]
+        if latest_frame != frame:
+            return None
+        rows = connection.execute(
+            "SELECT e.seq,e.payload,t.observation FROM events e JOIN tool_calls t "
+            "ON t.session_id=e.session_id AND t.turn_seq=json_extract(e.payload,'$.turn_seq') "
+            "AND t.call_id=json_extract(e.payload,'$.call_id') "
+            "WHERE e.session_id=? AND e.seq>? AND e.seq<? AND e.kind='tool_observed' AND e.role='qa' "
+            "AND t.call_id=? AND t.tool='report_review' AND t.status='observed' AND t.turn_seq>?",
+            (session_id, frame, decision_seq, call_id, frame),
+        )
+        reports: list[dict[str, Any]] = []
+        for row in rows:
+            observed = json.loads(row["payload"])
+            turn = observed.pop("turn_seq")
+            if (
+                decision.get("report_event_seq", row["seq"]) != row["seq"]
+                or decision.get("report_turn_seq", turn) != turn
+            ):
+                continue
+            if (
+                observed != json.loads(row["observation"])
+                or observed.get("ok") is not True
+                or observed.get("interrupted")
+                or observed.get("timed_out")
+            ):
+                continue
+            try:
+                report = json.loads(observed["content"])
+            except (KeyError, ValueError, TypeError):
+                return None
+            if isinstance(report, dict):
+                reports.append(report)
+        if len(reports) != 1 or reports[0].get("approved") is not True or reports[0].get("major_findings"):
+            return None
+        return reports[0]
+
     def _acceptance(
         self, connection: sqlite3.Connection, row: Mapping[str, Any], *, verification_starting: bool = False
     ) -> dict[str, object]:
         """Project existing durable checks and QA facts; no separate acceptance ledger."""
+        terminal = None
+        if row["status"] not in {"running", "pending"}:
+            # Capture the original delivery decision in this admission epoch.
+            # Later observations stay in the journal for reconciliation.
+            terminal = connection.execute(
+                "SELECT seq,json_extract(payload,'$.project_outcome') AS outcome FROM events "
+                "WHERE session_id=? AND kind='run_updated' AND json_extract(payload,'$.status') "
+                "IN ('completed','cancelled','failed','interrupted') AND seq > "
+                "(SELECT COALESCE(MAX(seq),0) FROM events WHERE session_id=? AND kind='run_resumed') "
+                "ORDER BY seq LIMIT 1",
+                (row["session_id"], row["session_id"]),
+            ).fetchone()
         events = connection.execute(
-            "SELECT seq,kind,payload FROM events WHERE session_id=? AND kind IN ('verification_started','verification_completed','qa_review_started','qa_review_completed') ORDER BY seq",
-            (row["session_id"],),
+            "SELECT seq,kind,payload FROM events WHERE session_id=? AND (? IS NULL OR seq<=?) "
+            "AND kind IN ('verification_started','verification_completed','qa_review_started','qa_review_completed') ORDER BY seq",
+            (row["session_id"], terminal["seq"] if terminal else None, terminal["seq"] if terminal else None),
         ).fetchall()
         verification_seq = 0
         start_seq = 0
         verification_payload: dict[str, Any] = {}
         verdict = "not_run"
         review_binding = None
+        decision_seq = 0
+        decision: dict[str, Any] = {}
         for event in events:
             payload = json.loads(event["payload"])
             if event["kind"] == "verification_started":
@@ -1250,6 +1426,7 @@ class EngineeringSessionStore:
             else:
                 binding = payload.get("input_binding", {})
                 review_binding = binding
+                decision_seq, decision = event["seq"], payload
                 verdict = (
                     payload.get("verdict", "unknown")
                     if (
@@ -1273,6 +1450,8 @@ class EngineeringSessionStore:
             and verification_payload.get("verification") == "passed"
             and verification_payload.get("workspace_revision") == row["workspace_revision"]
             and verification_payload.get("input_binding", {}).get("commands") == required_checks
+            and start_seq <= verification_seq
+            and verification_payload.get("checks") == checks
             and len(checks) == len(required_checks)
             and all(
                 check.get("ok") is True
@@ -1288,18 +1467,16 @@ class EngineeringSessionStore:
         # to passed. function is machine-graded; fidelity requires structured
         # QA clause rulings covering the extracted goal clauses.
         function_status: str = "passed" if evidence else ("failed" if row["verification"] == "failed" else "unknown")
-        review_row = connection.execute(
-            "SELECT arguments FROM tool_calls WHERE session_id=? AND tool='report_review' AND status='observed'"
-            " ORDER BY started_at DESC, turn_seq DESC LIMIT 1",
-            (row["session_id"],),
-        ).fetchone()
         findings: list[Any] = []
-        if review_row is not None:
-            try:
-                review_args = json.loads(review_row["arguments"] or "{}")
-                findings = normalize_clause_findings(review_args.get("clause_findings"))
-            except (ValueError, TypeError):
-                findings = []
+        if verdict == "approved":
+            report = self._approved_report(connection, str(row["session_id"]), decision, decision_seq)
+            if report is None:
+                verdict = "unknown"
+            else:
+                try:
+                    findings = normalize_clause_findings(report.get("clause_findings"))
+                except (ValueError, TypeError):
+                    verdict = "unknown"
         instruction = str(row.get("instruction") or "")
         fidelity = assess_fidelity(
             goal_clauses=extract_goal_clauses(instruction),
@@ -1314,6 +1491,8 @@ class EngineeringSessionStore:
         )
         fidelity_ok = (not required) or fidelity.status == "passed"
         accepted = row["status"] == "completed" and evidence and (not required or verdict == "approved") and fidelity_ok
+        if terminal is not None and terminal["outcome"] != "accepted":
+            accepted = False
         outcome = (
             "accepted"
             if accepted
@@ -1334,7 +1513,14 @@ class EngineeringSessionStore:
             "acceptance_fidelity_missing": list(fidelity.missing),
         }
 
+    def resume_run(self, session_id: str, *, expected_status: str) -> None:
+        """Commit the host-admitted resume and its event together under the workspace lock."""
+        self._update_run(session_id, resume_from=expected_status, status="running")
+
     def update_run(self, session_id: str, **fields: object) -> None:
+        self._update_run(session_id, resume_from=None, **fields)
+
+    def _update_run(self, session_id: str, *, resume_from: str | None, **fields: object) -> None:
         allowed = {"status", "text", "verification", "checks", "workspace_revision"}
         if not fields or not fields.keys() <= allowed:
             raise ValueError("unsupported engineering run update")
@@ -1359,6 +1545,11 @@ class EngineeringSessionStore:
             )
         with self._transaction() as connection:
             row = self._require_run(connection, session_id)
+            if resume_from is not None:
+                if row["status"] != resume_from:
+                    raise EngineeringSessionConflictError("engineering status changed before explicit resume")
+            elif row["status"] not in {"pending", "running"} and updates.get("status", row["status"]) != row["status"]:
+                raise EngineeringSessionConflictError("terminal engineering run requires explicit resume")
             if "workspace_revision" in updates:
                 revision = updates["workspace_revision"]
                 if type(revision) is not int or revision < row["workspace_revision"]:
@@ -1405,6 +1596,14 @@ class EngineeringSessionStore:
             )
             state.update(self._acceptance(connection, {**current, "verification": state["verification"]}))
             self._append_event(connection, session_id, kind="run_updated", role=str(current["role"]), payload=state)
+            if resume_from is not None:
+                self._append_event(
+                    connection,
+                    session_id,
+                    kind="run_resumed",
+                    role=current["role"],
+                    payload={"engine_version": current["engine_version"]},
+                )
 
     @contextmanager
     def acquire_workspace(self, workspace: Path) -> Iterator[None]:

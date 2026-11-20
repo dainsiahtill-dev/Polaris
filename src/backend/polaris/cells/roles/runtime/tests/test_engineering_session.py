@@ -290,3 +290,44 @@ def test_terminal_event_failure_rolls_back_tool_observation(workspace):
     assert len(pending) == 1
     assert pending[0]["observation"] is None
     assert [event["kind"] for event in store.load_events("run-1")] == ["tool_started"]
+
+
+@pytest.mark.parametrize("terminal_status", ["completed", "failed", "cancelled", "interrupted"])
+def test_terminal_retains_late_receipt_and_blocks_new_dispatch(workspace, terminal_status):
+    store, types, *_ = create(workspace)
+    store.record_tool_dispatch("run-1", turn_seq=1, call_id="old", tool="read_file", arguments={}, role="director")
+    store.update_run("run-1", status=terminal_status)
+    cold = type(store)(workspace)
+    cold.record_tool_observation(
+        "run-1",
+        turn_seq=1,
+        observation=types.ToolObservation("old", "read_file", True, "result", None, False),
+        role="director",
+    )
+    before = cold.load_events("run-1")
+    with pytest.raises(ValueError, match="terminal"):
+        cold.record_tool_dispatch("run-1", turn_seq=2, call_id="late", tool="read_file", arguments={}, role="director")
+    assert cold.load_events("run-1") == before
+    with pytest.raises(ValueError, match="terminal"):
+        cold.update_run("run-1", status="running")
+    with pytest.raises(ValueError, match="terminal"):
+        cold.update_run("run-1", status="completed" if terminal_status != "completed" else "failed")
+    assert cold.pending_tool_calls("run-1") == []
+    assert cold.load_run("run-1", workspace=workspace)["status"] == terminal_status
+
+
+def test_projection_requires_approved_report_observation(workspace):
+    store, *_ = create(workspace)
+    store.append_event(
+        "run-1",
+        kind="qa_review_completed",
+        role="qa",
+        payload={
+            "verdict": "approved",
+            "report_call_id": "absent",
+            "frame_seq": 1,
+            "input_binding": {"workspace_revision": 0, "verification_seq": 0},
+        },
+    )
+    store.update_run("run-1", verification="passed")
+    assert type(store)(workspace).load_run("run-1", workspace=workspace)["qa_verdict"] == "unknown"

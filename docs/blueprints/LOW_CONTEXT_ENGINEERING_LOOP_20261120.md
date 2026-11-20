@@ -242,3 +242,20 @@ QA 是过早收尾的安全网（独立逐条复核）。单测：`test_wrap_up_
 服务级 `test_wrap_up_gate_sends_passed_candidate_to_qa`。
 `test_writing_after_verified_candidate_requires_actual_fresh_check` 与 stage-gate 用例
 通过 env 关闭本门以隔离各自语义。
+
+## 9. 待落地设计（与并发工作不重叠）
+
+### 9.1 P2 思考态 / 提交前自检（更多思考）
+- 在**计划 / 修复 / 验收**三个决策点强制分析步：结构化输出（假设、不确定项、步骤、验证点），再执行；分析步可被校验（是否引用了刚失败的错误、是否覆盖当前条款）。
+- 提交前**自检轮**（独立 prompt，早于 QA）：对当前候选做一次廉价自检，减少 QA 轮次。
+- 落地：`role_instruction` 增思考协议；loop 增"分析步"；`_distill_verification_failure` 触发根因假设字段。
+- 度量：QA 首轮通过率、QA 轮数、返工率（A/B）。
+
+### 9.2 P5 边际价值终止（替代写次数/轮数）
+- 收益信号 = 最近 N 轮 `verification` 是否变化 + 自失效次数；收益为负即强制交 QA（freeze 的量化版）。
+- 落地：wrap-up 判定增 convergence 信号；阈值 A/B。
+- 度量：到终态轮数、自失效次数、accepted 率。
+
+### 9.3 P6 闭环度量
+- 以 L1-L12 逐项通过率为唯一推进指标；每机制 A/B（同项目同模型）后定默认。
+- 复用 `run_module_gates.py --mode bench` 的四支柱+N-batch 报告（已有骨架）。

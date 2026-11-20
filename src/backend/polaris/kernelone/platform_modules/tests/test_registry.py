@@ -81,6 +81,17 @@ class TestPlatformModuleRegistry(unittest.TestCase):
             for dep in module.depends_on:
                 self.assertIn(dep, PLATFORM_MODULES, msg=f"{module.module_id} -> {dep}")
 
+    def test_changed_projection_selects_runtime_consumer_and_unknown_selects_every_gate(self) -> None:
+        from polaris.kernelone.platform_modules.registry import affected_modules
+
+        projection = "src/backend/polaris/cells/roles/runtime/internal/engineering_state_projection.py"
+        selected = [m.module_id for m in affected_modules([projection])]
+        self.assertEqual(selected, ["M11_engineering_projection", "M12_engineering_run", "M13_engineering_evaluation"])
+        self.assertEqual(affected_modules([projection, "shared/config.toml"]), list_modules())
+        for module in list_modules():
+            for dep in module.depends_on:
+                self.assertLess(MODULE_CASCADE_ORDER.index(dep), MODULE_CASCADE_ORDER.index(module.module_id))
+
     def test_unknown_module_raises(self) -> None:
         with self.assertRaises(KeyError):
             get_module("M99_does_not_exist")

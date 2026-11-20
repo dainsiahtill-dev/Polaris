@@ -124,6 +124,59 @@ def test_actual_readonly_capture_returns_temporal_jpeg_pixels(workspace):
     assert sorted(path.name for path in workspace.iterdir()) == [".polaris", "index.html"]
 
 
+@pytest.mark.parametrize("failure", ["first", "persistent", "unrelated"])
+def test_compositor_retry_captures_once_without_replaying_interaction(workspace, monkeypatch, failure):
+    from polaris.cells.roles.runtime.internal import engineering_browser
+
+    (workspace / "index.html").write_text(
+        '<button id="count" onclick="this.textContent=Number(this.textContent)+1">0</button>', encoding="utf-8"
+    )
+    marker = "            page.set_default_timeout(2000)"
+    assert engineering_browser._BROWSER_PROGRAM.count(marker) == 1
+    inject = """
+            from playwright.sync_api import Error as SyntheticError
+            original_screenshot = page.screenshot
+            screenshot_timeouts = []
+            def injected_screenshot(**kwargs):
+                screenshot_timeouts.append(kwargs['timeout'])
+                if len(screenshot_timeouts) > 1:
+                    assert 0 < kwargs['timeout'] < screenshot_timeouts[0], 'frame timeout reset'
+                if FAILURE == 'unrelated':
+                    raise SyntheticError('Page closed')
+                if FAILURE == 'persistent' or len(screenshot_timeouts) == 1:
+                    time.sleep(.03)
+                    raise SyntheticError('Protocol error (Page.captureScreenshot): Unable to capture screenshot')
+                return original_screenshot(**kwargs)
+            page.screenshot = injected_screenshot
+""".replace("FAILURE", repr(failure))
+    monkeypatch.setattr(
+        engineering_browser, "_BROWSER_PROGRAM", engineering_browser._BROWSER_PROGRAM.replace(marker, marker + inject)
+    )
+    scope = _scope(workspace)
+    result = asyncio.run(
+        _capture()(
+            "frame",
+            {"actions": [{"type": "click", "selector": "#count"}], "frame_times_ms": [0]},
+            workspace=workspace,
+            scope=scope,
+            run_process=_runner(workspace, scope),
+        )
+    )
+    payload = json.loads(result.content)
+    attempts = payload["screenshot_attempts"]
+    if failure == "first":
+        assert result.ok and len(result.images) == 1, result.content
+        assert payload["dom"]["buttons"] == ["1"]
+        assert [attempt["ok"] for attempt in attempts] == [False, True]
+        assert attempts[1]["started_offset_ms"] >= attempts[0]["completed_offset_ms"]
+        assert attempts[1]["completed_offset_ms"] >= attempts[1]["started_offset_ms"]
+    else:
+        assert not result.ok and not result.images
+        assert len(attempts) == (2 if failure == "persistent" else 1)
+        assert all(not item["ok"] for item in attempts)
+    assert ("Page closed" if failure == "unrelated" else "Unable to capture screenshot") in attempts[0]["error"]
+
+
 def test_actual_click_pause_freezes_later_frames(workspace):
     capture = _capture()
     scope = _scope(workspace)

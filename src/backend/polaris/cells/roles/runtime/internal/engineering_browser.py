@@ -62,12 +62,13 @@ sys.path[:] = [path for path in sys.path if path and not Path(path).resolve().is
 for path in reversed(settings['python_paths']):
     sys.path.insert(0, path)
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
 console = []
 page_errors = []
 blocked_requests = []
 images = []
+screenshot_attempts = []
 context = None
 resource_reads = []
 resource_errors = []
@@ -76,6 +77,36 @@ resource_bytes = 0
 resource_remaining = 64 * 1024 * 1024
 resource_budget_error = None
 static_origin = 'https://polaris.invalid'
+
+def screenshot_frame(page, started, number, offset):
+    # A loaded page can still lack a capturable compositor surface. Only the
+    # pixel read is repeatable; navigation and actions have already completed.
+    deadline = time.monotonic() + 3.0
+    def remaining_ms():
+        value = int((deadline - time.monotonic()) * 1000)
+        if value <= 0:
+            raise TimeoutError('original screenshot deadline expired')
+        return value
+
+    for attempt in (1, 2):
+        timeout = remaining_ms()
+        timing = {'frame': number, 'attempt': attempt, 'requested_offset_ms': offset,
+                  'started_offset_ms': round((time.monotonic() - started) * 1000)}
+        screenshot_attempts.append(timing)
+        try:
+            data = page.screenshot(type='jpeg', quality=75, full_page=False, timeout=timeout)
+        except PlaywrightError as error:
+            timing.update(ok=False, error=str(error)[:300], completed_offset_ms=round((time.monotonic()-started)*1000))
+            if attempt == 2 or 'Protocol error (Page.captureScreenshot): Unable to capture screenshot' not in str(error):
+                raise
+            page.wait_for_function(
+                '() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))',
+                timeout=remaining_ms(),
+            ).dispose()
+        else:
+            completed = round((time.monotonic() - started) * 1000)
+            timing.update(ok=True, completed_offset_ms=completed)
+            return data, completed
 
 try:
     if settings.get('web_root') is not None:
@@ -212,8 +243,7 @@ try:
                     raise ValueError(resource_budget_error)
                 if settings['observation_mode'] == 'dom':
                     continue
-                captured_ms = round((time.monotonic() - started) * 1000)
-                data = page.screenshot(type='jpeg', quality=75, full_page=False, timeout=3000)
+                data, captured_ms = screenshot_frame(page, started, number + 1, offset)
                 total += len(data)
                 if total > 1024 * 1024:
                     raise ValueError('browser images exceed the 1 MiB binary limit')
@@ -223,7 +253,7 @@ try:
                     'width': settings['viewport']['width'],
                     'height': settings['viewport']['height'],
                     'sha256': hashlib.sha256(data).hexdigest(),
-                    'label': 'frame %d at %d ms (requested %d ms)' % (number + 1, captured_ms, offset),
+                    'label': 'frame %d capture completed at %d ms (requested %d ms)' % (number + 1, captured_ms, offset),
                 })
             dom_observed_ms = round((time.monotonic() - started) * 1000)
             body = page.locator('body')
@@ -282,6 +312,7 @@ try:
         raise ValueError(resource_budget_error)
     result = {
         'images': images,
+        'screenshot_attempts': screenshot_attempts,
         'observation_mode': settings['observation_mode'],
         'visual_evidence': settings['observation_mode'] == 'images',
         'dom_observation': {'timing': 'final_after_actions_and_wait',
@@ -317,6 +348,8 @@ except Exception as error:
                 'errors': resource_errors[:1], 'errors_truncated': len(resource_errors) > 1,
                 'max_resource_bytes': 16 * 1024 * 1024, 'max_total_bytes': 64 * 1024 * 1024},
             'error': type(error).__name__ + ': ' + (resource_budget_error or str(error))[:1000]}
+    if screenshot_attempts:
+        failure['screenshot_attempts'] = screenshot_attempts
     print(json.dumps(failure, ensure_ascii=False))
     raise SystemExit(2)
 """

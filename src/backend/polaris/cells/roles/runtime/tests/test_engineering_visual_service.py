@@ -240,14 +240,22 @@ async def test_native_owner_keeps_optional_director_capture_and_requires_indepen
 
     async def capture(call_id: str, *_args: Any, **_kwargs: Any) -> ToolObservation:
         captures.append(call_id)
-        return ToolObservation(call_id, "browser_observe", True, "{}", 0, False, images=(_image(),))
+        return ToolObservation(
+            call_id,
+            "browser_observe",
+            True,
+            json.dumps({"entry": "index.html", "page_errors": []}),
+            0,
+            False,
+            images=(_image(),),
+        )
 
     monkeypatch.setattr("polaris.cells.roles.runtime.internal.engineering_browser.capture_browser_observation", capture)
     service = EngineeringRunService(isolated_workspace, permission_resolver=lambda _row: scope, require_qa=True)
     command = RoleRunCommand(
         "native-visual-service",
         "director",
-        "Deliver the current HTML page.",
+        "Deliver the current HTML page.\nDisplay the fixture text.",
         isolated_workspace,
         required_checks=(
             "python3 -B -c \"from pathlib import Path; assert 'fixture' in Path('index.html').read_text(encoding='utf-8')\"",
@@ -257,17 +265,33 @@ async def test_native_owner_keeps_optional_director_capture_and_requires_indepen
     # Mandatory independent QA still captures and consumes its own current pixels.
     scripted_provider.enqueue_json(_calls(("director-capture", "browser_observe", {"entry": "index.html"})))
     scripted_provider.enqueue_json(_text("Observed my output; ready for required checks and independent QA."))
+    findings = [
+        {"clause": "Deliver the current HTML page.", "status": "pass", "evidence": "qa-read"},
+        {"clause": "Display the fixture text.", "status": "pass", "evidence": "qa-read"},
+    ]
     # Same-batch capture plus approval must fail first; later consumption may pass.
     scripted_provider.enqueue_json(_calls(("qa-read", "read_file", {"file": "index.html"})))
     scripted_provider.enqueue_json(
         _calls(
             ("qa-capture", "browser_observe", {"entry": "index.html"}),
-            ("early-approval", "report_review", {"approved": True, "feedback": "Premature"}),
+            (
+                "early-approval",
+                "report_review",
+                {"approved": True, "feedback": "Premature", "clause_findings": findings},
+            ),
         )
     )
     scripted_provider.enqueue_json(
         _calls(
-            ("current-approval", "report_review", {"approved": True, "feedback": "Current independent image consumed."})
+            (
+                "current-approval",
+                "report_review",
+                {
+                    "approved": True,
+                    "feedback": "Current independent image consumed.",
+                    "clause_findings": [findings[0], {**findings[1], "evidence": "qa-capture"}],
+                },
+            )
         )
     )
     limits = RunLimits(time.time() + 45, 1_000_000, 64000)
@@ -355,6 +379,99 @@ async def test_final_qa_owner_cannot_be_bypassed_by_an_adapter_without_actual_im
     assert verdict == expected
     final = service.store.load_events(command.session_id)[-1]
     assert final["kind"] == "qa_review_completed" and final["payload"]["verdict"] == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "capture,expected",
+    [
+        ("current", "approved"),
+        ("stale", "unknown"),
+        ("failed", "unknown"),
+        ("malformed", "unknown"),
+        ("wrong_entry", "unknown"),
+        ("page_error", "unknown"),
+        ("after_report", "unknown"),
+        ("made_up_citation", "unknown"),
+        ("stale_citation", "unknown"),
+        ("revisit_citation", "unknown"),
+        ("current_citation", "approved"),
+        ("stale_error_current_clean", "approved"),
+    ],
+)
+async def test_qa_browser_gate_requires_current_entry_before_judgment(
+    isolated_workspace: Path, monkeypatch: pytest.MonkeyPatch, capture: str, expected: str
+) -> None:
+    (isolated_workspace / "index.html").write_text("<title>current</title>", encoding="utf-8")
+    scope = _scope(isolated_workspace, required=False)
+    service = EngineeringRunService(isolated_workspace, permission_resolver=lambda _row: scope)
+    command, limits = _seed(service, scope)
+    cancel = asyncio.Event()
+    verifier = service._verification(scope, limits, cancel)
+    monkeypatch.setattr(verifier, "current_verification", lambda _id: "passed")
+    clean = json.dumps({"entry": "index.html", "page_errors": []})
+    page_error = json.dumps({"entry": "index.html", "page_errors": ["ReferenceError"]})
+
+    def observed(tool: str, identity: str, content: str, *, ok: bool = True) -> int:
+        turn = service.store.append_event(command.session_id, kind="turn_started", role="qa", payload={})
+        service.store.record_tool_dispatch(
+            command.session_id, turn_seq=turn, call_id=identity, tool=tool, arguments={}, role="qa"
+        )
+        service.store.record_tool_observation(
+            command.session_id,
+            turn_seq=turn,
+            role="qa",
+            observation=ToolObservation(identity, tool, ok, content, 0 if ok else 1, False),
+        )
+        return turn
+
+    service.store.append_event(command.session_id, kind="role_started", role="qa", payload={})
+    observed("browser_observe", "previous", page_error if capture == "stale_error_current_clean" else clean)
+    cited = {
+        "made_up_citation": "made-up",
+        "stale_citation": "previous",
+        "revisit_citation": "saved",
+        "current_citation": "current",
+    }
+    report = json.dumps(
+        {
+            "approved": True,
+            "feedback": "Inspected the current page.",
+            "clause_findings": [{"clause": command.instruction, "status": "pass", "evidence": cited[capture]}]
+            if capture in cited
+            else [],
+        }
+    )
+    report_turn = 0
+
+    async def adapter(*_args: Any, **_kwargs: Any) -> RoleRunResult:
+        nonlocal report_turn
+        service.store.append_event(command.session_id, kind="role_started", role="qa", payload={})
+        if capture not in {"stale", "after_report"}:
+            content = {
+                "malformed": "{}",
+                "wrong_entry": json.dumps({"entry": "other.html", "page_errors": []}),
+                "page_error": page_error,
+            }.get(capture, clean)
+            observed("browser_observe", "current", content, ok=capture != "failed")
+        if capture == "revisit_citation":
+            observed("browser_observe", "saved", json.dumps({"revisit_call_ids": ["previous"]}))
+        report_turn = observed("report_review", "judgment", report)
+        if capture == "after_report":
+            observed("browser_observe", "late", clean)
+        return RoleRunResult(command.session_id, "qa", "Reviewed.", "completed", "not_run", ())
+
+    monkeypatch.setattr(service, "run_role", adapter)
+    verdict, feedback = await service._review_qa(command, scope=scope, limits=limits, cancel=cancel, verifier=verifier)
+    assert verdict == expected, feedback
+    completion = service.store.load_events(command.session_id)[-1]["payload"]
+    assert completion["report_turn_seq"] == report_turn
+    selected = next(
+        event
+        for event in service.store.load_events(command.session_id)
+        if event["seq"] == completion["report_event_seq"]
+    )
+    assert selected["payload"]["call_id"] == "judgment"
 
 
 @pytest.mark.asyncio

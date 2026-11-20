@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from polaris.cells.roles.runtime.internal.engineering_acceptance import (
+    ClauseFinding,
     clause_coverage_gap,
     normalize_clause_findings,
 )
@@ -71,7 +72,7 @@ class EngineeringTools:
         cancel: asyncio.Event,
         *,
         consult: Callable[[str, str], Awaitable[str]] | None = None,
-        review: Callable[[bool], None] | None = None,
+        review: Callable[[bool, list[ClauseFinding]], None] | None = None,
         verify: Callable[[tuple[str, ...]], Awaitable[ToolObservation]] | None = None,
         observe: Callable[[dict[str, Any]], Awaitable[ToolObservation]] | None = None,
         authorize: Callable[[], None] | None = None,
@@ -208,8 +209,8 @@ class EngineeringTools:
                 if isinstance(clause_property, dict):
                     clause_property["description"] = (
                         "Required for this multi-clause goal: one entry per acceptance clause "
-                        f"({len(self.review_clauses)} clauses). Each entry needs clause, status pass|fail, "
-                        "and concrete evidence. A fail entry forces approved=false."
+                        f"({len(self.review_clauses)} clauses). Each entry needs clause, status pass|fail|unknown, "
+                        "and evidence. For pass, use the exact call ID of a current check or earlier successful QA observation."
                     )
                 required = [item for item in (parameters.get("required") or []) if item != "clause_findings"]
                 required.append("clause_findings")
@@ -305,7 +306,10 @@ class EngineeringTools:
                             f"Missing {len(gap)} of {len(self.review_clauses)} clauses: "
                             + json.dumps(gap, ensure_ascii=False)
                         )
-                self.review(approved and not findings)
+                self.review(
+                    approved and not findings and all(item.status == "pass" for item in clause_findings),
+                    clause_findings,
+                )
                 # The structured clause matrix is part of the durable review
                 # judgment, not only the call arguments, so an auditor can read
                 # the ruling from the observation alone.

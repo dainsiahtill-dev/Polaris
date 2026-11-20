@@ -1,62 +1,67 @@
-"""Workspace-scoped cross-run lessons.
+"""Shadow projection of operator-pinned verification failures from the engineering journal.
 
-Weak models repeat the same failure patterns across runs (write-many-turns-
-before-looking recurred verbatim in a later run). When QA rejects a candidate,
-the distilled major finding is persisted here; the next run's Director
-instruction carries the most recent lessons so the pattern is not rediscovered
-from scratch. Bounded: three lessons, two hundred characters each.
+The host counterexample_refs field accepts a JSON list of source
+session_id/event_seq pairs. Empty configuration disables selection. A hidden
+evaluation can keep a fixed reference set (or none) across all subjects.
+Current attempts never enroll themselves as training or reference evidence.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
-from pathlib import Path
+from typing import Any
 
-_LESSON_LIMIT = 3
-_LESSON_MAX_CHARS = 200
-_FILE_NAME = "engineering-lessons.jsonl"
+from polaris.cells.roles.runtime.internal.engineering_session import EngineeringSessionStore
 
 
-def _path(workspace: Path) -> Path:
-    return workspace / ".polaris" / "runtime" / _FILE_NAME
+def pinned_counterexamples(refs: tuple[dict[str, Any], ...]) -> tuple[tuple[str, int], ...]:
+    pins: list[tuple[str, int]] = []
+    for ref in refs:
+        if (
+            not isinstance(ref, dict)
+            or not isinstance(ref.get("session_id"), str)
+            or not ref["session_id"]
+            or type(ref.get("event_seq")) is not int
+            or ref["event_seq"] < 1
+        ):
+            raise ValueError("Each counterexample requires a source session_id and positive integer event_seq")
+        pins.append((ref["session_id"], ref["event_seq"]))
+    return tuple(dict.fromkeys(pins))
 
 
-def record_lesson(workspace: Path, lesson: str) -> None:
-    text = " ".join((lesson or "").split())[:_LESSON_MAX_CHARS]
-    if not text:
-        return
-    path = _path(workspace)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps({"lesson": text}, ensure_ascii=False) + "\n")
-
-
-def load_lessons(workspace: Path) -> list[str]:
-    path = _path(workspace)
-    if not path.is_file():
-        return []
-    lessons: list[str] = []
-    try:
-        for line in path.read_text(encoding="utf-8").splitlines()[-_LESSON_LIMIT:]:
-            try:
-                payload = json.loads(line)
-            except ValueError:
-                continue
-            lesson = str(payload.get("lesson") or "").strip()
-            if lesson:
-                lessons.append(lesson)
-    except OSError:
-        return []
-    return lessons
-
-
-def lessons_guidance(workspace: Path) -> str:
-    lessons = load_lessons(workspace)
-    if not lessons:
-        return ""
-    numbered = "\n".join(f"{index + 1}. {lesson}" for index, lesson in enumerate(lessons))
-    return (
-        "Lessons from earlier rejected attempts in this workspace (do not repeat them):\n"
-        + numbered
-        + "\n\n"
-    )
+def project_counterexamples(
+    store: EngineeringSessionStore, target_id: str, pins: tuple[tuple[str, int], ...]
+) -> dict[str, Any]:
+    selected = []
+    unavailable = []
+    for source_id, seq in pins:
+        ref = {"session_id": source_id, "event_seq": seq}
+        failure = store.comparable_failed_verification(target_id, source_id, seq)
+        if failure is None:
+            unavailable.append(ref)
+            continue
+        binding = failure["input_binding"]
+        checks = [
+            {
+                "command": command,
+                "call_id": check["call_id"],
+                "exit_code": check.get("exit_code"),
+                "timed_out": bool(check.get("timed_out")),
+                "output_sha256": hashlib.sha256(check["content"].encode("utf-8")).hexdigest(),
+            }
+            for command, check in zip(binding["commands"], failure["checks"], strict=True)
+            if check.get("ok") is not True or check.get("exit_code") != 0 or check.get("timed_out")
+        ]
+        selected.append(
+            {
+                "source": ref,
+                "source_revision": failure["workspace_revision"],
+                "verification_attempt_seq": binding.get("attempt_seq"),
+                "source_binding_sha256": hashlib.sha256(
+                    json.dumps(binding, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                ).hexdigest(),
+                "failed_checks": checks,
+            }
+        )
+    return {"mode": "shadow", "counterexamples": selected, "unmatched_or_unverified_refs": unavailable}

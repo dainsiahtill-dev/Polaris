@@ -4,20 +4,20 @@
 Usage examples:
 
   # Single sealed module full functional suite
-  python src/backend/scripts/platform_modules/run_module_gates.py --module M01_event_wait
+  rtk proxy .venv/bin/python src/backend/scripts/platform_modules/run_module_gates.py --module M01_event_wait
 
   # All sealed modules only
-  python src/backend/scripts/platform_modules/run_module_gates.py --mode sealed
+  rtk proxy .venv/bin/python src/backend/scripts/platform_modules/run_module_gates.py --mode sealed
 
   # Cascade: sealed + hardening in dependency order
-  python src/backend/scripts/platform_modules/run_module_gates.py --mode cascade
+  rtk proxy .venv/bin/python src/backend/scripts/platform_modules/run_module_gates.py --mode cascade
 
   # List registry
-  python src/backend/scripts/platform_modules/run_module_gates.py --list
+  rtk proxy .venv/bin/python src/backend/scripts/platform_modules/run_module_gates.py --list
 
   # Full isolated L1-01 bench (optional, long)
-  python src/backend/scripts/platform_modules/run_module_gates.py --mode bench \\
-      --work-dir /tmp/factory-bench-module-gate-l1-01
+  rtk proxy timeout 6000 .venv/bin/python src/backend/scripts/platform_modules/run_module_gates.py --mode bench \\
+      --host-config-file "$HOST_CONFIG" --llm-config-file "$LLM_CONFIG" --registry-home "$REGISTRY_HOME"
 
 This harness exists so agents stop re-proving entire L1–L12 after every one-line
 fix. Seal a module once; re-run only that module gate on change; cascade before
@@ -45,6 +45,7 @@ from polaris.kernelone.platform_modules.registry import (  # noqa: E402
     MODULE_CASCADE_ORDER,
     PlatformModuleRecord,
     PlatformModuleStatus,
+    affected_modules,
     get_module,
     list_modules,
     modules_by_status,
@@ -69,7 +70,7 @@ def _repo_root() -> Path:
 
 def _run_pytest(targets: Sequence[str], *, repo: Path, extra_args: Sequence[str] = ()) -> tuple[int, float, str]:
     if not targets:
-        return 0, 0.0, "no_pytest_targets"
+        return 2, 0.0, "no_pytest_targets"
     cmd = [
         sys.executable,
         "-m",
@@ -140,8 +141,19 @@ def select_modules(mode: str, module_id: str | None) -> list[PlatformModuleRecor
     raise ValueError(f"unsupported mode: {mode!r}")
 
 
-def run_bench_gate(*, repo: Path, work_dir: Path, timeout_s: int = 5400) -> dict[str, Any]:
-    """Run one isolated L1-01 factory_bench true-run (long)."""
+def run_bench_gate(
+    *,
+    repo: Path,
+    work_dir: Path,
+    host_config: Path,
+    llm_config: Path,
+    registry_home: Path,
+    project_id: str = "L1-01",
+    permission_profile_id: str | None = None,
+    workflow: str = "direct",
+    timeout_s: int = 5400,
+) -> dict[str, Any]:
+    """Run the frozen catalog case through the isolated engineering entry point."""
 
     work_dir = work_dir.resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -150,23 +162,32 @@ def run_bench_gate(*, repo: Path, work_dir: Path, timeout_s: int = 5400) -> dict
         sys.executable,
         str(runner),
         "--project-ids",
-        "L1-01",
+        project_id,
         "--work-dir",
         str(work_dir),
         "--timeout",
         str(timeout_s),
         "--max-failed",
         "0",
-        "--real-run-timeout",
-        "120",
+        "--overall-timeout",
+        "6000",
+        "--host-config-file",
+        str(host_config.resolve(strict=True)),
+        "--llm-config-file",
+        str(llm_config.resolve(strict=True)),
+        "--registry-home",
+        str(registry_home.resolve(strict=True)),
         "--launcher-instance-mode",
         "isolated",
         "--bench-session-reporting",
         "off",
     ]
+    cmd.extend(["--workflow", workflow])
+    if permission_profile_id is not None:
+        cmd.extend(["--permission-profile-id", permission_profile_id])
     env = os.environ.copy()
-    env["NO_PROXY"] = "*"
-    env["no_proxy"] = "*"
+    for key in ("NO_PROXY", "no_proxy"):
+        env[key] = ",".join(filter(None, (env.get(key), "localhost", "127.0.0.1", "::1")))
     started = time.time()
     proc = subprocess.run(
         cmd,
@@ -179,9 +200,42 @@ def run_bench_gate(*, repo: Path, work_dir: Path, timeout_s: int = 5400) -> dict
         errors="replace",
     )
     duration = round(time.time() - started, 1)
+    summary_path = None
+    record: dict[str, Any] = {}
+    selected = False
+    output_lines = proc.stdout.strip().splitlines()
+    if output_lines:
+        path = Path(output_lines[-1]).resolve()
+        if path.name == "summary.json" and path.parent.parent == work_dir / "reports":
+            try:
+                summary = json.loads(path.read_text(encoding="utf-8"))
+                records = summary["records"]
+                if isinstance(records, list) and len(records) == 1 and isinstance(records[0], dict):
+                    record = records[0]
+                    selected = (
+                        summary.get("selected_project_ids") == [project_id] and record.get("project_id") == project_id
+                    )
+                    summary_path = str(path)
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
+    observation = record.get("final_observation") or record.get("observation") or {}
+    platform_ok = isinstance(observation, dict) and observation.get("harness_status") == "OBSERVED_ACCEPTED"
+    ok = (
+        proc.returncode == 0
+        and selected
+        and platform_ok
+        and record.get("exit_code") == 0
+        and record.get("catalog_quality") == "PASS"
+        and record.get("resources_closed") is True
+    )
     return {
-        "ok": proc.returncode == 0,
-        "exit_code": proc.returncode,
+        "ok": ok,
+        "summary_path": summary_path,
+        "platform_observed_accepted": platform_ok,
+        "catalog_quality": record.get("catalog_quality", "UNKNOWN"),
+        "resources_closed": record.get("resources_closed"),
+        "process_exit_code": proc.returncode,
+        "exit_code": proc.returncode or int(not ok),
         "duration_s": duration,
         "work_dir": str(work_dir),
         "command": cmd,
@@ -220,12 +274,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         dest="list_registry",
         help="List the freeze registry (alias for --mode list)",
     )
+    parser.add_argument(
+        "--changed-path",
+        action="append",
+        default=[],
+        help="Repo-relative changed path (repeatable). Run owners and their dependent gates.",
+    )
     parser.add_argument("--module", default="", help="Single module_id (implies --mode module)")
     parser.add_argument(
         "--work-dir",
-        default="/tmp/factory-bench-module-gate-l1-01",
+        default=str(Path.home() / ".polaris" / "internal-engineering-bench"),
         help="Bench work dir for --mode bench",
     )
+    parser.add_argument("--permission-profile-id", help="Explicit host permission profile for the isolated case")
+    parser.add_argument("--workflow", choices=("direct", "collaborative"), default="direct")
+    parser.add_argument("--host-config-file", type=Path)
+    parser.add_argument("--llm-config-file", type=Path)
+    parser.add_argument("--registry-home", type=Path)
+    parser.add_argument("--project-id", default="L1-01", help="Catalog case for the isolated bench gate")
     parser.add_argument("--timeout", type=int, default=5400, help="Bench timeout seconds")
     parser.add_argument(
         "--json-out",
@@ -242,22 +308,39 @@ def main(argv: Sequence[str] | None = None) -> int:
     if module_id:
         mode = "module"
 
+    if args.changed_path:
+        if module_id or mode not in {"cascade", "sealed"}:
+            parser.error("--changed-path selects its own cascade and cannot be combined with this mode or module")
+        mode = "affected"
+
     if mode == "list":
         print_registry()
         return 0
 
     if mode == "bench":
-        report = {
-            "mode": "bench",
-            "bench": run_bench_gate(repo=repo, work_dir=Path(args.work_dir), timeout_s=args.timeout),
-        }
-        print(json.dumps(report, indent=2, ensure_ascii=False)[:8000])
+        if not all((args.host_config_file, args.llm_config_file, args.registry_home)):
+            parser.error("bench requires --host-config-file, --llm-config-file and --registry-home")
+        bench = run_bench_gate(
+            repo=repo,
+            work_dir=Path(args.work_dir),
+            timeout_s=args.timeout,
+            host_config=args.host_config_file,
+            llm_config=args.llm_config_file,
+            registry_home=args.registry_home,
+            permission_profile_id=args.permission_profile_id,
+            workflow=args.workflow,
+            project_id=args.project_id,
+        )
+        bench_report = {"mode": "bench", "bench": bench}
+        print(json.dumps(bench_report, indent=2, ensure_ascii=False)[:8000])
         if args.json_out:
-            Path(args.json_out).write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        return 0 if report["bench"]["ok"] else 1
+            Path(args.json_out).write_text(
+                json.dumps(bench_report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+            )
+        return 0 if bench["ok"] else 1
 
     try:
-        modules = select_modules(mode, module_id)
+        modules = list(affected_modules(args.changed_path)) if mode == "affected" else select_modules(mode, module_id)
     except (KeyError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -278,12 +361,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not result.ok:
             print(result.detail[-1500:], flush=True)
             # Fail-closed cascade: stop on first failure so residual is local to one module.
-            if mode in {"cascade", "all", "sealed"}:
+            if mode in {"cascade", "all", "sealed", "affected"}:
                 break
 
     report: dict[str, Any] = {
         "mode": mode,
         "module_filter": module_id,
+        "changed_paths": args.changed_path,
+        "selected_modules": [m.module_id for m in modules],
         "results": [asdict(item) for item in results],
         "passed": sum(1 for item in results if item.ok),
         "failed": sum(1 for item in results if not item.ok),

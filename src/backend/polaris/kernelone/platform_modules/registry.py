@@ -17,6 +17,7 @@ true wall-clock deadline. That invariant is sealed under ``M01_event_wait``.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Mapping
@@ -57,20 +58,7 @@ class PlatformModuleRecord:
         return " or ".join(self.markers)
 
 
-# Dependency order for cascade: observation → authority → tools → context → chain → bench.
-MODULE_CASCADE_ORDER: tuple[str, ...] = (
-    "M01_event_wait",
-    "M02_physical_attempt_authority",
-    "M03_tool_batch_deo",
-    "M04_final_request_context",
-    "M05_stage_lease_heartbeat",
-    "M06_director_multi_task",
-    "M07_factory_stage_chain",
-    "M08_run_ledger_tool_lifecycle",
-    "M10_materialization_semantic_quality",
-    "M09_four_pillars_gates",
-)
-
+_ENGINEERING = "src/backend/polaris/cells/roles/runtime"
 
 PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
     "M01_event_wait": PlatformModuleRecord(
@@ -515,7 +503,125 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
         bench_required=True,
         markers=("module_four_pillars",),
     ),
+    "M11_engineering_projection": PlatformModuleRecord(
+        module_id="M11_engineering_projection",
+        name="Engineering decision facts and clause assessment",
+        status=PlatformModuleStatus.HARDENING,
+        summary="Pure projections consumed by the native engineering loop and session store.",
+        owner_paths=tuple(
+            f"{_ENGINEERING}/internal/{name}.py"
+            for name in ("engineering_state_projection", "engineering_working_state", "engineering_acceptance")
+        ),
+        pytest_targets=tuple(
+            f"{_ENGINEERING}/tests/test_{name}.py"
+            for name in ("engineering_low_context", "engineering_acceptance_systemic")
+        ),
+        invariants=("current_candidate_evidence_only", "missing_mandatory_measurement_is_unknown"),
+    ),
+    "M12_engineering_run": PlatformModuleRecord(
+        module_id="M12_engineering_run",
+        name="Engineering run control and durable evidence",
+        status=PlatformModuleStatus.HARDENING,
+        summary="Single engineering owner, scoped command execution, checks, recovery and independent QA.",
+        owner_paths=(
+            f"{_ENGINEERING}/public/engineering_service.py",
+            "src/backend/polaris/bootstrap/engineering_runtime.py",
+            "src/backend/polaris/delivery/ws/engineering_events.py",
+            f"{_ENGINEERING}/public/contracts/engineering_run.py",
+            *(
+                f"{_ENGINEERING}/internal/{name}.py"
+                for name in (
+                    "engineering_roles",
+                    "engineering_loop",
+                    "engineering_session",
+                    "engineering_verification",
+                    "engineering_tools",
+                    "engineering_execution_policy",
+                    "engineering_artifacts",
+                    "engineering_visual",
+                    "engineering_browser",
+                    "engineering_web_probe",
+                    "engineering_lessons",
+                    "engineering_qualified_routing",
+                    "engineering_checkpoint",
+                )
+            ),
+        ),
+        pytest_targets=tuple(
+            f"{_ENGINEERING}/tests/test_{name}.py"
+            for name in (
+                "engineering_session",
+                "engineering_service",
+                "engineering_recovery",
+                "engineering_qa",
+                "engineering_qa_execution_recovery",
+                "engineering_lessons",
+                "engineering_qualified_routing",
+                "engineering_visual_service",
+                "engineering_atomic_write_effects",
+                "engineering_verification_fixtures",
+                "engineering_verified_checkpoint",
+                "engineering_verification",
+                "engineering_verification_selection",
+                "engineering_verification_output_policy",
+                "engineering_verification_execution_policy",
+            )
+        ),
+        invariants=(
+            "terminal_rejects_new_dispatch",
+            "late_receipt_retains_history",
+            "same_candidate_review",
+            "unknown_effect_not_replayed",
+        ),
+        depends_on=("M11_engineering_projection",),
+    ),
+    "M13_engineering_evaluation": PlatformModuleRecord(
+        module_id="M13_engineering_evaluation",
+        name="Internal engineering evaluation",
+        status=PlatformModuleStatus.HARDENING,
+        summary="Consumes settled engineering observation, evaluates catalog checks and compares registered study arms.",
+        owner_paths=tuple(
+            "src/backend/scripts/factory_bench/_bench_lib/" + name
+            for name in (
+                "cli.py",
+                "chain.py",
+                "catalog_quality.py",
+                "comparison.py",
+                "reliability.py",
+                "routing_evidence.py",
+            )
+        ),
+        pytest_targets=(
+            "src/backend/scripts/factory_bench/test_engineering_bench_runner.py",
+            "src/backend/scripts/factory_bench/test_paired_evaluation.py",
+            "src/backend/scripts/factory_bench/test_repeatability.py",
+            "src/backend/scripts/platform_modules/test_run_module_gates.py",
+        ),
+        invariants=(
+            "structural_floor_is_not_independent_correctness",
+            "partial_cohort_has_no_qualification",
+            "missing_billing_is_unknown",
+            "settlement_before_next_project",
+        ),
+        depends_on=("M12_engineering_run",),
+    ),
 }
+
+
+def _cascade_order() -> tuple[str, ...]:
+    # Preserve registry order among eligible gates (also used for legacy residual attribution).
+    pending = dict(PLATFORM_MODULES)
+    ordered: list[str] = []
+    while pending:
+        ready = next((key for key, record in pending.items() if all(dep in ordered for dep in record.depends_on)), None)
+        if ready is None:
+            raise ValueError(f"cyclic or unknown platform module dependencies: {tuple(pending)}")
+        ordered.append(ready)
+        del pending[ready]
+    return tuple(ordered)
+
+
+MODULE_CASCADE_ORDER = _cascade_order()
 
 
 def get_module(module_id: str) -> PlatformModuleRecord:
@@ -528,18 +634,29 @@ def get_module(module_id: str) -> PlatformModuleRecord:
 
 
 def list_modules() -> tuple[PlatformModuleRecord, ...]:
-    """Return modules in cascade order (unknowns appended)."""
+    """Return modules in dependency order."""
+    return tuple(PLATFORM_MODULES[key] for key in MODULE_CASCADE_ORDER)
 
-    ordered: list[PlatformModuleRecord] = []
-    seen: set[str] = set()
-    for module_id in MODULE_CASCADE_ORDER:
-        if module_id in PLATFORM_MODULES:
-            ordered.append(PLATFORM_MODULES[module_id])
-            seen.add(module_id)
-    for module_id, record in PLATFORM_MODULES.items():
-        if module_id not in seen:
-            ordered.append(record)
-    return tuple(ordered)
+
+def affected_modules(changed_paths: Sequence[str]) -> tuple[PlatformModuleRecord, ...]:
+    """Select owners and transitive consumers; unknown inputs require the full registry."""
+    modules = list_modules()
+    selected: set[str] = set()
+    if not changed_paths:
+        return modules
+    for path in changed_paths:
+        owners = {
+            m.module_id
+            for m in modules
+            if path in m.owner_paths or path in {target.partition("::")[0] for target in m.pytest_targets}
+        }
+        if not owners:
+            return modules
+        selected.update(owners)
+    for module in modules:
+        if selected.intersection(module.depends_on):
+            selected.add(module.module_id)
+    return tuple(module for module in modules if module.module_id in selected)
 
 
 def modules_by_status(status: PlatformModuleStatus) -> tuple[PlatformModuleRecord, ...]:

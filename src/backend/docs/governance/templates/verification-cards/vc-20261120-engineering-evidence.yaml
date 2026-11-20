@@ -1,0 +1,34 @@
+card_id: vc-20261120-engineering-evidence
+classification: structural
+bug_summary: Late verification and unrelated QA reports could project a pass on another candidate.
+owner: roles.runtime
+assumptions:
+  - id: A1
+    statement: Only the original verification attempt can attest its frozen candidate.
+    evidence: engineering_verification.run_verification formerly reloaded workspace_revision after executing checks.
+  - id: A2
+    statement: QA fidelity uses the observed report selected by the host.
+    evidence: EngineeringSessionStore._acceptance formerly selected the most recent report arguments by wall clock.
+  - id: A3
+    statement: An explicit host resume may reconcile an uncertain write by observing it.
+    evidence: EngineeringRunService._reconcile_writes checks the original dispatch and uses bounded readback.
+pre_mortem:
+  - Terminal dispatch protection could block the host readback needed after an interrupted write.
+  - A second verification on identical commands could accept a delayed success from the first attempt.
+  - Projected findings could come from a report whose call ID was reused in another turn.
+verification_plan:
+  - test_engineering_atomic_write_effects.py
+  - test_engineering_recovery.py
+  - test_engineering_session.py
+  - test_engineering_verification_selection.py
+  - test_engineering_visual_service.py
+results:
+  red:
+    - Four terminal statuses admitted fresh tool calls and allowed generic reactivation.
+    - Cold read returned approved for a nonexistent report.
+    - Late verifier callback displaced another attempt with the same check command.
+    - Concurrent revision advance was certified by the original check.
+  acceptance: Targeted cases require actual receipts and real candidate checks. Hidden-model qualification is separate.
+related_blueprint: docs/blueprints/RELIABLE_ENGINEERING_EXECUTION_20261120.md
+related_adrs:
+  - adr-20261120-engineering-evidence-binding

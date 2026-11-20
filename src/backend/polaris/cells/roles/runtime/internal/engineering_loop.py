@@ -13,6 +13,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from polaris.cells.roles.runtime.internal.engineering_acceptance import ClauseFinding, require_observed_clause_evidence
 from polaris.cells.roles.runtime.internal.engineering_execution_policy import resolve_execution_policy
 from polaris.cells.roles.runtime.internal.engineering_roles import register_consult_tool, role_instruction, role_scope
 from polaris.cells.roles.runtime.internal.engineering_session import EngineeringSessionStore
@@ -408,6 +409,36 @@ _ERROR_LINE_PATTERNS = (
 )
 
 
+def _qa_source_read(event: Mapping[str, Any]) -> bool:
+    payload = event["payload"]
+    return (
+        event["kind"] == "tool_observed"
+        and event["role"] == "qa"
+        and payload.get("ok") is True
+        and not payload.get("interrupted")
+        and not payload.get("timed_out")
+        and (
+            payload.get("tool") == "read_file"
+            or (payload.get("tool") == "repo_rg" and bool(str(payload.get("content", "")).strip()))
+        )
+    )
+
+
+def _loop_recovery_instruction(role: str, enabled: frozenset[str]) -> str:
+    if role == "qa" and "report_review" in enabled:
+        return (
+            "Submit report_review using exact current observation call IDs for passing clauses. "
+            "Record observed defects as fail and unavailable or inconclusive evidence as unknown. "
+            "If an unresolved clause still needs a check, use a different authorized read-only observation."
+        )
+    if role != "director":
+        return "Return your advice from the observations gathered, identifying any unresolved questions."
+    return (
+        "Take the next authorized action toward the goal. Address a missing implementation or test, "
+        "or verify the candidate with its declared checks. Read a specific file when needed; do not re-list the workspace."
+    )
+
+
 def _stage_gate_verification_hint(workspace: Path) -> str:
     """A concrete, project-typed verification invocation for the stage gate.
 
@@ -479,6 +510,7 @@ async def run_engineering_loop(
     authorize: Callable[[], None] | None = None,
     pending_ancestors: frozenset[tuple[int, str]] = frozenset(),
     project_run: bool = True,
+    route_request: Callable[[AIRequest, int], tuple[ResilientLLMClient, dict[str, Any]]] | None = None,
     purpose: str = "role",
     review_clauses: tuple[str, ...] = (),
 ) -> RoleRunResult:
@@ -490,6 +522,7 @@ async def run_engineering_loop(
     """
     from polaris.cells.roles.runtime.internal.engineering_roles import (
         interpret_review_reports,
+        qa_review_reserve_seconds,
         register_browser_observation_tool,
         register_review_tool,
         register_verification_tool,
@@ -530,24 +563,21 @@ async def run_engineering_loop(
                 current_binding=visual_binding(),
             )
 
-    def review_current(approved: bool) -> None:
+    def review_current(approved: bool, clause_findings: list[ClauseFinding]) -> None:
         if command.role != "qa" or active_dispatch is None:
             raise ValueError("report_review requires an active QA dispatch")
-        if not any(
-            event["kind"] == "tool_observed"
-            and event["role"] == "qa"
-            and event["seq"] > frame_seq
-            and (
-                event["payload"].get("tool") == "read_file"
-                or (event["payload"].get("tool") == "repo_rg" and str(event["payload"].get("content", "")).strip())
-            )
-            and event["payload"].get("ok") is True
-            and not event["payload"].get("interrupted")
-            and event["payload"].get("turn_seq", 0) < active_dispatch[0]
-            for event in store.load_events(command.session_id)
-        ):
+        events = store.load_events(command.session_id)
+        if not any(frame_seq < event["seq"] < active_dispatch[0] and _qa_source_read(event) for event in events):
             raise ValueError("report_review requires a successful current-frame source read in a previous turn")
         if approved:
+            if clause_findings:
+                require_observed_clause_evidence(
+                    clause_findings,
+                    events=events,
+                    checks=store.load_run(command.session_id, workspace=command.workspace)["checks"],
+                    frame_seq=frame_seq,
+                    report_turn_seq=active_dispatch[0],
+                )
             check_visual()
 
     tools = EngineeringTools(
@@ -563,6 +593,20 @@ async def run_engineering_loop(
         artifact_binding=artifact_binding,
         review_clauses=review_clauses,
     )
+    if project_run:
+        saved = store.load_run(command.session_id, workspace=command.workspace)
+        if saved["status"] not in {"pending", "running"}:
+            # A cold invocation is an observation until the service explicitly
+            # admits a resume. It must not append a new frame or dispatch.
+            return RoleRunResult(
+                saved["session_id"],
+                saved["role"],
+                saved["text"],
+                saved["status"],
+                saved["verification"],
+                tuple(ToolObservation(**item) for item in saved["checks"]),
+            )
+
     events = store.load_events(command.session_id)
     starts = [event for event in events if event["kind"] == "role_started" and event["role"] == command.role]
     last_start = starts[-1] if starts else None
@@ -657,7 +701,7 @@ async def run_engineering_loop(
     loop_signature: str | None = None
     loop_run_count = 0
     loop_alert: str | None = None
-    loop_tools: set[str] = set()
+    last_turn_evidence: list[str] = []
     # Gate-block streak: turns whose every call was intercepted by the stage
     # gate. Weak models keep re-issuing blocked probes; after a short streak
     # inject an explicit pivot alert (read_file stays allowed, but only
@@ -777,12 +821,8 @@ async def run_engineering_loop(
             # Budget observation comes first so protocol-native merging preserves
             # its _MARKER prefix; a single "\n" separator keeps the parts in one
             # text block while still letting _tail_observation find the budget facts.
+            shadow_pack = None
             host_parts: list[str] = []
-            if command.role == "qa" and qa_turn_limit > 0 and qa_turns >= qa_turn_limit:
-                host_parts.append(
-                    "QA effort budget: you have reached the review turn limit. Submit report_review now with "
-                    "your clause findings; further exploration ends the review without a verdict."
-                )
             if command.role == "director" and limits.deadline is not None:
                 observed_at = time.time()
                 # Keep the original system/history prefix and durable messages
@@ -807,11 +847,16 @@ async def run_engineering_loop(
                 # request. Derived from the same journal only; never persisted.
                 from polaris.cells.roles.runtime.internal.engineering_state_projection import (
                     STATE_EVENT_KINDS,
+                    shadow_decision_pack,
                     working_state_message,
                 )
 
-                run = store.load_run(command.session_id, workspace=command.workspace)
-                state_events = store.load_events(command.session_id, kinds=STATE_EVENT_KINDS)
+                run, state_events = store.load_projection_inputs(
+                    command.session_id, workspace=command.workspace, kinds=STATE_EVENT_KINDS
+                )
+                shadow_pack = shadow_decision_pack(
+                    run, state_events, max_tokens=_history_allowances(context_window_tokens)[0]
+                )
                 host_parts.append(
                     working_state_message(
                         run,
@@ -830,13 +875,69 @@ async def run_engineering_loop(
                     qa_working_state_message,
                 )
 
-                run = store.load_run(command.session_id, workspace=command.workspace)
-                working_events = store.load_events(command.session_id, kinds=QA_WORKING_STATE_EVENT_KINDS)
+                run, working_events = store.load_projection_inputs(
+                    command.session_id, workspace=command.workspace, kinds=QA_WORKING_STATE_EVENT_KINDS
+                )
+                now = time.time()
                 options["messages"].append(
                     qa_working_state_message(
-                        run, working_events, frame_seq=frame_seq, observed_at=time.time(), deadline=limits.deadline
+                        run, working_events, frame_seq=frame_seq, observed_at=now, deadline=limits.deadline
                     )
                 )
+                remaining = max(0.0, limits.deadline - now) if limits.deadline is not None else None
+                reserve = (
+                    qa_review_reserve_seconds(
+                        deadline=limits.deadline, created_at=float(run["created_at"]), observed_at=now
+                    )
+                    if limits.deadline is not None
+                    else 0.0
+                )
+                reason = (
+                    "deadline_reserve"
+                    if remaining is not None and remaining <= reserve
+                    else ("turn_limit" if qa_turn_limit > 0 and qa_turns >= qa_turn_limit else None)
+                )
+                if reason and "report_review" in tools.enabled:
+                    source = next(
+                        (
+                            event["payload"]["call_id"]
+                            for event in reversed(working_events)
+                            if frame_seq < event["seq"] < turn_seq and _qa_source_read(event)
+                        ),
+                        None,
+                    )
+                    if source:
+                        options["tool_choice"] = {"type": "function", "function": {"name": "report_review"}}
+                        instruction = (
+                            f"Current QA source receipt ID: {source}. Current host check IDs: "
+                            + json.dumps([check["call_id"] for check in run["checks"] if check.get("ok") is True])
+                            + ". In each passing finding copy a supporting call ID into evidence; "
+                            "put the explanation in feedback. Mark unverifiable clauses unknown."
+                        )
+                    else:
+                        instruction = (
+                            "Read the relevant source once with an available read tool, then submit report_review."
+                        )
+                    options["messages"].append(
+                        {"role": "user", "content": f"QA effort budget ({reason}). {instruction}"}
+                    )
+                    store.append_event(
+                        command.session_id,
+                        kind="qa_report_requested",
+                        role="qa",
+                        payload={
+                            "frame_seq": frame_seq,
+                            "turn_seq": turn_seq,
+                            "reason": reason,
+                            "remaining_seconds": remaining,
+                            "reserve_seconds": reserve,
+                            "observed_at": now,
+                            "deadline": limits.deadline,
+                            "source_call_id": source,
+                            "tool_choice": options["tool_choice"],
+                            "available_tools": sorted(tools.enabled),
+                        },
+                    )
             request = AIRequest(
                 task_type=TaskType.DIALOGUE,
                 role=command.role,
@@ -851,6 +952,9 @@ async def run_engineering_loop(
                     "visual_input_sets": visual_projection.get("image_sets", []),
                 },
             )
+            turn_client, routing_audit = (
+                route_request(request, context_window_tokens) if route_request else (client, {})
+            )
             store.append_event(
                 command.session_id,
                 kind="request_prepared",
@@ -858,12 +962,14 @@ async def run_engineering_loop(
                 payload={
                     "turn_seq": turn_seq,
                     "evidence_kind": "auxiliary_prepared_request",
+                    **({"binding_selection": routing_audit} if routing_audit else {}),
                     "visual_projection": visual_projection,
+                    **({"shadow_decision_pack": shadow_pack} if shadow_pack is not None else {}),
                     "request": request.to_dict(),
                 },
             )
             try:
-                response = await _invoke(client, request, cancel, limits.deadline)
+                response = await _invoke(turn_client, request, cancel, limits.deadline)
             except TimeoutError:
                 # The run deadline expired while the provider was answering.
                 # The run ends with the facts it committed, not with an
@@ -998,23 +1104,14 @@ async def run_engineering_loop(
             else:
                 loop_run_count = 0
             loop_signature = turn_signature
-            loop_tools = {call.name for call in calls}
             if calls and loop_run_count in (3, 7, 15):
                 tool_names = ", ".join(sorted({call.name for call in calls}))
-                last_observation = ""
-                for event in reversed(store.load_events(command.session_id, kinds=("tool_observed",))):
-                    payload = event.get("payload") or {}
-                    if payload.get("tool") in {call.name for call in calls}:
-                        last_observation = str(payload.get("content", ""))[:1200]
-                        break
                 loop_alert = (
-                    f"Host loop detection: you issued the identical call set ({tool_names}) for the last "
-                    f"{loop_run_count + 1} turns in a row without new progress. You are looping, not building. "
-                    "Do not repeat that probe again. The last observation for it was:\n"
-                    f"{last_observation}\n"
-                    "Now take the NEXT concrete action toward the goal: write the missing implementation or test "
-                    "files, or run the actual build/tests. If you need one specific file's content, read that file "
-                    "once, then act on it; do not re-list the workspace."
+                    f"Host loop detection: identical call set ({tool_names}) for {loop_run_count + 1} consecutive turns. "
+                    "Previous observations in this frame: "
+                    + "; ".join(last_turn_evidence)[:1200]
+                    + "\n"
+                    + _loop_recovery_instruction(command.role, tools.enabled)
                 )
                 store.append_event(
                     command.session_id,
@@ -1037,6 +1134,7 @@ async def run_engineering_loop(
             review_reports: list[dict[str, Any]] = []
             verification_passed = False
             turn_gate_blocks = 0
+            last_turn_evidence = []
             for call in calls:
                 if cancel.is_set():
                     return finish(
@@ -1203,7 +1301,7 @@ async def run_engineering_loop(
                                         "writes_since_verification": writes_since_verification,
                                     },
                                 )
-                            elif loop_run_count >= 3 and call.name in loop_tools:
+                            elif loop_run_count >= 3:
                                 # Loop enforcement: the 4th identical probe is
                                 # intercepted, not executed, so the model must
                                 # change action instead of looping forever.
@@ -1213,10 +1311,8 @@ async def run_engineering_loop(
                                     ok=False,
                                     content=(
                                         f"Loop break: you repeated the identical {call.name} call for the last "
-                                        f"{loop_run_count + 1} turns. Do NOT repeat it. Take the NEXT concrete "
-                                        "action toward the goal: run verify_project or browser_observe to produce "
-                                        "evidence, or write the missing implementation file. If you need one "
-                                        "specific file's content, read that file once with read_file, then act."
+                                        f"{loop_run_count + 1} turns. "
+                                        + _loop_recovery_instruction(command.role, tools.enabled)
                                     ),
                                     exit_code=None,
                                     interrupted=False,
@@ -1297,6 +1393,9 @@ async def run_engineering_loop(
                         if output_capture is not None:
                             output_capture.retain_for_reconciliation()
                         raise
+                last_turn_evidence.append(
+                    f"{observation.tool} {observation.call_id} ok={observation.ok}: {observation.content[:300]}"
+                )
                 if observation.tool == "report_review" and observation.ok and not observation.interrupted:
                     review_reports.append(tool_observation_payload(observation))
                 if observation.tool == "verify_project" and observation.ok and not observation.interrupted:
@@ -1384,7 +1483,7 @@ async def run_engineering_loop(
                     messages.append(fix_message)
                     store.append_message(command.session_id, role=command.role, message=fix_message)
             if review_reports:
-                _verdict, feedback, _call_id = interpret_review_reports(review_reports)
+                _verdict, feedback, _index = interpret_review_reports(review_reports)
                 return finish("completed", feedback)
     except asyncio.CancelledError:
         cancel.set()

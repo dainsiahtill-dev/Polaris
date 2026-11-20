@@ -17,6 +17,8 @@ current_modules:
 - polaris.cells.roles.runtime.public.contracts.engineering_run
 - polaris.cells.roles.runtime.internal.engineering_loop
 - polaris.cells.roles.runtime.internal.engineering_session
+- polaris.cells.roles.runtime.internal.engineering_checkpoint
+- polaris.cells.roles.runtime.internal.engineering_qualified_routing
 - polaris.cells.roles.runtime.public.service
 - polaris.cells.roles.runtime.internal.cfo_advisor
 - polaris.cells.roles.runtime.public.cfo_advisor
@@ -118,6 +120,8 @@ effects_allowed:
 - fs.write:workspace/**
 - fs.read:runtime/**
 - fs.write:runtime/engineering/*
+- fs.write:runtime/engineering/checkpoints/*
+- fs.write:explicit_checkpoint_export_destination/**
 - fs.write:runtime/command-output/*
 - fs.write:runtime/command-cache/data/**
 - fs.write:runtime/contexts/**
@@ -146,6 +150,10 @@ verification:
   - polaris/cells/roles/runtime/tests/test_engineering_command_cache_authority.py
   - polaris/cells/roles/runtime/tests/test_engineering_verification.py
   - polaris/cells/roles/runtime/tests/test_engineering_verification_selection.py
+  - polaris/cells/roles/runtime/tests/test_engineering_verification_fixtures.py
+  - polaris/cells/roles/runtime/tests/test_engineering_verified_checkpoint.py
+  - polaris/cells/roles/runtime/tests/test_engineering_qualified_routing.py
+  - polaris/cells/roles/runtime/tests/test_engineering_lessons.py
   - polaris/cells/roles/runtime/tests/test_engineering_recovery.py
   - polaris/cells/roles/runtime/tests/test_engineering_toolchain_binding.py
   - polaris/cells/roles/runtime/tests/test_engineering_context_audit.py

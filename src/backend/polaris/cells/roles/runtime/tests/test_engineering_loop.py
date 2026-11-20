@@ -572,6 +572,120 @@ async def test_loop_detection_injects_recovery_guidance(
     assert len(detections) == 1
 
 
+async def test_qa_loop_guidance_uses_only_this_frames_previous_probe(
+    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    (isolated_workspace / "note.txt").write_text("actual QA result", encoding="utf-8")
+    loop, store, _tools, command, scope, limits = _setup(
+        isolated_workspace, enabled=frozenset({"read_file", "report_review"})
+    )
+    command = replace(command, role="qa")
+    record = store.record_tool_observation
+
+    def noisy_journal(*args: Any, **kwargs: Any) -> None:
+        record(*args, **kwargs)
+        store.append_event(
+            command.session_id,
+            kind="tool_observed",
+            role="director",
+            payload={
+                "tool": "read_file",
+                "content": "OTHER_FRAME_RECEIPT",
+                "turn_seq": kwargs["turn_seq"],
+                "call_id": "foreign",
+                "ok": True,
+            },
+        )
+
+    monkeypatch.setattr(store, "record_tool_observation", noisy_journal)
+    for n in range(4):
+        scripted_provider.enqueue_json(_native((f"qa-read-{n}", "read_file", {"file": "note.txt"})))
+    scripted_provider.enqueue_json(
+        _native(("qa-report", "report_review", {"approved": False, "feedback": "Missing functionality"}))
+    )
+    await loop(
+        command,
+        scope=scope,
+        limits=limits,
+        cancel=asyncio.Event(),
+        store=store,
+        client=scripted_provider.client("openai", isolated_workspace, monkeypatch),
+    )
+    alerts = [
+        m["content"]
+        for m in scripted_provider.requests[-1]["body"]["messages"]
+        if m["role"] == "user" and "Host loop detection" in str(m["content"])
+    ]
+    assert len(alerts) == 1 and "report_review" in alerts[0] and "qa-read-2" in alerts[0]
+    assert "OTHER_FRAME_RECEIPT" not in alerts[0] and "write the missing" not in alerts[0]
+    blocked = next(
+        e
+        for e in store.load_events(command.session_id, role="qa", kinds=("tool_observed",))
+        if e["payload"].get("call_id") == "qa-read-3"
+    )
+    assert "report_review" in blocked["payload"]["content"] and "verify_project" not in blocked["payload"]["content"]
+
+
+@pytest.mark.parametrize("protocol", ["openai", "anthropic"])
+async def test_qa_reserves_last_minute_of_240s_for_evidence_bound_report(
+    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch, protocol: str
+) -> None:
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from polaris.cells.roles.runtime.internal import engineering_loop
+
+    (isolated_workspace / "note.txt").write_text("inspected", encoding="utf-8")
+    loop, store, _tools, command, scope, limits = _setup(
+        isolated_workspace, enabled=frozenset({"read_file", "report_review"})
+    )
+    command = replace(command, role="qa")
+    created = store.load_run(command.session_id, workspace=isolated_workspace)["created_at"]
+    limits = replace(limits, deadline=created + 240)
+    monkeypatch.setattr(engineering_loop, "time", SimpleNamespace(time=lambda: created + 185, monotonic=time.monotonic))
+    scripted_provider.enqueue_json(_native(("qa-read", "read_file", {"file": "note.txt"}), protocol=protocol))
+    scripted_provider.enqueue_json(
+        _native(
+            (
+                "qa-review",
+                "report_review",
+                {
+                    "approved": False,
+                    "feedback": "Insufficient evidence",
+                    "clause_findings": [
+                        {"clause": command.instruction, "status": "unknown", "evidence": "Unavailable oracle"}
+                    ],
+                },
+            ),
+            protocol=protocol,
+        )
+    )
+    result = await loop(
+        command,
+        scope=scope,
+        limits=limits,
+        cancel=asyncio.Event(),
+        store=store,
+        client=scripted_provider.client(protocol, isolated_workspace, monkeypatch),
+    )
+    assert result.status == "completed"
+    first, last = [r["body"] for r in scripted_provider.requests]
+    assert first["tools"] == last["tools"]
+    choice = (
+        {"type": "tool", "name": "report_review"}
+        if protocol == "anthropic"
+        else {"type": "function", "function": {"name": "report_review"}}
+    )
+    assert last["tool_choice"] == choice
+    tail = json.dumps(last["messages"][-1], ensure_ascii=False)
+    assert "QA effort budget" in tail and "Current QA source receipt ID" in tail and "qa-read" in tail
+    event = store.load_events(command.session_id, role="qa", kinds=("qa_report_requested",))[-1]
+    assert event["payload"]["reason"] == "deadline_reserve" and event["payload"]["remaining_seconds"] == 55
+    assert event["payload"]["reserve_seconds"] == 60 and event["payload"]["source_call_id"] == "qa-read"
+
+
 async def test_stage_gate_blocks_writes_until_verification(
     isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Any, cast
 
@@ -78,7 +80,11 @@ def _events() -> list[dict[str, Any]]:
             "seq": 7,
             "kind": "verification_completed",
             "role": "director",
-            "payload": {"verification": "passed", "checks": [{"command": "pytest", "ok": True, "exit_code": 0}]},
+            "payload": {
+                "workspace_revision": 3,
+                "verification": "passed",
+                "checks": [{"command": "pytest", "ok": True, "exit_code": 0}],
+            },
         },
     ]
 
@@ -172,6 +178,11 @@ async def test_director_request_carries_working_state(
     bodies = [json.dumps(request["body"], ensure_ascii=False) for request in scripted_provider.requests]
     assert any("Host working-state projection" in body for body in bodies)
     assert any("recorded facts only" in body for body in bodies)
+    prepared = store.load_events(command.session_id, kinds=("request_prepared",))
+    shadow = prepared[-1]["payload"]["shadow_decision_pack"]
+    assert shadow["session_id"] == command.session_id
+    assert shadow["status"] == "assembled"
+    assert all("shadow_decision_pack" not in body for body in bodies)
 
 
 def test_working_state_excludes_control_plane_fields() -> None:
@@ -204,6 +215,7 @@ def test_working_state_keeps_failed_verification_reason() -> None:
             "kind": "verification_completed",
             "role": "director",
             "payload": {
+                "workspace_revision": 2,
                 "verification": "failed",
                 "checks": [
                     {
@@ -219,3 +231,144 @@ def test_working_state_keeps_failed_verification_reason() -> None:
     facts = working_state_facts(run, events, role="director", frame_seq=1, observed_at=1.0, deadline=None)
     assert facts["candidate"]["verification"] == "failed"
     assert "TS2307" in facts["last_verification_error"]
+
+
+@pytest.mark.parametrize("change", ["revision", "restart", "unbound", "invalidated"])
+def test_projection_never_reuses_stale_verification(change: str) -> None:
+    events = _events()
+    verdict = "not_run" if change == "invalidated" else "passed"
+    run = {"workspace_revision": 4 if change == "revision" else 3, "verification": verdict}
+    if change == "restart":
+        events.append({"seq": 8, "kind": "verification_started", "role": "director", "payload": {}})
+    if change == "unbound":
+        events[-1]["payload"].pop("workspace_revision")
+    facts = working_state_facts(run, events, role="director", frame_seq=1, observed_at=1, deadline=None)
+    assert facts["candidate"]["verification"] == ("not_run" if change == "invalidated" else "unknown")
+    assert facts["last_verification"] == []
+
+
+def test_projection_binds_latest_checks_and_successful_edits() -> None:
+    events = _events()
+    events.append(
+        {
+            **events[-1],
+            "seq": 8,
+            "payload": {
+                "workspace_revision": 3,
+                "verification": "failed",
+                "checks": [{"command": "new", "ok": False, "content": "Error: current", "exit_code": 1}],
+            },
+        }
+    )
+    events.append(
+        {
+            **events[1],
+            "seq": 9,
+            "payload": {
+                "turn_seq": 9,
+                "call_id": "pending",
+                "tool": "edit_file",
+                "arguments": {"file": "pending.txt"},
+            },
+        }
+    )
+    facts = working_state_facts(
+        {"workspace_revision": 3, "verification": "failed"},
+        events,
+        role="director",
+        frame_seq=1,
+        observed_at=1,
+        deadline=None,
+    )
+    assert facts["last_verification"] == [{"command": "new", "ok": False, "exit_code": 1}]
+    assert facts["last_verification_error"] == "Error: current"
+    assert facts["files_changed"] == ["a.py"]
+
+
+def test_shadow_pack_replay_and_overflow_preserve_evidence_location() -> None:
+    from polaris.cells.roles.runtime.internal.engineering_state_projection import shadow_decision_pack
+
+    run = {
+        "session_id": "r",
+        "instruction": "首要约束" * 1000,
+        "required_checks": ["test"],
+        "workspace_revision": 4,
+        "verification": "not_run",
+    }
+    events = _events()
+    events.append(
+        {
+            **events[1],
+            "seq": 8,
+            "payload": {
+                "turn_seq": 8,
+                "call_id": "unknown",
+                "tool": "execute_command",
+            },
+        }
+    )
+    full = shadow_decision_pack(run, events, max_tokens=32000)
+    assert full == shadow_decision_pack(run, events, max_tokens=32000)
+    assert full["status"] == "assembled"
+    assert full["pack"]["contract"]["instruction"] == run["instruction"]
+    assert full["pack"]["current_verification_seq"] is None
+    assert full["pack"]["last_verification_seq"] == 7
+    assert full["pack"]["pending_tool_started_seqs"] == [8]
+    assert full["pack"]["intervention_seqs"] == [6]
+    overflow = shadow_decision_pack(run, events, max_tokens=20)
+    assert overflow["status"] == "overflow"
+    assert "pack" not in overflow
+    assert overflow["as_of_selected_event_seq"] == 8
+    assert overflow["estimated_pack_tokens"] > overflow["max_tokens"]
+
+
+def test_shadow_projection_inputs_share_one_sqlite_snapshot(
+    isolated_workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, store, _, command, _, _ = _setup(isolated_workspace)
+    # Permit the competing test connection to commit while the reader holds its
+    # snapshot. Production coherence must hold under either journal mode.
+    with closing(sqlite3.connect(store.database_path)) as connection:
+        connection.execute("PRAGMA journal_mode=WAL")
+    existing = store.load_events(command.session_id, kinds=("tool_started",))
+    acceptance = store._acceptance
+
+    def interleave(*args: Any, **kwargs: Any) -> Any:
+        result = acceptance(*args, **kwargs)
+        store.append_event(
+            command.session_id,
+            kind="tool_started",
+            role="director",
+            payload={"call_id": "late", "turn_seq": 23, "tool": "test"},
+        )
+        return result
+
+    monkeypatch.setattr(store, "_acceptance", interleave)
+    _, selected = store.load_projection_inputs(
+        command.session_id, workspace=isolated_workspace, kinds=("tool_started",)
+    )
+    assert selected == existing
+    assert len(store.load_events(command.session_id, kinds=("tool_started",))) == len(existing) + 1
+
+
+def test_shadow_separates_reconciled_effect_and_pending_observation() -> None:
+    from polaris.cells.roles.runtime.internal.engineering_state_projection import shadow_decision_pack
+
+    events = _events()
+    events.append({**events[1], "seq": 8, "payload": {"turn_seq": 8, "call_id": "edit", "tool": "write_file"}})
+    events.append(
+        {
+            "seq": 9,
+            "role": "director",
+            "kind": "tool_reconciled",
+            "payload": {
+                "turn_seq": 8,
+                "call_id": "edit",
+                "original_effect": "unknown",
+                "continuation_basis": "current_file_matches_requested_write",
+            },
+        }
+    )
+    pack = shadow_decision_pack({}, events, max_tokens=5000)["pack"]
+    assert pack["pending_tool_started_seqs"] == []
+    assert pack["reconciliation_seqs"] == [9]

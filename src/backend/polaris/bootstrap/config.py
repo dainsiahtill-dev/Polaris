@@ -331,6 +331,7 @@ class EngineeringPermissionProfile(BaseModel):
     network_allowed: bool = False
     browser: EngineeringBrowserObservationConfig | None = None
     toolchain_bin_dirs: tuple[Path, ...] = ()
+    verification_fixture_sha256: dict[str, str] = Field(default_factory=dict)
     toolchain_env: dict[str, str] = {}
     command_cache: Literal["disabled", "read_only", "read_write"] = "disabled"
 
@@ -349,6 +350,10 @@ class ServerConfig(BaseModel):
     engineering_max_tool_output_bytes: int = Field(default=64_000, gt=0)
     engineering_verification_output_roots: tuple[str, ...] = ()
     engineering_require_qa: bool = False
+    engineering_retain_verified_candidate: bool = False
+    engineering_routing_record_file: str | None = None
+    engineering_routing_record_sha256: str | None = None
+    engineering_counterexample_refs: tuple[dict[str, Any], ...] = ()
 
     host: str = Field(default="127.0.0.1", description="Server bind host")
     port: int = Field(default=DEFAULT_BACKEND_PORT, description="Server port")
@@ -1433,7 +1438,13 @@ class Settings(BaseModel):
             if not host_path.is_absolute():
                 raise ValueError("KERNELONE_ENGINEERING_HOST_CONFIG must be an absolute host file")
             host_payload = json.loads(host_path.read_text(encoding="utf-8"))
-            if not isinstance(host_payload, dict) or host_payload.keys() - engineering_fields:
+            frozen_only = {
+                "routing_record_file",
+                "routing_record_sha256",
+                "counterexample_refs",
+                "retain_verified_candidate",
+            }
+            if not isinstance(host_payload, dict) or host_payload.keys() - (engineering_fields | frozen_only):
                 raise ValueError("engineering host config contains unsupported fields")
             server_config.update({f"engineering_{key}": value for key, value in host_payload.items()})
         for key in engineering_fields:

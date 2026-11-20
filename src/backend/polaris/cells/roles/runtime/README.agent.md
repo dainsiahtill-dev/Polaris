@@ -111,3 +111,9 @@ Root source review and component gates have passed; new frozen actual requests a
 ## Optional budget and model advisors (2026-10-26)
 
 `polaris.cells.roles.runtime.public.cfo_advisor.CFOAgent` and `polaris.cells.roles.runtime.public.hr_advisor.HRAgent` retain role tools, TASK/RESULT messages and RoleAgent lifecycle. Deterministic operations and their persisted budget/config state remain in `finops.budget_guard` and `llm.control_plane`; neither lower owner imports RoleAgent. These advisors do not create another EngineeringRunService or project outcome owner and are not mandatory planning stages.
+
+## 可靠工程执行
+
+`EngineeringRunService` 通过本 workspace 的工程会话库核对验证 attempt、候选 revision 与独立 QA 的实际报告。终止后的迟到观察保留在历史，显式恢复由原 owner 重新检查授权。宿主可固定工作区外的只读验收夹具，并显式保留已通过验证的候选文件。导出使用新目录，原候选和外部效果保持其独立记录。
+
+冻结宿主配置、观察范围与验收命令见 [工程实施蓝图](../../../../../../docs/blueprints/RELIABLE_ENGINEERING_EXECUTION_20261120.md)、[候选恢复说明](../../../../docs/ENGINEERING_VERIFIED_CHECKPOINTS.md)和[资格路由](../../../../docs/ENGINEERING_QUALIFIED_ROUTING.md)。

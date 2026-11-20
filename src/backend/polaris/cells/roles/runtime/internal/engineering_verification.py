@@ -14,26 +14,34 @@ import contextlib
 import hashlib
 import json
 import os
+import platform
 import re
 import stat
+import sys
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
+from functools import partial
 from pathlib import Path
 from typing import Any
 
+from polaris.cells.roles.runtime.internal.engineering_io import run_owned_io
 from polaris.cells.roles.runtime.internal.engineering_session import EngineeringSessionStore
 from polaris.cells.roles.runtime.internal.engineering_tools import EngineeringTools, bounded_output
 from polaris.cells.roles.runtime.public.contracts.engineering_run import PermissionScope, RunLimits, ToolObservation
 from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
 from polaris.kernelone.exceptions import PathSecurityError
-from polaris.kernelone.fs import GuardedMetadataError
+from polaris.kernelone.fs import GuardedMetadataError, read_guarded_regular_file_snapshot
 from polaris.kernelone.fs.runtime import KernelFileSystem
 from polaris.kernelone.process.command_cache import resolve_command_cache
 from polaris.kernelone.process.process_tree import ProcessTreeDrainError
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
 from .engineering_roles import _VERIFICATION_GUIDANCE
+
+# Captured when the verifier module loads. A cold reader can distinguish
+# observations produced by a previous implementation without touching the candidate.
+_VERIFIER_DIGEST = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
 
 class CandidateObservationUnavailableError(ValueError):
@@ -137,6 +145,7 @@ class EngineeringVerification:
         limits: RunLimits,
         cancel: asyncio.Event,
         writable_output_roots: tuple[Path, ...] = (),
+        retain_verified_candidate: bool = False,
         authorize: Callable[[], None] | None = None,
     ) -> None:
         self.workspace = workspace.resolve(strict=True)
@@ -145,6 +154,7 @@ class EngineeringVerification:
         self.store = store
         self.scope = scope
         self.cancel = cancel
+        self._retain_verified_candidate = retain_verified_candidate
         # Only a host query may install an actual capture, never a caller's
         # binding. Context-local lifetime also isolates concurrent readers.
         self._observed_inputs: ContextVar[dict[str, object] | None] = ContextVar(
@@ -407,6 +417,37 @@ class EngineeringVerification:
             cache.validate()
         return digest.digest()
 
+    def _fixture_manifest(self) -> dict[str, dict[str, object]]:
+        """Re-read bounded host-owned files even when a large external mount is excluded from the candidate manifest."""
+        result: dict[str, dict[str, object]] = {}
+        for raw, expected in self.scope.verification_fixture_sha256:
+            path = Path(raw)
+            if path.is_relative_to(self.workspace) or any(path.is_relative_to(root) for root in self.scope.write_roots):
+                raise CandidateObservationUnavailableError(
+                    f"verification fixture is in a candidate or writable root: {path}"
+                )
+            roots = [root for root in self.scope.read_roots if path != root and path.is_relative_to(root)]
+            if not roots:
+                raise CandidateObservationUnavailableError(
+                    f"verification fixture is outside granted read roots: {path}"
+                )
+            root = max(roots, key=lambda item: len(item.parts))
+            snapshot = read_guarded_regular_file_snapshot(root, path.relative_to(root).as_posix(), 16 * 1024 * 1024)
+            observed = hashlib.sha256(snapshot.content).hexdigest()
+            if observed != expected:
+                raise CandidateObservationUnavailableError(
+                    f"verification fixture digest mismatch: {path} expected={expected} observed={observed}"
+                )
+            result[raw] = {
+                "sha256": observed,
+                "size": snapshot.size,
+                "device": snapshot.device,
+                "inode": snapshot.inode,
+                "ctime_ns": snapshot.ctime_ns,
+                "mtime_ns": snapshot.mtime_ns,
+            }
+        return result
+
     def review_binding(self, session_id: str) -> dict[str, object]:
         """Host observations bind a review to exact current inputs, never model IDs."""
         row = self.store.load_run(session_id, workspace=self.workspace)
@@ -420,10 +461,46 @@ class EngineeringVerification:
             "scope": row["scope"],
             "profile": self._profile(),
             "inputs": self._current_manifest(),
+            **({"fixture_manifest": self._fixture_manifest()} if self.scope.verification_fixture_sha256 else {}),
+        }
+
+    def _evidence_identity(self, row: dict[str, Any], commands: list[str]) -> dict[str, object]:
+        def digest(payload: Mapping[str, object]) -> str:
+            data = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+            return hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+        contract = {
+            "instruction": row["instruction"],
+            "declared_checks": row["required_checks"],
+            "effective_checks": commands,
+            "require_qa": bool(row["require_qa"]),
+        }
+        # This identifies the declared host context. External services and
+        # arbitrary toolchain contents are outside this environment fingerprint.
+        environment = {
+            "python": sys.version,
+            "kernel": platform.release(),
+            "system": platform.system(),
+            "machine": platform.machine(),
+            "command_profile": self._profile(),
+            "execution_policy": row["verification_execution_policy"],
+        }
+        return {
+            "schema": "engineering.check_identity.v1",
+            "contract_digest": digest(contract),
+            "verifier_digest": _VERIFIER_DIGEST,
+            "verifier_scope": __name__,
+            "environment": environment,
+            "environment_digest": digest(environment),
         }
 
     def _profile(self) -> dict[str, object]:
         return {
+            **(
+                {"verification_fixture_sha256": dict(self.scope.verification_fixture_sha256)}
+                if self.scope.verification_fixture_sha256
+                else {}
+            ),
             "read_roots": [str(Path(root).absolute()) for root in self.scope.read_roots],
             "output_roots": [str(root) for root in self.output_roots],
             "execute_command": "execute_command" in self.tools.enabled,
@@ -574,12 +651,10 @@ class EngineeringVerification:
             "scope": self._profile(),
         }
 
-        def record(status: str, detail: str, *, workspace_revision_override: int | None = None) -> None:
+        def record(status: str, detail: str) -> None:
             self.store.record_verification(
                 session_id,
-                workspace_revision=workspace_revision_override
-                if workspace_revision_override is not None
-                else workspace_revision,
+                workspace_revision=workspace_revision,
                 checks=tuple(observations),
                 verification=status,
                 detail=detail,
@@ -612,6 +687,7 @@ class EngineeringVerification:
                 raise PermissionError("verify_project and execute_command require explicit host permission")
             binding["commands"] = self.store._merge_commands(run["required_checks"], commands)
             binding["requested_by"] = list(requested_by)
+        binding["evidence_identity"] = self._evidence_identity(run, list(binding["commands"]))
         binding["execution_policy"] = execution_policy.binding(list(binding["commands"]))
         if not commands:
             record("not_run", "No final checks declared.")
@@ -628,6 +704,14 @@ class EngineeringVerification:
             return ()
         manifest_error = None
         try:
+            if dict(self.scope.verification_fixture_sha256) != run["scope"].get("verification_fixture_sha256", {}):
+                raise CandidateObservationUnavailableError(
+                    "verification fixture policy differs from the saved host profile"
+                )
+            if self.scope.verification_fixture_sha256:
+                if not run["required_checks"]:
+                    raise CandidateObservationUnavailableError("pinned fixtures require host-declared checks")
+                binding["fixture_manifest"] = await asyncio.to_thread(self._fixture_manifest)
             # The manifest walks and hashes every granted read root.  On a
             # real project tree that takes seconds; running it on the event
             # loop stalls the provider request that is waiting for its
@@ -675,7 +759,11 @@ class EngineeringVerification:
                 if observation.interrupted:
                     break
             result_manifest = await asyncio.to_thread(self._manifest, include_outputs=True)
-            if binding["source_manifest"] != self._source_view(result_manifest):
+            if "fixture_manifest" in binding and binding["fixture_manifest"] != await asyncio.to_thread(
+                self._fixture_manifest
+            ):
+                record("unknown", "Pinned verification fixtures changed during final checks.")
+            elif binding["source_manifest"] != self._source_view(result_manifest):
                 record("unknown", "Source inputs changed during final checks.")
             else:
                 binding["result_manifest"] = result_manifest
@@ -693,15 +781,43 @@ class EngineeringVerification:
                         else "failed"
                     )
                 )
-                # Reload the run to get the current workspace_revision, which
-                # may have been advanced by execute_command during this attempt.
-                run = self.store.load_run(session_id, workspace=self.workspace)
-                current_workspace_revision = int(run["workspace_revision"])
-                record(
-                    status,
-                    "Final checks observed against current inputs.",
-                    workspace_revision_override=current_workspace_revision,
-                )
+                if (
+                    status == "passed"
+                    and self._retain_verified_candidate
+                    and run["scope"].get("retain_verified_candidate") is True
+                ):
+                    from polaris.cells.roles.runtime.internal.engineering_checkpoint import (
+                        CheckpointUnavailableError,
+                        save_checkpoint,
+                    )
+
+                    if self.tools.authorize is not None:
+                        self.tools.authorize()
+                    try:
+                        binding["verified_checkpoint"] = await run_owned_io(
+                            partial(
+                                save_checkpoint,
+                                self.workspace,
+                                self.store.control_root,
+                                result_manifest,
+                                (*self.scope.read_roots, *self.output_roots),
+                                self._host_runtime_roots(),
+                            )
+                        )
+                    except (ValueError, RuntimeError, OSError) as exc:
+                        # Record only bounded classification. Operator paths, file bytes
+                        # and raw I/O errors must never enter checkpoint metadata.
+                        binding["verified_checkpoint"] = {
+                            "status": "unavailable",
+                            "reason": str(exc) if isinstance(exc, CheckpointUnavailableError) else type(exc).__name__,
+                        }
+                    if self.tools.authorize is not None:
+                        self.tools.authorize()
+                    if result_manifest != await run_owned_io(partial(self._manifest, include_outputs=True)):
+                        binding["verified_checkpoint"] = {"status": "unavailable", "reason": "candidate_changed"}
+                        record("unknown", "Candidate changed during checkpoint capture.")
+                        return tuple(observations)
+                record(status, "Final checks observed against current inputs.")
         except ProcessTreeDrainError as drain_error:
             # Never let reporting failure hide the physical owner's unproved
             # drain; the service must retain the workspace writer.
@@ -732,12 +848,18 @@ class EngineeringVerification:
             payload.get("verification") != run["verification"]
             or payload.get("workspace_revision") != run["workspace_revision"]
             or binding.get("commands") != run["verification_commands"]
+            or (
+                "evidence_identity" in binding
+                and binding["evidence_identity"] != self._evidence_identity(run, run["verification_commands"])
+            )
             or binding.get("scope") != self._profile()
             or not run["verification_commands"]
             or not self.store.verification_completion_is_observed(session_id, payload)
         ):
             return None
         try:
+            if self.scope.verification_fixture_sha256 and binding.get("fixture_manifest") != self._fixture_manifest():
+                return None
             return payload if binding.get("result_manifest") == self._current_manifest() else None
         except (OSError, ValueError, RuntimeError, PathSecurityError):
             return None

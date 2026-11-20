@@ -88,6 +88,7 @@ def resolve_engineering_profile(settings: Settings, workspace: Path, profile_id:
         toolchain_bin_dirs=bins,
         toolchain_env=tuple(sorted(profile.toolchain_env.items())),
         command_cache=profile.command_cache,
+        verification_fixture_sha256=tuple(sorted(profile.verification_fixture_sha256.items())),
     )
 
 
@@ -134,6 +135,10 @@ def create_engineering_service(
             workspace, settings.server.engineering_verification_output_roots, future_outputs=True
         ),
         require_qa=settings.server.engineering_require_qa,
+        routing_record_file=settings.server.engineering_routing_record_file,
+        routing_record_sha256=settings.server.engineering_routing_record_sha256,
+        counterexample_refs=settings.server.engineering_counterexample_refs,
+        retain_verified_candidate=settings.server.engineering_retain_verified_candidate,
         event_publisher=publish_engineering_event if settings.nats.enabled else None,
     )
 

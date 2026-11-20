@@ -16,8 +16,9 @@ from polaris.cells.roles.runtime.internal.engineering_acceptance import (
     extract_goal_clauses,
     has_truncated_goal_clauses,
     normalize_clause_findings,
+    require_observed_clause_evidence,
 )
-from polaris.cells.roles.runtime.internal.engineering_roles import register_review_tool
+from polaris.cells.roles.runtime.internal.engineering_roles import interpret_review_reports, register_review_tool
 from polaris.cells.roles.runtime.internal.engineering_tools import EngineeringTools
 from polaris.cells.roles.runtime.public.contracts.engineering_run import PermissionScope, RunLimits
 from polaris.kernelone.llm.engine.prompt_budget import compress_native_tool_history
@@ -70,6 +71,32 @@ def test_fidelity_approved_without_matrix_is_unknown() -> None:
     assert len(verdict.missing) == len(clauses)
 
 
+def test_native_prose_citation_requires_every_reference_to_be_current() -> None:
+    import pytest
+
+    identity = "call_6327ad35ab3b9f404b903214"
+    checks = [{"call_id": identity, "tool": "execute_command", "ok": True, "exit_code": 0}]
+
+    def validate(text: str) -> None:
+        findings = normalize_clause_findings([{"clause": "File matches", "status": "pass", "evidence": text}])
+        require_observed_clause_evidence(findings, events=[], checks=checks, frame_seq=10, report_turn_seq=20)
+
+    validate(f"Current QA check {identity} (execute_command, exit 0) confirms the clause.")
+    checks.append({"call_id": "verification-72-0", "tool": "execute_command", "ok": True, "exit_code": 0})
+    validate(f"Current QA check {identity} and host verification-72-0 both passed.")
+    for invalid in [
+        f"x{identity}",
+        f"{identity}-other",
+        f"file/{identity}",
+        f"{identity}.bad",
+        f"{identity}, call_missing",
+        f"{identity} " + "e" * 450 + " toolu_unknown",
+        "output looks right",
+    ]:
+        with pytest.raises(ValueError):
+            validate(invalid)
+
+
 def test_fidelity_full_pass_matrix_passes() -> None:
     clauses = extract_goal_clauses(_PELICAN_GOAL)
     findings = normalize_clause_findings(
@@ -89,6 +116,21 @@ def test_fidelity_containment_matching_and_fail() -> None:
 def test_fidelity_single_clause_follows_verdict() -> None:
     verdict = assess_fidelity(goal_clauses=["only one clause"], findings=[], qa_verdict="approved")
     assert verdict.status == "passed"
+
+
+def test_unavailable_clause_remains_unknown_through_report_and_fidelity() -> None:
+    raw = [{"clause": "Review rendering", "status": "unknown", "evidence": "Renderer unavailable"}]
+    result = assess_fidelity(
+        goal_clauses=["Review rendering"], findings=normalize_clause_findings(raw), qa_verdict="approved"
+    )
+    assert (result.status, result.covered, result.missing) == ("unknown", 0, ("Review rendering",))
+    for approved in (True, False):
+        report = {
+            "call_id": "review",
+            "content": json.dumps({"approved": approved, "feedback": "Cannot assess", "clause_findings": raw}),
+        }
+        verdict, _, _ = interpret_review_reports([report])
+        assert verdict == "unknown"
 
 
 def test_dimensions_summary_marks_not_required() -> None:
@@ -180,6 +222,27 @@ def test_clause_coverage_gap_never_invents_coverage() -> None:
     assert clause_coverage_gap([], findings) == []
 
 
+def test_shared_fragment_cannot_certify_two_distinct_clauses() -> None:
+    clauses = ["Open detail view", "Open settings view"]
+    findings = normalize_clause_findings([{"clause": "Open", "status": "pass", "evidence": "read"}])
+    assert clause_coverage_gap(clauses, findings) == clauses
+    assert assess_fidelity(goal_clauses=clauses, findings=findings, qa_verdict="approved").status == "unknown"
+
+
+def test_normal_markdown_sections_and_distinct_long_requirements_survive_extraction() -> None:
+    prefix = "Read and validate input before proceeding. " * 4
+    first, second = prefix + "Return results sorted.", prefix + "Reject unordered input."
+    assert extract_goal_clauses(f"## Output\n{first}\n## Error behavior\n{second}") == [first, second]
+
+
+def test_role_instructions_only_advertise_browser_on_a_visual_host() -> None:
+    from polaris.cells.roles.runtime.internal.engineering_roles import role_instruction
+
+    for role in ("director", "qa"):
+        assert "browser_observe" not in role_instruction(role, visual=False)
+        assert "browser_observe" in role_instruction(role, visual=True)
+
+
 def test_report_review_schema_exposes_clause_matrix() -> None:
     """Production root cause (pelican-bike runs): the provider-facing
     report_review schema omitted clause_findings, so a function-calling QA
@@ -193,7 +256,7 @@ def test_report_review_schema_exposes_clause_matrix() -> None:
     clause_property = parameters["properties"]["clause_findings"]
     items = clause_property["items"]
     assert set(items["required"]) == {"clause", "status", "evidence"}
-    assert items["properties"]["status"]["enum"] == ["pass", "fail"]
+    assert items["properties"]["status"]["enum"] == ["pass", "fail", "unknown"]
 
 
 def _review_tools(workspace: Path, clauses: tuple[str, ...]) -> EngineeringTools:
@@ -204,7 +267,7 @@ def _review_tools(workspace: Path, clauses: tuple[str, ...]) -> EngineeringTools
         PermissionScope((workspace,), (), frozenset({"read_file", "report_review"}), False),
         RunLimits(None, 100_000, 16_000),
         asyncio.Event(),
-        review=lambda approved: None,
+        review=lambda approved, findings: None,
         review_clauses=clauses,
     )
 

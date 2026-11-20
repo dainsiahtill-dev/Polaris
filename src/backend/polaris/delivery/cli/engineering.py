@@ -37,7 +37,7 @@ def add_engineering_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--engineering-action",
-        choices=("discuss", "execute", "observe", "cancel", "resume"),
+        choices=("discuss", "execute", "observe", "cancel", "resume", "export"),
         default="discuss",
         help="New-engine action; discussion creates no run",
     )
@@ -51,7 +51,9 @@ def add_engineering_arguments(parser: argparse.ArgumentParser) -> None:
         help="Required verification command; repeat to retain multiple checks",
     )
     parser.add_argument("--request-key", default=None, help="Idempotent engineering creation key")
-    parser.add_argument("--run-id", default=None, help="Existing engineering run for observe/cancel/resume")
+    parser.add_argument("--run-id", default=None, help="Existing engineering run for observe/cancel/resume/export")
+    parser.add_argument("--destination", type=Path, help="New absolute directory for host-only checkpoint export")
+    parser.add_argument("--verification-seq", type=int, help="Specific verified completion event to export")
 
 
 async def run_engineering_action(
@@ -79,7 +81,24 @@ async def run_engineering_action(
                 deep=True, update={"workspace": workspace, "workspace_path": str(workspace)}
             )
             service = create_engineering_service(settings)
-            if action == "discuss":
+            if action != "export" and (
+                getattr(args, "destination", None) is not None or getattr(args, "verification_seq", None) is not None
+            ):
+                raise ValueError("--destination and --verification-seq apply only to export")
+            if action == "export":
+                if not args.run_id or args.destination is None:
+                    raise ValueError("--run-id and --destination are required for export")
+                restored = service.export_verified_candidate(
+                    args.run_id,
+                    destination=args.destination.expanduser(),
+                    verification_seq=args.verification_seq,
+                )
+                output = json.dumps(
+                    {"engine_version": service.engine_version, "run_id": args.run_id, "destination": str(restored)},
+                    ensure_ascii=False,
+                )
+                exit_code = 0
+            elif action == "discuss":
                 if args.run_id:
                     raise ValueError("discussion cannot resume a run; select observe or resume explicitly")
                 message = args.instruction or getattr(args, "goal", "")

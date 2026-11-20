@@ -11,30 +11,31 @@ import subprocess
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractContextManager
-from contextvars import ContextVar, copy_context
-from dataclasses import replace
+from contextvars import ContextVar
+from dataclasses import asdict, replace
 from functools import partial
 from pathlib import Path
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, Literal, cast
 
 from polaris.cells.roles.runtime.internal.engineering_acceptance import (
     extract_goal_clauses,
 )
+from polaris.cells.roles.runtime.internal.engineering_io import run_owned_io as _observe_in_io
 from polaris.cells.roles.runtime.internal.engineering_lessons import (
-    lessons_guidance,
-    record_lesson,
+    pinned_counterexamples,
+    project_counterexamples,
+)
+from polaris.cells.roles.runtime.internal.engineering_qualified_routing import (
+    choose_qualified_bindings,
+    conditions_digest,
+    load_routing_record,
 )
 from polaris.cells.roles.runtime.internal.engineering_session import (
     EngineeringSessionConflictError as EngineeringSessionConflictError,
     EngineeringSessionStore,
     WorkspaceBusyError,
 )
-from polaris.cells.roles.runtime.internal.engineering_web_probe import (
-    WebProbeResult,
-    find_web_entry,
-    probe_feedback,
-    probe_web_deliverable,
-)
+from polaris.cells.roles.runtime.internal.engineering_web_probe import find_web_entry
 from polaris.cells.roles.runtime.public.contracts.engineering_run import (
     ArtifactObservation,
     BrowserObservationConfig,
@@ -63,37 +64,11 @@ _TERMINAL = frozenset({"completed", "failed", "cancelled", "interrupted"})
 #: share one run deadline, so the Director must not spend the last of it:
 #: a review without time to answer leaves the run without a verdict even
 #: though the candidate was verified.
-_QA_REVIEW_RESERVE_SECONDS = 600.0
 
 #: Only the Director may run with a degraded provider binding set.  Every
 #: other role, and every single-binding role, stays fail-closed.
 _DEGRADABLE_ROLES = frozenset({"director"})
 logger = logging.getLogger(__name__)
-_ObservationT = TypeVar("_ObservationT")
-
-
-async def _observe_in_io(observation: Callable[[], _ObservationT]) -> _ObservationT:
-    """Keep fresh readonly observations off the loop, owned until drained."""
-    context = copy_context()
-    future = asyncio.get_running_loop().run_in_executor(
-        get_concurrency_manager().get_io_pool(), context.run, observation
-    )
-    try:
-        return await asyncio.shield(future)
-    except asyncio.CancelledError:
-        # Cancelling an executor Future cannot stop its running callable. Keep
-        # ownership until it finishes; never release a candidate while an old
-        # observation is still traversing its inputs.
-        while not future.done():
-            try:
-                await asyncio.shield(future)
-            except asyncio.CancelledError:
-                continue
-            except Exception:  # noqa: BLE001 - report the completed drain error below.
-                break
-        if not future.cancelled() and (error := future.exception()) is not None:
-            logger.warning("Candidate observation failed while cancellation drained: %s", error)
-        raise
 
 
 class _NativeEngineProvider(AIExecutor):
@@ -169,13 +144,20 @@ def _native_client(
     role: str = "director",
     native_request_observer: Callable[[AIRequest, Mapping[str, Any]], None] | None = None,
     context_reference_owner: Callable[[AIRequest, str], ContextSnapshotReferenceOwnerV1] | None = None,
+    *,
+    qualified_bindings: tuple[tuple[str, str], ...] | None = None,
 ) -> ResilientLLMClient:
     # K1 owns model selection and provider timeouts. This wrapper adds no
     # fallback of its own and cannot shorten a provider's configured
     # deadline. The engineering loop also watches the actual run deadline.
     remaining = max(0.001, limits.deadline - time.time()) if limits.deadline is not None else float("inf")
     entries: list[tuple[Any, ProviderConfig]] = []
-    for provider_id, model in _native_bindings(role):
+    bindings = _native_bindings(role)
+    if qualified_bindings is not None:
+        if not qualified_bindings or any(binding not in bindings for binding in qualified_bindings):
+            raise ValueError("Qualified binding is outside the current configured role bindings")
+        bindings = qualified_bindings
+    for provider_id, model in bindings:
         entries.append(
             (
                 _PinnedNativeProvider(
@@ -246,6 +228,10 @@ class EngineeringRunService:
         permission_resolver: Callable[[dict[str, Any]], PermissionScope] | None = None,
         writable_output_roots: tuple[Path, ...] = (),
         require_qa: bool = False,
+        routing_record_file: str | None = None,
+        routing_record_sha256: str | None = None,
+        counterexample_refs: tuple[dict[str, Any], ...] = (),
+        retain_verified_candidate: bool = False,
         event_publisher: Callable[[dict[str, Any]], Awaitable[bool]] | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve(strict=True)
@@ -260,6 +246,9 @@ class EngineeringRunService:
         self._publication_error: str | None = None
         self._native_observation_error: str | None = None
         self.store = EngineeringSessionStore(self.workspace, on_committed_events=self._committed_events)
+        self._retain_verified_candidate = retain_verified_candidate
+        self._routing_record = load_routing_record(routing_record_file, routing_record_sha256)
+        self._counterexample_refs = pinned_counterexamples(counterexample_refs)
         self._client = client
         self._permission_resolver = permission_resolver
         from polaris.cells.roles.runtime.internal.engineering_verification import EngineeringVerification
@@ -496,6 +485,47 @@ class EngineeringRunService:
             "context_reference_recovery": self.context_reference_recovery,
         }
 
+    def export_verified_candidate(
+        self, session_id: str, *, destination: Path, verification_seq: int | None = None
+    ) -> Path:
+        """Host-only export of the most recent retained verified bytes under current grants."""
+        from polaris.cells.roles.runtime.internal.engineering_checkpoint import export_checkpoint
+
+        if not self._retain_verified_candidate:
+            raise PermissionError("current host policy must enable verified candidate retention for export")
+        if verification_seq is not None and (type(verification_seq) is not int or verification_seq < 1):
+            raise ValueError("verification event sequence must be a positive integer")
+        run = self.store.load_run(session_id, workspace=self.workspace)
+        scope = self._revalidated_scope(run)
+        if run["scope"].get("retain_verified_candidate") is not True:
+            raise ValueError("this run did not opt into verified candidate retention")
+        outputs = self._saved_outputs(run)
+        roots = (*scope.read_roots, *outputs)
+        verifier = self._verification(scope, self._limits(run), asyncio.Event(), output_roots=outputs)
+        for event in reversed(self.store.load_events(session_id, kinds=("verification_completed",))):
+            if verification_seq is not None and verification_seq != event["seq"]:
+                continue
+            payload = event["payload"]
+            binding = payload.get("input_binding", {})
+            ref = binding.get("verified_checkpoint")
+            if (
+                payload.get("verification") == "passed"
+                and isinstance(ref, dict)
+                and ref.get("status") == "available"
+                and binding.get("workspace_revision") == payload.get("workspace_revision")
+                and self.store.verification_completion_is_observed(session_id, payload)
+            ):
+                return export_checkpoint(
+                    self.workspace,
+                    self.store.control_root,
+                    ref,
+                    destination,
+                    binding["result_manifest"],
+                    roots,
+                    verifier._host_runtime_roots(),
+                )
+        raise ValueError("no retained verified candidate for this engineering run")
+
     def current_snapshot(self, *, workspace: Path) -> dict[str, Any] | None:
         """Discover current identity, then apply the same read-only freshness checks."""
         self._assert_workspace(workspace)
@@ -721,12 +751,14 @@ class EngineeringRunService:
             self.workspace, self._writable_output_roots, write_roots=scope.write_roots
         )
         declared_outputs: tuple[Path, ...] | None = self._writable_output_roots
+        retain_candidate = self._retain_verified_candidate
         execution_policy: str | None = "bash_pipefail_v1"
         existing_id = self.store.find_request(request_key) if request_key is not None else command.session_id
         if existing_id is not None:
             try:
                 existing = self.store.load_run(existing_id, workspace=self.workspace)
                 execution_policy = existing.get("verification_execution_policy")
+                retain_candidate = existing["scope"].get("retain_verified_candidate") is True
                 if existing.get("verification_output_roots") is None and not self._writable_output_roots:
                     declared_outputs = None
             except KeyError:
@@ -741,6 +773,7 @@ class EngineeringRunService:
             require_qa=self._require_qa,
             verification_output_roots=declared_outputs,
             verification_execution_policy=execution_policy,
+            retain_verified_candidate=retain_candidate,
         )
         row = await self._observe_off_loop(session_id, workspace=self.workspace)
         if session_id in self._tasks or row["status"] in _TERMINAL or row["status"] == "running":
@@ -828,6 +861,97 @@ class EngineeringRunService:
                 forwarding.cancel()
                 await asyncio.gather(forwarding, return_exceptions=True)
 
+    def _director_route(
+        self,
+        command: RoleRunCommand,
+        run: dict[str, Any],
+        scope: PermissionScope,
+        limits: RunLimits,
+        default_client: ResilientLLMClient,
+        selected_clients: dict[tuple[str, tuple[tuple[str, str], ...]], ResilientLLMClient],
+        request: AIRequest,
+        window: int,
+    ) -> tuple[ResilientLLMClient, dict[str, Any]]:
+        from polaris.cells.roles.runtime.internal.engineering_loop import _history_allowances
+        from polaris.cells.roles.runtime.internal.engineering_roles import role_scope
+        from polaris.kernelone.llm import config_store
+
+        assert self._routing_record is not None
+        record_sha, record = self._routing_record
+        allowed = _native_bindings("director")
+        cache_root = config_store.resolve_workspace_cache_root_for_workspace(str(self.workspace))
+        config = config_store.load_llm_config(str(self.workspace), cache_root, settings=None)
+        providers = config.get("providers", {})
+        comparable: list[tuple[str, str]] = []
+        provider_settings = []
+        for provider_id, model in allowed:
+            provider = providers.get(provider_id, {})
+            if window > 0 and provider.get("max_context_tokens") == window:
+                comparable.append((provider_id, model))
+            provider_settings.append(
+                {
+                    key: provider.get(key)
+                    for key in ("type", "base_url", "api_path", "max_context_tokens", "max_tokens", "max_output_tokens")
+                }
+            )
+
+        effective = asdict(role_scope("director", scope))
+        for key in ("read_roots", "write_roots", "toolchain_bin_dirs"):
+            effective[key] = [
+                {"workspace_relative": path.relative_to(self.workspace).as_posix()}
+                if path.is_relative_to(self.workspace)
+                else {"absolute": str(path)}
+                for path in effective[key]
+            ]
+        effective["enabled_tools"] = sorted(effective["enabled_tools"])
+        digest = conditions_digest(
+            {
+                "engine_version": self.engine_version,
+                "workflow": command.workflow,
+                "required_checks": run["required_checks"],
+                "require_qa": run["require_qa"],
+                "verification_execution_policy": run.get("verification_execution_policy"),
+                "verification_output_roots": run.get("verification_output_roots"),
+                "scope": effective,
+                "tool_schemas": request.options.get("tools"),
+                "bindings": allowed,
+                "provider_settings": provider_settings,
+                "context_window_tokens": window,
+                "history_allowances": _history_allowances(window),
+                "max_output_bytes": limits.max_output_bytes,
+                "max_tool_output_bytes": limits.max_tool_output_bytes,
+            }
+        )
+        order = choose_qualified_bindings(
+            record,
+            tuple(comparable),
+            goal=run["instruction"],
+            conditions_sha256=digest,
+            seconds_left=limits.deadline - time.time() if limits.deadline is not None else float("inf"),
+        )
+        audit = {
+            "qualification_record_sha256": record_sha,
+            "conditions_sha256": digest,
+            "task_class": record.get("task_class"),
+            "qualified_order": order,
+            "activated": bool(order),
+        }
+        if not order:
+            return default_client, audit
+        # Keep the native client's retry/circuit state between turns of this
+        # role. A different configured scope or order gets its own client.
+        cache_key = (digest, order)
+        if cache_key not in selected_clients:
+            selected_clients[cache_key] = _native_client(
+                self.workspace,
+                limits,
+                "director",
+                self._observe_native_request,
+                self.context_reference_owner_resolver(command.session_id),
+                qualified_bindings=order,
+            )
+        return selected_clients[cache_key], audit
+
     async def _run_current_role(
         self,
         command: RoleRunCommand,
@@ -852,16 +976,30 @@ class EngineeringRunService:
         try:
             # Historical declarations are readable context, not current grants.
             # Keep current-host validation on the existing Verifier effect path.
-            saved_outputs = (
-                self.store.load_run(command.session_id, workspace=self.workspace).get("verification_output_roots")
-                if command.role == "director"
-                else None
+            saved_run = (
+                self.store.load_run(command.session_id, workspace=self.workspace) if command.role == "director" else {}
             )
-            guided = command
-            if command.role == "director":
-                guidance = lessons_guidance(self.workspace)
-                if guidance:
-                    guided = replace(command, instruction=guidance + command.instruction)
+            saved_outputs = saved_run.get("verification_output_roots")
+            route_request = None
+            if (
+                self._routing_record is not None
+                and self._client is None
+                and command.role == "director"
+                and command.workflow == "direct"
+                and saved_run.get("status") == "running"
+            ):
+                route_request = partial(self._director_route, command, saved_run, scope, limits, client, {})
+            if (
+                command.role == "director"
+                and self._counterexample_refs
+                and not self.store.load_events(command.session_id, kinds=("counterexamples_projected",))
+            ):
+                self.store.append_event(
+                    command.session_id,
+                    kind="counterexamples_projected",
+                    role="director",
+                    payload=project_counterexamples(self.store, command.session_id, self._counterexample_refs),
+                )
             # QA reviews the original goal, not the review instruction built for
             # it. Hand the acceptance clauses to the tool surface so a
             # multi-clause goal requires a complete structured clause matrix
@@ -871,12 +1009,13 @@ class EngineeringRunService:
                 goal = str(self.store.load_run(command.session_id, workspace=self.workspace).get("instruction") or "")
                 review_clauses = tuple(extract_goal_clauses(goal))
             return await run_engineering_loop(
-                guided,
+                command,
                 scope=scope,
                 limits=limits,
                 cancel=cancel,
                 store=self.store,
                 client=client,
+                route_request=route_request,
                 consult=self._consult_dispatch,
                 verify=self._verify_dispatch,
                 verification_output_declarations=(
@@ -1409,6 +1548,12 @@ class EngineeringRunService:
         try:
             # Acquiring the real OS lock first prevents a second interpreter
             # from reconciling effects while their physical owner is alive.
+            # Another owner may have settled after the initial observation.
+            # Revalidate inside the lock before recording any recovery effects.
+            row = await _observe_in_io(partial(self.observe, session_id, workspace=workspace))
+            original_scope = self._revalidated_scope(row)
+            if row["status"] == "completed" and row["verification"] != "unknown" and row.get("qa_verdict") != "unknown":
+                return session_id
             self.store.reconcile_verification_calls(
                 session_id, max_output_bytes=self._limits(row).max_tool_output_bytes
             )
@@ -1418,7 +1563,8 @@ class EngineeringRunService:
                 detail = "Dispatched tool effects remain unknown; no automatic replay: " + ", ".join(
                     f"{call['tool']} ({call['call_id']})" for call in unresolved
                 )
-                self.store.update_run(session_id, status="interrupted", verification="unknown", text=detail)
+                blocked_status = row["status"] if row["status"] in _TERMINAL else "interrupted"
+                self.store.update_run(session_id, status=blocked_status, verification="unknown", text=detail)
                 self.store.append_event(
                     session_id,
                     kind="resume_blocked",
@@ -1464,10 +1610,7 @@ class EngineeringRunService:
                         ),
                     )
             command, limits, cancel = self._command(row), self._limits(row), asyncio.Event()
-            self.store.update_run(session_id, status="running")
-            self.store.append_event(
-                session_id, kind="run_resumed", role=command.role, payload={"engine_version": self.engine_version}
-            )
+            self.store.resume_run(session_id, expected_status=row["status"])
             self._cancellations[session_id] = cancel
             self._tasks[session_id] = asyncio.create_task(
                 self._drive(command, scope=original_scope, limits=limits, cancel=cancel, lock=lock, collaborative=True),
@@ -1513,16 +1656,12 @@ class EngineeringRunService:
                     continue
                 # normalize checks current write authority; read_file checks
                 # current read authority and the actual safe KFS path again.
-                turn = self.store.append_event(
-                    session_id,
-                    kind="reconciliation_started",
-                    role=role,
-                    payload={"original_turn_seq": pending["turn_seq"], "original_call_id": pending["call_id"]},
-                )
-                call_id = f"readback-{turn}"
                 read_arguments = {"file": arguments["file"], "max_bytes": self._limits(row).max_tool_output_bytes}
-                self.store.record_tool_dispatch(
-                    session_id, turn_seq=turn, call_id=call_id, tool="read_file", arguments=read_arguments, role=role
+                turn, call_id = self.store.begin_write_readback(
+                    session_id,
+                    original_turn=pending["turn_seq"],
+                    original_call=pending["call_id"],
+                    arguments=read_arguments,
                 )
                 observed = await tools.execute(call_id, "read_file", read_arguments)
                 self.store.record_tool_observation(session_id, turn_seq=turn, observation=observed, role=role)
@@ -1577,6 +1716,7 @@ class EngineeringRunService:
             limits=limits,
             cancel=cancel,
             writable_output_roots=self._writable_output_roots if output_roots is None else output_roots,
+            retain_verified_candidate=self._retain_verified_candidate,
             authorize=(lambda: self._authorize_tools(owner[0].session_id))
             if owner is not None and self._permission_resolver is not None
             else None,
@@ -1708,39 +1848,6 @@ class EngineeringRunService:
                     verification="unknown",
                     checks=checks,
                 )
-            # Host web probe: for web deliverables, objective function (page
-            # errors, canvas/WebGL, visible motion, live controls) is graded
-            # by the machine, never by the model that built the artifact. A
-            # failing probe downgrades verification and sends the model the
-            # distilled failure to fix.
-            if find_web_entry(self.workspace) is not None:
-                try:
-                    probe = await probe_web_deliverable(self.workspace)
-                except (OSError, RuntimeError, ValueError) as error:
-                    probe = WebProbeResult(entry="", ran=True, ok=False, probe_error=str(error)[:300])
-                if probe.ran:
-                    checks_list = [
-                        *checks,
-                        ToolObservation(
-                            call_id=f"web-probe-{command.session_id[:8]}",
-                            tool="web_probe",
-                            ok=probe.ok,
-                            content=probe.details + ("\n" + probe_feedback(probe) if not probe.ok else ""),
-                            exit_code=0 if probe.ok else 1,
-                            interrupted=False,
-                        ),
-                    ]
-                    result = replace(result, checks=tuple(checks_list))
-                    if not probe.ok:
-                        result = replace(result, verification="failed", checks=tuple(checks_list))
-                        result = await self._continue_director(
-                            command,
-                            probe_feedback(probe),
-                            scope=scope,
-                            limits=limits,
-                            cancel=cancel,
-                        )
-                        continue
             if verification != "failed":
                 result = replace(result, verification=verification, checks=checks)
                 if verification == "passed" and not saved["require_qa"]:
@@ -1788,7 +1895,6 @@ class EngineeringRunService:
                         verification=current["verification"],
                         checks=tuple(ToolObservation(**check) for check in current["checks"]),
                     )
-                record_lesson(self.workspace, feedback.split("\n")[0])
                 result = await self._continue_director(
                     command,
                     "Independent QA rejected the current candidate. Continue the same original goal using actual review findings:\n"
@@ -1877,19 +1983,16 @@ class EngineeringRunService:
         """
         if limits.deadline is None:
             return True
-        remaining = max(0.0, limits.deadline - time.time())
-        reserve = _QA_REVIEW_RESERVE_SECONDS
+        from polaris.cells.roles.runtime.internal.engineering_roles import qa_review_reserve_seconds
+
+        now = time.time()
         try:
             created = float(self.store.load_run(session_id, workspace=self.workspace).get("created_at") or 0.0)
         except (KeyError, OSError, TypeError, ValueError):
             created = 0.0
-        if created > 0.0:
-            reserve = min(reserve, max(0.0, (limits.deadline - created) * 0.25))
-        else:
-            # Without the run's own start the remaining budget is the only
-            # scale available, so the reserve stays a quarter of it.
-            reserve = min(reserve, remaining * 0.25)
-        return remaining > reserve
+        return limits.deadline - now > qa_review_reserve_seconds(
+            deadline=limits.deadline, created_at=created, observed_at=now
+        )
 
     async def _continue_director(
         self,
@@ -1933,26 +2036,22 @@ class EngineeringRunService:
         verifier: Any,
     ) -> tuple[str, str]:
         """Consume only current-frame observed QA reports, independently bound by the host."""
-        from polaris.cells.roles.runtime.internal.engineering_roles import interpret_review_reports
+        from polaris.cells.roles.runtime.internal.engineering_acceptance import (
+            normalize_clause_findings,
+            require_observed_clause_evidence,
+        )
+        from polaris.cells.roles.runtime.internal.engineering_roles import browser_review_gap, interpret_review_reports
 
         row = self.store.load_run(command.session_id, workspace=self.workspace)
         self._revalidated_scope(row)
         binding = await _observe_in_io(partial(verifier.review_binding, command.session_id))
-        # Host-driven render: for browser-page candidates the platform itself
-        # renders the artifact and injects the evidence, so acceptance cannot
-        # hinge on whether the model happens to call browser_observe.
-        render_evidence = ""
-        if (self.workspace / "index.html").is_file() and scope.browser is not None:
-            try:
-                rendered = await self._observe_dispatch({"entry": "index.html"}, 0, "host-render-qa")
-                render_evidence = (
-                    "Host-rendered candidate evidence (this run's actual browser observation, not a model claim):\n"
-                    + str(rendered.content)[:2500]
-                    + "\n\n"
-                )
-            except Exception as render_error:  # noqa: BLE001 - record the failed render as evidence, never fabricate it
-                render_evidence = f"Host render attempt failed with: {render_error}\n\n"
-        instruction = render_evidence + (
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        browser_allowed = scope.browser is not None and "browser_observe" in {
+            ToolSpecRegistry.get_canonical(name) for name in scope.enabled_tools
+        }
+        web_entry = find_web_entry(self.workspace) if browser_allowed else None
+        instruction = (
             "Original user goal:\n"
             + row["instruction"]
             + "\n\nCurrent actual required checks (these do not establish semantic correctness):\n"
@@ -1963,27 +2062,34 @@ class EngineeringRunService:
                 ],
                 ensure_ascii=False,
             )
-            + "\n\nAcceptance clauses (rule on EVERY clause with report_review clause_findings; each needs status pass|fail plus concrete evidence such as a browser_observe call id or check output):\n"
+            + "\n\nAcceptance clauses (rule on EVERY clause with report_review clause_findings; each needs status pass|fail|unknown plus evidence (for pass: the exact call ID of a current check or an earlier successful QA observation)):\n"
             + json.dumps(extract_goal_clauses(row["instruction"]), ensure_ascii=False, indent=1)
             + "\n\nRead the current relevant implementation using native read tools. Check the original requirements, behavior and actual artifacts, including incomplete or hollow implementations. "
             "Then submit report_review with a justified decision: approved, feedback, major_findings when rejecting, and clause_findings. "
-            "clause_findings is REQUIRED: exactly one entry per acceptance clause listed above, each with status pass|fail and concrete evidence. "
+            "clause_findings is REQUIRED: exactly one entry per acceptance clause listed above, each with status pass|fail|unknown and evidence. "
             "A report is rejected if any clause is missing, and a fail entry requires approved=false. Do not treat Director text as evidence."
         )
-        if (self.workspace / "index.html").is_file():
+        if web_entry is not None:
             instruction = (
-                "This is a browser-page candidate. Your FIRST action MUST be browser_observe(entry='index.html') "
+                f"This is a browser-page candidate. Your FIRST action MUST be browser_observe(entry={web_entry!r}) "
                 "to render it and inspect for runtime errors. Do NOT review source before rendering; a browser "
                 "page's actual runtime behavior, not only its source, decides acceptance.\n\n"
             ) + instruction
         pending = self._pending_review(command.session_id)
         reusable = pending is not None and pending["payload"].get("input_binding") == binding
-        if not reusable:
-            self.store.append_event(
+        review_start_seq = (
+            pending["seq"]
+            if pending is not None and reusable
+            else self.store.append_event(
                 command.session_id, kind="qa_review_started", role="qa", payload={"input_binding": binding}
             )
+        )
         events = self.store.load_events(command.session_id)
-        starts = [event for event in events if event["kind"] == "role_started" and event["role"] == "qa"]
+        starts = [
+            event
+            for event in events
+            if event["kind"] == "role_started" and event["role"] == "qa" and event["seq"] > review_start_seq
+        ]
         durable_reports = [
             event
             for event in events
@@ -1997,7 +2103,7 @@ class EngineeringRunService:
             and not event["payload"].get("interrupted")
         ]
         if durable_reports:
-            _verdict, feedback, _call_id = interpret_review_reports([event["payload"] for event in durable_reports])
+            _verdict, feedback, _index = interpret_review_reports([event["payload"] for event in durable_reports])
             result = RoleRunResult(command.session_id, "qa", feedback, "completed", "not_run", ())
             self.store.append_event(
                 command.session_id,
@@ -2018,19 +2124,27 @@ class EngineeringRunService:
                 cancel=cancel,
             )
         events = self.store.load_events(command.session_id)
-        frame = next(event for event in reversed(events) if event["kind"] == "role_started" and event["role"] == "qa")
+        frame = next(
+            (
+                event
+                for event in reversed(events)
+                if event["kind"] == "role_started" and event["role"] == "qa" and event["seq"] > review_start_seq
+            ),
+            None,
+        )
         reports = [
             event
             for event in events
             if event["kind"] == "tool_observed"
             and event["role"] == "qa"
+            and frame is not None
             and event["seq"] > frame["seq"]
             and event["payload"].get("tool") == "report_review"
             and event["payload"].get("ok") is True
             and not event["payload"].get("interrupted")
         ]
         verdict, feedback = "unknown", result.text
-        report_call_id = None
+        report = None
         try:
             self._revalidated_scope(row)
             if (
@@ -2039,54 +2153,33 @@ class EngineeringRunService:
                 and binding == await _observe_in_io(partial(verifier.review_binding, command.session_id))
                 and await _observe_in_io(partial(verifier.current_verification, command.session_id)) == "passed"
             ):
-                verdict, feedback, report_call_id = interpret_review_reports([event["payload"] for event in reports])
-                if verdict == "approved":
-                    # A browser-page candidate cannot be accepted on source and
-                    # Node checks alone: QA must have rendered it with
-                    # browser_observe and observed zero page errors.
-                    from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
-
-                    browser_obs = [
-                        event
-                        for event in events
-                        if event["kind"] == "tool_observed"
-                        and event["role"] == "qa"
-                        and event["payload"].get("tool") == "browser_observe"
-                    ]
-                    if (self.workspace / "index.html").is_file() and "browser_observe" in {
-                        ToolSpecRegistry.get_canonical(name) for name in scope.enabled_tools
-                    }:
-                        render_errors: list[str] = []
-                        for event in browser_obs:
-                            content = str(event["payload"].get("content", ""))
-                            try:
-                                parsed = json.loads(content) if content.strip().startswith("{") else {}
-                            except json.JSONDecodeError:
-                                parsed = {}
-                            if parsed.get("page_errors"):
-                                render_errors.extend(str(item)[:200] for item in parsed["page_errors"])
-                        if not browser_obs:
-                            verdict = "unknown"
-                            feedback = (
-                                "Browser-page candidate: QA never rendered it with browser_observe. "
-                                "Rendering evidence is required before approval."
-                            )
-                        elif render_errors:
-                            verdict = "unknown"
-                            feedback = "Browser-page candidate renders with page errors: " + "; ".join(
-                                render_errors[:3]
-                            )
-                    if verdict == "approved":
-                        report = next(
-                            event for event in reversed(reports) if event["payload"].get("call_id") == report_call_id
+                verdict, feedback, selected = interpret_review_reports([event["payload"] for event in reports])
+                report = reports[selected] if selected is not None else None
+                if verdict == "approved" and report is not None and frame is not None:
+                    require_observed_clause_evidence(
+                        normalize_clause_findings(json.loads(report["payload"]["content"]).get("clause_findings")),
+                        events=events,
+                        checks=row["checks"],
+                        frame_seq=frame["seq"],
+                        report_turn_seq=report["payload"]["turn_seq"],
+                    )
+                    if web_entry is not None:
+                        gap = browser_review_gap(
+                            events,
+                            frame_seq=frame["seq"],
+                            report_turn_seq=report["payload"]["turn_seq"],
+                            entry=web_entry,
                         )
+                        if gap:
+                            verdict, feedback = "unknown", gap
+                    if verdict == "approved":
                         self._require_visual_input(
                             command.session_id,
                             role="qa",
                             scope=scope,
                             current_binding=lambda: verifier.review_binding(command.session_id),
                             frame_seq=frame["seq"],
-                            turn_seq=report["payload"].get("turn_seq"),
+                            turn_seq=report["payload"]["turn_seq"],
                         )
         except (ValueError, OSError, RuntimeError, PathSecurityError) as error:
             verdict = "unknown"
@@ -2098,8 +2191,10 @@ class EngineeringRunService:
             payload={
                 "verdict": verdict,
                 "feedback": feedback,
-                "frame_seq": frame["seq"],
-                "report_call_id": report_call_id,
+                "frame_seq": frame["seq"] if frame is not None else None,
+                "report_call_id": report["payload"]["call_id"] if report is not None else None,
+                "report_turn_seq": report["payload"]["turn_seq"] if report is not None else None,
+                "report_event_seq": report["seq"] if report is not None else None,
                 "input_binding": binding,
             },
         )
@@ -2357,6 +2452,9 @@ class EngineeringRunService:
                 raise ValueError("saved browser configuration is invalid") from error
         reads = tuple(Path(root) for root in scope["read_roots"])
         writes = tuple(Path(root) for root in scope["write_roots"])
+        fixtures = scope.get("verification_fixture_sha256", {})
+        if not isinstance(fixtures, dict):
+            raise ValueError("saved verification fixture declarations must be a path-to-digest mapping")
         raw_bins = scope.get("toolchain_bin_dirs", ())
         if not isinstance(raw_bins, (list, tuple)):
             raise ValueError("saved toolchain directories must be an ordered path sequence")
@@ -2378,6 +2476,7 @@ class EngineeringRunService:
             browser,
             toolchain_bin_dirs=tuple(bins),
             command_cache=scope.get("command_cache", "disabled"),
+            verification_fixture_sha256=tuple(sorted(fixtures.items())),
         )
 
     @staticmethod
@@ -2410,6 +2509,7 @@ class EngineeringRunService:
         cache_rank = {"disabled": 0, "read_only": 1, "read_write": 2}
         return (
             toolchains_within
+            and dict(saved.verification_fixture_sha256) == dict(current.verification_fixture_sha256)
             and cache_rank[saved.command_cache] <= cache_rank[current.command_cache]
             and {ToolSpecRegistry.get_canonical(name) for name in saved.enabled_tools}
             <= {ToolSpecRegistry.get_canonical(name) for name in current.enabled_tools}

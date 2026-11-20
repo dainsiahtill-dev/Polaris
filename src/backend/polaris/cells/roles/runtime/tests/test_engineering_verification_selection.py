@@ -160,7 +160,8 @@ async def test_complete_parent_recovery_is_exact_atomic_idempotent_and_does_not_
     assert before_children == after_children and len(checks) == 1
     replies = [m for m in cold.load_message_history("selection") if m.get("tool_call_id") == parent[1]]
     assert len(replies) == 1 and json.loads(replies[0]["content"]) == tool_observation_payload(observation)
-    assert cold.load_run("selection", workspace=isolated_workspace)["project_outcome"] == "accepted"
+    frozen = cold.load_run("selection", workspace=isolated_workspace)
+    assert frozen["verification"] == "passed" and frozen["project_outcome"] == "not_accepted"
 
 
 async def test_observed_parent_missing_message_repaired_without_duplicate_observation(isolated_workspace):
@@ -333,14 +334,30 @@ async def test_real_command_without_observation_cannot_close_unknown_parent(isol
 async def test_new_selection_immediately_invalidates_previous_qa_verdict(isolated_workspace, monkeypatch, old_verdict):
     store, verifier = setup(isolated_workspace, require_qa=True)
     await request(store, verifier, isolated_workspace, [command("assert 12 == 12")])
-    # A durable host QA fixture isolates projection invalidation, not real QA execution.
+    frame = store.append_event("selection", kind="role_started", role="qa", payload={})
+    turn = store.append_event("selection", kind="turn_started", role="qa", payload={})
+    args = {"approved": old_verdict == "approved", "feedback": "Observed addition result."}
+    store.record_tool_dispatch(
+        "selection", turn_seq=turn, call_id="review", tool="report_review", arguments=args, role="qa"
+    )
+    store.record_tool_observation(
+        "selection",
+        turn_seq=turn,
+        observation=ToolObservation("review", "report_review", True, json.dumps(args), None, False),
+        role="qa",
+    )
     store.append_event(
         "selection",
         kind="qa_review_completed",
         role="qa",
-        payload={"verdict": old_verdict, "input_binding": verifier.review_binding("selection")},
+        payload={
+            "verdict": old_verdict,
+            "input_binding": verifier.review_binding("selection"),
+            "report_call_id": "review",
+            "frame_seq": frame,
+        },
     )
-    store.update_run("selection", status="completed")
+    store.update_run("selection", status="running")
     assert store.load_run("selection", workspace=isolated_workspace)["qa_verdict"] == old_verdict
     observed = []
     original = verifier.tools.execute
@@ -357,3 +374,90 @@ async def test_new_selection_immediately_invalidates_previous_qa_verdict(isolate
         assert projection["qa_verdict"] == "unknown" and projection["project_outcome"] == "unknown"
         assert projection["acceptance_basis"] is None and projection["checks"] == []
     assert store.load_run("selection", workspace=isolated_workspace)["qa_verdict"] == "unknown"
+
+
+async def test_late_verifier_completion_cannot_displace_current_attempt(isolated_workspace):
+    store, verifier = setup(isolated_workspace)
+    commands = [command('print("same check, different attempt")')]
+    await request(store, verifier, isolated_workspace, commands)
+    old = verifier.current_completed_result("selection")
+    await request(store, verifier, isolated_workspace, commands, identity="second")
+    current = verifier.current_completed_result("selection")
+    assert old["input_binding"]["attempt_seq"] != current["input_binding"]["attempt_seq"]
+    cold = EngineeringSessionStore(isolated_workspace)
+    committed = cold.record_verification(
+        "selection",
+        workspace_revision=0,
+        checks=tuple(ToolObservation(**c) for c in old["checks"]),
+        verification="passed",
+        detail="late callback",
+        input_binding=old["input_binding"],
+    )
+    assert committed is False
+    assert verifier.current_completed_result("selection") == current
+
+
+async def test_concurrent_revision_advance_invalidates_exact_check(isolated_workspace, monkeypatch):
+    store, verifier = setup(isolated_workspace)
+    execute = verifier.tools.execute
+
+    async def advance_after_command(*args, **kwargs):
+        observed = await execute(*args, **kwargs)
+        store.update_run("selection", workspace_revision=1)
+        return observed
+
+    monkeypatch.setattr(verifier.tools, "execute", advance_after_command)
+    await request(store, verifier, isolated_workspace, [command('print("observed")')])
+    result = store.load_run("selection", workspace=isolated_workspace)
+    assert result["verification"] == "unknown"
+    assert verifier.current_completed_result("selection") is None
+
+
+async def test_new_evidence_binds_host_contract_and_verifier(isolated_workspace, monkeypatch):
+    from polaris.cells.roles.runtime.internal import engineering_verification
+
+    store, verifier = setup(isolated_workspace)
+    await request(store, verifier, isolated_workspace, [command('print("witness")')])
+    binding = verifier.current_completed_result("selection")["input_binding"]
+    identity = binding["evidence_identity"]
+    assert len(identity["contract_digest"]) == 64
+    assert len(identity["environment_digest"]) == 64
+    assert len(identity["verifier_digest"]) == 64
+    monkeypatch.setattr(engineering_verification, "_VERIFIER_DIGEST", "0" * 64)
+    assert verifier.current_verification("selection") == "unknown"
+    assert store.load_run("selection", workspace=isolated_workspace)["verification"] == "passed"
+
+
+async def test_late_qa_verdict_cannot_promote_terminal_delivery(isolated_workspace):
+    store, verifier = setup(isolated_workspace, require_qa=True)
+    await request(store, verifier, isolated_workspace, [command('print("verified")')])
+    frame = store.append_event("selection", kind="role_started", role="qa", payload={})
+    turn = store.append_event("selection", kind="turn_started", role="qa", payload={})
+    args = {"approved": True, "feedback": "Observed current candidate."}
+    store.record_tool_dispatch(
+        "selection", turn_seq=turn, call_id="late", tool="report_review", arguments=args, role="qa"
+    )
+    store.record_tool_observation(
+        "selection",
+        turn_seq=turn,
+        observation=ToolObservation("late", "report_review", True, json.dumps(args), None, False),
+        role="qa",
+    )
+    binding = verifier.review_binding("selection")
+    store.update_run("selection", status="completed")
+    first = store.load_run("selection", workspace=isolated_workspace)
+    assert first["project_outcome"] != "accepted"
+    late = store.append_event(
+        "selection",
+        kind="qa_review_completed",
+        role="qa",
+        payload={
+            "verdict": "approved",
+            "input_binding": binding,
+            "frame_seq": frame,
+            "report_call_id": "late",
+        },
+    )
+    cold = EngineeringSessionStore(isolated_workspace)
+    assert cold.load_events("selection")[-1]["seq"] == late
+    assert cold.load_run("selection", workspace=isolated_workspace)["project_outcome"] == first["project_outcome"]

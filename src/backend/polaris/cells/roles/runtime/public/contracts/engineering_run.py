@@ -54,7 +54,22 @@ class PermissionScope:
     toolchain_env: tuple[tuple[str, str], ...] = ()
     command_cache: Literal["disabled", "read_only", "read_write"] = "disabled"
 
+    verification_fixture_sha256: tuple[tuple[str, str], ...] = ()
+
     def __post_init__(self) -> None:
+        fixture_paths: set[str] = set()
+        for path, digest in self.verification_fixture_sha256:
+            if (
+                not isinstance(path, str)
+                or not Path(path).is_absolute()
+                or str(Path(path)) != path
+                or ".." in Path(path).parts
+                or "\0" in path
+            ):
+                raise ValueError("verification fixture must be a canonical absolute path")
+            if path in fixture_paths or not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
+                raise ValueError("verification fixtures require distinct paths with lowercase SHA-256 digests")
+            fixture_paths.add(path)
         cache_mode: object = self.command_cache
         if type(cache_mode) is not str or cache_mode not in ("disabled", "read_only", "read_write"):
             raise ValueError("command cache mode must be disabled, read_only or read_write")

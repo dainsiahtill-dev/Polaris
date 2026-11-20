@@ -999,26 +999,37 @@ def main(argv: Sequence[str] | None = None) -> int:
     history_query = (command == "task" and getattr(args, "task_command", "") in {"list", "show"}) or (
         command == "session" and getattr(args, "session_command", "") in {"list", "show"}
     )
-    if not history_query:
-        # Historical owners receive their workspace explicitly and must not
-        # initialize execution bindings or change the caller's workspace.
-        _bind_workspace_env(workspace)
-        from contextlib import redirect_stdout
-
-        with redirect_stdout(sys.stderr):
-            _bootstrap_runtime()
-
-    # Dispatch
-    router = _get_router()
+    # main() is also called in-process by adapters. A CLI-created binding
+    # belongs only to this invocation, including when bootstrap or dispatch fails.
+    env_before = {key: os.environ.get(key) for key in ("KERNELONE_CONTEXT_ROOT", "KERNELONE_RUNTIME_ROOT")}
     try:
-        return router.route(args)
-    except KeyboardInterrupt:
-        print("\n[polaris] Interrupted", file=sys.stderr)
-        return 130
-    except (RuntimeError, ValueError) as exc:
-        logger.warning("CLI dispatch error: %s", exc)
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
+        if not history_query:
+            # Historical owners receive their workspace explicitly and must not
+            # initialize execution bindings or change the caller's workspace.
+            _bind_workspace_env(workspace)
+            from contextlib import redirect_stdout
+
+            with redirect_stdout(sys.stderr):
+                _bootstrap_runtime()
+
+        # Dispatch
+        router = _get_router()
+        try:
+            return router.route(args)
+        except KeyboardInterrupt:
+            print("\n[polaris] Interrupted", file=sys.stderr)
+            return 130
+        except (RuntimeError, ValueError) as exc:
+            logger.warning("CLI dispatch error: %s", exc)
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+    finally:
+        if not history_query:
+            for key, value in env_before.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
 
 if __name__ == "__main__":

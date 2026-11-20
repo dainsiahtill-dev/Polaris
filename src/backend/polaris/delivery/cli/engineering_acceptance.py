@@ -38,6 +38,10 @@ _HOST_KEYS = frozenset(
         "require_qa",
         "run_timeout_seconds",
         "verification_output_roots",
+        "routing_record_file",
+        "routing_record_sha256",
+        "counterexample_refs",
+        "retain_verified_candidate",
         "max_output_bytes",
         "max_tool_output_bytes",
     }
