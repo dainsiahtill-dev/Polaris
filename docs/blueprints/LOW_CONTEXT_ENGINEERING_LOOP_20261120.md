@@ -144,6 +144,12 @@ run_engineering_loop
 这是「有界工作集 + 状态投影 + 真实退出码 + 两道门禁 + fidelity 契约面」首次端到端
 跑通并 accepted，证明该形态能完成真实项目（非仅单元测试）。
 
+**L1-06（C++ CLI「月球邮局明信片生成器」，同批）**：预算耗尽 `interrupted`。过程：
+3 次 verification passed → QA 按 13 条条款矩阵 **rejected** → Director 修复 → 5 次
+failed → 修复回 passed，但 5400s 预算用尽，**未及再 QA**。终态 `outcome=unknown`、
+`fidelity=unknown`、`function=passed` —— **诚实失败，不假阳**。结论：更简单项目可
+accepted；复杂构建型项目在 90 分钟预算内弱模型收敛不足，需更强的模型或更长的预算。
+
 ## 8. 门禁与设计缺口（preparation/wrap-up 已实施；overlay 待 ADR）
 
 **构建型项目的验证只读域 vs 构建输出**：`verify_project` 的 check 在只读验证域运行
