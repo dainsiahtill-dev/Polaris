@@ -359,10 +359,10 @@ def test_goal_clauses_use_frozen_user_requirements_only() -> None:
     clauses = extract_goal_clauses(instruction)
     assert clauses == [
         "观察问题：悲伤的花与兴奋的花能否跳出不同灯光舞蹈？",
-        "| 输入／操作 | 预期结果 |",
         "| 种子7、同布局运行10秒 | 重置重跑位置与闪光序列一致； |",
         "准备输入。花朵有悲伤、平静、兴奋三档。",
     ]
+    assert "| 输入／操作 | 预期结果 |" not in clauses
     assert has_truncated_goal_clauses(instruction) is False
 
 

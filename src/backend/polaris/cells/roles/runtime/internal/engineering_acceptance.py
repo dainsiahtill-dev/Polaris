@@ -70,12 +70,21 @@ def _goal_clause_source(instruction: str) -> str:
 def _goal_clause_candidates(instruction: str) -> list[str]:
     clauses: list[str] = []
     seen: set[str] = set()
-    for raw in _goal_clause_source(instruction).splitlines():
-        line = _CLAUSE_STRIP.sub("", raw.strip()).strip()
+    lines = _goal_clause_source(instruction).splitlines()
+    for index, raw in enumerate(lines):
+        stripped = raw.strip()
+        line = _CLAUSE_STRIP.sub("", stripped).strip()
         if not line:
             continue
         if line.startswith("#") or _TABLE_SEPARATOR.match(line):
             continue
+        if stripped.startswith("|"):
+            # A Markdown table header is layout, not an independent acceptance
+            # requirement. Keep the data rows, but skip the header immediately
+            # followed by its delimiter row (observed blocking L1-01 QA).
+            following = next((item.strip() for item in lines[index + 1 :] if item.strip()), "")
+            if _TABLE_SEPARATOR.match(following):
+                continue
         if line in seen:
             continue
         seen.add(line)

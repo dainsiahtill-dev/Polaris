@@ -26,3 +26,9 @@ L1-06 run `3ee2e82d5e3144c4958f618580ef4094` 在 5352/5400 秒才第一次 verif
 新增 `KERNELONE_ENGINEERING_FIRST_VERIFICATION_FRACTION`（默认 0.4）：当 Director 到 run 预算 40% 仍无 verify_project 结果时，wire 停止广告 write_file/edit_file/repo_tree/repo_rg，只保留 verify_project、execute_command、read_file、browser_observe；即使 provider 仍生成写入调用，也在 dispatch 前拦截。execute_command 始终保留用于构建/依赖准备，避免 EROFS 死锁。
 
 新增 `test_first_verification_budget_stops_late_source_writes`；目标测试 61 passed。
+
+## Markdown 表头不是验收条款（L1-01）
+
+L1-01 run `53eac3bdbcdb410cb2b9609b5f41775f` 的 QA 已批准所有功能条款，但 `| 输入／操作 | 预期结果 |` 被错误抽成独立 clause。QA 只能将其标为 unknown，最终 run interrupted/unknown。
+
+`_goal_clause_candidates` 现在识别“紧接分隔行的 Markdown 表头”并跳过，保留真实数据行；目标验收测试 27 passed，clause/fidelity 回归 19 passed。
