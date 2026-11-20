@@ -630,6 +630,7 @@ async def test_wrap_up_gate_blocks_post_pass_edits(
     actually passed.
     """
     monkeypatch.setenv("KERNELONE_ENGINEERING_STAGE_GATE_WRITES", "0")
+    monkeypatch.setenv("KERNELONE_ENGINEERING_WRAP_UP_CYCLES", "1")
     loop, store, _tools, command, scope, limits = _setup(
         isolated_workspace, enabled=_ALL_TOOLS | frozenset({"verify_project"})
     )
@@ -719,6 +720,7 @@ async def test_wrap_up_cycle_budget_is_run_scoped(
 ) -> None:
     """A frame restart must not give an over-working model a fresh write budget."""
     monkeypatch.setenv("KERNELONE_ENGINEERING_STAGE_GATE_WRITES", "0")
+    monkeypatch.setenv("KERNELONE_ENGINEERING_WRAP_UP_CYCLES", "1")
     loop, store, _tools, command, scope, limits = _setup(
         isolated_workspace, enabled=_ALL_TOOLS | frozenset({"verify_project"})
     )
@@ -759,11 +761,55 @@ async def test_wrap_up_cycle_budget_is_run_scoped(
     assert (isolated_workspace / "a.py").read_text(encoding="utf-8") == "x = 1\n"
 
 
+async def test_wrap_up_gate_freezes_at_first_pass_by_default(
+    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Default policy: the first durable pass freezes the candidate for QA.
+
+    No pass -> write cycle is allowed, so the very first post-pass write is
+    intercepted and the frame ends for independent review.
+    """
+    monkeypatch.setenv("KERNELONE_ENGINEERING_STAGE_GATE_WRITES", "0")
+    loop, store, _tools, command, scope, limits = _setup(
+        isolated_workspace, enabled=_ALL_TOOLS | frozenset({"verify_project"})
+    )
+    (isolated_workspace / "a.py").write_text("x = 1\n", encoding="utf-8")
+    scripted_provider.enqueue_json(_native(("v1", "verify_project", {"commands": ["python3 -m py_compile a.py"]})))
+    scripted_provider.enqueue_json(
+        _native(("w1", "edit_file", {"file": "a.py", "search": "x = 1", "replace": "x = 2"}))
+    )
+    scripted_provider.enqueue_json(
+        _native(("w2", "edit_file", {"file": "a.py", "search": "x = 1", "replace": "x = 3"}))
+    )
+    from polaris.cells.roles.runtime.public.contracts.engineering_run import ToolObservation
+
+    async def fake_verify(commands: tuple[str, ...], turn_seq: int, call_id: str) -> ToolObservation:
+        return ToolObservation(
+            call_id=call_id, tool="verify_project", ok=True, content="checks ran", exit_code=0, interrupted=False
+        )
+
+    result = await loop(
+        command,
+        scope=scope,
+        limits=limits,
+        cancel=asyncio.Event(),
+        store=store,
+        client=scripted_provider.client("openai", isolated_workspace, monkeypatch),
+        verify=fake_verify,
+    )
+    assert result.status == "completed", result.text
+    events = store.load_events(command.session_id)
+    blocked = [event for event in events if event["kind"] == "wrap_up_enforced"]
+    assert [event["payload"]["call_id"] for event in blocked] == ["w1", "w2"]
+    assert (isolated_workspace / "a.py").read_text(encoding="utf-8") == "x = 1\n"
+
+
 async def test_wrap_up_gate_blocks_post_pass_shell(
     isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A repeated pass -> build cycle through execute_command is intercepted too."""
     monkeypatch.setenv("KERNELONE_ENGINEERING_STAGE_GATE_WRITES", "0")
+    monkeypatch.setenv("KERNELONE_ENGINEERING_WRAP_UP_CYCLES", "1")
     loop, store, _tools, command, scope, limits = _setup(
         isolated_workspace, enabled=_ALL_TOOLS | frozenset({"verify_project"})
     )

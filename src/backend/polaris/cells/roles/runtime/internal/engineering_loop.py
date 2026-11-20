@@ -215,6 +215,19 @@ _WINDOW_RESERVE_TOKENS = 16384 + 8192
 # safety net for a genuinely premature finish.
 _WRAP_UP_GATE_ENV = "KERNELONE_ENGINEERING_WRAP_UP_GATE"
 _WRAP_UP_GATE_MAX_BLOCKS = 2
+# Pass -> write cycles allowed before the wrap-up gate intercepts writes.
+# 0 = freeze the candidate at the first durable pass and hand it to independent
+# QA (only a QA rejection unfreezes it); 1 = allow one change-then-reverify
+# cycle. Chosen by an A/B comparison on real runs, not by taste.
+_WRAP_UP_CYCLES_ENV = "KERNELONE_ENGINEERING_WRAP_UP_CYCLES"
+
+
+def _wrap_up_cycle_allowance() -> int:
+    raw = os.environ.get(_WRAP_UP_CYCLES_ENV, "0")
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 0
 
 
 def _history_allowances(window: int) -> list[int]:
@@ -635,6 +648,7 @@ async def run_engineering_loop(
     # cycle is allowed; a second means the model is thrashing its own evidence,
     # so further explicit writes are intercepted. The count is run-scoped: a
     # frame restart must not give an over-working model a fresh budget.
+    wrap_up_cycle_allowance = _wrap_up_cycle_allowance()
     prior_wrap_blocks = sum(1 for _event in store.load_events(command.session_id, kinds=("wrap_up_enforced",)))
     post_pass_write_cycles = 1 if prior_wrap_blocks >= 1 else 0
     wrap_up_blocks = prior_wrap_blocks
@@ -1055,7 +1069,7 @@ async def run_engineering_loop(
                             elif (
                                 candidate_verification_passed
                                 and wrap_up_gate_enabled
-                                and post_pass_write_cycles >= 1
+                                and post_pass_write_cycles >= wrap_up_cycle_allowance
                                 and command.role == "director"
                                 and call.name in {"write_file", "edit_file", "execute_command"}
                             ):
