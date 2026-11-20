@@ -869,6 +869,7 @@ async def run_engineering_loop(
                 )
             if host_parts:
                 options["messages"].append({"role": "user", "content": "\n".join(host_parts)})
+            qa_report_required = False
             if command.role == "qa":
                 from polaris.cells.roles.runtime.internal.engineering_working_state import (
                     QA_WORKING_STATE_EVENT_KINDS,
@@ -907,6 +908,17 @@ async def run_engineering_loop(
                         None,
                     )
                     if source:
+                        qa_report_required = True
+                        # A forced tool_choice is only advisory for some compatible
+                        # providers. MiniMax was observed returning execute_command
+                        # six times despite type=tool/report_review. Remove every
+                        # other tool from the wire as well, then enforce the same
+                        # boundary again after parsing before any effect can run.
+                        options["tools"] = [
+                            schema
+                            for schema in options["tools"]
+                            if ((schema.get("function") or {}).get("name") or schema.get("name")) == "report_review"
+                        ]
                         options["tool_choice"] = {"type": "function", "function": {"name": "report_review"}}
                         instruction = (
                             f"Current QA source receipt ID: {source}. Current host check IDs: "
@@ -1047,6 +1059,12 @@ async def run_engineering_loop(
                 return finish("failed", "Engineering role output budget exceeded before tool dispatch.")
             try:
                 calls = _native_calls(response)
+                if qa_report_required and (not calls or any(call.name != "report_review" for call in calls)):
+                    raise NativeTurnRejectedError(
+                        "QA effort budget requires only report_review; provider returned an unallowed tool surface",
+                        calls,
+                        "qa_report_required",
+                    )
             except NativeTurnRejectedError as rejection:
                 diagnostic = {"turn_seq": turn_seq, "provider_response_seq": response_seq, **rejection.diagnostic}
                 message = {

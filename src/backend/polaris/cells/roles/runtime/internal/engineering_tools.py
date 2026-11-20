@@ -236,6 +236,12 @@ class EngineeringTools:
             if any(any(value != values[0] for value in values[1:]) for values in operands.values()):
                 raise ValueError("conflicting engineering tool argument aliases")
         normalized = dict(normalize_tool_arguments_from_snapshot(snapshot, arguments))
+        timeout = normalized.get("timeout")
+        if name == "execute_command" and type(timeout) is int:
+            # Weak providers sometimes ignore the advertised maximum (observed
+            # timeout=180 in a real QA frame). Clamping to the host ceiling is
+            # semantics-preserving; lower bounds and non-integers still fail.
+            normalized["timeout"] = min(timeout, COMMAND_TIMEOUT_MAXIMUM)
         if name not in self.enabled:
             raise ValueError(f"engineering tool disabled: {name}")
         return name, normalized

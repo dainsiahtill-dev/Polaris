@@ -672,7 +672,10 @@ async def test_qa_reserves_last_minute_of_240s_for_evidence_bound_report(
     )
     assert result.status == "completed"
     first, last = [r["body"] for r in scripted_provider.requests]
-    assert first["tools"] == last["tools"]
+    assert len(first["tools"]) > 1
+    assert [((tool.get("function") or {}).get("name") or tool.get("name")) for tool in last["tools"]] == [
+        "report_review"
+    ]
     choice = (
         {"type": "tool", "name": "report_review"}
         if protocol == "anthropic"
@@ -684,6 +687,60 @@ async def test_qa_reserves_last_minute_of_240s_for_evidence_bound_report(
     event = store.load_events(command.session_id, role="qa", kinds=("qa_report_requested",))[-1]
     assert event["payload"]["reason"] == "deadline_reserve" and event["payload"]["remaining_seconds"] == 55
     assert event["payload"]["reserve_seconds"] == 60 and event["payload"]["source_call_id"] == "qa-read"
+
+
+async def test_qa_forced_report_limits_wire_and_rejects_ignored_provider_choice(
+    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """MiniMax can ignore forced tool_choice; only the report tool may reach the wire."""
+
+    from dataclasses import replace
+
+    monkeypatch.setenv("KERNELONE_ENGINEERING_QA_MAX_TURNS", "1")
+    (isolated_workspace / "note.txt").write_text("inspected", encoding="utf-8")
+    loop, store, _tools, command, scope, limits = _setup(
+        isolated_workspace, enabled=frozenset({"read_file", "report_review"})
+    )
+    command = replace(command, role="qa")
+    scripted_provider.enqueue_json(_native(("qa-read-1", "read_file", {"file": "note.txt"})))
+    # Provider violates the forced report_review choice. This call must be
+    # rejected before dispatch, not executed as another exploration turn.
+    scripted_provider.enqueue_json(_native(("qa-read-2", "read_file", {"file": "note.txt"})))
+    scripted_provider.enqueue_json(
+        _native(
+            (
+                "qa-report",
+                "report_review",
+                {
+                    "approved": False,
+                    "feedback": "Insufficient evidence",
+                    "clause_findings": [
+                        {"clause": command.instruction, "status": "unknown", "evidence": "Unavailable oracle"}
+                    ],
+                },
+            )
+        )
+    )
+    result = await loop(
+        command,
+        scope=scope,
+        limits=limits,
+        cancel=asyncio.Event(),
+        store=store,
+        client=scripted_provider.client("openai", isolated_workspace, monkeypatch),
+    )
+    assert result.status == "completed", result.text
+    assert len(scripted_provider.requests) == 3
+    for request in scripted_provider.requests[1:]:
+        assert [
+            ((tool.get("function") or {}).get("name") or tool.get("name")) for tool in request["body"]["tools"]
+        ] == ["report_review"]
+    events = store.load_events(command.session_id, role="qa")
+    rejected = [event for event in events if event["payload"].get("native_turn_rejection")]
+    assert len(rejected) == 1
+    assert "requires only report_review" in rejected[0]["payload"]["native_turn_rejection"]["reason"]
+    observed_calls = {event["payload"].get("call_id") for event in events if event["kind"] == "tool_observed"}
+    assert observed_calls == {"qa-read-1", "qa-report"}
 
 
 async def test_stage_gate_blocks_writes_until_verification(

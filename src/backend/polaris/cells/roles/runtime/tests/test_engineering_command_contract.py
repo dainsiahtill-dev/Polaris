@@ -216,7 +216,7 @@ async def test_explicit_empty_writes_still_allow_commands_but_cannot_persist_wor
     assert not (isolated_workspace / "forbidden.txt").exists()
 
 
-@pytest.mark.parametrize("timeout", [0, 121, -1, True, "invalid"])
+@pytest.mark.parametrize("timeout", [0, -1, True, "invalid"])
 async def test_out_of_contract_timeout_is_rejected_without_command_effect(
     isolated_workspace: Path, timeout: Any
 ) -> None:
@@ -227,6 +227,12 @@ async def test_out_of_contract_timeout_is_rejected_without_command_effect(
     )
     assert not rejected.ok and "integer in [1, 120]" in rejected.content
     assert not (isolated_workspace / "allowed" / "unexpected").exists()
+
+
+def test_execute_timeout_above_host_ceiling_is_clamped_during_normalization(isolated_workspace: Path) -> None:
+    tools = _tools(isolated_workspace, write=False)
+    name, arguments = tools.normalize("execute_command", {"command": "printf bounded", "timeout": 180})
+    assert name == "execute_command" and arguments["timeout"] == 120
 
 
 @pytest.mark.parametrize("arguments", [{"timeout": 1}, {"timeout": 120}, {"timeout": "30"}, {}])
