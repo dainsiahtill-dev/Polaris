@@ -157,6 +157,24 @@ failed → 修复回 passed，但 5400s 预算用尽，**未及再 QA**。终态
 `fidelity=unknown`、`function=passed` —— **诚实失败，不假阳**。结论：更简单项目可
 accepted；复杂构建型项目在 90 分钟预算内弱模型收敛不足，需更强的模型或更长的预算。
 
+**stage gate 封死构建准备（"大量 write 失败"根因）**：stage gate 在 N 次写后
+封锁 `write_file/edit_file/repo_tree/repo_rg/execute_command`，并要求先
+`verify_project`。但 `execute_command` 是唯一能在只读验证域外做依赖安装/编译的
+路径 → 封它=死锁：门禁要 verify，verify 域只读不能构建（EROFS），准备路径又被封。
+生产实测（L1 bench 工作区）stage gate 触发频繁，被封锁工具计数：
+`write_file 26 / execute_command 23 / edit_file 15 / repo_tree 2`。
+修复：`gate_blocked_tools` 去掉 `execute_command`（保留整文件写与工作区探测），
+消息同步说明 execute_command 可用于准备/构建。测试：
+`test_stage_gate_allows_build_preparation_shell`。
+
+**收敛策略 A/B（科学对照，同项目同模型）**：把「通过后允许的改写次数」参数化
+`KERNELONE_ENGINEERING_WRAP_UP_CYCLES`（0=freeze，1=允许一次改→再验）：
+- P1（cycles=1，旧）：MiniMax L1-01 → 159 轮、3 次 passed、未进 QA、预算耗尽。
+- P2（cycles=0，freeze，新默认）：对照运行中。
+- 指标：`accepted` 率、到终态轮数、自失效次数（pass 被后续写作废）。
+原则：策略由真实对照数据选定，不靠直觉；QA 是独立终态裁决器，freeze 消除
+Director 自失效，过早收尾由 QA 拒绝兜底。
+
 ## 8. 门禁与设计缺口（preparation/wrap-up 已实施；overlay 待 ADR）
 
 **构建型项目的验证只读域 vs 构建输出**：`verify_project` 的 check 在只读验证域运行
