@@ -647,7 +647,12 @@ async def run_engineering_loop(
     # the model): after this many file writes the Director must run
     # verify_project before it may write again, turning free-form flailing
     # into a build -> verify -> fix rhythm. 0 disables the gate.
-    stage_gate_writes = int(os.environ.get("KERNELONE_ENGINEERING_STAGE_GATE_WRITES", "5") or "0")
+    # Off by default: counting raw writes is the wrong unit. A weak model that
+    # scaffolds several files hits the limit mid-scaffold and sees a stream of
+    # write_file/edit_file rejections, while "no unverified delivery" is already
+    # enforced by the completion gate (_verify_director) plus wrap-up and QA.
+    # Opt in (e.g. 5) only where a write-then-verify rhythm is explicitly wanted.
+    stage_gate_writes = int(os.environ.get("KERNELONE_ENGINEERING_STAGE_GATE_WRITES", "0") or "0")
     writes_since_verification = 0
     wrap_up_gate_enabled = os.environ.get(_WRAP_UP_GATE_ENV, "1") != "0"
     wrap_up_force_finish = False
