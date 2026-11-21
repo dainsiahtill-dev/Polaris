@@ -277,6 +277,13 @@ async def test_write_file_missing_content_gets_a_precise_recovery_error(isolated
     assert (isolated_workspace / "allowed" / "b.py").read_text(encoding="utf-8") == "existing = 1\n"
 
 
+async def test_write_file_empty_path_is_rejected_with_precise_error(isolated_workspace: Path) -> None:
+    tools = _tools(isolated_workspace, names=frozenset({"write_file"}))
+    result = await tools.execute("empty-path", "write_file", {"file": "", "content": "x"})
+    assert not result.ok and "requires a nonempty relative file path" in result.content
+    assert not (isolated_workspace / "a.py").exists()
+
+
 def test_repo_rg_ignores_hallucinated_read_only_metadata(isolated_workspace: Path) -> None:
     tools = _tools(isolated_workspace, names=frozenset({"repo_rg"}))
     ignored: list[str] = []

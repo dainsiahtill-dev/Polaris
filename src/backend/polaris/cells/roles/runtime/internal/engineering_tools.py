@@ -667,6 +667,11 @@ class EngineeringTools:
                 return self._observation(call_id, name, True, json.dumps({"file_card": card}, ensure_ascii=False))
             if name == "write_file":
                 self._keys(args, {"file", "content"})
+                raw_file = args.get("file")
+                if not isinstance(raw_file, str) or not raw_file.strip():
+                    raise ValueError(
+                        "write_file requires a nonempty relative file path; provide the target path and full content"
+                    )
                 file_argument = self._text(args, "file")
                 target = self._path(file_argument, write=True)
                 if "content" not in args and target.is_file():
