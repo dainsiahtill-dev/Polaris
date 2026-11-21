@@ -77,12 +77,16 @@ def test_memory_cards_cover_long_term_engineering_facts() -> None:
         "requirement_trace",
         "tool_pattern",
         "file_diff",
+        "verification_contract",
         "evidence_lease",
     }
     failure = next(card for card in cards if card["kind"] == "failure_cluster" and "刹车" in card["title"])
     assert failure["unresolved"] is True
     requirement = next(card for card in cards if card["kind"] == "requirement_trace")
     assert requirement["status"] == "fail"
+    contract = next(card for card in cards if card["kind"] == "verification_contract")
+    assert contract["status"] == "failed"
+    assert contract["evidence_refs"] == ["verify-1"]
 
 
 def test_epoch_selection_waits_until_fifty_activities_behind() -> None:

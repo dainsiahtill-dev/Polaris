@@ -241,6 +241,58 @@ def build_file_diff_cards(events: Sequence[Mapping[str, Any]]) -> list[dict[str,
     return cards
 
 
+def build_verification_contract_cards(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """One reusable contract per verification, bound to its candidate revision."""
+
+    cards: list[dict[str, Any]] = []
+    for event in events:
+        if event["kind"] != "verification_completed":
+            continue
+        payload = event["payload"]
+        checks = payload.get("checks")
+        if not isinstance(checks, list) or not checks:
+            continue
+        commands: list[str] = []
+        evidence: list[str] = []
+        exit_codes: list[int] = []
+        for check in checks:
+            command = str(check.get("tool") or "")
+            if command:
+                commands.append(command)
+            content = str(check.get("content") or "")
+            try:
+                body = json.loads(content)
+            except json.JSONDecodeError:
+                body = None
+            command_card = body.get("command_card") if isinstance(body, dict) else None
+            if isinstance(command_card, dict):
+                reference = command_card.get("content_ref")
+                if isinstance(reference, str) and reference:
+                    evidence.append(reference)
+                if isinstance(command_card.get("exit_code"), int):
+                    exit_codes.append(int(command_card["exit_code"]))
+            elif isinstance(check.get("call_id"), str):
+                evidence.append(str(check["call_id"]))
+        verdict = str(payload.get("verification") or "unknown")
+        revision = payload.get("workspace_revision")
+        summary = f"{verdict} · exit={exit_codes or '—'}"
+        if revision is not None:
+            summary += f" · rev={revision}"
+        cards.append(
+            {
+                "kind": "verification_contract",
+                "id": _id("verification", f"{event['seq']}:{verdict}:{revision}"),
+                "title": " · ".join(commands)[:180] or "verification",
+                "summary": summary,
+                "status": verdict,
+                "workspace_revision": revision,
+                "evidence_refs": evidence[-12:],
+                "uncertain": verdict != "passed",
+            }
+        )
+    return cards[-16:]
+
+
 def build_evidence_lease_cards(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     leases: list[dict[str, Any]] = []
     for event in events:
@@ -281,5 +333,6 @@ def build_memory_cards(run: Mapping[str, Any], events: Sequence[Mapping[str, Any
         *build_requirement_trace_cards(run, events),
         *build_tool_pattern_cards(events),
         *build_file_diff_cards(events),
+        *build_verification_contract_cards(events),
         *build_evidence_lease_cards(events),
     ]

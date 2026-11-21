@@ -34,7 +34,15 @@ export interface ProjectionRunCard {
 }
 
 export interface ContextMemoryCard {
-  kind: 'failure_cluster' | 'interface_contract' | 'requirement_trace' | 'tool_pattern' | 'file_diff' | 'evidence_lease' | 'epoch_card';
+  kind:
+    | 'failure_cluster'
+    | 'interface_contract'
+    | 'requirement_trace'
+    | 'tool_pattern'
+    | 'file_diff'
+    | 'verification_contract'
+    | 'evidence_lease'
+    | 'epoch_card';
   id: string;
   title: string;
   summary: string;
