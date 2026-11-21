@@ -139,6 +139,9 @@ class EngineeringSessionStore:
         # the kernel sets and the user cannot rewind, so a matching signature
         # means the captured bytes are still the current bytes.
         self.verification_input_cache: dict[tuple[object, ...], tuple[bytes, dict[str, object]]] = {}
+        with self._connection() as connection:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("PRAGMA busy_timeout=5000")
         with self._transaction() as connection:
             connection.execute("PRAGMA encoding='UTF-8'")
             connection.execute("""CREATE TABLE IF NOT EXISTS runs (
@@ -205,6 +208,7 @@ class EngineeringSessionStore:
         connection = sqlite3.connect(self.database_path, timeout=5, isolation_level=None)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute("PRAGMA busy_timeout=5000")
         try:
             yield connection
         finally:

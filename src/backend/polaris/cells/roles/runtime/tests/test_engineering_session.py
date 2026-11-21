@@ -43,6 +43,19 @@ def create(workspace, *, request_key="request-1", **changes):
     return store, types, command, scope, limits, result
 
 
+def test_wal_allows_long_reader_during_writer(workspace):
+    store, _, _, _, _, _ = create(workspace)
+    with store._connection() as reader:
+        assert reader.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+        reader.execute("BEGIN")
+        reader.execute("SELECT * FROM runs").fetchall()
+        with store._connection() as writer:
+            writer.execute("BEGIN IMMEDIATE")
+            writer.execute("CREATE TABLE IF NOT EXISTS wal_probe (id INTEGER PRIMARY KEY)")
+            writer.rollback()
+        reader.rollback()
+
+
 def test_restores_original_workflow_checks_permissions_and_absolute_deadline(workspace):
     store, _, _, _, _, session_id = create(workspace)
     restored = type(store)(workspace).load_run(session_id, workspace=workspace)
