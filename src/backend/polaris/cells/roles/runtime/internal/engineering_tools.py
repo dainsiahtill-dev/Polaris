@@ -634,6 +634,11 @@ class EngineeringTools:
             if name == "write_file":
                 self._keys(args, {"file", "content"})
                 file_argument = self._text(args, "file")
+                if "content" not in args:
+                    raise ValueError(
+                        f"write_file requires a content field with the complete file body for {file_argument}; "
+                        "do not send only file. Provide full content in every write_file call."
+                    )
                 if "\n" in file_argument or "\r" in file_argument:
                     raise ValueError(
                         "write_file file must be one relative path; put the document body in content, not in file"
@@ -716,7 +721,7 @@ class EngineeringTools:
         self.run_output_root.mkdir(parents=True, exist_ok=True)
         parameters = inspect.signature(self._process).parameters
         var_keyword = any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values())
-        run_output = self.run_output_root if "run_output_root" in parameters or var_keyword else None
+        run_output = self.run_output_root
         capture_root = capture_output_root if "capture_output_root" in parameters or var_keyword else None
         # Validate the ordinary command's containment before allocating any
         # persistent resource. Unsupported platforms or invalid source grants

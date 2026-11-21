@@ -260,6 +260,14 @@ async def test_write_file_path_body_confusion_gets_a_corrective_error(isolated_w
     assert not result.ok and "put the document body in content" in result.content
 
 
+async def test_write_file_missing_content_gets_a_precise_recovery_error(isolated_workspace: Path) -> None:
+    tools = _tools(isolated_workspace, names=frozenset({"write_file"}))
+    result = await tools.execute("missing-content", "write_file", {"file": "a.py"})
+    assert not result.ok and "requires a content field with the complete file body for a.py" in result.content
+    assert "do not send only file" in result.content
+    assert not (isolated_workspace / "a.py").exists()
+
+
 def test_repo_rg_ignores_hallucinated_read_only_metadata(isolated_workspace: Path) -> None:
     tools = _tools(isolated_workspace, names=frozenset({"repo_rg"}))
     ignored: list[str] = []
