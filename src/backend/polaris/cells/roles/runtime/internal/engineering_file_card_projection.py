@@ -67,6 +67,22 @@ def fold_file_card_previews(
                 payload = json.loads(str(projected_message.get("content") or "{}"))
             except json.JSONDecodeError:
                 payload = None
+            command_card = payload.get("command_card") if isinstance(payload, dict) else None
+            if isinstance(command_card, dict):
+                if command_card.get("exit_code") != 0:
+                    command_card["pin_reason"] = "unresolved_failure"
+                activity_age = len(messages) - 1 - index
+                if activity_age >= _inactive_fold_activities() and not command_card.get("pin_reason"):
+                    command_card["stdout_preview"] = ""
+                    command_card["stderr_preview"] = ""
+                    command_card["fold_state"] = "FOLDED"
+                    command_card["fold_reason"] = "outside_current_focus"
+                    command_card["last_fold_activity_seq"] = index
+                else:
+                    command_card["fold_state"] = "ACTIVE"
+                projected_message["content"] = json.dumps(payload, ensure_ascii=False)
+                folded.append(projected_message)
+                continue
             card = payload.get("file_card") if isinstance(payload, dict) else None
             if isinstance(card, dict) and isinstance(card.get("path"), str):
                 path = card["path"]
