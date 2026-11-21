@@ -6,6 +6,7 @@ engineering effect; output remains advice until the request compiler accepts it.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping
 from enum import StrEnum
@@ -48,6 +49,42 @@ class CandidateRefs:
         self.node_ids = node_ids
         self.slice_ids = slice_ids
         self.evidence_refs = evidence_refs
+
+
+def build_advice_envelope(
+    *,
+    advice_job_id: str,
+    input_package: Mapping[str, Any],
+    source_snapshot_ids: list[str],
+    related_requirement_versions: list[str],
+    related_failure_versions: list[str],
+    model_id: str,
+    model_revision: str,
+    prompt_version: str,
+    created_at: float,
+    finished_at: float,
+    validation_result: ValidationResult,
+) -> dict[str, Any]:
+    """Attach host-owned provenance to a validated or rejected advisor result."""
+
+    fingerprint = hashlib.sha256(
+        json.dumps(input_package, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {
+        "advice_job_id": advice_job_id,
+        "source_input_fingerprint": fingerprint,
+        "source_snapshot_ids": source_snapshot_ids,
+        "related_requirement_versions": related_requirement_versions,
+        "related_failure_versions": related_failure_versions,
+        "model_id": model_id,
+        "model_revision": model_revision,
+        "prompt_version": prompt_version,
+        "schema_version": "semantic-advice.v1",
+        "sampling_configuration": {"temperature": 0},
+        "created_at": created_at,
+        "finished_at": finished_at,
+        "validation_result": validation_result.value,
+    }
 
 
 def _object(value: object, label: str) -> Mapping[str, Any]:
