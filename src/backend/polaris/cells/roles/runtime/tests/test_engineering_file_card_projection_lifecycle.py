@@ -30,21 +30,34 @@ def test_first_three_activities_keep_continuity() -> None:
 def test_inactive_card_folds_after_three_activities() -> None:
     folded = fold_file_card_previews(
         [
+            {"role": "assistant", "content": "step-1"},
             _message("a.py", "a"),
+            {"role": "assistant", "content": "step-2"},
             _message("b.py", "b"),
+            {"role": "assistant", "content": "step-3"},
             _message("c.py", "c"),
+            {"role": "assistant", "content": "step-4"},
             _message("d.py", "d"),
         ]
     )
-    first = json.loads(folded[0]["content"])["file_card"]
+    first = next(message for message in folded if message["role"] == "tool")
+    first = json.loads(first["content"])["file_card"]
     assert first["fold_state"] == "FOLDED" and first["content_preview"] == ""
     assert first["last_fold_activity_seq"] == 0
 
 
 def test_inactive_threshold_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "1")
-    folded = fold_file_card_previews([_message("a.py", "a"), _message("b.py", "b")])
-    assert json.loads(folded[0]["content"])["file_card"]["fold_state"] == "FOLDED"
+    folded = fold_file_card_previews(
+        [
+            {"role": "assistant", "content": "step-1"},
+            _message("a.py", "a"),
+            {"role": "assistant", "content": "step-2"},
+            _message("b.py", "b"),
+        ]
+    )
+    first = next(message for message in folded if message["role"] == "tool")
+    assert json.loads(first["content"])["file_card"]["fold_state"] == "FOLDED"
 
 
 def test_folded_card_does_not_fold_again() -> None:
