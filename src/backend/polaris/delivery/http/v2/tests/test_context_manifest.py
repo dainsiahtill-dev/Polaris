@@ -3,6 +3,29 @@ import json
 from polaris.delivery.http.v2.context_manifest import build_projection_manifest
 
 
+def test_manifest_exposes_context_health_metrics() -> None:
+    run = {
+        "session_id": "run",
+        "workspace": "/ws",
+        "workspace_revision": 3,
+        "verification": "not_run",
+        "instruction": "goal",
+    }
+    events = [
+        {
+            "seq": 1,
+            "kind": "tool_observed",
+            "role": "director",
+            "payload": {"tool": "read_command_result", "ok": True, "content": "x"},
+        }
+    ]
+    manifest = build_projection_manifest(run, events, {"messages": []})
+    health = manifest["summary"]["context_health"]
+    assert health["evidence_recoveries"] == 1
+    assert health["memory_card_count"] >= 0
+    assert health["fold_rate"] is not None
+
+
 def test_manifest_tracks_fold_provenance_and_run_card_hierarchy() -> None:
     run = {"session_id": "run", "workspace": "/ws", "workspace_revision": 7, "verification": "passed"}
     events = [

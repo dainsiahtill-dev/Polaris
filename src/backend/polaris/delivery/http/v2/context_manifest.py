@@ -363,6 +363,21 @@ def build_projection_manifest(
 
     fold_counts = Counter(node["fold_state"] for node in nodes)
     kind_counts = Counter(node["kind"] for node in nodes)
+    evidence_recoveries = 0
+    for event in events:
+        payload = event["payload"]
+        if payload.get("tool") == "read_command_result":
+            evidence_recoveries += 1
+        elif payload.get("tool") == "read_file" and payload.get("ok") is True:
+            try:
+                body = json.loads(str(payload.get("content") or "{}"))
+            except json.JSONDecodeError:
+                body = None
+            card = body.get("file_card") if isinstance(body, dict) else None
+            if isinstance(card, dict) and card.get("recovered_from"):
+                evidence_recoveries += 1
+    total_nodes = len(nodes)
+    unknown_nodes = sum(1 for node in nodes if node["fold_state"] == "UNKNOWN")
     from polaris.cells.roles.runtime.internal.engineering_memory_cards import build_memory_cards
 
     memory_cards = build_memory_cards(run, events)
@@ -385,6 +400,16 @@ def build_projection_manifest(
             "fold_counts": dict(fold_counts),
             "kind_counts": dict(kind_counts),
             "run_card_count": len(cards),
+            "context_health": {
+                "fold_rate": (fold_counts.get("FOLDED", 0) / total_nodes) if total_nodes else None,
+                "unknown_ratio": (unknown_nodes / total_nodes) if total_nodes else None,
+                "evidence_recoveries": evidence_recoveries,
+                "memory_card_count": len(memory_cards),
+                "epoch_card_count": sum(1 for card in memory_cards if card.get("kind") == "epoch_card"),
+                "verification_contract_count": sum(
+                    1 for card in memory_cards if card.get("kind") == "verification_contract"
+                ),
+            },
             "scope": "Token values are approximate character/4 estimates; fold provenance is derived from the same journal and current snapshot, never inferred from node color.",
         },
     }

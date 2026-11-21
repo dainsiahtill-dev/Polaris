@@ -73,6 +73,14 @@ export interface ContextProjectionManifest {
     fold_counts: Partial<Record<ContextFoldState, number>>;
     kind_counts: Partial<Record<ContextNodeKind, number>>;
     run_card_count: number;
+    context_health?: {
+      fold_rate: number | null;
+      unknown_ratio: number | null;
+      evidence_recoveries: number;
+      memory_card_count: number;
+      epoch_card_count: number;
+      verification_contract_count: number;
+    };
     scope: string;
   };
 }
