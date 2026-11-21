@@ -22,6 +22,14 @@ def _message(path: str, preview: str, **extra: object) -> dict[str, object]:
     return {"role": "tool", "content": json.dumps({"file_card": card})}
 
 
+def _envelope(path: str, preview: str) -> dict[str, object]:
+    message = _message(path, preview)
+    return {
+        "role": "tool",
+        "content": json.dumps({"call_id": "call-1", "tool": "read_file", "ok": True, "content": message["content"]}),
+    }
+
+
 def test_first_three_activities_keep_continuity() -> None:
     folded = fold_file_card_previews([_message("a.py", "a"), _message("b.py", "b"), _message("c.py", "c")])
     assert all(json.loads(message["content"])["file_card"]["fold_state"] == "ACTIVE" for message in folded)
@@ -137,6 +145,9 @@ def test_acceptance_pin_survives_inactivity() -> None:
     )
     first = next(message for message in folded if message["role"] == "tool")
     assert json.loads(first["content"])["file_card"]["fold_state"] == "ACTIVE"
+
+
+def test_folded_card_does_not_fold_again() -> None:
     folded_once = _message("a.py", "", fold_state="FOLDED", last_fold_activity_seq=1)
     folded_twice = fold_file_card_previews([folded_once, _message("b.py", "b")])
     card = json.loads(folded_twice[0]["content"])["file_card"]
@@ -147,3 +158,24 @@ def test_rehydration_grace_blocks_immediate_refold() -> None:
     recovered = _message("a.py", "source", recovered_from="filecard:old", last_rehydrated_activity_seq=1)
     folded = fold_file_card_previews([recovered, _message("b.py", "b"), _message("c.py", "c")])
     assert json.loads(folded[0]["content"])["file_card"]["fold_state"] == "ACTIVE"
+
+
+def test_nested_tool_envelope_is_folded_without_losing_wrapper() -> None:
+    large = "x" * 600
+    folded = fold_file_card_previews(
+        [
+            {"role": "assistant", "content": "step-1"},
+            _envelope("a.py", large),
+            {"role": "assistant", "content": "step-2"},
+            _envelope("a.py", large),
+            {"role": "assistant", "content": "step-3"},
+            _envelope("a.py", large),
+            {"role": "assistant", "content": "step-4"},
+            _envelope("a.py", large),
+        ]
+    )
+    first = next(message for message in folded if message["role"] == "tool")
+    envelope = json.loads(first["content"])
+    card = json.loads(envelope["content"])["file_card"]
+    assert envelope["call_id"] == "call-1"
+    assert card["fold_state"] == "FOLDED" and card["content_preview"] == ""

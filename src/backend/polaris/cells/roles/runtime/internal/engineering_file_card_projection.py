@@ -21,6 +21,26 @@ def _fold_min_bytes() -> int:
     return max(0, int(os.environ.get("KERNELONE_CONTEXTOS_FOLD_MIN_BYTES", "512")))
 
 
+def _card_payload(payload: object) -> tuple[dict[str, Any] | None, bool]:
+    """Unwrap tool envelopes whose card JSON is nested in content."""
+
+    if not isinstance(payload, dict):
+        return None, False
+    if isinstance(payload.get("file_card"), dict) or isinstance(payload.get("command_card"), dict):
+        return payload, False
+    content = payload.get("content")
+    if isinstance(content, str):
+        try:
+            nested = json.loads(content)
+        except json.JSONDecodeError:
+            return None, False
+        if isinstance(nested, dict) and (
+            isinstance(nested.get("file_card"), dict) or isinstance(nested.get("command_card"), dict)
+        ):
+            return nested, True
+    return None, False
+
+
 def _activity_indices(messages: Sequence[Mapping[str, Any]]) -> list[int]:
     """Map messages to completed logical activities, not transport retries."""
 
@@ -63,7 +83,8 @@ def fold_file_card_previews(
             payload = json.loads(str(message.get("content") or "{}"))
         except json.JSONDecodeError:
             continue
-        card = payload.get("file_card") if isinstance(payload, dict) else None
+        card_payload, _nested = _card_payload(payload)
+        card = card_payload.get("file_card") if card_payload is not None else None
         if isinstance(card, dict) and isinstance(card.get("path"), str):
             latest[card["path"]] = index
     targets = _write_targets(messages)
@@ -85,7 +106,8 @@ def fold_file_card_previews(
                 payload = json.loads(str(projected_message.get("content") or "{}"))
             except json.JSONDecodeError:
                 payload = None
-            command_card = payload.get("command_card") if isinstance(payload, dict) else None
+            card_payload, nested = _card_payload(payload)
+            command_card = card_payload.get("command_card") if card_payload is not None else None
             if isinstance(command_card, dict):
                 if command_card.get("exit_code") != 0:
                     command_card["pin_reason"] = "unresolved_failure"
@@ -106,10 +128,12 @@ def fold_file_card_previews(
                     command_card["last_fold_activity_seq"] = index
                 else:
                     command_card["fold_state"] = "ACTIVE"
+                if nested and isinstance(payload, dict):
+                    payload["content"] = json.dumps(card_payload, ensure_ascii=False)
                 projected_message["content"] = json.dumps(payload, ensure_ascii=False)
                 folded.append(projected_message)
                 continue
-            card = payload.get("file_card") if isinstance(payload, dict) else None
+            card = card_payload.get("file_card") if card_payload is not None else None
             if isinstance(card, dict) and isinstance(card.get("path"), str):
                 path = card["path"]
                 pin_reason = (
@@ -150,6 +174,8 @@ def fold_file_card_previews(
                     card["last_fold_activity_seq"] = activity_indices[index]
                 else:
                     card["fold_state"] = "ACTIVE"
+                if nested and isinstance(payload, dict):
+                    payload["content"] = json.dumps(card_payload, ensure_ascii=False)
                 projected_message["content"] = json.dumps(payload, ensure_ascii=False)
         folded.append(projected_message)
     return folded
