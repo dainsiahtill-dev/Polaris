@@ -90,7 +90,9 @@ def folded_card_projections(messages: Sequence[Mapping[str, Any]]) -> list[dict[
     """Describe folded snapshots for realtime UI events and idempotent provenance."""
 
     projections: list[dict[str, Any]] = []
-    for message in messages:
+    activity_indices = _activity_indices(messages)
+    current_activity = activity_indices[-1] if activity_indices else 0
+    for index, message in enumerate(messages):
         if message.get("role") != "tool":
             continue
         try:
@@ -119,6 +121,7 @@ def folded_card_projections(messages: Sequence[Mapping[str, Any]]) -> list[dict[
                     else "INACTIVE_PAYLOAD",
                     "fold_reason": reason,
                     "activity_seq": card.get("last_fold_activity_seq"),
+                    "activity_age": current_activity - activity_indices[index],
                     "summary": card.get("summary") or "",
                 }
             )

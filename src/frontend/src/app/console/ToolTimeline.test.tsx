@@ -52,6 +52,7 @@ describe('ToolTimeline live ordering', () => {
         projection_ref: 'filecard:abc',
         fold_state: 'FOLDED',
         fold_reason_code: 'INACTIVE_PAYLOAD',
+        activity_age: 12,
       },
     };
     render(
@@ -65,6 +66,7 @@ describe('ToolTimeline live ordering', () => {
     );
     expect(screen.getByTestId('story-fold-5')).toHaveTextContent('智能折叠已触发');
     expect(screen.getByTestId('story-fold-5')).toHaveTextContent('index.html');
+    expect(screen.getByTestId('story-fold-5')).toHaveTextContent('12 轮前');
     expect(screen.getByTestId('fold-marker')).toHaveTextContent('INACTIVE_PAYLOAD');
   });
 
