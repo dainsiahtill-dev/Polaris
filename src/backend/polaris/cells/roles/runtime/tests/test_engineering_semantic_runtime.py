@@ -58,15 +58,24 @@ async def test_semantic_runtime_assist_pins_only_relevant_cards() -> None:
 
 def test_facts_for_advice_bounds_candidates_and_failure() -> None:
     card = build_file_card(
-        "a.py", "x", revision=1, preview="x", truncated=False, start_line=1, end_line=1, snapshot_ref="filecard:a"
+        "a.py",
+        "x" * 600,
+        revision=1,
+        preview="x" * 600,
+        truncated=False,
+        start_line=1,
+        end_line=1,
+        snapshot_ref="filecard:a",
     )
     events = [
         {
             "kind": "tool_observed",
+            "seq": 1,
             "payload": {"tool": "read_file", "ok": True, "content": json.dumps({"file_card": card})},
         },
         {
             "kind": "tool_observed",
+            "seq": 2,
             "payload": {
                 "tool": "execute_command",
                 "ok": True,
@@ -75,12 +84,37 @@ def test_facts_for_advice_bounds_candidates_and_failure() -> None:
         },
         {
             "kind": "tool_observed",
+            "seq": 3,
             "payload": {"tool": "execute_command", "ok": False, "call_id": "failure_1", "content": "assertion failed"},
         },
     ]
+    events.extend({"kind": "turn_started", "seq": index + 4, "payload": {}} for index in range(11))
     request, refs, fingerprint = facts_for_advice({"instruction": "fix", "workspace_revision": 2}, events)
     assert refs.node_ids == {"a.py"}
     assert "failure_1" in refs.evidence_refs
     assert "command:abc" in refs.evidence_refs
     assert len(fingerprint) == 64
     assert request["activity"] == "assertion failed"
+
+
+def test_facts_for_advice_does_not_trigger_before_ten_activities() -> None:
+    card = build_file_card(
+        "a.py",
+        "x" * 600,
+        revision=1,
+        preview="x" * 600,
+        truncated=False,
+        start_line=1,
+        end_line=1,
+        snapshot_ref="filecard:a",
+    )
+    events = [
+        {
+            "kind": "tool_observed",
+            "seq": 1,
+            "payload": {"tool": "read_file", "ok": True, "content": json.dumps({"file_card": card})},
+        }
+    ]
+    events.extend({"kind": "turn_started", "seq": index + 2, "payload": {}} for index in range(9))
+    _request, refs, _fingerprint = facts_for_advice({"instruction": "fix"}, events)
+    assert refs.node_ids == set()

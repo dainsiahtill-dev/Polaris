@@ -10,6 +10,7 @@ import json
 import mimetypes
 import os
 import re
+import shlex
 import subprocess
 import time
 from collections.abc import Awaitable, Callable
@@ -67,6 +68,39 @@ def bounded_output(content: str, maximum: int) -> str:
         encoded[:maximum].decode("utf-8", errors="ignore")
         + f"\n[output truncated: {len(encoded) - maximum} bytes omitted]"
     )
+
+
+def _shell_file_read(command: str) -> dict[str, Any] | None:
+    """Normalize only unambiguous read-only cat/sed forms into FileCard reads."""
+
+    try:
+        parts = shlex.split(command, posix=True)
+    except ValueError:
+        return None
+    while len(parts) >= 4 and parts[0] in {"cd", "echo"} and parts[2] in {"&&", ";"}:
+        parts = parts[3:]
+    if (
+        not parts
+        or any(token in parts for token in (">", ">>", "<", "`", "$("))
+        or any("$" in token for token in parts)
+    ):
+        return None
+    if len(parts) == 2 and parts[0] == "cat":
+        return {"file": parts[1], "_normalized_from": "execute_command"}
+    if len(parts) == 3 and parts[:2] == ["cat", "-n"]:
+        return {"file": parts[2], "_normalized_from": "execute_command"}
+    if len(parts) == 4 and parts[:2] == ["sed", "-n"]:
+        match = re.fullmatch(r"(\d+),(\d+)p", parts[2])
+        if match:
+            return {
+                "file": parts[3],
+                "start_line": int(match.group(1)),
+                "end_line": int(match.group(2)),
+                "_normalized_from": "execute_command",
+            }
+    if len(parts) == 5 and parts[0] == "cat" and parts[2] == "|" and parts[3] == "head" and parts[4].isdigit():
+        return {"file": parts[1], "end_line": int(parts[4]), "_normalized_from": "execute_command"}
+    return None
 
 
 class EngineeringTools:
@@ -179,6 +213,8 @@ class EngineeringTools:
                     else "No workspace writes are authorized. "
                 )
                 function["description"] = (
+                    "Prefer read_file with start_line/end_line for source slices and repo_rg for search; "
+                    "use execute_command for builds, tests and shell operations rather than cat/sed file reads. "
                     f"Run /bin/sh -c with initial cwd {self.workspace}. Each call starts a fresh shell and sandbox. "
                     "/tmp, HOME, cache (XDG_CACHE_HOME), and output (POLARIS_SANDBOX_OUTPUT) are private and "
                     "discarded after that call. Shell variables, cd, and files in those private directories do not "
@@ -276,6 +312,11 @@ class EngineeringTools:
             # timeout=180 in a real QA frame). Clamping to the host ceiling is
             # semantics-preserving; lower bounds and non-integers still fail.
             normalized["timeout"] = min(timeout, COMMAND_TIMEOUT_MAXIMUM)
+        if name == "execute_command" and "read_file" in self.enabled:
+            read_request = _shell_file_read(str(normalized.get("command") or ""))
+            if read_request is not None:
+                name = "read_file"
+                normalized = read_request
         if name not in self.enabled:
             raise ValueError(f"engineering tool disabled: {name}")
         return name, normalized
@@ -294,6 +335,7 @@ class EngineeringTools:
         ignored_arguments: list[str] = []
         try:
             name, args = self.normalize(tool, arguments, ignored=ignored_arguments)
+            normalized_from = args.pop("_normalized_from", None)
             if self.authorize is not None:
                 self.authorize()
             if self.cancel.is_set():
@@ -617,7 +659,22 @@ class EngineeringTools:
                             snapshot_ref=reference,
                         )
                         card["recovered_from"] = reference
-                    return self._observation(call_id, name, True, json.dumps({"file_card": card}, ensure_ascii=False))
+                    return self._observation(
+                        call_id,
+                        name,
+                        True,
+                        json.dumps(
+                            {
+                                "file_card": card,
+                                **(
+                                    {"normalization": {"from": normalized_from, "reason": "shell_file_read"}}
+                                    if normalized_from
+                                    else {}
+                                ),
+                            },
+                            ensure_ascii=False,
+                        ),
+                    )
                 target = self._path(self._text(args, "file"), write=False)
                 if not target.is_file():
                     return self._observation(
@@ -664,7 +721,22 @@ class EngineeringTools:
                     end_line=end,
                     snapshot_ref=snapshot_ref,
                 )
-                return self._observation(call_id, name, True, json.dumps({"file_card": card}, ensure_ascii=False))
+                return self._observation(
+                    call_id,
+                    name,
+                    True,
+                    json.dumps(
+                        {
+                            "file_card": card,
+                            **(
+                                {"normalization": {"from": normalized_from, "reason": "shell_file_read"}}
+                                if normalized_from
+                                else {}
+                            ),
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
             if name == "write_file":
                 self._keys(args, {"file", "content"})
                 raw_file = args.get("file")

@@ -20,6 +20,11 @@ class _Store:
         return len(self.appended)
 
 
+class _Advisor:
+    def pin_reasons(self) -> dict[str, str]:
+        return {"a.py": "semantic_card"}
+
+
 def _message(preview: str) -> dict[str, object]:
     card = build_file_card(
         "a.py",
@@ -42,7 +47,7 @@ def _message(preview: str) -> dict[str, object]:
 def test_first_fold_emits_realtime_event() -> None:
     store = _Store()
     messages: list[dict[str, Any]] = [{"role": "user", "content": "fix the project"}]
-    for index in range(4):
+    for index in range(11):
         messages.append({"role": "assistant", "content": f"step-{index}"})
         messages.append(_message("x" * 600))
     _bounded_request_messages(
@@ -53,6 +58,7 @@ def test_first_fold_emits_realtime_event() -> None:
         context_window_tokens=0,
         visual_binding=None,
         audit={},
+        semantic_runtime=_Advisor(),
     )
     folds = [event for event in store.appended if event["kind"] == "context_projection_folded"]
     assert len(folds) == 1

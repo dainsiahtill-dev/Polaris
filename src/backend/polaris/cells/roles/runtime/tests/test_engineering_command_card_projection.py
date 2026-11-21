@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from polaris.cells.roles.runtime.internal.engineering_command_cards import build_command_card
 from polaris.cells.roles.runtime.internal.engineering_file_card_projection import fold_file_card_previews
 
@@ -11,7 +12,8 @@ def _command_message(exit_code: int = 0) -> dict[str, object]:
     return {"role": "tool", "content": json.dumps({"command_card": card})}
 
 
-def test_command_card_folds_only_after_inactive_window() -> None:
+def test_command_card_folds_only_after_inactive_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "3")
     folded = fold_file_card_previews(
         [
             {"role": "assistant", "content": "step-1"},
@@ -22,7 +24,8 @@ def test_command_card_folds_only_after_inactive_window() -> None:
             _command_message(),
             {"role": "assistant", "content": "step-4"},
             _command_message(),
-        ]
+        ],
+        semantic_pins={"command:abc": "semantic_card"},
     )
     tool_messages = [message for message in folded if message["role"] == "tool"]
     first = json.loads(tool_messages[0]["content"])["command_card"]

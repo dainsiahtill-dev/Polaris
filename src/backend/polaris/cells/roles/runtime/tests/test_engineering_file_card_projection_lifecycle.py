@@ -35,7 +35,8 @@ def test_first_three_activities_keep_continuity() -> None:
     assert all(json.loads(message["content"])["file_card"]["fold_state"] == "ACTIVE" for message in folded)
 
 
-def test_inactive_card_folds_after_three_activities() -> None:
+def test_inactive_card_folds_after_configured_activities(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "3")
     folded = fold_file_card_previews(
         [
             {"role": "assistant", "content": "step-1"},
@@ -46,13 +47,11 @@ def test_inactive_card_folds_after_three_activities() -> None:
             _message("c.py", "c"),
             {"role": "assistant", "content": "step-4"},
             _message("d.py", "d"),
-        ]
+        ],
+        semantic_pins={"a.py": "semantic_card"},
     )
     first = next(message for message in folded if message["role"] == "tool")
     first = json.loads(first["content"])["file_card"]
-    print("INACTIVE_DEBUG", first["fold_state"], first.get("last_fold_activity_seq"), len(first["content_preview"]))
-    assert first["fold_state"] == "FOLDED" and first["content_preview"] == ""
-    assert first["last_fold_activity_seq"] == 0
     assert first["fold_state"] == "FOLDED" and first["content_preview"] == ""
     assert first["last_fold_activity_seq"] == 0
 
@@ -65,7 +64,8 @@ def test_inactive_threshold_is_configurable(monkeypatch: pytest.MonkeyPatch) -> 
             _message("a.py", "a" * 600),
             {"role": "assistant", "content": "step-2"},
             _message("b.py", "b"),
-        ]
+        ],
+        semantic_pins={"a.py": "semantic_card"},
     )
     first = next(message for message in folded if message["role"] == "tool")
     assert json.loads(first["content"])["file_card"]["fold_state"] == "FOLDED"
@@ -100,7 +100,8 @@ def test_large_duplicate_payload_can_fold() -> None:
             _message("a.py", large),
             {"role": "assistant", "content": "step-4"},
             _message("a.py", large),
-        ]
+        ],
+        semantic_pins={"a.py": "semantic_card"},
     )
     first = next(message for message in folded if message["role"] == "tool")
     assert json.loads(first["content"])["file_card"]["fold_state"] == "FOLDED"
@@ -172,7 +173,8 @@ def test_nested_tool_envelope_is_folded_without_losing_wrapper() -> None:
             _envelope("a.py", large),
             {"role": "assistant", "content": "step-4"},
             _envelope("a.py", large),
-        ]
+        ],
+        semantic_pins={"a.py": "semantic_card"},
     )
     first = next(message for message in folded if message["role"] == "tool")
     envelope = json.loads(first["content"])

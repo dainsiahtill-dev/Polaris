@@ -20,6 +20,7 @@ class SemanticRuntime:
         self._fingerprint = ""
         self._job: asyncio.Task[list[dict[str, Any]]] | None = None
         self.result: dict[str, Any] | None = None
+        self._pins: dict[str, str] = {}
 
     def schedule(
         self,
@@ -44,26 +45,28 @@ class SemanticRuntime:
         assert job is not None
         try:
             self.result = job.result()[0]
+            self._record_pins()
         except asyncio.CancelledError:
             return None
         return self.result
 
-    def pin_reasons(self) -> dict[str, str]:
+    def _record_pins(self) -> None:
         if self.mode != "assist" or not self.result or self.result.get("validation_result") != "VALID":
-            return {}
-        pins: dict[str, str] = {}
+            return
         for assessment in self.result["result"].get("assessments", []):
             view = assessment.get("suggested_view")
             node = assessment.get("node_id")
             if not isinstance(node, str):
                 continue
             if view in {"FULL", "SLICE"}:
-                pins[node] = "semantic_relevance"
+                self._pins[node] = "semantic_relevance"
             elif view == "CARD":
-                pins[node] = "semantic_card"
+                self._pins[node] = "semantic_card"
             elif view == "REFERENCE":
-                pins[node] = "semantic_reference"
-        return pins
+                self._pins[node] = "semantic_reference"
+
+    def pin_reasons(self) -> dict[str, str]:
+        return dict(self._pins)
 
 
 def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple[dict[str, Any], CandidateRefs, str]:
@@ -77,14 +80,69 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
     candidates: list[dict[str, Any]] = []
     node_ids: set[str] = set()
     slice_ids: set[str] = set()
-    for event in events[-12:]:
+    activity = 0
+    activity_at_seq: dict[int, int] = {}
+    for event in events:
+        if event.get("kind") == "turn_started":
+            activity += 1
+        activity_at_seq[int(event["seq"])] = activity
+    current_activity = activity
+    latest_paths: dict[str, int] = {}
+    for event in events:
+        if event["payload"].get("tool") == "read_file":
+            card = card_from_observation(str(event["payload"].get("content") or ""))
+            if card is not None and isinstance(card.get("path"), str):
+                latest_paths[card["path"]] = int(event["seq"])
+    targets = {
+        str(event["payload"].get("arguments", {}).get("file"))
+        for event in events[-12:]
+        if event["payload"].get("tool") in {"write_file", "edit_file"}
+        and event["payload"].get("arguments", {}).get("file")
+    }
+    instruction = str(run.get("instruction") or "")
+    for event in events[-80:]:
         payload = event["payload"]
+        age = current_activity - activity_at_seq.get(int(event["seq"]), current_activity)
+        if age < 10:
+            continue
+        if payload.get("tool") == "execute_command" and payload.get("ok") is True:
+            try:
+                observation = json.loads(str(payload.get("content") or "{}"))
+            except json.JSONDecodeError:
+                observation = None
+            card = observation.get("command_card") if isinstance(observation, dict) else None
+            reference = card.get("content_ref") if isinstance(card, dict) else None
+            preview = (
+                str(card.get("stdout_preview") or "") + str(card.get("stderr_preview") or "")
+                if isinstance(card, dict)
+                else ""
+            )
+            if isinstance(reference, str) and reference and len(preview.encode("utf-8")) >= 512:
+                node_ids.add(reference)
+                slice_ids.add("slice_output")
+                candidates.append(
+                    {
+                        "node_id": reference,
+                        "snapshot_id": reference,
+                        "slice_ids": ["slice_output"],
+                        "content": preview or (str(card.get("summary") or "") if isinstance(card, dict) else ""),
+                        "activity_age": age,
+                        "kind": "command_card",
+                    }
+                )
+            continue
         if payload.get("tool") != "read_file" or payload.get("ok") is not True:
             continue
         card = card_from_observation(str(payload.get("content") or ""))
         if card is None:
             continue
         path = str(card["path"])
+        preview = str(card.get("content_preview") or "")
+        if len(preview.encode("utf-8")) < 512 or path in targets or path in instruction:
+            continue
+        reference = card.get("content_ref")
+        if not isinstance(reference, str) or not reference:
+            continue
         node_ids.add(path)
         symbols = card.get("symbols") or []
         slices = [f"slice_{symbol}" for symbol in symbols] or ["slice_file"]
@@ -92,9 +150,12 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
         candidates.append(
             {
                 "node_id": path,
-                "snapshot_id": card["content_ref"],
+                "snapshot_id": reference,
                 "slice_ids": slices,
-                "content": card.get("content_preview") or card.get("summary") or "",
+                "content": preview or card.get("summary") or "",
+                "activity_age": age,
+                "duplicate": latest_paths.get(path) != int(event["seq"]),
+                "kind": "file_card",
             }
         )
     failure_refs = ["goal"]
@@ -107,7 +168,7 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
             if len(failure_refs) >= 4:
                 break
     evidence_refs = set(failure_refs)
-    for event in events[-12:]:
+    for event in events[-80:]:
         payload = event["payload"]
         if payload.get("tool") != "execute_command":
             continue
@@ -119,14 +180,14 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
         reference = card.get("content_ref") if isinstance(card, dict) else None
         if isinstance(reference, str) and reference:
             evidence_refs.add(reference)
-    activity = last_error or str(run.get("verification") or "not_run")
-    request = {"task": run.get("instruction") or "", "activity": activity, "candidates": candidates[-4:]}
+    activity_text = last_error or str(run.get("verification") or "not_run")
+    request = {"task": run.get("instruction") or "", "activity": activity_text, "candidates": candidates[-4:]}
     refs = CandidateRefs(node_ids=node_ids, slice_ids=slice_ids, evidence_refs=evidence_refs)
     fingerprint = hashlib.sha256(
         json.dumps(
             {
                 "revision": run.get("workspace_revision"),
-                "activity": activity,
+                "activity": activity_text,
                 "candidates": [item["snapshot_id"] for item in candidates[-4:]],
                 "evidence_refs": sorted(evidence_refs),
             },
