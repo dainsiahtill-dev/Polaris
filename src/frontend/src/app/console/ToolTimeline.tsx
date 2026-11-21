@@ -24,11 +24,12 @@ export type StoryKind =
   | 'visual_qa'      // visual_observation_completed
   | 'llm_call'       // llm_request_observed
   | 'fold'           // context_projection_folded
+  | 'advisor'        // semantic_advice_completed
   | 'verification';  // verification_started / completed
 
 const DISPLAY_KINDS = new Set([
   'message', 'tool_observed', 'stage_gate_enforced', 'loop_detected',
-  'visual_observation_completed', 'llm_request_observed', 'context_projection_folded',
+  'visual_observation_completed', 'llm_request_observed', 'context_projection_folded', 'semantic_advice_completed',
   'verification_started', 'verification_completed',
 ]);
 
@@ -41,6 +42,7 @@ export function storyKindOf(event: EngineeringEvent): StoryKind | null {
     case 'visual_observation_completed': return 'visual_qa';
     case 'llm_request_observed': return 'llm_call';
     case 'context_projection_folded': return 'fold';
+    case 'semantic_advice_completed': return 'advisor';
     case 'verification_started':
     case 'verification_completed': return 'verification';
     default: return null;
@@ -197,6 +199,25 @@ export function ToolTimeline({ events, selectedSeq, onSelect, onOpenContext, emp
               {text.length > 500 ? (
                 <button type="button" className="mt-1 text-xs text-[var(--cx-teal-strong)] hover:underline" onClick={() => setExpanded((p) => ({ ...p, [event.seq]: !isOpen }))}>{isOpen ? '收起' : '展开全部'}</button>
               ) : null}
+            </article>
+          );
+        }
+        if (kind === 'advisor') {
+          const result = event.payload.result && typeof event.payload.result === 'object'
+            ? event.payload.result as Record<string, unknown>
+            : {};
+          const assessments = Array.isArray(result.assessments) ? result.assessments : [];
+          const views = assessments.map((item) => {
+            const assessment = item as Record<string, unknown>;
+            return textOf(assessment.suggested_view);
+          }).filter(Boolean).join(' / ') || textOf(event.payload.validation_result) || 'UNKNOWN';
+          return (
+            <article key={event.seq} data-testid={`story-advisor-${event.seq}`} className="rounded-xl border border-[rgba(31,122,140,.28)] bg-[rgba(31,122,140,.05)] px-3 py-2">
+              <div className="flex items-center gap-2">
+                <IconGauge className="h-4 w-4 text-[#1f7a8c]" />
+                <p className="min-w-0 flex-1 truncate text-xs text-[var(--cx-ink)]">远程小模型评估 · {views}</p>
+                <span className="text-[0.65rem] text-[var(--cx-ink-faint)]">{textOf(event.payload.validation_result)}</span>
+              </div>
             </article>
           );
         }

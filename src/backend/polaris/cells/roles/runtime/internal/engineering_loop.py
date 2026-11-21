@@ -623,7 +623,7 @@ async def run_engineering_loop(
     )
 
     semantic_runtime = semantic_runtime_from_environment()
-    semantic_reported = False
+    semantic_reported: set[str] = set()
     tools = EngineeringTools(
         command.workspace,
         scope,
@@ -817,14 +817,15 @@ async def run_engineering_loop(
             run_now = store.load_run(command.session_id, workspace=command.workspace)
             if semantic_runtime is not None:
                 advice = semantic_runtime.poll()
-                if advice is not None and not semantic_reported:
+                advice_fingerprint = str(advice.get("fingerprint") or "") if advice is not None else ""
+                if advice is not None and advice_fingerprint not in semantic_reported:
                     store.append_event(
                         command.session_id,
                         kind="semantic_advice_completed",
                         role=command.role,
                         payload=advice,
                     )
-                    semantic_reported = True
+                    semantic_reported.add(advice_fingerprint)
                 advice_request, advice_refs, advice_fingerprint = facts_for_advice(
                     run_now, store.load_events(command.session_id)
                 )

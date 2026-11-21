@@ -68,6 +68,30 @@ describe('ToolTimeline live ordering', () => {
     expect(screen.getByTestId('fold-marker')).toHaveTextContent('INACTIVE_PAYLOAD');
   });
 
+  it('shows remote advisor evaluations in the live timeline', () => {
+    const advice: EngineeringEvent = {
+      session_id: 'run',
+      workspace: '/ws',
+      seq: 6,
+      role: 'director',
+      kind: 'semantic_advice_completed',
+      payload: {
+        validation_result: 'VALID',
+        result: { assessments: [{ suggested_view: 'CARD' }] },
+      },
+    };
+    render(
+      <ToolTimeline
+        events={[advice]}
+        selectedSeq={null}
+        onSelect={vi.fn()}
+        onOpenContext={vi.fn()}
+        emptyHint="empty"
+      />,
+    );
+    expect(screen.getByTestId('story-advisor-6')).toHaveTextContent('远程小模型评估 · CARD');
+  });
+
   it('shows the newest event first so users do not need to scroll to the bottom', () => {
     render(
       <ToolTimeline

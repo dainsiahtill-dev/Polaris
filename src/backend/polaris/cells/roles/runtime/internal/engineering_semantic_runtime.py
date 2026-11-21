@@ -74,6 +74,7 @@ class SemanticRuntime:
         assert job is not None
         try:
             self.result = job.result()[0]
+            self.result["fingerprint"] = self._fingerprint
             self._record_pins()
         except asyncio.CancelledError:
             return None
