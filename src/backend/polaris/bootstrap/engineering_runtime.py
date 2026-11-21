@@ -53,6 +53,7 @@ def resolve_engineering_profile(settings: Settings, workspace: Path, profile_id:
         raise PermissionError(f"engineering permission profile is unavailable: {profile_id}")
     supported = {
         "read_file",
+        "read_command_result",
         "repo_tree",
         "repo_rg",
         "write_file",

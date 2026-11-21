@@ -86,7 +86,14 @@ def build_command_card(
         "command": command,
         "exit_code": exit_code,
         "ok": exit_code == 0,
-        "summary": _error_excerpt(stdout, stderr) or ("completed" if exit_code == 0 else "command failed"),
+        "summary": _error_excerpt(stdout, stderr)
+        or (
+            (stderr or stdout).strip()[-500:]
+            if exit_code != 0 and (stderr or stdout).strip()
+            else "completed"
+            if exit_code == 0
+            else "command failed"
+        ),
         "content_ref": snapshot_ref,
         "recoverable": snapshot_ref is not None,
         "stdout_preview": stdout[:_PREVIEW_BYTES],

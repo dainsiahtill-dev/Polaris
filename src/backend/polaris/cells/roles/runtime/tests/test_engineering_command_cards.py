@@ -5,6 +5,7 @@ import json
 import time
 from pathlib import Path
 
+from polaris.cells.roles.runtime.internal.engineering_command_cards import build_command_card
 from polaris.cells.roles.runtime.internal.engineering_tools import EngineeringTools
 from polaris.cells.roles.runtime.public.contracts.engineering_run import PermissionScope, RunLimits
 from polaris.cells.roles.runtime.tests.engineering_support import isolated_workspace as isolated_workspace
@@ -29,6 +30,11 @@ def test_execute_command_returns_bounded_card_and_exact_recovery(isolated_worksp
     full = json.loads(recovered.content)["command_result"]
     assert "displayWidth mismatch" in full["stdout"]
     assert len(full["stdout"]) > 8000
+
+
+def test_failed_command_summary_preserves_output_excerpt() -> None:
+    card = build_command_card("run browser", "", "browser launch missing", 1, "command:abc")
+    assert card["summary"] == "browser launch missing"
 
 
 def test_manifest_recognizes_command_card(isolated_workspace: Path) -> None:
