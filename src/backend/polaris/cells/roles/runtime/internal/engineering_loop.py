@@ -1471,9 +1471,17 @@ async def run_engineering_loop(
                                 post_pass_write_cycles += 1
                             verification_passed = False
                             candidate_verification_passed = False
-                        if output_capture is not None:
+                        if output_capture is not None and observation.artifacts:
                             run = store.load_run(command.session_id, workspace=command.workspace)
-                            binding = artifact_binding() if artifact_binding is not None else {}
+                            binding = {}
+                            if observation.artifacts and artifact_binding is not None:
+                                try:
+                                    binding = artifact_binding()
+                                except (ValueError, OSError):
+                                    # The ordinary command observation remains
+                                    # valid even if its optional stable capture
+                                    # binding cannot be established.
+                                    binding = {}
                             digest = inputs_digest(binding) if binding else None
                             stable = bool(observation.artifacts) and all(
                                 item.source_digest == digest for item in observation.artifacts
@@ -1483,9 +1491,9 @@ async def run_engineering_loop(
                                 turn_seq=turn_seq,
                                 observation=observation,
                                 role=command.role,
-                                capture_completion={"input_binding": binding if stable else None},
                                 advance_workspace_revision=advances_revision,
                                 expected_workspace_revision=int(run["workspace_revision"]),
+                                **({"capture_completion": {"input_binding": binding}} if stable and binding else {}),
                             )
                         else:
                             store.record_tool_observation(

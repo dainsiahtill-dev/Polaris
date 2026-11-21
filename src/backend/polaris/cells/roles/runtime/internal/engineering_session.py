@@ -1280,7 +1280,11 @@ class EngineeringSessionStore:
                     ToolSpecRegistry.capture_effective_spec(original["tool"]), json.loads(original["arguments"])
                 )
             )
-            if set(arguments) != {"file", "content"} or arguments["content"] != readback.content:
+            from polaris.cells.roles.runtime.internal.engineering_file_cards import card_from_observation
+
+            readback_card = card_from_observation(readback.content)
+            actual = str(readback_card.get("content_preview") or "") if readback_card is not None else readback.content
+            if set(arguments) != {"file", "content"} or arguments["content"] != actual:
                 raise ValueError("write reconciliation requires exact requested current content")
             if (
                 original is None

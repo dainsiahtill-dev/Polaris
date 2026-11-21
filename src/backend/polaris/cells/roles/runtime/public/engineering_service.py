@@ -1667,7 +1667,11 @@ class EngineeringRunService:
                 )
                 observed = await tools.execute(call_id, "read_file", read_arguments)
                 self.store.record_tool_observation(session_id, turn_seq=turn, observation=observed, role=role)
-                if observed.ok and not observed.interrupted and observed.content == expected:
+                from polaris.cells.roles.runtime.internal.engineering_file_cards import card_from_observation
+
+                card = card_from_observation(observed.content)
+                actual = str(card.get("content_preview") or "") if card is not None else observed.content
+                if observed.ok and not observed.interrupted and actual == expected:
                     self.store.record_write_reconciliation(
                         session_id,
                         turn_seq=pending["turn_seq"],

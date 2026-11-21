@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import inspect
 import json
 import mimetypes
 import os
@@ -396,9 +397,7 @@ class EngineeringTools:
                 names = requested_artifacts(args["artifacts"]) if "artifacts" in args else ()
                 if names and (output_capture is None or self.artifact_binding is None):
                     raise ValueError("artifact capture requires the active host output binding")
-                before = (
-                    self.artifact_binding() if output_capture is not None and self.artifact_binding is not None else {}
-                )
+                before = self.artifact_binding() if names and self.artifact_binding is not None else {}
                 command = self._text(args, "command")
                 timeout = self._integer(
                     args,
@@ -407,12 +406,20 @@ class EngineeringTools:
                     minimum=COMMAND_TIMEOUT_MINIMUM,
                     maximum=COMMAND_TIMEOUT_MAXIMUM,
                 )
+                process_parameters = inspect.signature(self._process).parameters
+                supports_capture = "capture_output_root" in process_parameters or any(
+                    parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in process_parameters.values()
+                )
                 completed = await self._process(
                     (execution_policy or resolve_execution_policy(None)).argv(command),
                     timeout=timeout,
                     writes=self.scope.write_roots,
                     command_cache_write=True,
-                    **({"capture_output_root": output_capture.root} if output_capture is not None else {}),
+                    **(
+                        {"capture_output_root": output_capture.root}
+                        if output_capture is not None and supports_capture
+                        else {}
+                    ),
                 )
                 content = f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
                 observation = self._observation(call_id, name, completed.returncode == 0, content, completed.returncode)
@@ -442,7 +449,13 @@ class EngineeringTools:
                             in {"image/svg+xml", "text/html", "image/png", "image/jpeg"}
                         )
                     try:
-                        artifacts = capture_artifacts(output_capture, capture_names, before, self.artifact_binding())
+                        try:
+                            after = self.artifact_binding()
+                        except (ValueError, OSError):
+                            if names:
+                                raise
+                            after = {}
+                        artifacts = capture_artifacts(output_capture, capture_names, before, after)
                         observation = replace(observation, artifacts=artifacts)
                     except (ValueError, OSError, PathSecurityError, GuardedRegularFileSnapshotError) as error:
                         observation = replace(
@@ -701,6 +714,10 @@ class EngineeringTools:
         # Only ordinary execute_command uses the explicit host cache grant.
         cache_mode = self.scope.command_cache if command_cache_write else "disabled"
         self.run_output_root.mkdir(parents=True, exist_ok=True)
+        parameters = inspect.signature(self._process).parameters
+        var_keyword = any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values())
+        run_output = self.run_output_root if "run_output_root" in parameters or var_keyword else None
+        capture_root = capture_output_root if "capture_output_root" in parameters or var_keyword else None
         # Validate the ordinary command's containment before allocating any
         # persistent resource. Unsupported platforms or invalid source grants
         # must leave even an explicitly granted cache absent.
@@ -713,8 +730,8 @@ class EngineeringTools:
             network_allowed=self.scope.network_allowed,
             toolchain_bin_dirs=self.scope.toolchain_bin_dirs,
             toolchain_env=dict(self.scope.toolchain_env),
-            capture_output_root=capture_output_root,
-            run_output_root=self.run_output_root,
+            capture_output_root=capture_root,
+            run_output_root=run_output,
         )
         command_cache = resolve_command_cache(
             self.workspace, cache_mode, create=command_cache_write and cache_mode == "read_write"
@@ -730,8 +747,8 @@ class EngineeringTools:
                 toolchain_bin_dirs=self.scope.toolchain_bin_dirs,
                 toolchain_env=dict(self.scope.toolchain_env),
                 command_cache=command_cache,
-                capture_output_root=capture_output_root,
-                run_output_root=self.run_output_root,
+                capture_output_root=capture_root,
+                run_output_root=run_output,
             )
         control = ProcessTreeRunControl()
         worker = asyncio.create_task(

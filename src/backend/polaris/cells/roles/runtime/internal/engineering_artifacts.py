@@ -55,8 +55,8 @@ def capture_artifacts(
     capture: CommandOutputCapture, names: tuple[str, ...], before: Mapping[str, Any], after: Mapping[str, Any]
 ) -> tuple[ArtifactObservation, ...]:
     """Read only after the command's physical owner has proved drain."""
-    original = inputs_digest(before)
-    source = original if original == inputs_digest(after) else None
+    original = inputs_digest(before) if before else inputs_digest(after) if after else None
+    source = original if original is not None and original == inputs_digest(after) else None
     return tuple(
         ArtifactObservation(
             artifact_ref="artifact_" + uuid4().hex,
