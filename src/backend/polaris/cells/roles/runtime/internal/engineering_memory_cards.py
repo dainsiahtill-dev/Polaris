@@ -29,12 +29,38 @@ def _id(kind: str, value: str) -> str:
     return f"{kind}:{hashlib.sha256(value.encode('utf-8')).hexdigest()[:20]}"
 
 
+def _failure_text(content: object) -> str:
+    """Unwrap a CommandCard JSON check body before scanning for failures."""
+
+    if not isinstance(content, str) or not content.strip():
+        return ""
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError:
+        return content
+    if not isinstance(payload, dict):
+        return content
+    command = payload.get("command_card")
+    if not isinstance(command, dict):
+        return content
+    return "\n".join(str(command.get(key) or "") for key in ("stdout_preview", "stderr_preview", "summary"))
+
+
+_FAILURE_MARK = re.compile(
+    r"(?:\bfail(?:ed|ure)?\b|\berror\b|\bexception\b|\btraceback\b|\bassert(?:ion)?\b|\[FAIL\]|✗)",
+    re.IGNORECASE,
+)
+
+
 def _failure_signatures(text: str) -> list[str]:
     signatures: list[str] = []
     for line in text.splitlines():
-        if "[FAIL]" not in line and "✗" not in line and "ReferenceError" not in line and "Error:" not in line:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("[PASS]"):
             continue
-        normalized = re.sub(r"\s+", " ", line.strip())
+        if not _FAILURE_MARK.search(stripped):
+            continue
+        normalized = re.sub(r"\s+", " ", stripped)
         normalized = normalized.split("——", 1)[0].split(" | ", 1)[0]
         if normalized:
             signatures.append(normalized[:240])
@@ -46,8 +72,7 @@ def build_failure_cluster_cards(events: Sequence[Mapping[str, Any]]) -> list[dic
     for event in events:
         if event["kind"] == "verification_completed":
             for check in event["payload"].get("checks", []):
-                text = str(check.get("content") or "")
-                for signature in _failure_signatures(text):
+                for signature in _failure_signatures(_failure_text(check.get("content"))):
                     card = clusters.setdefault(
                         signature,
                         {
@@ -69,7 +94,10 @@ def build_failure_cluster_cards(events: Sequence[Mapping[str, Any]]) -> list[dic
         if event["payload"].get("ok") is False:
             command = _command_card(event)
             if command is not None:
-                signature = str(command.get("summary") or "command failed")[:240]
+                raw_summary = str(command.get("summary") or "").strip()
+                signature = (raw_summary if raw_summary and _FAILURE_MARK.search(raw_summary) else "command failed")[
+                    :240
+                ]
                 card = clusters.setdefault(
                     signature,
                     {
@@ -88,12 +116,16 @@ def build_failure_cluster_cards(events: Sequence[Mapping[str, Any]]) -> list[dic
                 reference = command.get("content_ref")
                 if isinstance(reference, str) and reference not in card["evidence_refs"]:
                     card["evidence_refs"].append(reference)
-    if any(
-        event["kind"] == "verification_completed" and event["payload"].get("verification") == "passed"
-        for event in events
-    ):
-        for card in clusters.values():
-            card["unresolved"] = False
+    last_passed_seq = max(
+        (
+            event["seq"]
+            for event in events
+            if event["kind"] == "verification_completed" and event["payload"].get("verification") == "passed"
+        ),
+        default=None,
+    )
+    for card in clusters.values():
+        card["unresolved"] = last_passed_seq is None or card["last_seq"] >= last_passed_seq
     for card in clusters.values():
         card["summary"] = f"{card['count']} 次 · {'未解决' if card['unresolved'] else '后续验证已通过'}"
         card["evidence_refs"] = card["evidence_refs"][-12:]

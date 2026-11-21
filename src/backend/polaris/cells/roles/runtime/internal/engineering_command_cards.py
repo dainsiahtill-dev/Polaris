@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -15,14 +16,19 @@ from polaris.kernelone.fs import (
 
 _MAX_OUTPUT_BYTES = 16 * 1024 * 1024
 _PREVIEW_BYTES = 4000
-_ERROR_TOKENS = ("error", "fail", "exception", "traceback", "assert", "denied", "cannot", "not found")
+_ERROR_PATTERN = re.compile(
+    r"(?:\bfail(?:ed|ure)?\b|\berror\b|\bexception\b|\btraceback\b|\bassert(?:ion)?\b|\bdenied\b|\bcannot\b|\bnot found\b|\[FAIL\]|✗)",
+    re.IGNORECASE,
+)
 
 
 def _error_excerpt(stdout: str, stderr: str) -> str:
     for line in (stderr or stdout).splitlines():
-        lowered = line.lower()
-        if any(token in lowered for token in _ERROR_TOKENS):
-            return line.strip()[:500]
+        stripped = line.strip()
+        if not stripped or stripped.startswith("[PASS]"):
+            continue
+        if _ERROR_PATTERN.search(stripped):
+            return stripped[:500]
     return ""
 
 
