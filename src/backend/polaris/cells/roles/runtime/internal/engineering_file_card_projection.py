@@ -25,7 +25,9 @@ def _write_targets(messages: Sequence[Mapping[str, Any]]) -> set[str]:
     return targets
 
 
-def fold_file_card_previews(messages: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def fold_file_card_previews(
+    messages: Sequence[Mapping[str, Any]], *, semantic_pins: Mapping[str, str] | None = None
+) -> list[dict[str, Any]]:
     """Fold duplicate/non-focused FileCards without changing durable observations."""
 
     latest: dict[str, int] = {}
@@ -60,11 +62,19 @@ def fold_file_card_previews(messages: Sequence[Mapping[str, Any]]) -> list[dict[
             if isinstance(card, dict) and isinstance(card.get("path"), str):
                 path = card["path"]
                 pin_reason = (
-                    "current_edit" if path in targets else "acceptance_clause" if path in instruction_text else None
+                    "current_edit"
+                    if path in targets
+                    else "acceptance_clause"
+                    if path in instruction_text
+                    else (semantic_pins or {}).get(path)
                 )
                 if pin_reason:
                     card["pin_reason"] = pin_reason
-                if latest[path] != index and not pin_reason:
+                if latest[path] != index and pin_reason not in {
+                    "current_edit",
+                    "acceptance_clause",
+                    "semantic_relevance",
+                }:
                     card["content_preview"] = ""
                     card["content_bounds"] = {**card.get("content_bounds", {}), "truncated": True}
                     card["fold_state"] = "FOLDED"

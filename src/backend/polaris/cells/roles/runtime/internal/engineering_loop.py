@@ -282,6 +282,7 @@ def _bounded_request_messages(
     context_window_tokens: int,
     visual_binding: Callable[[], dict[str, Any]] | None,
     audit: dict[str, Any],
+    semantic_runtime: Any = None,
 ) -> list[dict[str, Any]]:
     """Build the request messages inside the model's context window.
 
@@ -292,7 +293,10 @@ def _bounded_request_messages(
     """
     from polaris.cells.roles.runtime.internal.engineering_file_card_projection import fold_file_card_previews
 
-    messages = fold_file_card_previews(messages)
+    messages = fold_file_card_previews(
+        messages,
+        semantic_pins=semantic_runtime.pin_reasons() if semantic_runtime is not None else None,
+    )
     events = store.load_events(
         command.session_id,
         kinds=(
@@ -598,6 +602,13 @@ async def run_engineering_loop(
                 return card
         raise ValueError(f"unknown file_card reference: {reference}")
 
+    from polaris.cells.roles.runtime.internal.engineering_semantic_runtime import (
+        facts_for_advice,
+        semantic_runtime_from_environment,
+    )
+
+    semantic_runtime = semantic_runtime_from_environment()
+    semantic_reported = False
     tools = EngineeringTools(
         command.workspace,
         scope,
@@ -789,6 +800,21 @@ async def run_engineering_loop(
                         "the candidate keeps its current verdict (unknown).",
                     )
             run_now = store.load_run(command.session_id, workspace=command.workspace)
+            if semantic_runtime is not None:
+                advice = semantic_runtime.poll()
+                if advice is not None and not semantic_reported:
+                    store.append_event(
+                        command.session_id,
+                        kind="semantic_advice_completed",
+                        role=command.role,
+                        payload=advice,
+                    )
+                    semantic_reported = True
+                advice_request, advice_refs, advice_fingerprint = facts_for_advice(
+                    run_now, store.load_events(command.session_id)
+                )
+                if advice_refs.node_ids:
+                    semantic_runtime.schedule(advice_request, advice_refs, fingerprint=advice_fingerprint)
             first_verification_due = False
             if (
                 command.role == "director"
@@ -809,6 +835,7 @@ async def run_engineering_loop(
                 context_window_tokens=context_window_tokens,
                 visual_binding=visual_binding if scope.browser is not None else None,
                 audit=visual_projection,
+                semantic_runtime=semantic_runtime,
             )
             options: dict[str, Any] = {
                 "messages": request_messages,
