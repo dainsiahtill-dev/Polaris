@@ -17,6 +17,10 @@ def _rehydration_grace_activities() -> int:
     return max(0, int(os.environ.get("KERNELONE_CONTEXTOS_REHYDRATION_GRACE_ACTIVITIES", "2")))
 
 
+def _fold_min_bytes() -> int:
+    return max(0, int(os.environ.get("KERNELONE_CONTEXTOS_FOLD_MIN_BYTES", "512")))
+
+
 def _activity_indices(messages: Sequence[Mapping[str, Any]]) -> list[int]:
     """Map messages to completed logical activities, not transport retries."""
 
@@ -86,7 +90,15 @@ def fold_file_card_previews(
                 if command_card.get("exit_code") != 0:
                     command_card["pin_reason"] = "unresolved_failure"
                 activity_age = current_activity - activity_indices[index]
-                if activity_age >= _inactive_fold_activities() and not command_card.get("pin_reason"):
+                if (
+                    activity_age >= _inactive_fold_activities()
+                    and not command_card.get("pin_reason")
+                    and (
+                        len(str(command_card.get("stdout_preview") or "").encode("utf-8"))
+                        + len(str(command_card.get("stderr_preview") or "").encode("utf-8"))
+                        >= _fold_min_bytes()
+                    )
+                ):
                     command_card["stdout_preview"] = ""
                     command_card["stderr_preview"] = ""
                     command_card["fold_state"] = "FOLDED"
@@ -113,7 +125,10 @@ def fold_file_card_previews(
                 already_folded = card.get("fold_state") == "FOLDED"
                 rehydrated = card.get("recovered_from") is not None
                 duplicate = latest[path] != index
-                if (
+                small_payload = len(str(card.get("content_preview") or "").encode("utf-8")) < _fold_min_bytes()
+                if small_payload:
+                    card["fold_state"] = "ACTIVE"
+                elif (
                     duplicate
                     and not already_folded
                     and pin_reason not in {"current_edit", "acceptance_clause", "semantic_relevance"}
@@ -127,7 +142,7 @@ def fold_file_card_previews(
                     activity_age < _inactive_fold_activities() and not already_folded
                 ):
                     card["fold_state"] = "ACTIVE"
-                elif not already_folded:
+                elif not already_folded and not small_payload:
                     card["content_preview"] = ""
                     card["content_bounds"] = {**card.get("content_bounds", {}), "truncated": True}
                     card["fold_state"] = "FOLDED"

@@ -31,7 +31,7 @@ def test_inactive_card_folds_after_three_activities() -> None:
     folded = fold_file_card_previews(
         [
             {"role": "assistant", "content": "step-1"},
-            _message("a.py", "a"),
+            _message("a.py", "a" * 600),
             {"role": "assistant", "content": "step-2"},
             _message("b.py", "b"),
             {"role": "assistant", "content": "step-3"},
@@ -42,6 +42,9 @@ def test_inactive_card_folds_after_three_activities() -> None:
     )
     first = next(message for message in folded if message["role"] == "tool")
     first = json.loads(first["content"])["file_card"]
+    print("INACTIVE_DEBUG", first["fold_state"], first.get("last_fold_activity_seq"), len(first["content_preview"]))
+    assert first["fold_state"] == "FOLDED" and first["content_preview"] == ""
+    assert first["last_fold_activity_seq"] == 0
     assert first["fold_state"] == "FOLDED" and first["content_preview"] == ""
     assert first["last_fold_activity_seq"] == 0
 
@@ -51,9 +54,44 @@ def test_inactive_threshold_is_configurable(monkeypatch: pytest.MonkeyPatch) -> 
     folded = fold_file_card_previews(
         [
             {"role": "assistant", "content": "step-1"},
-            _message("a.py", "a"),
+            _message("a.py", "a" * 600),
             {"role": "assistant", "content": "step-2"},
             _message("b.py", "b"),
+        ]
+    )
+    first = next(message for message in folded if message["role"] == "tool")
+    assert json.loads(first["content"])["file_card"]["fold_state"] == "FOLDED"
+
+
+def test_small_duplicate_payload_is_not_folded() -> None:
+    folded = fold_file_card_previews(
+        [
+            {"role": "assistant", "content": "step-1"},
+            _message("a.py", "a"),
+            {"role": "assistant", "content": "step-2"},
+            _message("a.py", "a"),
+            {"role": "assistant", "content": "step-3"},
+            _message("a.py", "a"),
+            {"role": "assistant", "content": "step-4"},
+            _message("a.py", "a"),
+        ]
+    )
+    first = next(message for message in folded if message["role"] == "tool")
+    assert json.loads(first["content"])["file_card"]["fold_state"] == "ACTIVE"
+
+
+def test_large_duplicate_payload_can_fold() -> None:
+    large = "x" * 600
+    folded = fold_file_card_previews(
+        [
+            {"role": "assistant", "content": "step-1"},
+            _message("a.py", large),
+            {"role": "assistant", "content": "step-2"},
+            _message("a.py", large),
+            {"role": "assistant", "content": "step-3"},
+            _message("a.py", large),
+            {"role": "assistant", "content": "step-4"},
+            _message("a.py", large),
         ]
     )
     first = next(message for message in folded if message["role"] == "tool")

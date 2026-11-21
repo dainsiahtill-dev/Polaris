@@ -7,7 +7,7 @@ from polaris.cells.roles.runtime.internal.engineering_file_card_projection impor
 
 
 def _command_message(exit_code: int = 0) -> dict[str, object]:
-    card = build_command_card("make test", "build log", "", exit_code, "command:abc")
+    card = build_command_card("make test", "x" * 600, "", exit_code, "command:abc")
     return {"role": "tool", "content": json.dumps({"command_card": card})}
 
 
@@ -28,7 +28,7 @@ def test_command_card_folds_only_after_inactive_window() -> None:
     first = json.loads(tool_messages[0]["content"])["command_card"]
     last = json.loads(tool_messages[-1]["content"])["command_card"]
     assert first["fold_state"] == "FOLDED" and first["stdout_preview"] == ""
-    assert last["fold_state"] == "ACTIVE" and last["stdout_preview"] == "build log"
+    assert last["fold_state"] == "ACTIVE" and last["stdout_preview"] == "x" * 600
 
 
 def test_failed_command_preview_is_pinned() -> None:
@@ -37,4 +37,4 @@ def test_failed_command_preview_is_pinned() -> None:
     )
     first = json.loads(folded[0]["content"])["command_card"]
     assert first["fold_state"] == "ACTIVE" and first["pin_reason"] == "unresolved_failure"
-    assert first["stdout_preview"] == "build log"
+    assert first["stdout_preview"] == "x" * 600
