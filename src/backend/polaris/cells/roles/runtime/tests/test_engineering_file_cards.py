@@ -34,6 +34,33 @@ def test_read_file_returns_bounded_file_card(isolated_workspace: Path) -> None:
     assert card["content_bounds"]["truncated"] is True
 
 
+def test_content_ref_recovers_exact_snapshot_beyond_preview(isolated_workspace: Path) -> None:
+    source = "def alpha():\n    return 1\n" + ("# padding\n" * 2000)
+    (isolated_workspace / "a.py").write_text(source, encoding="utf-8")
+    tools = EngineeringTools(
+        isolated_workspace,
+        PermissionScope((isolated_workspace,), (), frozenset({"read_file"}), False),
+        RunLimits(time.time() + 15, 1_000_000, 64_000),
+        asyncio.Event(),
+    )
+    first = asyncio.run(tools.execute("read-1", "read_file", {"file": "a.py"}))
+    card = json.loads(first.content)["file_card"]
+    tools.file_card_resolver = lambda _ref: card
+    recovered = asyncio.run(
+        tools.execute(
+            "read-2",
+            "read_file",
+            {"content_ref": card["content_ref"], "start_line": 1000, "end_line": 1005},
+        )
+    )
+    restored = json.loads(recovered.content)["file_card"]
+    assert restored["recovered_from"] == card["content_ref"]
+    assert restored["content_bounds"]["start_line"] == 1000
+    assert restored["content_bounds"]["end_line"] == 1005
+    assert "# padding" in restored["content_preview"]
+    assert restored["stale"] is False
+
+
 def test_content_ref_recovers_card_and_marks_stale_source(isolated_workspace: Path) -> None:
     path = isolated_workspace / "a.py"
     path.write_text("def alpha():\n    return 1\n", encoding="utf-8")

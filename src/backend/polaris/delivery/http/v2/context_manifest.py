@@ -181,11 +181,53 @@ def build_projection_manifest(
                     f"journal:{run['session_id']}:{event['seq']}",
                 )
                 projected = 0
+        node_pin = None
         if card is not None:
+            path = str(card["path"])
+            pin_reason = (
+                "current_edit"
+                if any(
+                    event["kind"] == "tool_started"
+                    and event["payload"].get("tool") in {"write_file", "edit_file"}
+                    and event["payload"].get("arguments", {}).get("file") == path
+                    for event in events[-12:]
+                )
+                else "acceptance_clause"
+                if path in str(run.get("instruction") or "")
+                else None
+            )
+            node_pin = pin_reason
             if state == "ACTIVE":
                 projected = max(1, _tokens(str(card.get("content_preview") or "")))
+            elif pin_reason:
+                state = "FOLDED"
+                reason = f"FileCard pinned by {pin_reason}; full source remains recoverable"
+                projection_ref = str(card["content_ref"])
+                projected = 24
             elif state == "REFERENCE":
                 projection_ref = str(card["content_ref"])
+                projected = 24
+            latest_seq = max(
+                (
+                    candidate["seq"]
+                    for candidate in events
+                    if (other := _file_card(candidate)) is not None and other.get("path") == path
+                ),
+                default=event["seq"],
+            )
+            if state != "ACTIVE" and latest_seq != event["seq"]:
+                latest_card = next(
+                    (
+                        _file_card(candidate)
+                        for candidate in events
+                        if candidate["seq"] == latest_seq and _file_card(candidate) is not None
+                    ),
+                    None,
+                )
+                state = "FOLDED"
+                reason = "superseded by a newer FileCard for the same path"
+                if latest_card is not None:
+                    projection_ref = str(latest_card["content_ref"])
                 projected = 24
         original_tokens = (
             max(1, (int(card["size_bytes"]) + 3) // 4)
@@ -208,6 +250,10 @@ def build_projection_manifest(
                 "projection_ref": projection_ref,
                 "request_message_index": index,
                 "phase": None,
+                "pin_reason": node_pin,
+                "superseded_by": projection_ref
+                if card is not None and reason == "superseded by a newer FileCard for the same path"
+                else None,
                 "ok": payload.get("ok") if isinstance(payload.get("ok"), bool) else None,
                 "original_tokens": original_tokens,
                 "projected_tokens": projected,

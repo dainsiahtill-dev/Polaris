@@ -40,3 +40,13 @@
 - FileCard 与 manifest 5 个目标测试通过。
 - ContextOS 前端 16 files / 320 tests passed。
 - ruff/mypy 与 TypeScript strict 通过。
+
+## 生命周期增强（后续实现）
+
+- **SourceSnapshot 持久化**：完整源字节先写入 `.polaris/runtime/filecards/<sha256>.json`，再暴露 content_ref；不存在才创建，已存在则校验复用，不覆盖历史版本。
+- **精确恢复**：`read_file(content_ref, start_line/end_line/max_bytes)` 从不可变快照恢复指定范围，不偷读现场文件；缺快照或 hash 不一致时明确失败。
+- **同路径去重**：请求投影中，同一路径只让最新 FileCard 携带预览；旧卡折叠并指向最新 content_ref，观察记录仍全部保留。
+- **pin**：当前 edit 目标与验收条款相关文件保留预览及原因，不默认淘汰。
+- **WorkingState**：增加 FileCard 投影（路径、revision、sha、symbols、content_ref、stale、pin_reason、fold_state）。
+- **stale**：现场 sha 与快照不同则标记，恢复仍返回承诺的旧快照，不把新文件伪装成历史。
+- **manifest**：同路径旧卡标记 `FOLDED / superseded`，pin 卡标记原因，分布区分原始与投影 token。

@@ -542,6 +542,34 @@ class EngineeringTools:
                         current_digest = hashlib.sha256(current.encode("utf-8")).hexdigest()
                         if current_digest != card["sha256"]:
                             card = {**card, "stale": True, "current_sha256": current_digest}
+                    if (
+                        "start_line" in args
+                        or "end_line" in args
+                        or args.get("max_bytes") not in {None, 200000, 200001}
+                    ):
+                        from polaris.cells.roles.runtime.internal.engineering_file_cards import read_file_snapshot
+
+                        snapshot = read_file_snapshot(self.workspace, reference)
+                        original = str(snapshot["content"])
+                        start = self._integer(args, "start_line", 1, minimum=1)
+                        end = self._integer(args, "end_line", max(1, len(original.splitlines())), minimum=start)
+                        selected = "".join(original.splitlines(keepends=True)[start - 1 : end])
+                        maximum = self._integer(
+                            args, "max_bytes", min(8000, self.limits.max_tool_output_bytes), minimum=1
+                        )
+                        preview = bounded_output(selected, max(1, min(maximum, self.limits.max_tool_output_bytes) - 64))
+                        card = build_file_card(
+                            str(card["path"]),
+                            original,
+                            revision=card.get("revision"),
+                            preview=preview,
+                            truncated=len(preview.encode("utf-8")) < len(selected.encode("utf-8"))
+                            or end < len(original.splitlines()),
+                            start_line=start,
+                            end_line=end,
+                            snapshot_ref=reference,
+                        )
+                        card["recovered_from"] = reference
                     return self._observation(call_id, name, True, json.dumps({"file_card": card}, ensure_ascii=False))
                 target = self._path(self._text(args, "file"), write=False)
                 if not target.is_file():
@@ -573,6 +601,11 @@ class EngineeringTools:
                     else self._integer(args, "max_bytes", default_preview, minimum=1)
                 )
                 preview = bounded_output(selected, max(1, min(maximum, self.limits.max_tool_output_bytes) - 64))
+                from polaris.cells.roles.runtime.internal.engineering_file_cards import persist_file_snapshot
+
+                snapshot_ref = persist_file_snapshot(
+                    self.workspace, target.relative_to(self.workspace).as_posix(), content
+                )
                 card = build_file_card(
                     target.relative_to(self.workspace).as_posix(),
                     content,
@@ -582,6 +615,7 @@ class EngineeringTools:
                     or end < len(content.splitlines()),
                     start_line=start,
                     end_line=end,
+                    snapshot_ref=snapshot_ref,
                 )
                 return self._observation(call_id, name, True, json.dumps({"file_card": card}, ensure_ascii=False))
             if name == "write_file":

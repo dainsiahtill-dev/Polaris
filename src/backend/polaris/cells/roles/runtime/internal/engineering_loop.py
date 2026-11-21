@@ -290,6 +290,9 @@ def _bounded_request_messages(
     bounded before the request is built, by dropping whole older turns. The
     durable journal keeps every observation, so nothing is lost.
     """
+    from polaris.cells.roles.runtime.internal.engineering_file_card_projection import fold_file_card_previews
+
+    messages = fold_file_card_previews(messages)
     events = store.load_events(
         command.session_id,
         kinds=(

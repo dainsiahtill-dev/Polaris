@@ -16,6 +16,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from polaris.cells.roles.runtime.internal.engineering_evidence_graph import evidence_graph_projection
+from polaris.cells.roles.runtime.internal.engineering_file_cards import card_from_observation
 from polaris.kernelone.llm.engine.token_estimator import TokenEstimator
 
 STATE_EVENT_KINDS = (
@@ -191,6 +192,31 @@ def working_state_facts(
                     last_intent = _text(content, _MAX_TEXT_CHARS)
         elif kind in _LOOP_KINDS:
             loop_interventions += 1
+    file_cards: dict[str, dict[str, Any]] = {}
+    for event in scoped:
+        if event.get("kind") != "tool_observed":
+            continue
+        payload = event.get("payload") or {}
+        if payload.get("tool") != "read_file" or payload.get("ok") is not True:
+            continue
+        card = card_from_observation(str(payload.get("content") or ""))
+        if card is not None:
+            path = str(card["path"])
+            file_cards[path] = {
+                "path": path,
+                "revision": card.get("revision"),
+                "sha256": card.get("sha256"),
+                "summary": card.get("summary"),
+                "symbols": card.get("symbols") or [],
+                "content_ref": card.get("content_ref"),
+                "stale": card.get("stale", False),
+                "fold_state": "ACTIVE" if path in files or path in str(run.get("instruction") or "") else "REFERENCE",
+                "pin_reason": "current_edit"
+                if path in files
+                else "acceptance_clause"
+                if path in str(run.get("instruction") or "")
+                else None,
+            }
     verification = str(run.get("verification") or "unknown")
     last_checks: list[dict[str, Any]] = []
     last_verification_error = ""
@@ -223,6 +249,7 @@ def working_state_facts(
         "last_verification": last_checks,
         "last_verification_error": last_verification_error,
         "files_changed": files[:_MAX_FILES],
+        "file_cards": list(file_cards.values())[:_MAX_FILES],
         "tool_activity": dict(sorted(tool_counts.items(), key=lambda item: (-item[1], item[0]))),
         "loop_interventions": loop_interventions,
         "last_intent": last_intent,
