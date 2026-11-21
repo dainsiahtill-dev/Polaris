@@ -89,6 +89,7 @@ def test_facts_for_advice_bounds_candidates_and_failure() -> None:
         },
     ]
     events.extend({"kind": "turn_started", "seq": index + 4, "payload": {}} for index in range(11))
+    events.extend({"kind": "message", "seq": index + 15, "payload": {}} for index in range(100))
     request, refs, fingerprint = facts_for_advice({"instruction": "fix", "workspace_revision": 2}, events)
     assert refs.node_ids == {"a.py"}
     assert "failure_1" in refs.evidence_refs

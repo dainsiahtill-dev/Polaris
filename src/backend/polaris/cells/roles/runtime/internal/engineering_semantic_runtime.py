@@ -100,7 +100,7 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
         and event["payload"].get("arguments", {}).get("file")
     }
     instruction = str(run.get("instruction") or "")
-    for event in events[-80:]:
+    for event in events:
         payload = event["payload"]
         age = current_activity - activity_at_seq.get(int(event["seq"]), current_activity)
         if age < 10:
@@ -168,7 +168,7 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
             if len(failure_refs) >= 4:
                 break
     evidence_refs = set(failure_refs)
-    for event in events[-80:]:
+    for event in events:
         payload = event["payload"]
         if payload.get("tool") != "execute_command":
             continue
