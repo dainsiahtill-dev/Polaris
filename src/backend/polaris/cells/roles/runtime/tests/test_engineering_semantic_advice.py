@@ -74,6 +74,15 @@ def test_parse_semantic_advice_drops_invented_slices_without_inventing_coverage(
     assert validated["need_evidence"] == []
 
 
+def test_parse_semantic_advice_clears_slices_for_non_slice_views() -> None:
+    payload = valid_advice()
+    payload["assessments"][0]["suggested_view"] = "CARD"
+    payload["assessments"][0]["keep_slice_ids"] = ["slice_display_width"]
+    validated = parse_semantic_advice(json.dumps(payload), candidates())
+    assert validated["assessments"][0]["suggested_view"] == "CARD"
+    assert validated["assessments"][0]["keep_slice_ids"] == []
+
+
 def summary_request() -> dict[str, object]:
     return {
         "node_id": "obs_read_312",

@@ -203,6 +203,8 @@ def _normalize_advice_slices(payload: object, candidates: CandidateRefs) -> obje
             item["keep_slice_ids"] = slices
             if item.get("suggested_view") == SuggestedView.SLICE.value and not slices:
                 item["suggested_view"] = SuggestedView.CARD.value
+            if item.get("suggested_view") != SuggestedView.SLICE.value:
+                item["keep_slice_ids"] = []
     needs = payload.get("need_evidence")
     if isinstance(needs, list):
         normalized_needs: list[object] = []
