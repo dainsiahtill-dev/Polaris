@@ -41,6 +41,22 @@ def _card_payload(payload: object) -> tuple[dict[str, Any] | None, bool]:
     return None, False
 
 
+def _apply_fold_summary(card: dict[str, Any], summaries: Mapping[str, Mapping[str, Any]] | None, node_id: str) -> bool:
+    summary = (summaries or {}).get(node_id)
+    if summary is None:
+        return False
+    text = summary.get("summary")
+    if not isinstance(text, str) or not text.strip():
+        return False
+    card["source_summary"] = card.get("summary")
+    card["summary"] = text
+    card["summary_kind"] = "model_inference"
+    card["summary_evidence_refs"] = summary.get("evidence_refs") or []
+    card["summary_uncertain"] = summary.get("uncertain", True)
+    card["summary_reason"] = summary.get("reason") or ""
+    return True
+
+
 def _activity_indices(messages: Sequence[Mapping[str, Any]]) -> list[int]:
     """Map messages to completed logical activities, not transport retries."""
 
@@ -103,13 +119,17 @@ def folded_card_projections(messages: Sequence[Mapping[str, Any]]) -> list[dict[
                     else "INACTIVE_PAYLOAD",
                     "fold_reason": reason,
                     "activity_seq": card.get("last_fold_activity_seq"),
+                    "summary": card.get("summary") or "",
                 }
             )
     return projections
 
 
 def fold_file_card_previews(
-    messages: Sequence[Mapping[str, Any]], *, semantic_pins: Mapping[str, str] | None = None
+    messages: Sequence[Mapping[str, Any]],
+    *,
+    semantic_pins: Mapping[str, str] | None = None,
+    semantic_summaries: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Fold duplicate/non-focused FileCards without changing durable observations."""
 
@@ -167,6 +187,7 @@ def fold_file_card_previews(
                     and advisor_view in {"semantic_card", "semantic_reference"}
                     and command_card.get("pin_reason") != "unresolved_failure"
                     and large_payload
+                    and _apply_fold_summary(command_card, semantic_summaries, str(reference))
                 ):
                     command_card["stdout_preview"] = ""
                     command_card["stderr_preview"] = ""
@@ -207,6 +228,7 @@ def fold_file_card_previews(
                     duplicate
                     and advisor_fold
                     and pin_reason not in {"current_edit", "acceptance_clause", "semantic_relevance"}
+                    and _apply_fold_summary(card, semantic_summaries, path)
                 ):
                     card["content_preview"] = ""
                     card["content_bounds"] = {**card.get("content_bounds", {}), "truncated": True}
@@ -217,7 +239,11 @@ def fold_file_card_previews(
                     activity_age < _inactive_fold_activities()
                 ):
                     card["fold_state"] = "ACTIVE"
-                elif advisor_fold and pin_reason not in {"current_edit", "acceptance_clause", "semantic_relevance"}:
+                elif (
+                    advisor_fold
+                    and pin_reason not in {"current_edit", "acceptance_clause", "semantic_relevance"}
+                    and _apply_fold_summary(card, semantic_summaries, path)
+                ):
                     card["content_preview"] = ""
                     card["content_bounds"] = {**card.get("content_bounds", {}), "truncated": True}
                     card["fold_state"] = "FOLDED"

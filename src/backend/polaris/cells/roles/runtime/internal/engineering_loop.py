@@ -299,6 +299,7 @@ def _bounded_request_messages(
     messages = fold_file_card_previews(
         messages,
         semantic_pins=semantic_runtime.pin_reasons() if semantic_runtime is not None else None,
+        semantic_summaries=semantic_runtime.fold_summaries() if semantic_runtime is not None else None,
     )
     prior_fold_refs = {
         str(event["payload"].get("projection_ref"))

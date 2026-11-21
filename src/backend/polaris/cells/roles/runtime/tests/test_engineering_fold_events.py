@@ -24,6 +24,9 @@ class _Advisor:
     def pin_reasons(self) -> dict[str, str]:
         return {"a.py": "semantic_card"}
 
+    def fold_summaries(self) -> dict[str, dict[str, str]]:
+        return {"a.py": {"summary": "旧文件摘要"}}
+
 
 def _message(preview: str) -> dict[str, object]:
     card = build_file_card(

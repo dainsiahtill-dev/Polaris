@@ -26,6 +26,7 @@ def test_command_card_folds_only_after_inactive_window(monkeypatch: pytest.Monke
             _command_message(),
         ],
         semantic_pins={"command:abc": "semantic_card"},
+        semantic_summaries={"command:abc": {"summary": "旧命令摘要"}},
     )
     tool_messages = [message for message in folded if message["role"] == "tool"]
     first = json.loads(tool_messages[0]["content"])["command_card"]

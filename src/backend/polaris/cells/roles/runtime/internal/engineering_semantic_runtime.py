@@ -21,6 +21,7 @@ class SemanticRuntime:
         self._job: asyncio.Task[list[dict[str, Any]]] | None = None
         self.result: dict[str, Any] | None = None
         self._pins: dict[str, str] = {}
+        self._summaries: dict[str, dict[str, Any]] = {}
 
     def schedule(
         self,
@@ -36,7 +37,35 @@ class SemanticRuntime:
         if self._job is not None and not self._job.done():
             self._job.cancel()
         self._fingerprint = fingerprint
-        self._job = asyncio.create_task(self.pool.advise_many([request], candidates))
+        self._job = asyncio.create_task(self._evaluate(request, candidates))
+
+    async def _evaluate(self, request: dict[str, Any], candidates: CandidateRefs) -> list[dict[str, Any]]:
+        advice_results = await self.pool.advise_many([request], candidates)
+        advice = advice_results[0]
+        if advice.get("validation_result") != "VALID":
+            return advice_results
+        fold_nodes = {
+            item.get("node_id")
+            for item in advice["result"].get("assessments", [])
+            if item.get("suggested_view") in {"CARD", "REFERENCE"}
+        }
+        summary_requests: list[dict[str, Any]] = []
+        for candidate in request.get("candidates", []):
+            if candidate.get("node_id") not in fold_nodes:
+                continue
+            summary_requests.append(
+                {
+                    "node_id": candidate["node_id"],
+                    "snapshot_id": candidate["snapshot_id"],
+                    "content": candidate.get("content") or "",
+                    "coverage": candidate.get("coverage") or {"observed_line_ranges": [[1, 1]]},
+                    "allowed_evidence_refs": sorted(candidates.evidence_refs),
+                    "max_summary_tokens": 192,
+                }
+            )
+        summaries = await self.pool.summarize_many(summary_requests) if summary_requests else []
+        advice["summaries"] = summaries
+        return advice_results
 
     def poll(self) -> dict[str, Any] | None:
         job = self._job
@@ -64,9 +93,19 @@ class SemanticRuntime:
                 self._pins[node] = "semantic_card"
             elif view == "REFERENCE":
                 self._pins[node] = "semantic_reference"
+        for summary in self.result.get("summaries", []):
+            if summary.get("validation_result") != "VALID":
+                continue
+            result = summary.get("result") or {}
+            node = result.get("node_id")
+            if isinstance(node, str):
+                self._summaries[node] = result
 
     def pin_reasons(self) -> dict[str, str]:
         return dict(self._pins)
+
+    def fold_summaries(self) -> dict[str, dict[str, Any]]:
+        return dict(self._summaries)
 
 
 def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple[dict[str, Any], CandidateRefs, str]:
@@ -128,6 +167,7 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
                         "content": preview or (str(card.get("summary") or "") if isinstance(card, dict) else ""),
                         "activity_age": age,
                         "kind": "command_card",
+                        "coverage": {"observed_line_ranges": [[1, max(1, len(preview.splitlines()))]]},
                     }
                 )
             continue
@@ -156,6 +196,7 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
                 "activity_age": age,
                 "duplicate": latest_paths.get(path) != int(event["seq"]),
                 "kind": "file_card",
+                "coverage": card.get("coverage") or {"observed_line_ranges": [[1, max(1, card.get("line_count", 1))]]},
             }
         )
     failure_refs = ["goal"]

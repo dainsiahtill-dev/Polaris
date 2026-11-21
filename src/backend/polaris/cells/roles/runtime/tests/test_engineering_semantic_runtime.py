@@ -56,6 +56,69 @@ async def test_semantic_runtime_assist_pins_only_relevant_cards() -> None:
     assert json.loads(folded[1]["content"])["file_card"]["content_preview"] == "y"
 
 
+class _SummaryPool:
+    async def advise_many(self, requests, candidates):
+        return [
+            {
+                "endpoint_index": 0,
+                "validation_result": "VALID",
+                "result": {
+                    "assessments": [
+                        {
+                            "node_id": "a.py",
+                            "relation": "BACKGROUND",
+                            "suggested_view": "CARD",
+                            "keep_slice_ids": [],
+                            "evidence_refs": [],
+                            "uncertain": False,
+                            "reason": "旧节点可折叠。",
+                        }
+                    ],
+                    "need_evidence": [],
+                },
+            }
+        ]
+
+    async def summarize_many(self, requests):
+        return [
+            {
+                "endpoint_index": 0,
+                "validation_result": "VALID",
+                "result": {
+                    "node_id": "a.py",
+                    "snapshot_id": "filecard:a",
+                    "summary": "旧文件主要负责输入处理。",
+                    "summary_kind": "model_inference",
+                    "coverage": {"observed_line_ranges": [[1, 1]], "summary_complete": False},
+                    "evidence_refs": ["filecard:a"],
+                    "uncertain": False,
+                    "reason": "基于旧快照摘要。",
+                },
+            }
+        ]
+
+
+async def test_semantic_runtime_stores_remote_fold_summary() -> None:
+    runtime = SemanticRuntime(_SummaryPool(), "assist")
+    refs = CandidateRefs(node_ids={"a.py"}, slice_ids={"slice_file"}, evidence_refs={"filecard:a"})
+    request = {
+        "candidates": [
+            {
+                "node_id": "a.py",
+                "snapshot_id": "filecard:a",
+                "content": "input",
+                "coverage": {"observed_line_ranges": [[1, 1]]},
+            }
+        ]
+    }
+    runtime.schedule(request, refs, fingerprint="fold")
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    result = runtime.poll()
+    assert result is not None and result["validation_result"] == "VALID"
+    assert runtime.fold_summaries()["a.py"]["summary"] == "旧文件主要负责输入处理。"
+
+
 def test_facts_for_advice_bounds_candidates_and_failure() -> None:
     card = build_file_card(
         "a.py",

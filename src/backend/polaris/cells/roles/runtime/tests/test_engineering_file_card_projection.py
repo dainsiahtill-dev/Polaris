@@ -24,6 +24,7 @@ def test_duplicate_file_cards_keep_only_latest_preview() -> None:
     folded = fold_file_card_previews(
         [_message("a.py", "o" * 600), _message("a.py", "n" * 600), _message("b.py", "keep")],
         semantic_pins={"a.py": "semantic_card"},
+        semantic_summaries={"a.py": {"summary": "旧文件摘要"}},
     )
     first, second, third = (json.loads(message["content"])["file_card"] for message in folded)
     assert first["content_preview"] == "" and first["fold_state"] == "FOLDED"
