@@ -340,12 +340,23 @@ def build_context_memory_messages(
     failures = [card for card in cards if card.get("kind") == "failure_cluster" and card.get("unresolved") is not False]
     failures.sort(key=lambda card: (-int(card.get("count") or 0), str(card.get("title") or "")))
     if failures:
-        lines = [f"- {card.get('title')}: {card.get('summary')}" for card in failures[:5]]
-        sections.append("未解决失败聚类（避免重复探索）：\n" + "\n".join(lines))
+        lines = []
+        for card in failures[:5]:
+            refs = [ref for ref in (card.get("evidence_refs") or []) if isinstance(ref, str)]
+            hint = f" · 证据: {', '.join(refs[-2:])}" if refs else ""
+            lines.append(f"- {card.get('title')}: {card.get('summary')}{hint}")
+        sections.append(
+            "未解决失败聚类（避免重复探索；可用 read_command_result/read_file 按证据引用取回原始输出）：\n"
+            + "\n".join(lines)
+        )
     contracts = [card for card in cards if card.get("kind") == "verification_contract"]
     if contracts:
         latest = contracts[-1]
-        sections.append(f"最近验证契约：{latest.get('summary')} · {latest.get('title')}")
+        refs = [ref for ref in (latest.get("evidence_refs") or []) if isinstance(ref, str)]
+        sections.append(
+            f"最近验证契约：{latest.get('summary')} · {latest.get('title')}"
+            + (f" · 证据: {', '.join(refs[-3:])}" if refs else "")
+        )
     epochs = [card for card in cards if card.get("kind") == "epoch_card" and card.get("summary")]
     for card in epochs[-2:]:
         sections.append(f"Epoch 记忆 {card.get('id')}：{card.get('summary')}")
