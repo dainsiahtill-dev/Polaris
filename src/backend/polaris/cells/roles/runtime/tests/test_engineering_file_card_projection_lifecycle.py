@@ -98,7 +98,45 @@ def test_large_duplicate_payload_can_fold() -> None:
     assert json.loads(first["content"])["file_card"]["fold_state"] == "FOLDED"
 
 
-def test_folded_card_does_not_fold_again() -> None:
+def test_current_edit_pin_survives_inactivity() -> None:
+    large = "x" * 600
+    folded = fold_file_card_previews(
+        [
+            {"role": "assistant", "content": "step-1"},
+            _message("a.py", large),
+            {"role": "assistant", "content": "step-2"},
+            _message("b.py", "b"),
+            {"role": "assistant", "content": "step-3"},
+            _message("c.py", "c"),
+            {"role": "assistant", "content": "step-4"},
+            _message("d.py", "d"),
+            {
+                "role": "assistant",
+                "tool_calls": [{"function": {"name": "edit_file", "arguments": json.dumps({"file": "a.py"})}}],
+            },
+        ],
+    )
+    first = next(message for message in folded if message["role"] == "tool")
+    assert json.loads(first["content"])["file_card"]["fold_state"] == "ACTIVE"
+
+
+def test_acceptance_pin_survives_inactivity() -> None:
+    large = "x" * 600
+    folded = fold_file_card_previews(
+        [
+            {"role": "user", "content": "verify a.py"},
+            {"role": "assistant", "content": "step-1"},
+            _message("a.py", large),
+            {"role": "assistant", "content": "step-2"},
+            _message("b.py", "b"),
+            {"role": "assistant", "content": "step-3"},
+            _message("c.py", "c"),
+            {"role": "assistant", "content": "step-4"},
+            _message("d.py", "d"),
+        ],
+    )
+    first = next(message for message in folded if message["role"] == "tool")
+    assert json.loads(first["content"])["file_card"]["fold_state"] == "ACTIVE"
     folded_once = _message("a.py", "", fold_state="FOLDED", last_fold_activity_seq=1)
     folded_twice = fold_file_card_previews([folded_once, _message("b.py", "b")])
     card = json.loads(folded_twice[0]["content"])["file_card"]

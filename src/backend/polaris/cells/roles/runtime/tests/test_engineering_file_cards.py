@@ -34,6 +34,40 @@ def test_read_file_returns_bounded_file_card(isolated_workspace: Path) -> None:
     assert card["content_bounds"]["truncated"] is True
 
 
+def test_oversize_snapshot_is_degraded_not_fatal(isolated_workspace: Path) -> None:
+    source = "x" * (16 * 1024 * 1024 + 1)
+    (isolated_workspace / "big.txt").write_text(source, encoding="utf-8")
+    tools = EngineeringTools(
+        isolated_workspace,
+        PermissionScope((isolated_workspace,), (), frozenset({"read_file"}), False),
+        RunLimits(time.time() + 15, 1_000_000, 64_000),
+        asyncio.Event(),
+    )
+    result = asyncio.run(tools.execute("big", "read_file", {"file": "big.txt"}))
+    card = json.loads(result.content)["file_card"]
+    assert result.ok and card["recoverable"] is False
+    assert card["snapshot_ref"] is None
+
+
+def test_oversize_command_output_is_degraded_not_fatal(isolated_workspace: Path) -> None:
+    tools = EngineeringTools(
+        isolated_workspace,
+        PermissionScope((isolated_workspace,), (), frozenset({"execute_command"}), False),
+        RunLimits(time.time() + 15, 1_000_000, 64_000),
+        asyncio.Event(),
+    )
+    result = asyncio.run(
+        tools.execute(
+            "big-cmd",
+            "execute_command",
+            {"command": "python3 -c 'import sys; sys.stdout.write(\"x\" * (16 * 1024 * 1024 + 1))'"},
+        )
+    )
+    card = json.loads(result.content)["command_card"]
+    assert result.ok and card["recoverable"] is False
+    assert card["content_ref"] is None
+
+
 def test_content_ref_recovers_exact_snapshot_beyond_preview(isolated_workspace: Path) -> None:
     source = "def alpha():\n    return 1\n" + ("# padding\n" * 2000)
     (isolated_workspace / "a.py").write_text(source, encoding="utf-8")

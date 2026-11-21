@@ -7,7 +7,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from polaris.kernelone.fs import guarded_compare_and_create_regular_file, read_guarded_regular_file_snapshot
+from polaris.kernelone.fs import (
+    GuardedRegularFileSnapshotError,
+    guarded_compare_and_create_regular_file,
+    read_guarded_regular_file_snapshot,
+)
 
 _MAX_OUTPUT_BYTES = 16 * 1024 * 1024
 _PREVIEW_BYTES = 4000
@@ -22,7 +26,7 @@ def _error_excerpt(stdout: str, stderr: str) -> str:
     return ""
 
 
-def persist_command_result(workspace: Path, command: str, stdout: str, stderr: str, exit_code: int) -> str:
+def persist_command_result(workspace: Path, command: str, stdout: str, stderr: str, exit_code: int) -> str | None:
     """Persist exact command output before creating a bounded CommandCard."""
 
     payload = json.dumps(
@@ -43,7 +47,10 @@ def persist_command_result(workspace: Path, command: str, stdout: str, stderr: s
     if (root / f"{digest}.json").exists():
         read_command_result(workspace, reference)
         return reference
-    guarded_compare_and_create_regular_file(root, f"{digest}.json", payload, max_bytes=_MAX_OUTPUT_BYTES)
+    try:
+        guarded_compare_and_create_regular_file(root, f"{digest}.json", payload, max_bytes=_MAX_OUTPUT_BYTES)
+    except (ValueError, OSError, GuardedRegularFileSnapshotError):
+        return None
     return reference
 
 
@@ -69,7 +76,9 @@ def read_command_result(workspace: Path, reference: str) -> dict[str, Any]:
     return payload
 
 
-def build_command_card(command: str, stdout: str, stderr: str, exit_code: int, snapshot_ref: str) -> dict[str, Any]:
+def build_command_card(
+    command: str, stdout: str, stderr: str, exit_code: int, snapshot_ref: str | None
+) -> dict[str, Any]:
     """Create a bounded command result with exact recovery and output bounds."""
 
     return {
@@ -79,6 +88,7 @@ def build_command_card(command: str, stdout: str, stderr: str, exit_code: int, s
         "ok": exit_code == 0,
         "summary": _error_excerpt(stdout, stderr) or ("completed" if exit_code == 0 else "command failed"),
         "content_ref": snapshot_ref,
+        "recoverable": snapshot_ref is not None,
         "stdout_preview": stdout[:_PREVIEW_BYTES],
         "stderr_preview": stderr[:_PREVIEW_BYTES],
         "stdout_bytes": len(stdout.encode("utf-8")),

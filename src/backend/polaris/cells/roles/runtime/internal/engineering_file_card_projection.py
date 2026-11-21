@@ -26,7 +26,7 @@ def _activity_indices(messages: Sequence[Mapping[str, Any]]) -> list[int]:
 
     indices: list[int] = []
     activity = -1
-    for index, message in enumerate(messages):
+    for _index, message in enumerate(messages):
         if message.get("role") == "assistant":
             activity += 1
         indices.append(max(0, activity))
@@ -142,7 +142,7 @@ def fold_file_card_previews(
                     activity_age < _inactive_fold_activities() and not already_folded
                 ):
                     card["fold_state"] = "ACTIVE"
-                elif not already_folded and not small_payload:
+                elif not already_folded and not small_payload and not pin_reason:
                     card["content_preview"] = ""
                     card["content_bounds"] = {**card.get("content_bounds", {}), "truncated": True}
                     card["fold_state"] = "FOLDED"

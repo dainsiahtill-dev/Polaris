@@ -18,7 +18,7 @@ from polaris.kernelone.fs import (
 _MAX_SNAPSHOT_BYTES = 16 * 1024 * 1024
 
 
-def persist_file_snapshot(workspace: Path, path: str, content: str) -> str:
+def persist_file_snapshot(workspace: Path, path: str, content: str) -> str | None:
     """Persist full immutable bytes before exposing a recoverable FileCard ref."""
 
     digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
@@ -35,7 +35,10 @@ def persist_file_snapshot(workspace: Path, path: str, content: str) -> str:
         if not (parent / relative).exists():
             guarded_create_directory(str(parent), relative)
     payload = json.dumps({"path": path, "sha256": digest, "content": content}, ensure_ascii=False).encode("utf-8")
-    guarded_compare_and_create_regular_file(root, f"{digest}.json", payload, max_bytes=_MAX_SNAPSHOT_BYTES)
+    try:
+        guarded_compare_and_create_regular_file(root, f"{digest}.json", payload, max_bytes=_MAX_SNAPSHOT_BYTES)
+    except (ValueError, OSError, GuardedRegularFileSnapshotError):
+        return None
     return f"filecard:{digest}"
 
 
