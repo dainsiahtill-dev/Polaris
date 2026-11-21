@@ -401,6 +401,21 @@ class EngineeringTools:
                             f"Missing {len(gap)} of {len(self.review_clauses)} clauses: "
                             + json.dumps(gap, ensure_ascii=False)
                         )
+                if not approved and self.review_clauses:
+                    # A rejection without a reviewed clause matrix is an
+                    # unstarted review, not an engineering finding. Send the QA
+                    # role back to inspect the current candidate instead of
+                    # rejecting the run on a placeholder.
+                    if not clause_findings:
+                        raise ValueError(
+                            "report_review cannot reject the candidate before reviewing it: "
+                            "inspect the current candidate and submit clause_findings with evidence."
+                        )
+                    if all(not str(item.evidence or "").strip() for item in clause_findings):
+                        raise ValueError(
+                            "report_review rejection requires per-clause evidence from the current "
+                            "candidate; continue inspecting before ruling."
+                        )
                 self.review(
                     approved and not findings and all(item.status == "pass" for item in clause_findings),
                     clause_findings,
