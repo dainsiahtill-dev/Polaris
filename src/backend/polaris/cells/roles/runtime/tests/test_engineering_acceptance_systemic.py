@@ -450,6 +450,18 @@ def test_read_only_targets_cover_open_and_cp_write_failures() -> None:
     assert read_only_write_targets("cp: cannot create regular file 'card1.svg': Read-only file system") == ["card1.svg"]
 
 
+def test_read_only_detection_covers_chinese_write_failures() -> None:
+    from polaris.cells.roles.runtime.internal.engineering_verification import (
+        is_read_only_failure,
+        read_only_write_targets,
+    )
+
+    content = "办件被拒绝：无法写入临时文件：examples/output/postcard-tranquil-sea.svg.tmp （已有卡片保持不变，不会被半成品覆盖）"
+    assert is_read_only_failure(content)
+    assert read_only_write_targets(content) == ["examples/output/postcard-tranquil-sea.svg.tmp"]
+    assert is_read_only_failure('办件被拒绝：无法创建输出目录 "build/verify_out"')
+
+
 def test_distilled_verification_failure_names_read_only_write() -> None:
     """A read-only write failure must not be reported as a code location to fix."""
     from polaris.cells.roles.runtime.internal.engineering_loop import _distill_verification_failure

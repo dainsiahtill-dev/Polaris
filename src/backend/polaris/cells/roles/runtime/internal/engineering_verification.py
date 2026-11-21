@@ -58,11 +58,19 @@ _EROFS_WRITE_PATH = re.compile(
     r"(?:open|cannot create regular file)\s+'?([^':\n]+?)'?\s*:\s*(?:read-only file system|EROFS)",
     re.IGNORECASE,
 )
+_EROFS_CN_PATH = re.compile(r"(?:无法写入临时文件|无法创建输出目录)[：:]\s*([^（(]+)")
 # A failed check tried to create/write inside the read-only verification scope.
 # Coreutils prints "Read-only file system"; tsc prints "EROFS: read-only file
 # system"; npm reports a failed mkdir as "npm ERR! code ENOENT ... syscall
 # mkdir". All three mean the same thing: the check must be prepared first.
-READ_ONLY_MARKERS = ("read-only file system", "erofs", "syscall mkdir")
+READ_ONLY_MARKERS = (
+    "read-only file system",
+    "erofs",
+    "syscall mkdir",
+    "无法写入临时文件",
+    "无法创建输出目录",
+    "只读文件系统",
+)
 
 
 def is_read_only_failure(content: str) -> bool:
@@ -82,9 +90,9 @@ def read_only_write_targets(content: str) -> list[str]:
     if not is_read_only_failure(content):
         return []
     targets: list[str] = []
-    for pattern in (_EROFS_PATH, _EROFS_WRITE_PATH):
+    for pattern in (_EROFS_PATH, _EROFS_WRITE_PATH, _EROFS_CN_PATH):
         for match in pattern.finditer(content):
-            path = match.group(1)
+            path = match.group(1).strip()
             if path not in targets:
                 targets.append(path)
     return targets[:3]
