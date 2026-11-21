@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import http.client
 import json
 import os
 import re
@@ -57,6 +58,32 @@ def _has_remaining_budget(limits: RunLimits) -> bool:
     if limits.deadline is None:
         return True
     return time.time() < limits.deadline
+
+
+# Stream-level transport interruptions can escape the provider client as raw
+# http.client exceptions before it can classify them. They carry no provider
+# answer and no tool effect, so the same role may retry its own turn.
+_TRANSIENT_PROVIDER_EXCEPTIONS = (
+    http.client.IncompleteRead,
+    http.client.RemoteDisconnected,
+    ConnectionResetError,
+    ConnectionAbortedError,
+    BrokenPipeError,
+)
+
+
+def _provider_transport_message(error: object) -> dict[str, Any]:
+    """A recoverable provider interruption that ran no tool from this turn."""
+
+    return {
+        "role": "user",
+        "content": (
+            "The provider request failed before any tool from this turn ran: "
+            f"{error}. Earlier observed tool effects are "
+            "unchanged and no candidate was accepted. Continue the original goal using the same "
+            "available tools and permissions; do not repeat a rejected or already observed action."
+        ),
+    }
 
 
 class NativeTurnRejectedError(ValueError):
@@ -1131,6 +1158,47 @@ async def run_engineering_loop(
             )
             try:
                 response = await _invoke(turn_client, request, cancel, limits.deadline)
+            except _TRANSIENT_PROVIDER_EXCEPTIONS as exc:
+                # A truncated or reset stream is not an engineering outcome and
+                # no tool from this turn ran. Keep the committed observations
+                # and let the same role retry its own turn.
+                if _has_remaining_budget(limits):
+                    message = _provider_transport_message(exc)
+                    store.append_event(
+                        command.session_id,
+                        kind="message",
+                        role=command.role,
+                        payload={
+                            "message": message,
+                            "provider_transport_failure": {
+                                "error": str(exc),
+                                "error_type": type(exc).__name__,
+                            },
+                        },
+                    )
+                    messages.append(message)
+                    store.append_event(
+                        command.session_id,
+                        kind="turn_finished",
+                        role=command.role,
+                        payload={
+                            "turn_seq": turn_seq,
+                            "tools_dispatched": False,
+                            "provider_transport_failure": True,
+                        },
+                    )
+                    continue
+                store.append_event(
+                    command.session_id,
+                    kind="role_error",
+                    role=command.role,
+                    payload={
+                        "error": f"{type(exc).__name__}: {exc}",
+                        "error_type": type(exc).__name__,
+                        "deadline_expired": True,
+                    },
+                )
+                return finish("interrupted", f"Provider stream interrupted: {exc}")
             except TimeoutError:
                 # The run deadline expired while the provider was answering.
                 # The run ends with the facts it committed, not with an
@@ -1169,15 +1237,7 @@ async def run_engineering_loop(
                     # tool from this turn ran and the committed observations
                     # stay valid, so the same role continues its own goal with
                     # the recoverable fact instead of ending the run.
-                    message = {
-                        "role": "user",
-                        "content": (
-                            "The provider request failed before any tool from this turn ran: "
-                            f"{response.error or 'unspecified provider error'}. Earlier observed tool effects are "
-                            "unchanged and no candidate was accepted. Continue the original goal using the same "
-                            "available tools and permissions; do not repeat a rejected or already observed action."
-                        ),
-                    }
+                    message = _provider_transport_message(response.error or "unspecified provider error")
                     store.append_event(
                         command.session_id,
                         kind="message",
