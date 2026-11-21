@@ -31,6 +31,7 @@ from polaris.kernelone.llm.engine.internal.context_hash import (
 )
 
 from ._shared import StructuredHTTPException, get_state, require_auth
+from .context_manifest import build_projection_manifest
 from .workspace_acl import WORKSPACE_HEADER, check_advisory_workspace_acl
 
 logger = logging.getLogger(__name__)
@@ -132,6 +133,45 @@ def get_context_final_request_by_hash(request: Request, hash: str) -> dict[str, 
         message=result.error_message or "Final provider request audit is unavailable.",
         details=result.payload if isinstance(result.payload, dict) else {},
     )
+
+
+@router.get("/v2/context/{hash}/manifest", dependencies=[Depends(require_auth)])
+def get_context_projection_manifest(request: Request, hash: str) -> dict[str, Any]:
+    """Return the journal-backed fold/projection manifest for a provider request."""
+
+    try:
+        canonical_hash = validate_context_hash(hash)
+    except ValueError as exc:
+        raise StructuredHTTPException(
+            status_code=400, code="INVALID_HASH", message="Hash must be a 24-character hexadecimal string"
+        ) from exc
+    state = get_state(request)
+    check_advisory_workspace_acl(
+        request=request,
+        settings=state.settings,
+        code="WORKSPACE_FORBIDDEN",
+        message="Context snapshot belongs to a different workspace",
+    )
+    workspace = _resolve_workspace(request)
+    from polaris.cells.roles.runtime.internal.engineering_session import EngineeringSessionStore
+
+    store = EngineeringSessionStore(Path(workspace))
+    matches = [
+        event
+        for event in store.context_reference_events(engine_version="engineering_v2")
+        if event["payload"].get("context_snapshot_ref") == canonical_hash
+    ]
+    if not matches:
+        raise StructuredHTTPException(
+            status_code=404,
+            code="CONTEXT_MANIFEST_NOT_FOUND",
+            message="No engineering journal is bound to this context snapshot",
+            details={"context_hash": canonical_hash, "workspace": workspace},
+        )
+    session_id = matches[-1]["session_id"]
+    run = store.load_run(session_id, workspace=Path(workspace))
+    snapshot = read_context_snapshot(workspace, canonical_hash).payload
+    return build_projection_manifest(run, store.load_events(session_id), snapshot)
 
 
 @router.get("/v2/context/{hash}", dependencies=[Depends(require_auth)])

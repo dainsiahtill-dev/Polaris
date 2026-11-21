@@ -1,6 +1,7 @@
 import type { EngineeringEvent } from '@/services/api.types';
 import type { ContextPayload } from './ContextViewerModal';
 import type { FinalProviderRequestPayload } from './finalProviderRequestProtocol';
+import type { ContextProjectionManifest } from './contextProjectionManifest';
 
 export type ContextNodeKind = 'goal' | 'message' | 'tool_call' | 'tool_log' | 'verification' | 'run_card' | 'artifact' | 'request';
 export type ContextFoldState = 'ACTIVE' | 'FOLDED' | 'REFERENCE' | 'EVICTED' | 'UNKNOWN';
@@ -19,6 +20,11 @@ export interface ContextNode {
   phase: string | null;
   ok: boolean | null;
   approxTokens: number | null;
+  parentId?: string | null;
+  projectionRef?: string | null;
+  requestMessageIndex?: number | null;
+  originalTokens?: number;
+  projectedTokens?: number;
 }
 
 function text(value: unknown, limit = 160): string {
@@ -157,6 +163,29 @@ export function buildContextNodes(
     approxTokens: approxTokens(message.content),
   }));
   return [...journal, ...requestNodes];
+}
+
+export function nodesFromManifest(manifest: ContextProjectionManifest): ContextNode[] {
+  return manifest.nodes.map((node) => ({
+    id: node.id,
+    seq: node.seq ?? Number.MAX_SAFE_INTEGER,
+    turn: node.turn,
+    kind: node.kind,
+    title: node.title,
+    summary: node.summary,
+    role: node.role,
+    foldState: node.fold_state,
+    foldReason: node.fold_reason,
+    evidenceRef: node.evidence_ref,
+    phase: node.phase,
+    ok: node.ok,
+    approxTokens: node.original_tokens || null,
+    parentId: node.parent_id,
+    projectionRef: node.projection_ref,
+    requestMessageIndex: node.request_message_index,
+    originalTokens: node.original_tokens,
+    projectedTokens: node.projected_tokens,
+  }));
 }
 
 export function foldStateCounts(nodes: ContextNode[]): Record<ContextFoldState, number> {

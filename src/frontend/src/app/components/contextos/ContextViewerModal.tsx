@@ -55,6 +55,7 @@ import { apiFetch } from '@/api';
 import type { EngineeringEvent } from '@/services/api.types';
 import { cn } from '@/app/components/ui/utils';
 import { ContextOSNodeMap } from './ContextOSNodeMap';
+import type { ContextProjectionManifest } from './contextProjectionManifest';
 import {
   buildFullMarkdown,
   buildMessageMarkdown,
@@ -449,6 +450,7 @@ function MessageCardBase({ message, index, onCopyMessage, copyState }: MessageCa
     <div
       className="rounded-lg border border-white/[0.06] bg-white/[0.02] overflow-hidden"
       data-testid={`contextos-msg-${index}`}
+      data-message-index={index}
       data-role={message.role}
     >
       <div className="flex w-full items-center gap-2 px-3 py-2 hover:bg-white/[0.03] transition-colors">
@@ -806,6 +808,7 @@ function GroupSection({ role, count, totalTokens, children }: GroupSectionProps)
 export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, workspace, workerId, events = [], initialTab = 'messages' }: ContextViewerModalProps) {
   const [content, setContent] = useState<ContextPayload | null>(null);
   const [finalRequest, setFinalRequest] = useState<FinalProviderRequestPayload | null>(null);
+  const [manifest, setManifest] = useState<ContextProjectionManifest | null>(null);
   const [loading, setLoading] = useState(false);
   const [finalRequestLoading, setFinalRequestLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -890,11 +893,31 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worksp
     }
   }, [buildWorkspaceSuffix, contextSnapshotRef]);
 
+  const fetchManifest = useCallback(async (signal?: AbortSignal) => {
+    if (!contextSnapshotRef || !CONTEXT_SNAPSHOT_REF_RE.test(contextSnapshotRef)) {
+      setManifest(null);
+      return;
+    }
+    try {
+      const res = await apiFetch(`/v2/context/${contextSnapshotRef}/manifest${buildWorkspaceSuffix()}`, { signal });
+      if (!res.ok) {
+        setManifest(null);
+        return;
+      }
+      const payload = (await res.json()) as ContextProjectionManifest;
+      if (signal?.aborted) return;
+      setManifest(payload?.schema_version === 'context.projection_manifest.v1' ? payload : null);
+    } catch {
+      if (!signal?.aborted) setManifest(null);
+    }
+  }, [buildWorkspaceSuffix, contextSnapshotRef]);
+
   const fetchContext = useCallback(async (signal?: AbortSignal) => {
     if (!contextSnapshotRef) return;
     if (!CONTEXT_SNAPSHOT_REF_RE.test(contextSnapshotRef)) {
       setContent(null);
       setFinalRequest(null);
+      setManifest(null);
       setLoading(false);
       setFinalRequestLoading(false);
       setError(null);
@@ -957,6 +980,7 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worksp
       if (signal?.aborted) return;
       setContent(data);
       void fetchFinalRequest(signal);
+      void fetchManifest(signal);
     } catch (e) {
       // AbortError 静默：组件卸载或 ref 变化导致的取消不应作为错误呈现。
       if ((e as { name?: string })?.name === 'AbortError') return;
@@ -966,7 +990,7 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worksp
         setLoading(false);
       }
     }
-  }, [buildWorkspaceSuffix, contextSnapshotRef, fetchFinalRequest]);
+  }, [buildWorkspaceSuffix, contextSnapshotRef, fetchFinalRequest, fetchManifest]);
 
   useEffect(() => {
     if (!contextSnapshotRef) return;
@@ -1367,9 +1391,18 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worksp
                     content={content}
                     finalRequest={finalRequest}
                     events={events}
-                    onEvidenceSelect={(reference) => {
-                      setSearch(reference);
-                      setActiveTab('messages');
+                    manifest={manifest}
+                    onEvidenceSelect={(reference, messageIndex) => {
+                      if (messageIndex !== undefined) {
+                        setSearch('');
+                        setActiveTab('messages');
+                        window.setTimeout(() => {
+                          document.querySelector(`[data-message-index="${messageIndex}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }, 0);
+                      } else {
+                        setSearch(reference);
+                        setActiveTab('messages');
+                      }
                     }}
                   />
                 </div>

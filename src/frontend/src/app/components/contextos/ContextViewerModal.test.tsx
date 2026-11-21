@@ -440,7 +440,8 @@ describe('ContextViewerModal', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('contextos-viewer-error')).toBeNull();
     });
-    expect(mockedApiFetch).toHaveBeenCalledTimes(3);
+    // Snapshot + final-request + projection manifest + retry snapshot.
+    expect(mockedApiFetch).toHaveBeenCalledTimes(4);
   });
 
   it('renders a context-missing empty state for structured CONTEXT_NOT_FOUND 404', async () => {
