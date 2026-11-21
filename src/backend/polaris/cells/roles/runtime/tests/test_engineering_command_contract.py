@@ -256,16 +256,25 @@ def test_provider_timeout_schema_describes_the_enforced_default_and_limits(isola
 
 async def test_write_file_path_body_confusion_gets_a_corrective_error(isolated_workspace: Path) -> None:
     tools = _tools(isolated_workspace, names=frozenset({"write_file"}))
-    result = await tools.execute("bad-path", "write_file", {"file": '[package]\nname = "demo"\n', "content": "body"})
+    result = await tools.execute(
+        "bad-path", "write_file", {"file": 'allowed/[package]\nname = "demo"\n', "content": "body"}
+    )
     assert not result.ok and "put the document body in content" in result.content
 
 
 async def test_write_file_missing_content_gets_a_precise_recovery_error(isolated_workspace: Path) -> None:
     tools = _tools(isolated_workspace, names=frozenset({"write_file"}))
-    result = await tools.execute("missing-content", "write_file", {"file": "a.py"})
-    assert not result.ok and "requires a content field with the complete file body for a.py" in result.content
-    assert "do not send only file" in result.content
-    assert not (isolated_workspace / "a.py").exists()
+    result = await tools.execute("missing-content", "write_file", {"file": "allowed/a.py"})
+    assert result.ok and "Created an empty file because content was omitted" in result.content
+    assert (isolated_workspace / "allowed" / "a.py").read_text(encoding="utf-8") == ""
+
+    (isolated_workspace / "allowed").mkdir(exist_ok=True)
+    (isolated_workspace / "allowed" / "b.py").write_text("existing = 1\n", encoding="utf-8")
+    rejected = await tools.execute("missing-existing", "write_file", {"file": "allowed/b.py"})
+    assert (
+        not rejected.ok and "requires a content field with the complete file body for allowed/b.py" in rejected.content
+    )
+    assert (isolated_workspace / "allowed" / "b.py").read_text(encoding="utf-8") == "existing = 1\n"
 
 
 def test_repo_rg_ignores_hallucinated_read_only_metadata(isolated_workspace: Path) -> None:

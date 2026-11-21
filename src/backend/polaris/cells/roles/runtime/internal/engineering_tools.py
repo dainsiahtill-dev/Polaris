@@ -634,7 +634,8 @@ class EngineeringTools:
             if name == "write_file":
                 self._keys(args, {"file", "content"})
                 file_argument = self._text(args, "file")
-                if "content" not in args:
+                target = self._path(file_argument, write=True)
+                if "content" not in args and target.is_file():
                     raise ValueError(
                         f"write_file requires a content field with the complete file body for {file_argument}; "
                         "do not send only file. Provide full content in every write_file call."
@@ -643,10 +644,17 @@ class EngineeringTools:
                     raise ValueError(
                         "write_file file must be one relative path; put the document body in content, not in file"
                     )
-                target = self._path(file_argument, write=True)
                 receipt = self.filesystem.workspace_write_text_atomic(
-                    str(target), self._text(args, "content", allow_empty=True), encoding="utf-8"
+                    str(target), self._text(args, "content", default="", allow_empty=True), encoding="utf-8"
                 )
+                if "content" not in args:
+                    return self._observation(
+                        call_id,
+                        name,
+                        True,
+                        f"Created an empty file because content was omitted for {target.relative_to(self.workspace)}; "
+                        "provide the full body next time if this file is meant to be implemented.",
+                    )
                 return self._observation(
                     call_id,
                     name,
