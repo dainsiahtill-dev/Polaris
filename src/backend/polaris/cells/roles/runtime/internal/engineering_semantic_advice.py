@@ -189,6 +189,35 @@ def validate_semantic_advice(payload: object, candidates: CandidateRefs) -> dict
     return {"schema_version": "semantic-advice.v1", "assessments": assessments, "need_evidence": needs}
 
 
+def _normalize_advice_slices(payload: object, candidates: CandidateRefs) -> object:
+    """Drop invented slice ids; never invent evidence or precise source coverage."""
+
+    if not isinstance(payload, dict):
+        return payload
+    assessments = payload.get("assessments")
+    if isinstance(assessments, list):
+        for item in assessments:
+            if not isinstance(item, dict) or not isinstance(item.get("keep_slice_ids"), list):
+                continue
+            slices = list(dict.fromkeys(ref for ref in item["keep_slice_ids"] if ref in candidates.slice_ids))
+            item["keep_slice_ids"] = slices
+            if item.get("suggested_view") == SuggestedView.SLICE.value and not slices:
+                item["suggested_view"] = SuggestedView.CARD.value
+    needs = payload.get("need_evidence")
+    if isinstance(needs, list):
+        normalized_needs: list[object] = []
+        for item in needs:
+            if not isinstance(item, dict) or not isinstance(item.get("requested_slice_ids"), list):
+                normalized_needs.append(item)
+                continue
+            slices = list(dict.fromkeys(ref for ref in item["requested_slice_ids"] if ref in candidates.slice_ids))
+            if slices:
+                item["requested_slice_ids"] = slices
+                normalized_needs.append(item)
+        payload["need_evidence"] = normalized_needs
+    return payload
+
+
 def parse_semantic_advice(raw: str, candidates: CandidateRefs) -> dict[str, Any]:
     """Parse and validate a model response; malformed JSON never becomes advice."""
 
@@ -196,7 +225,7 @@ def parse_semantic_advice(raw: str, candidates: CandidateRefs) -> dict[str, Any]
         payload = json.loads(raw)
     except json.JSONDecodeError as error:
         raise ValueError("semantic advice is not valid JSON") from error
-    return validate_semantic_advice(payload, candidates)
+    return validate_semantic_advice(_normalize_advice_slices(payload, candidates), candidates)
 
 
 def validate_node_summary(payload: object, request: Mapping[str, Any]) -> dict[str, Any]:

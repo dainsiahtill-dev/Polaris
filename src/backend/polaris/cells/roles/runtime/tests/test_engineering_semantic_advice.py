@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from polaris.cells.roles.runtime.internal.engineering_semantic_advice import (
     CandidateRefs,
@@ -58,6 +60,18 @@ def test_semantic_advice_rejects_non_slice_with_slices_and_bad_json() -> None:
         validate_semantic_advice(payload, candidates())
     with pytest.raises(ValueError, match="not valid JSON"):
         parse_semantic_advice("{not json", candidates())
+
+
+def test_parse_semantic_advice_drops_invented_slices_without_inventing_coverage() -> None:
+    payload = valid_advice()
+    payload["assessments"][0]["keep_slice_ids"] = ["slice_bike"]
+    payload["need_evidence"] = [
+        {"node_id": "file_util_hpp", "requested_slice_ids": ["slice_bike"], "reason": "需要该切片。"}
+    ]
+    validated = parse_semantic_advice(json.dumps(payload), candidates())
+    assert validated["assessments"][0]["suggested_view"] == "CARD"
+    assert validated["assessments"][0]["keep_slice_ids"] == []
+    assert validated["need_evidence"] == []
 
 
 def summary_request() -> dict[str, object]:
