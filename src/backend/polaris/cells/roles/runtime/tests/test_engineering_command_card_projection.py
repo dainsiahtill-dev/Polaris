@@ -42,3 +42,25 @@ def test_failed_command_preview_is_pinned() -> None:
     first = json.loads(folded[0]["content"])["command_card"]
     assert first["fold_state"] == "ACTIVE" and first["pin_reason"] == "unresolved_failure"
     assert first["stdout_preview"] == "x" * 600
+
+
+def test_old_failed_command_folds_without_current_dependency() -> None:
+    messages: list[dict[str, object]] = []
+    for index in range(11):
+        messages.append({"role": "assistant", "content": f"step-{index}"})
+        messages.append(_command_message(exit_code=1 if index == 0 else 0))
+    folded = fold_file_card_previews(messages)
+    first = next(message for message in folded if message["role"] == "tool")
+    assert json.loads(first["content"])["command_card"]["fold_state"] == "FOLDED"
+
+
+def test_failed_command_current_reasoning_is_protected() -> None:
+    messages: list[dict[str, object]] = []
+    for index in range(11):
+        messages.append({"role": "assistant", "content": f"step-{index}"})
+        messages.append(_command_message(exit_code=1 if index == 0 else 0))
+    messages.append({"role": "assistant", "content": "继续分析 command:abc 的失败原因"})
+    folded = fold_file_card_previews(messages)
+    first = next(message for message in folded if message["role"] == "tool")
+    card = json.loads(first["content"])["command_card"]
+    assert card["fold_state"] == "ACTIVE" and card["pin_reason"] == "current_reasoning"

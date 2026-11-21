@@ -152,6 +152,19 @@ def test_acceptance_pin_survives_inactivity() -> None:
     assert json.loads(first["content"])["file_card"]["fold_state"] == "ACTIVE"
 
 
+def test_current_reasoning_pin_survives_ten_activities() -> None:
+    large = "x" * 600
+    messages: list[dict[str, object]] = []
+    for index in range(11):
+        messages.append({"role": "assistant", "content": f"step-{index}"})
+        messages.append(_message("a.py" if index == 0 else "b.py", large))
+    messages.append({"role": "assistant", "content": "继续修复 a.py 的交互。"})
+    folded = fold_file_card_previews(messages)
+    first = next(message for message in folded if message["role"] == "tool")
+    card = json.loads(first["content"])["file_card"]
+    assert card["fold_state"] == "ACTIVE" and card["pin_reason"] == "current_reasoning"
+
+
 def test_folded_card_does_not_fold_again() -> None:
     folded_once = _message("a.py", "", fold_state="FOLDED", last_fold_activity_seq=1)
     folded_twice = fold_file_card_previews([folded_once, _message("b.py", "b")])
