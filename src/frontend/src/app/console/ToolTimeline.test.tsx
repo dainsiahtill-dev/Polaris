@@ -94,6 +94,27 @@ describe('ToolTimeline live ordering', () => {
     expect(screen.getByTestId('story-advisor-6')).toHaveTextContent('远程小模型评估 · CARD');
   });
 
+  it('shows Devourer epoch summaries in the live timeline', () => {
+    const epoch: EngineeringEvent = {
+      session_id: 'run',
+      workspace: '/ws',
+      seq: 7,
+      role: 'devourer',
+      kind: 'epoch_card_completed',
+      payload: { id: 'epoch-0001-0010', summary: '完成基础模块，仍有失败。', validation_result: 'VALID' },
+    };
+    render(
+      <ToolTimeline
+        events={[epoch]}
+        selectedSeq={null}
+        onSelect={vi.fn()}
+        onOpenContext={vi.fn()}
+        emptyHint="empty"
+      />,
+    );
+    expect(screen.getByTestId('story-epoch-7')).toHaveTextContent('Devourer 吞噬兽 · epoch-0001-0010');
+  });
+
   it('shows the newest event first so users do not need to scroll to the bottom', () => {
     render(
       <ToolTimeline

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildContextNodes, foldStateCounts } from './contextOSNodeMapModel';
+import { buildContextNodes, foldStateCounts, nodesFromManifest } from './contextOSNodeMapModel';
 import type { ContextPayload } from './ContextViewerModal';
 import type { EngineeringEvent } from '@/services/api.types';
 import type { FinalProviderRequestPayload } from './finalProviderRequestProtocol';
@@ -48,5 +48,25 @@ describe('ContextOS node folding model', () => {
       event(8, 'message', { message: { role: 'assistant', content: 'unproven' } }),
     ]);
     expect(nodes[0].foldState).toBe('UNKNOWN');
+  });
+
+  it('projects deterministic and epoch memory cards into the node map', () => {
+    const nodes = nodesFromManifest({
+      schema_version: 'context.projection_manifest.v1',
+      context_snapshot_ref: null,
+      workspace: '/ws',
+      run_id: 'run',
+      call_id: null,
+      nodes: [],
+      run_cards: [],
+      memory_cards: [
+        { kind: 'failure_cluster', id: 'failure-1', title: 'root is not defined', summary: '8 次 · 未解决', evidence_refs: ['verify-1'], unresolved: true },
+        { kind: 'epoch_card', id: 'epoch-0001-0010', title: 'epoch-0001-0010', summary: '完成基础模块', evidence_refs: [] },
+      ],
+      summary: { original_tokens: 0, projected_tokens: 0, compression_ratio: null, fold_counts: {}, kind_counts: {}, run_card_count: 0, scope: 'test' },
+    });
+    expect(nodes[0].kind).toBe('failure_cluster');
+    expect(nodes[0].evidenceRef).toBe('verify-1');
+    expect(nodes[1].kind).toBe('epoch_card');
   });
 });

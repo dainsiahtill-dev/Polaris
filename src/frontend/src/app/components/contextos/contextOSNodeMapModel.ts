@@ -3,7 +3,7 @@ import type { ContextPayload } from './ContextViewerModal';
 import type { FinalProviderRequestPayload } from './finalProviderRequestProtocol';
 import type { ContextProjectionManifest } from './contextProjectionManifest';
 
-export type ContextNodeKind = 'goal' | 'message' | 'tool_call' | 'tool_log' | 'verification' | 'run_card' | 'artifact' | 'request' | 'file_card' | 'command_card';
+export type ContextNodeKind = 'goal' | 'message' | 'tool_call' | 'tool_log' | 'verification' | 'run_card' | 'artifact' | 'request' | 'file_card' | 'command_card' | 'failure_cluster' | 'interface_contract' | 'requirement_trace' | 'tool_pattern' | 'file_diff' | 'evidence_lease' | 'epoch_card';
 export type ContextFoldState = 'ACTIVE' | 'FOLDED' | 'REFERENCE' | 'EVICTED' | 'UNKNOWN';
 
 export interface ContextNode {
@@ -169,7 +169,7 @@ export function buildContextNodes(
 }
 
 export function nodesFromManifest(manifest: ContextProjectionManifest): ContextNode[] {
-  return manifest.nodes.map((node) => ({
+  const projectionNodes = manifest.nodes.map((node) => ({
     id: node.id,
     seq: node.seq ?? Number.MAX_SAFE_INTEGER,
     turn: node.turn,
@@ -192,6 +192,23 @@ export function nodesFromManifest(manifest: ContextProjectionManifest): ContextN
     pinReason: node.pin_reason,
     supersededBy: node.superseded_by,
   }));
+  const memoryNodes = (manifest.memory_cards || []).map((card, index): ContextNode => ({
+    id: card.id,
+    seq: Number.MAX_SAFE_INTEGER - 1000 + index,
+    turn: null,
+    kind: card.kind,
+    title: card.title,
+    summary: card.summary,
+    role: 'ContextOS',
+    foldState: 'REFERENCE',
+    foldReason: '长期记忆卡 · 原始证据引用保留',
+    evidenceRef: card.evidence_refs?.find((ref): ref is string => typeof ref === 'string' && ref.length > 0) || null,
+    phase: null,
+    ok: card.unresolved === undefined ? null : !card.unresolved,
+    approxTokens: approxTokens(card.summary),
+    pinReason: card.pin_reason,
+  }));
+  return [...projectionNodes, ...memoryNodes];
 }
 
 export function foldStateCounts(nodes: ContextNode[]): Record<ContextFoldState, number> {

@@ -39,6 +39,13 @@ const KIND_STYLE: Record<ContextNodeKind, { color: string; label: string; icon: 
   run_card: { color: '#0ca30c', label: 'RunCard', icon: GitBranch },
   artifact: { color: '#c98500', label: 'Artifact', icon: Package },
   request: { color: '#d55181', label: '最终请求', icon: FileText },
+  failure_cluster: { color: '#e66767', label: '失败聚类', icon: ShieldCheck },
+  interface_contract: { color: '#3987e5', label: '接口契约', icon: GitBranch },
+  requirement_trace: { color: '#c98500', label: '需求追踪', icon: ShieldCheck },
+  tool_pattern: { color: '#199e70', label: '工具经验', icon: Terminal },
+  file_diff: { color: '#9085e9', label: '文件变更', icon: FileText },
+  evidence_lease: { color: '#1f7a8c', label: '证据租约', icon: Link2 },
+  epoch_card: { color: '#d55181', label: 'Epoch记忆', icon: Layers },
 };
 
 const FOLD_STYLE: Record<ContextFoldState, { label: string; icon: typeof GitBranch; className: string; bar: string }> = {

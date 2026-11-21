@@ -623,7 +623,16 @@ async def run_engineering_loop(
     )
 
     semantic_runtime = semantic_runtime_from_environment()
+    from polaris.cells.roles.runtime.internal.engineering_epoch_kimi import kimi_epoch_pool_from_environment
+    from polaris.cells.roles.runtime.internal.engineering_epoch_runtime import EpochRuntime, facts_for_epoch
+
+    epoch_pool = kimi_epoch_pool_from_environment()
+    fallback_pool = semantic_runtime.pool if semantic_runtime is not None else None
+    epoch_runtime = (
+        EpochRuntime(epoch_pool or fallback_pool) if epoch_pool is not None or fallback_pool is not None else None
+    )
     semantic_reported: set[str] = set()
+    epoch_reported: set[str] = set()
     tools = EngineeringTools(
         command.workspace,
         scope,
@@ -831,6 +840,21 @@ async def run_engineering_loop(
                 )
                 if advice_refs.node_ids:
                     semantic_runtime.schedule(advice_request, advice_refs, fingerprint=advice_fingerprint)
+            if epoch_runtime is not None:
+                epoch_card = epoch_runtime.poll()
+                if epoch_card is not None and epoch_card["fingerprint"] not in epoch_reported:
+                    store.append_event(
+                        command.session_id,
+                        kind="epoch_card_completed",
+                        role="devourer",
+                        payload=epoch_card,
+                    )
+                    epoch_reported.add(epoch_card["fingerprint"])
+                epoch_request, epoch_refs, epoch_fingerprint = facts_for_epoch(
+                    run_now, store.load_events(command.session_id)
+                )
+                if epoch_refs.node_ids:
+                    epoch_runtime.schedule(epoch_request, epoch_refs, fingerprint=epoch_fingerprint)
             first_verification_due = False
             if (
                 command.role == "director"

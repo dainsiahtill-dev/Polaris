@@ -25,11 +25,12 @@ export type StoryKind =
   | 'llm_call'       // llm_request_observed
   | 'fold'           // context_projection_folded
   | 'advisor'        // semantic_advice_completed
+  | 'epoch'          // epoch_card_completed
   | 'verification';  // verification_started / completed
 
 const DISPLAY_KINDS = new Set([
   'message', 'tool_observed', 'stage_gate_enforced', 'loop_detected',
-  'visual_observation_completed', 'llm_request_observed', 'context_projection_folded', 'semantic_advice_completed',
+  'visual_observation_completed', 'llm_request_observed', 'context_projection_folded', 'semantic_advice_completed', 'epoch_card_completed',
   'verification_started', 'verification_completed',
 ]);
 
@@ -43,6 +44,7 @@ export function storyKindOf(event: EngineeringEvent): StoryKind | null {
     case 'llm_request_observed': return 'llm_call';
     case 'context_projection_folded': return 'fold';
     case 'semantic_advice_completed': return 'advisor';
+    case 'epoch_card_completed': return 'epoch';
     case 'verification_started':
     case 'verification_completed': return 'verification';
     default: return null;
@@ -199,6 +201,19 @@ export function ToolTimeline({ events, selectedSeq, onSelect, onOpenContext, emp
               {text.length > 500 ? (
                 <button type="button" className="mt-1 text-xs text-[var(--cx-teal-strong)] hover:underline" onClick={() => setExpanded((p) => ({ ...p, [event.seq]: !isOpen }))}>{isOpen ? '收起' : '展开全部'}</button>
               ) : null}
+            </article>
+          );
+        }
+        if (kind === 'epoch') {
+          return (
+            <article key={event.seq} data-testid={`story-epoch-${event.seq}`} className="rounded-xl border border-[rgba(213,81,129,.32)] bg-[rgba(213,81,129,.06)] px-3 py-2.5">
+              <div className="flex items-center gap-2">
+                <IconClapper className="h-4 w-4 text-[#d55181]" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold text-[var(--cx-ink)]">Devourer 吞噬兽 · {textOf(event.payload.id)}</p>
+                  <p className="mt-0.5 line-clamp-3 text-[0.7rem] text-[var(--cx-ink-dim)]">{textOf(event.payload.summary)}</p>
+                </div>
+              </div>
             </article>
           );
         }

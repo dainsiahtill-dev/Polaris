@@ -33,6 +33,22 @@ export interface ProjectionRunCard {
   child_ids: string[];
 }
 
+export interface ContextMemoryCard {
+  kind: 'failure_cluster' | 'interface_contract' | 'requirement_trace' | 'tool_pattern' | 'file_diff' | 'evidence_lease' | 'epoch_card';
+  id: string;
+  title: string;
+  summary: string;
+  evidence_refs?: Array<string | null>;
+  status?: string;
+  count?: number;
+  unresolved?: boolean;
+  symbols?: string[];
+  diff_preview?: string;
+  pin_reason?: string;
+  validation_result?: string;
+  uncertain?: boolean;
+}
+
 export interface ContextProjectionManifest {
   schema_version: 'context.projection_manifest.v1';
   context_snapshot_ref: string | null;
@@ -41,6 +57,7 @@ export interface ContextProjectionManifest {
   call_id: string | null;
   nodes: ProjectionManifestNode[];
   run_cards: ProjectionRunCard[];
+  memory_cards: ContextMemoryCard[];
   summary: {
     original_tokens: number;
     projected_tokens: number;

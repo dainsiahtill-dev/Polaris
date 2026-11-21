@@ -363,6 +363,10 @@ def build_projection_manifest(
 
     fold_counts = Counter(node["fold_state"] for node in nodes)
     kind_counts = Counter(node["kind"] for node in nodes)
+    from polaris.cells.roles.runtime.internal.engineering_memory_cards import build_memory_cards
+
+    memory_cards = build_memory_cards(run, events)
+    memory_cards.extend(dict(event["payload"]) for event in events if event["kind"] == "epoch_card_completed")
     original = sum(node["original_tokens"] for node in nodes)
     projected = sum(node["projected_tokens"] for node in nodes)
     return {
@@ -373,6 +377,7 @@ def build_projection_manifest(
         "call_id": snapshot.get("call_id"),
         "nodes": nodes,
         "run_cards": cards,
+        "memory_cards": memory_cards,
         "summary": {
             "original_tokens": original,
             "projected_tokens": projected,
