@@ -335,6 +335,7 @@ class EngineeringPermissionProfile(BaseModel):
             "edit_file",
             "execute_command",
             "verify_project",
+            "report_review",
         }
     )
     network_allowed: bool = False
