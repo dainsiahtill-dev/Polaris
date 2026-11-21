@@ -15,6 +15,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from polaris.cells.roles.runtime.internal.engineering_evidence_graph import evidence_graph_projection
 from polaris.kernelone.llm.engine.token_estimator import TokenEstimator
 
 STATE_EVENT_KINDS = (
@@ -214,6 +215,7 @@ def working_state_facts(
     return {
         "goal": _text(run.get("instruction"), _MAX_GOAL_CHARS),
         "required_checks": run.get("required_checks") or [],
+        "evidence_graph": evidence_graph_projection(str(run.get("instruction") or ""), events),
         "candidate": {
             "workspace_revision": run.get("workspace_revision"),
             "verification": verification,

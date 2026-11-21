@@ -594,6 +594,7 @@ async def run_engineering_loop(
         authorize=authorize,
         artifact_binding=artifact_binding,
         review_clauses=review_clauses,
+        run_id=command.session_id,
     )
     if project_run:
         saved = store.load_run(command.session_id, workspace=command.workspace)
@@ -797,7 +798,12 @@ async def run_engineering_loop(
                 # The first verification may not be postponed until the run is
                 # about to expire. Keep build preparation available, but stop
                 # advertising more source writes/repository exploration.
-                allowed = {"verify_project", "execute_command", "read_file", "browser_observe"}
+                from polaris.cells.roles.runtime.internal.engineering_phase_policy import (
+                    EngineeringPhase,
+                    allowed_tools,
+                )
+
+                allowed = allowed_tools(EngineeringPhase.VERIFY) or frozenset()
                 options["tools"] = [
                     schema
                     for schema in options["tools"]
@@ -914,11 +920,6 @@ async def run_engineering_loop(
                     command.session_id, workspace=command.workspace, kinds=QA_WORKING_STATE_EVENT_KINDS
                 )
                 now = time.time()
-                options["messages"].append(
-                    qa_working_state_message(
-                        run, working_events, frame_seq=frame_seq, observed_at=now, deadline=limits.deadline
-                    )
-                )
                 remaining = max(0.0, limits.deadline - now) if limits.deadline is not None else None
                 reserve = (
                     qa_review_reserve_seconds(
@@ -932,6 +933,16 @@ async def run_engineering_loop(
                     if remaining is not None and remaining <= reserve
                     else ("turn_limit" if qa_turn_limit > 0 and qa_turns >= qa_turn_limit else None)
                 )
+                options["messages"].append(
+                    qa_working_state_message(
+                        run,
+                        working_events,
+                        frame_seq=frame_seq,
+                        observed_at=now,
+                        deadline=limits.deadline,
+                        include_evidence_pack=reason is not None,
+                    )
+                )
                 if reason and "report_review" in tools.enabled:
                     source = next(
                         (
@@ -943,6 +954,13 @@ async def run_engineering_loop(
                     )
                     if source:
                         qa_report_required = True
+                        # Final verdict is a fresh evidence-only call, not a
+                        # continuation of dozens of exploratory assistant/tool
+                        # turns. The next QA working-state message supplies the
+                        # bounded evidence pack and unsatisfied obligations.
+                        options["messages"] = [
+                            message for message in options["messages"] if message.get("role") == "system"
+                        ]
                         # A forced tool_choice is only advisory for some compatible
                         # providers. MiniMax was observed returning execute_command
                         # six times despite type=tool/report_review. Remove every
@@ -984,6 +1002,15 @@ async def run_engineering_loop(
                             "available_tools": sorted(tools.enabled),
                         },
                     )
+            from polaris.cells.roles.runtime.internal.engineering_phase_policy import phase_for
+
+            phase = phase_for(
+                command.role,
+                verification=str(run_now.get("verification") or "not_run"),
+                first_verification_due=first_verification_due,
+                preparation_pending=preparation_pending,
+                qa_report_required=qa_report_required,
+            )
             request = AIRequest(
                 task_type=TaskType.DIALOGUE,
                 role=command.role,
@@ -994,6 +1021,7 @@ async def run_engineering_loop(
                     "workspace": str(command.workspace),
                     "engine_version": "engineering_v2",
                     "turn_seq": turn_seq,
+                    "phase": phase.value,
                     "call_id": f"{command.session_id}:{command.role}:{turn_seq}",
                     "visual_input_sets": visual_projection.get("image_sets", []),
                 },
@@ -1212,14 +1240,16 @@ async def run_engineering_loop(
                 )
                 try:
                     canonical, normalized = tools.normalize(call.name, call.arguments)
-                    if canonical == "execute_command" and requested_artifacts(normalized.get("artifacts", [])):
-                        if tools.artifact_binding is None:
+                    if canonical == "execute_command":
+                        selected = requested_artifacts(normalized.get("artifacts", []))
+                        if selected and tools.artifact_binding is None:
                             raise ValueError("artifact capture has no host candidate binding")
-                        if authorize is not None:
-                            authorize()
-                        tools._remaining()
-                        if not cancel.is_set():
-                            capture_context = open_command_output_capture(command.workspace)
+                        if tools.artifact_binding is not None:
+                            if authorize is not None:
+                                authorize()
+                            tools._remaining()
+                            if not cancel.is_set():
+                                capture_context = open_command_output_capture(command.workspace)
                 except (ValueError, OSError):
                     # The normal execution adapter records the same rejection.
                     # No scratch is allocated before real authorization.

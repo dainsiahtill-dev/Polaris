@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import mimetypes
 import os
+import re
 import subprocess
 import time
 from collections.abc import Awaitable, Callable
@@ -49,6 +51,7 @@ COMMAND_TIMEOUT_DEFAULT = 30
 COMMAND_TIMEOUT_MINIMUM = 1
 COMMAND_TIMEOUT_MAXIMUM = 120
 _REPO_RG_KEYS = frozenset({"pattern", "paths", "path", "max_results", "glob", "context_lines", "case_sensitive"})
+_EXIT_MASKING_SUFFIX = re.compile(r"(?:;|\|\|)\s*(?:true|/bin/true|echo\b.*|printf\b.*|exit\s+0)\s*$")
 
 
 def bounded_output(content: str, maximum: int) -> str:
@@ -79,6 +82,7 @@ class EngineeringTools:
         authorize: Callable[[], None] | None = None,
         artifact_binding: Callable[[], dict[str, Any]] | None = None,
         review_clauses: tuple[str, ...] = (),
+        run_id: str | None = None,
     ) -> None:
         self.workspace = workspace.resolve(strict=True)
         # Acceptance clauses of the original goal, when this session is a QA
@@ -103,6 +107,8 @@ class EngineeringTools:
         self.observe = observe
         self.authorize = authorize
         self.artifact_binding = artifact_binding
+        safe_run_id = re.sub(r"[^A-Za-z0-9_.-]", "_", run_id or "shared")[:96]
+        self.run_output_root = self.workspace / ".polaris" / "runtime" / "run-output" / safe_run_id
         self.filesystem = KernelFileSystem(str(self.workspace), LocalFileSystemAdapter())
         self.enabled = frozenset(ToolSpecRegistry.get_canonical(name) for name in scope.enabled_tools) & (
             ENGINEERING_TOOLS
@@ -168,7 +174,8 @@ class EngineeringTools:
                     f"Run /bin/sh -c with initial cwd {self.workspace}. Each call starts a fresh shell and sandbox. "
                     "/tmp, HOME, cache (XDG_CACHE_HOME), and output (POLARIS_SANDBOX_OUTPUT) are private and "
                     "discarded after that call. Shell variables, cd, and files in those private directories do not "
-                    "persist across calls. "
+                    "persist across calls. POLARIS_RUN_OUTPUT is writable scratch shared by calls in this run; "
+                    "use it for build/test intermediates instead of /tmp. "
                     + persistence
                     + (
                         "Host persistent command cache is available at POLARIS_COMMAND_CACHE "
@@ -240,10 +247,11 @@ class EngineeringTools:
         if name == "repo_rg":
             # Read-only search can safely ignore hallucinated metadata fields
             # (observed context_labels) without changing the query semantics.
-            unknown = sorted(arguments.keys() - _REPO_RG_KEYS)
+            allowed_keys = _REPO_RG_KEYS | set(aliases)
+            unknown = sorted(arguments.keys() - allowed_keys)
             if ignored is not None:
                 ignored.extend(unknown)
-            arguments = {key: value for key, value in arguments.items() if key in _REPO_RG_KEYS}
+            arguments = {key: value for key, value in arguments.items() if key in allowed_keys}
         # A transport synonym cannot choose between two different destinations
         # or payloads. Edit dialect disambiguation belongs to the K1 normalizer.
         if name != "edit_file" and isinstance(aliases, dict):
@@ -290,14 +298,26 @@ class EngineeringTools:
             if name == "verify_project":
                 self._keys(args, {"commands"})
                 commands = args.get("commands")
-                if (
-                    not isinstance(commands, list)
-                    or not commands
-                    or any(
-                        not isinstance(command, str) or not command.strip() or "\0" in command for command in commands
-                    )
+                if not isinstance(commands, list) or any(
+                    not isinstance(command, str) or not command.strip() or "\0" in command for command in commands
                 ):
-                    raise ValueError("verify_project requires a nonempty list of nonempty command strings without NUL")
+                    raise ValueError("verify_project commands must be a list of nonempty command strings without NUL")
+                if not commands:
+                    from polaris.cells.roles.runtime.internal.engineering_verification_plan import (
+                        default_verification_commands,
+                    )
+
+                    commands = list(default_verification_commands(self.workspace))
+                    if not commands:
+                        raise ValueError(
+                            "verify_project received no commands and the host could not detect a supported toolchain"
+                        )
+                masked = [command for command in commands if _EXIT_MASKING_SUFFIX.search(command.strip())]
+                if masked:
+                    raise ValueError(
+                        "verify_project rejects exit-status masking (for example '; true', '|| true', '; echo' or '|| exit 0'): "
+                        + json.dumps(masked, ensure_ascii=False)
+                    )
                 if self.verify is None:
                     raise ValueError("verify_project requires the active Director session owner")
                 return await self.verify(tuple(commands))
@@ -371,7 +391,9 @@ class EngineeringTools:
                 names = requested_artifacts(args["artifacts"]) if "artifacts" in args else ()
                 if names and (output_capture is None or self.artifact_binding is None):
                     raise ValueError("artifact capture requires the active host output binding")
-                before = self.artifact_binding() if names and self.artifact_binding is not None else {}
+                before = (
+                    self.artifact_binding() if output_capture is not None and self.artifact_binding is not None else {}
+                )
                 command = self._text(args, "command")
                 timeout = self._integer(
                     args,
@@ -405,9 +427,17 @@ class EngineeringTools:
                         + "POLARIS_SANDBOX_OUTPUT; /tmp and HOME are discarded when the call ends, so later calls "
                         + "must recreate any files they need.",
                     )
-                if names and output_capture is not None and self.artifact_binding is not None:
+                if output_capture is not None and self.artifact_binding is not None:
+                    capture_names = names
+                    if not capture_names:
+                        capture_names = tuple(
+                            name
+                            for name in output_capture.list()
+                            if mimetypes.guess_type(name)[0]
+                            in {"image/svg+xml", "text/html", "image/png", "image/jpeg"}
+                        )
                     try:
-                        artifacts = capture_artifacts(output_capture, names, before, self.artifact_binding())
+                        artifacts = capture_artifacts(output_capture, capture_names, before, self.artifact_binding())
                         observation = replace(observation, artifacts=artifacts)
                     except (ValueError, OSError, PathSecurityError, GuardedRegularFileSnapshotError) as error:
                         observation = replace(
@@ -599,6 +629,7 @@ class EngineeringTools:
         # Fixed source-reader helpers do not consume persistent command inputs.
         # Only ordinary execute_command uses the explicit host cache grant.
         cache_mode = self.scope.command_cache if command_cache_write else "disabled"
+        self.run_output_root.mkdir(parents=True, exist_ok=True)
         # Validate the ordinary command's containment before allocating any
         # persistent resource. Unsupported platforms or invalid source grants
         # must leave even an explicitly granted cache absent.
@@ -612,6 +643,7 @@ class EngineeringTools:
             toolchain_bin_dirs=self.scope.toolchain_bin_dirs,
             toolchain_env=dict(self.scope.toolchain_env),
             capture_output_root=capture_output_root,
+            run_output_root=self.run_output_root,
         )
         command_cache = resolve_command_cache(
             self.workspace, cache_mode, create=command_cache_write and cache_mode == "read_write"
@@ -628,6 +660,7 @@ class EngineeringTools:
                 toolchain_env=dict(self.scope.toolchain_env),
                 command_cache=command_cache,
                 capture_output_root=capture_output_root,
+                run_output_root=self.run_output_root,
             )
         control = ProcessTreeRunControl()
         worker = asyncio.create_task(

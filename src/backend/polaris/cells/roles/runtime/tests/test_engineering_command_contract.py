@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shlex
+import time
 from pathlib import Path
 from typing import Any
 
@@ -275,3 +276,39 @@ async def test_read_only_command_feedback_names_output_and_tmp_lifecycle(isolate
     )
     assert not result.ok and "./mpqa" in result.content
     assert "POLARIS_SANDBOX_OUTPUT" in result.content and "/tmp and HOME are discarded" in result.content
+
+
+async def test_run_output_persists_across_calls_without_workspace_writes(isolated_workspace: Path) -> None:
+    tools = _tools(isolated_workspace, write=False)
+    first = await tools.execute(
+        "run-write",
+        "execute_command",
+        {"command": 'printf persistent > "$POLARIS_RUN_OUTPUT/state.txt"'},
+    )
+    second = await tools.execute("run-read", "execute_command", {"command": 'cat "$POLARIS_RUN_OUTPUT/state.txt"'})
+    assert first.ok and second.ok and "persistent" in second.content
+
+
+@pytest.mark.parametrize("command", ["false; true", "false || true", "false; echo DONE", "false || exit 0"])
+async def test_verify_project_rejects_exit_status_masking_before_execution(
+    isolated_workspace: Path, command: str
+) -> None:
+    from polaris.cells.roles.runtime.internal.engineering_roles import register_verification_tool
+
+    register_verification_tool()
+    called = False
+
+    async def fake_verify(commands: tuple[str, ...]) -> Any:
+        nonlocal called
+        called = True
+        raise AssertionError("masked verification must not execute")
+
+    tools = EngineeringTools(
+        isolated_workspace,
+        PermissionScope((isolated_workspace,), (), frozenset({"execute_command", "verify_project"}), False),
+        RunLimits(time.time() + 15, 1_000_000, 64_000),
+        asyncio.Event(),
+        verify=fake_verify,
+    )
+    result = await tools.execute("masked", "verify_project", {"commands": [command]})
+    assert not result.ok and "exit-status masking" in result.content and not called

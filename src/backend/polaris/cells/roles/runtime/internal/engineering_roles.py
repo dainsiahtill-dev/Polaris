@@ -240,12 +240,12 @@ def register_browser_observation_tool() -> None:
             ),
             "parameter_any_of": [
                 {
-                    "properties": {"artifact_ref": {}, "viewport": {}, "frame_times_ms": {}, "actions": {}},
+                    "properties": {"artifact_ref": {}, "viewport": {}, "frame_times_ms": {}, "dom_queries": {}, "actions": {}},
                     "required": ["artifact_ref"],
                     "additionalProperties": False,
                 },
                 {
-                    "properties": {"entry": {}, "web_root": {}, "viewport": {}, "frame_times_ms": {}, "actions": {}},
+                    "properties": {"entry": {}, "web_root": {}, "viewport": {}, "frame_times_ms": {}, "dom_queries": {}, "actions": {}},
                     "additionalProperties": False,
                 },
                 {
@@ -299,6 +299,20 @@ def register_browser_observation_tool() -> None:
                     "minItems": 1,
                     "maxItems": 4,
                     "description": "Ordered absolute image capture times after actions, default [0, 400]. In DOM-only mode only the final offset determines final DOM observation; no intermediate snapshots. Actions plus final wait must total at most 10000ms.",
+                },
+                {
+                    "name": "dom_queries",
+                    "type": "array",
+                    "maxItems": 16,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "selector": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": r"\S"},
+                        },
+                        "required": ["selector"],
+                        "additionalProperties": False,
+                    },
+                    "description": "Up to 16 CSS selectors; returns match count plus text, visibility and bounding box for the first four matches. Use for targeted DOM/layout evidence instead of visual guesses.",
                 },
                 {
                     "name": "actions",

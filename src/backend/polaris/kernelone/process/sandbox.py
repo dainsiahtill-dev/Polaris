@@ -217,6 +217,7 @@ def build_workspace_sandbox_argv(
     toolchain_env: Mapping[str, str] | None = None,
     capture_output_root: Path | None = None,
     command_cache: CommandCacheMount | None = None,
+    run_output_root: Path | None = None,
 ) -> list[str]:
     """Build a fail-closed Linux command with explicit filesystem grants.
 
@@ -281,6 +282,14 @@ def build_workspace_sandbox_argv(
         from .output_capture import validate_command_output_root
 
         validate_command_output_root(project, capture_output_root, empty=True)
+    if run_output_root is not None:
+        from .output_capture import _directory_identity
+
+        expected_root = (control / "runtime" / "run-output").resolve()
+        resolved_run_root = run_output_root.resolve(strict=True)
+        if resolved_run_root == expected_root or not resolved_run_root.is_relative_to(expected_root):
+            raise ValueError("run output root must be a dedicated child of the workspace run-output namespace")
+        _directory_identity(resolved_run_root)
     if command_cache is not None:
         if not isinstance(command_cache, CommandCacheMount) or command_cache.workspace != project:
             raise ValueError("sandbox command cache must belong to this workspace")
@@ -321,6 +330,8 @@ def build_workspace_sandbox_argv(
         arguments.extend(("--ro-bind", str(root), str(root)))
     for root in sorted(writes, key=lambda path: (len(path.parts), str(path))):
         arguments.extend(("--bind", str(root), str(root)))
+    if run_output_root is not None:
+        arguments.extend(("--bind", str(run_output_root), "/sandbox-run-output"))
     arguments.extend(("--tmpfs", str(control), "--remount-ro", str(control)))
     if command_cache is not None:
         arguments.extend(
@@ -336,6 +347,7 @@ def build_workspace_sandbox_argv(
         "XDG_CACHE_HOME": "/sandbox-cache",
         "PYTHONPYCACHEPREFIX": "/sandbox-cache/python",
         "POLARIS_SANDBOX_OUTPUT": "/sandbox-output",
+        "POLARIS_RUN_OUTPUT": "/sandbox-run-output",
         "TMPDIR": "/tmp",
         "PATH": "/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin",
         "LANG": "C.UTF-8",

@@ -7,6 +7,8 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from polaris.cells.roles.runtime.internal.engineering_evidence_graph import evidence_graph_projection
+
 QA_WORKING_STATE_EVENT_KINDS = (
     "run_updated",
     "role_started",
@@ -23,6 +25,7 @@ def qa_working_state_message(
     frame_seq: int,
     observed_at: float,
     deadline: float | None,
+    include_evidence_pack: bool = False,
 ) -> dict[str, Any]:
     """Describe recorded facts only; do not rank, deny, repeat or decide actions.
 
@@ -140,6 +143,7 @@ def qa_working_state_message(
             "unobserved_tool_dispatch_count": len(dispatches.keys() - closed) if binding_known else None,
         },
         "last_probe": last_probe,
+        "evidence_graph": evidence_graph_projection(str(run["instruction"]), events),
         "visible_result_count_scope": "Same QA frame and journal revision; tool/ok/content/exit_code/interrupted/timed_out fields only; image equality not inferred. Arguments ignored; same visible result does not imply same command, effect identity or redundant purpose.",
         "original_deadline_epoch_seconds": deadline,
         "observed_at_epoch_seconds": observed_at,
@@ -147,6 +151,26 @@ def qa_working_state_message(
         "timing_scope": "Observation at request preparation; remaining time may be lower when received. Unknown deadline remains null.",
         "authority": "Recorded observations only, not acceptance or instructions for the next decision; saved captures retain their original bindings.",
     }
+    if include_evidence_pack:
+        facts["final_evidence_pack"] = {
+            "host_checks": [
+                {
+                    "call_id": check.get("call_id"),
+                    "ok": check.get("ok"),
+                    "content": str(check.get("content") or "")[:1200],
+                }
+                for check in list(run["checks"])[-8:]
+            ],
+            "qa_observations": [
+                {
+                    "call_id": event["payload"]["call_id"],
+                    "tool": event["payload"]["tool"],
+                    "content": str(event["payload"].get("content") or "")[:1200],
+                }
+                for event in successful[-16:]
+            ],
+            "scope": "Bounded excerpts from current host checks and successful QA observations in this frame; full evidence remains in SQLite.",
+        }
     return {
         "role": "user",
         "content": "Host QA working-state observation (request preparation): "

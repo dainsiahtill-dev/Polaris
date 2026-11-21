@@ -71,7 +71,12 @@ async def test_static_origin_registry_json_native_service_and_cold_original_pixe
 
     restored_context.run(restore)
     # path is a genuine natural-call alias; web_root must survive normalization.
-    arguments = {entry_argument: "public/dist/nested/index.html", "web_root": "public/dist", "frame_times_ms": [100]}
+    arguments = {
+        entry_argument: "public/dist/nested/index.html",
+        "web_root": "public/dist",
+        "frame_times_ms": [100],
+        "dom_queries": [{"selector": "body"}],
+    }
     if protocol == "openai":
         scripted_provider.enqueue_json(_response(("static-capture", "browser_observe", arguments)))
         scripted_provider.enqueue_json(_response(text="Inspected the explicit synthetic static-origin capture."))
@@ -112,6 +117,16 @@ async def test_static_origin_registry_json_native_service_and_cold_original_pixe
     assert observation["ok"], observation["content"]
     payload = json.loads(observation["content"])
     assert READY in payload["dom"]["body_text"]
+    assert payload["dom"]["queries"] == [
+        {
+            "selector": "body",
+            "count": 1,
+            "matches": [
+                {"text": READY, "visible": True, "bounds": payload["dom"]["queries"][0]["matches"][0]["bounds"]}
+            ],
+        }
+    ]
+    assert payload["dom"]["queries"][0]["matches"][0]["bounds"]["width"] > 0
     assert payload["entry"] == "public/dist/nested/index.html" and payload["web_root"] == "public/dist"
     assert payload["origin_mode"] == "static"
     dispatch = next(e for e in events if e["kind"] == "tool_started")

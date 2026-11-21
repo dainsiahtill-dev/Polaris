@@ -262,6 +262,20 @@ try:
                 'body_text': body.inner_text()[:2000] if body.count() else '',
                 'buttons': [text[:80] for text in page.get_by_role('button').all_text_contents()[:8]],
             }
+            query_results = []
+            for query in settings['dom_queries']:
+                locator = page.locator(query['selector'])
+                count = locator.count()
+                matches = []
+                for index in range(min(count, 4)):
+                    node = locator.nth(index)
+                    matches.append({
+                        'text': node.inner_text()[:500],
+                        'visible': node.is_visible(),
+                        'bounds': node.bounding_box(),
+                    })
+                query_results.append({'selector': query['selector'], 'count': count, 'matches': matches})
+            summary['queries'] = query_results
             # Read only public properties of rendered standard form controls.
             # Prefix limits describe observations, never truncate supplied actions.
             summary.update(page.locator('input, textarea, select').evaluate_all(r'''
@@ -404,6 +418,7 @@ def _settings(
         "web_root",
         "viewport",
         "frame_times_ms",
+        "dom_queries",
         "actions",
     }:
         raise ValueError("unsupported browser observation arguments")
@@ -466,6 +481,14 @@ def _settings(
     frames = [_integer(value, label="frame offset", minimum=0, maximum=10000) for value in frames]
     if frames != sorted(frames):
         raise ValueError("frame_times_ms must be ordered absolute offsets after the actions")
+    supplied_queries = arguments.get("dom_queries", [])
+    if not isinstance(supplied_queries, list) or len(supplied_queries) > 16:
+        raise ValueError("dom_queries must contain at most 16 selector objects")
+    dom_queries = []
+    for query in supplied_queries:
+        if not isinstance(query, dict) or query.keys() != {"selector"}:
+            raise ValueError("each dom_query must contain only selector")
+        dom_queries.append({"selector": _text(query["selector"], label="dom query selector", maximum=512)})
     supplied_actions = arguments.get("actions", [])
     if not isinstance(supplied_actions, list):
         raise ValueError("actions must be a list")
@@ -546,6 +569,7 @@ def _settings(
         else None,
         "viewport": viewport,
         "frame_times_ms": frames,
+        "dom_queries": dom_queries,
         "actions": actions,
         "executable": str(executable),
         "python_executable": str(python),

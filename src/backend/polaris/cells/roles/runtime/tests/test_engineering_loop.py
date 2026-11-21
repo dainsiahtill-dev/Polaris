@@ -735,6 +735,7 @@ async def test_qa_forced_report_limits_wire_and_rejects_ignored_provider_choice(
         assert [
             ((tool.get("function") or {}).get("name") or tool.get("name")) for tool in request["body"]["tools"]
         ] == ["report_review"]
+    assert all(message["role"] in {"system", "user"} for message in scripted_provider.requests[-1]["body"]["messages"])
     events = store.load_events(command.session_id, role="qa")
     rejected = [event for event in events if event["payload"].get("native_turn_rejection")]
     assert len(rejected) == 1

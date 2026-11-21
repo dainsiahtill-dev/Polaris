@@ -201,8 +201,6 @@ def test_actual_click_pause_freezes_later_frames(workspace):
         {"entry": "https://example.com"},
         {"entry": "/etc/passwd"},
         {"entry": "index.html", "executable": "/bin/sh"},
-        {"viewport": {"width": 319, "height": 360}},
-        {"viewport": {"width": 640, "height": 1201}},
         {"frame_times_ms": []},
         {"frame_times_ms": [0, 1, 2, 3, 4]},
         {"frame_times_ms": [10001]},

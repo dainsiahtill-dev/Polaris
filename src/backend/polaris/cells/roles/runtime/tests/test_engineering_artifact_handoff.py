@@ -109,7 +109,10 @@ def artifact_provider(monkeypatch: pytest.MonkeyPatch) -> Iterator[ScriptedProvi
                     (
                         "produce",
                         getattr(script, "command_tool", "execute_command"),
-                        {"command": command, "artifacts": ["report.svg"]},
+                        {
+                            "command": command,
+                            **({} if getattr(script, "auto_artifacts", False) else {"artifacts": ["report.svg"]}),
+                        },
                     )
                 )
             else:
@@ -518,6 +521,65 @@ async def test_capture_without_browser_configuration_persists_actual_bytes(
         "browser_observe" not in {t["function"]["name"] for t in q["body"].get("tools", [])}
         for q in artifact_provider.requests
     )
+
+
+@pytest.mark.asyncio
+async def test_full_loop_auto_capture_opens_without_model_artifacts_argument(
+    isolated_workspace: Path, artifact_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = isolated_workspace
+    artifact_provider.auto_artifacts = True
+    _filesystem(workspace).workspace_write_text("source.txt", "AUTO", encoding="utf-8")
+    scope = PermissionScope((workspace,), (), frozenset({"execute_command"}), False)
+    artifact_provider.client("openai", workspace, monkeypatch)
+    service = EngineeringRunService(workspace, require_qa=False, permission_resolver=lambda _row: scope)
+    command = RoleRunCommand(
+        "auto-capture-loop",
+        "director",
+        "Auto-register actual output.",
+        workspace,
+        required_checks=("test -f source.txt",),
+    )
+    await service.start(command, scope=scope, limits=RunLimits(time.time() + 35, 1_000_000, 64_000))
+    await service.wait(command.session_id, workspace=workspace)
+    produced = next(
+        event["payload"]
+        for event in service.store.load_events(command.session_id)
+        if event["kind"] == "tool_observed" and event["payload"].get("call_id") == "produce"
+    )
+    assert produced["artifacts"][0]["name"] == "report.svg"
+
+
+@pytest.mark.asyncio
+async def test_execute_command_auto_registers_supported_output_without_artifacts_argument(
+    isolated_workspace: Path,
+) -> None:
+    from polaris.cells.roles.runtime.internal.engineering_tools import EngineeringTools
+    from polaris.kernelone.process import open_command_output_capture
+
+    workspace = isolated_workspace
+    (workspace / ".polaris").mkdir(exist_ok=True)
+    tools = EngineeringTools(
+        workspace,
+        PermissionScope((workspace,), (), frozenset({"execute_command"}), False),
+        RunLimits(time.time() + 15, 1_000_000, 64_000),
+        asyncio.Event(),
+        artifact_binding=lambda: {"inputs": {}},
+    )
+    with open_command_output_capture(workspace) as capture:
+        result = await tools.execute(
+            "auto-artifact",
+            "execute_command",
+            {
+                "command": 'printf \'<svg xmlns="http://www.w3.org/2000/svg"></svg>\' > "$POLARIS_SANDBOX_OUTPUT/auto.svg"'
+            },
+            output_capture=capture,
+        )
+    assert result.ok, result.content
+    assert len(result.artifacts) == 1
+    artifact = result.artifacts[0]
+    assert artifact.name == "auto.svg" and artifact.media_type == "image/svg+xml"
+    assert base64.b64decode(artifact.data_base64).startswith(b"<svg")
 
 
 @pytest.mark.asyncio

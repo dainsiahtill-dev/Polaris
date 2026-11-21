@@ -6,6 +6,7 @@ leaving this resource. Export bounds constrain returned bytes, not disk usage.
 
 from __future__ import annotations
 
+import os
 import re
 import stat
 from collections.abc import Iterator, Sequence
@@ -140,6 +141,30 @@ class CommandOutputCapture:
         if validate_command_output_root(self._workspace, self.root, empty=False) != self._identity:
             raise ValueError("command output root identity changed after read")
         return tuple(outputs)
+
+    def list(self) -> tuple[str, ...]:
+        """List bounded regular files produced in this call, without model path guesses."""
+
+        if self._closed:
+            raise ValueError("command output capture is closed")
+        if validate_command_output_root(self._workspace, self.root, empty=False) != self._identity:
+            raise ValueError("command output root identity changed")
+        names: list[str] = []
+        total_bytes = 0
+        for current, directories, files in os.walk(self.root, followlinks=False):
+            directories[:] = sorted(name for name in directories if not (Path(current) / name).is_symlink())
+            for filename in sorted(files):
+                path = Path(current) / filename
+                if path.is_symlink() or not path.is_file():
+                    continue
+                size = path.stat().st_size
+                if total_bytes + size > _MAX_BYTES:
+                    continue
+                total_bytes += size
+                names.append(path.relative_to(self.root).as_posix())
+                if len(names) >= _MAX_FILES:
+                    return tuple(names)
+        return tuple(names)
 
 
 @contextmanager
