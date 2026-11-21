@@ -310,6 +310,7 @@ def _bounded_request_messages(
     visual_binding: Callable[[], dict[str, Any]] | None,
     audit: dict[str, Any],
     semantic_runtime: Any = None,
+    fold_window: int | None = None,
 ) -> list[dict[str, Any]]:
     """Build the request messages inside the model's context window.
 
@@ -327,6 +328,7 @@ def _bounded_request_messages(
         messages,
         semantic_pins=semantic_runtime.pin_reasons() if semantic_runtime is not None else None,
         semantic_summaries=semantic_runtime.fold_summaries() if semantic_runtime is not None else None,
+        inactive_fold_activities=fold_window,
     )
     prior_fold_refs = {
         str(event["payload"].get("projection_ref"))
@@ -894,6 +896,15 @@ async def run_engineering_loop(
                 budget = max(0.0, float(limits.deadline) - created_at)
                 first_verification_due = time.time() >= created_at + budget * first_verification_fraction
             visual_projection: dict[str, Any] = {}
+            from polaris.cells.roles.runtime.internal.engineering_context_budget import context_fold_window
+            from polaris.kernelone.llm.engine.token_estimator import TokenEstimator
+
+            fold_window = context_fold_window(
+                limits=limits,
+                created_at=float(run_now["created_at"]),
+                current_tokens=TokenEstimator.estimate(json.dumps(messages, ensure_ascii=False)),
+                context_window_tokens=context_window_tokens,
+            )
             request_messages = _bounded_request_messages(
                 messages,
                 store=store,
@@ -903,6 +914,7 @@ async def run_engineering_loop(
                 visual_binding=visual_binding if scope.browser is not None else None,
                 audit=visual_projection,
                 semantic_runtime=semantic_runtime,
+                fold_window=fold_window,
             )
             options: dict[str, Any] = {
                 "messages": request_messages,

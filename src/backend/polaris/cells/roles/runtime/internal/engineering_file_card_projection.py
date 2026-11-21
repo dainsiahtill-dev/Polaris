@@ -133,8 +133,13 @@ def fold_file_card_previews(
     *,
     semantic_pins: Mapping[str, str] | None = None,
     semantic_summaries: Mapping[str, Mapping[str, Any]] | None = None,
+    inactive_fold_activities: int | None = None,
 ) -> list[dict[str, Any]]:
     """Fold duplicate/non-focused FileCards without changing durable observations."""
+
+    fold_window = (
+        _inactive_fold_activities() if inactive_fold_activities is None else max(0, int(inactive_fold_activities))
+    )
 
     latest: dict[str, int] = {}
     for index, message in enumerate(messages):
@@ -178,7 +183,7 @@ def fold_file_card_previews(
                 activity_age = current_activity - activity_indices[index]
                 if reference and str(reference) in reasoning_text:
                     command_card["pin_reason"] = "current_reasoning"
-                elif command_card.get("exit_code") != 0 and activity_age < _inactive_fold_activities():
+                elif command_card.get("exit_code") != 0 and activity_age < fold_window:
                     command_card["pin_reason"] = "unresolved_failure"
                 elif advisor_view == "semantic_relevance":
                     command_card["pin_reason"] = advisor_view
@@ -190,9 +195,7 @@ def fold_file_card_previews(
                 )
                 if already_folded:
                     command_card["fold_state"] = "FOLDED"
-                elif (
-                    activity_age >= _inactive_fold_activities() and large_payload and not command_card.get("pin_reason")
-                ):
+                elif activity_age >= fold_window and large_payload and not command_card.get("pin_reason"):
                     _apply_fold_summary(command_card, semantic_summaries, str(reference))
                     command_card["stdout_preview"] = ""
                     command_card["stderr_preview"] = ""
@@ -236,16 +239,14 @@ def fold_file_card_previews(
                     card["fold_state"] = "FOLDED"
                 elif small_payload:
                     card["fold_state"] = "ACTIVE"
-                elif duplicate and activity_age >= _inactive_fold_activities() and not protected:
+                elif duplicate and activity_age >= fold_window and not protected:
                     _apply_fold_summary(card, semantic_summaries, path)
                     card["content_preview"] = ""
                     card["content_bounds"] = {**card.get("content_bounds", {}), "truncated": True}
                     card["fold_state"] = "FOLDED"
                     card["fold_reason"] = "superseded_by_newer_card"
                     card["last_fold_activity_seq"] = activity_indices[index]
-                elif (rehydrated and activity_age < _rehydration_grace_activities()) or (
-                    activity_age < _inactive_fold_activities()
-                ):
+                elif (rehydrated and activity_age < _rehydration_grace_activities()) or (activity_age < fold_window):
                     card["fold_state"] = "ACTIVE"
                 elif not protected:
                     _apply_fold_summary(card, semantic_summaries, path)
