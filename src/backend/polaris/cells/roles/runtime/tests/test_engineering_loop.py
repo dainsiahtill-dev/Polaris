@@ -315,7 +315,7 @@ async def test_tree_search_and_read_limits_use_scoped_real_files(isolated_worksp
     read = await tools.execute("read", "read_file", {"path": "hello.txt", "start_line": 2, "end_line": 2})
     assert tree.ok and "hello.txt" in tree.content and ".polaris" not in tree.content
     assert search.ok and "hello.txt:2:needle" in search.content and "secret" not in search.content
-    assert read.ok and read.content == "needle\n"
+    assert read.ok and json.loads(read.content)["file_card"]["content_preview"] == "needle\n"
 
 
 async def test_cancel_reaps_actual_sandbox_before_return(isolated_workspace: Path) -> None:

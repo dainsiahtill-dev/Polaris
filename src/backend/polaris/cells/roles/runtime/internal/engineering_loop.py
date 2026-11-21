@@ -582,6 +582,19 @@ async def run_engineering_loop(
                 )
             check_visual()
 
+    def resolve_file_card(reference: str) -> dict[str, Any]:
+        for event in reversed(store.load_events(command.session_id, kinds=("tool_observed",))):
+            payload = event["payload"]
+            if payload.get("tool") != "read_file" or payload.get("ok") is not True:
+                continue
+            try:
+                card = json.loads(str(payload.get("content") or "{}")).get("file_card")
+            except json.JSONDecodeError:
+                continue
+            if isinstance(card, dict) and card.get("content_ref") == reference:
+                return card
+        raise ValueError(f"unknown file_card reference: {reference}")
+
     tools = EngineeringTools(
         command.workspace,
         scope,
@@ -595,6 +608,10 @@ async def run_engineering_loop(
         artifact_binding=artifact_binding,
         review_clauses=review_clauses,
         run_id=command.session_id,
+        file_card_resolver=resolve_file_card,
+        revision_provider=lambda: int(
+            store.load_run(command.session_id, workspace=command.workspace)["workspace_revision"]
+        ),
     )
     if project_run:
         saved = store.load_run(command.session_id, workspace=command.workspace)

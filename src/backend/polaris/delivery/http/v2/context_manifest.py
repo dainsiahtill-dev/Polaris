@@ -19,6 +19,11 @@ def _tokens(value: object) -> int:
 
 
 def _ref(event: Mapping[str, Any]) -> str | None:
+    card = _file_card(event)
+    if card is not None:
+        reference = card.get("content_ref")
+        if isinstance(reference, str):
+            return reference
     payload = event["payload"]
     for key in ("call_id", "context_snapshot_ref", "provider_request_id"):
         value = payload.get(key)
@@ -27,7 +32,20 @@ def _ref(event: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _file_card(event: Mapping[str, Any]) -> dict[str, Any] | None:
+    if event["kind"] != "tool_observed" or event["payload"].get("tool") != "read_file":
+        return None
+    try:
+        payload = json.loads(str(event["payload"].get("content") or "{}"))
+    except json.JSONDecodeError:
+        return None
+    card = payload.get("file_card") if isinstance(payload, dict) else None
+    return card if isinstance(card, dict) and card.get("schema_version") == "engineering.file_card.v1" else None
+
+
 def _kind(event: Mapping[str, Any]) -> str:
+    if _file_card(event) is not None:
+        return "file_card"
     kind = event["kind"]
     if kind == "tool_started":
         return "tool_call"
@@ -43,6 +61,10 @@ def _kind(event: Mapping[str, Any]) -> str:
 
 
 def _title(event: Mapping[str, Any]) -> str:
+    card = _file_card(event)
+    if card is not None:
+        path = card.get("path")
+        return path if isinstance(path, str) else ""
     payload = event["payload"]
     tool = payload.get("tool")
     if isinstance(tool, str) and tool:
@@ -57,6 +79,9 @@ def _title(event: Mapping[str, Any]) -> str:
 
 
 def _summary(event: Mapping[str, Any]) -> str:
+    card = _file_card(event)
+    if card is not None:
+        return f"{card.get('summary', '')} · stale={card.get('stale', False)}"
     payload = event["payload"]
     if event["kind"] == "run_updated":
         return f"rev={payload.get('workspace_revision', '—')} · {payload.get('verification', 'unknown')} · {payload.get('status', '')}"
@@ -109,6 +134,7 @@ def build_projection_manifest(
         if kind == "llm_request_observed":
             continue
         payload = event["payload"]
+        card = _file_card(event)
         ref = _ref(event)
         index = _request_index(messages, ref)
         if index is not None or (ref and ref in active_wire):
@@ -155,6 +181,17 @@ def build_projection_manifest(
                     f"journal:{run['session_id']}:{event['seq']}",
                 )
                 projected = 0
+        if card is not None:
+            if state == "ACTIVE":
+                projected = max(1, _tokens(str(card.get("content_preview") or "")))
+            elif state == "REFERENCE":
+                projection_ref = str(card["content_ref"])
+                projected = 24
+        original_tokens = (
+            max(1, (int(card["size_bytes"]) + 3) // 4)
+            if card is not None
+            else _tokens(payload.get("content") or payload.get("feedback") or payload.get("message"))
+        )
         nodes.append(
             {
                 "id": f"event-{event['seq']}",
@@ -172,7 +209,7 @@ def build_projection_manifest(
                 "request_message_index": index,
                 "phase": None,
                 "ok": payload.get("ok") if isinstance(payload.get("ok"), bool) else None,
-                "original_tokens": _tokens(payload.get("content") or payload.get("feedback") or payload.get("message")),
+                "original_tokens": original_tokens,
                 "projected_tokens": projected,
             }
         )

@@ -1338,7 +1338,7 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
     "read_file": {
         "category": "read",
         "cost_level": "high",
-        "description": "Read the full content of a text file (UTF-8). HIGH COST: prefer repo_read_slice/around for targeted reading.",
+        "description": "Read source as a bounded FileCard (path, revision, sha256, symbols, content_ref and an 8KB default preview). Use start_line/end_line for larger files; use content_ref to retrieve an earlier card without rereading the file.",
         "aliases": ["rf", "cat", "file_read"],
         "arg_aliases": {
             "file_path": "file",
@@ -1349,7 +1349,8 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
             "target_path": "file",
         },
         "arguments": [
-            {"name": "file", "type": "string", "required": True},
+            {"name": "file", "type": "string", "required": False},
+            {"name": "content_ref", "type": "string", "required": False, "pattern": "^filecard:[0-9a-f]{64}$"},
             {"name": "max_bytes", "type": "integer", "required": False, "default": 200001},
             {"name": "start_line", "type": "integer", "required": False, "minimum": 1},
             {"name": "end_line", "type": "integer", "required": False, "minimum": 1},
@@ -1357,7 +1358,7 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
         ],
         "response_format_hint": "Full file content with truncation flag",
         "budget_hint": "For files >500 lines, prefer repo_read_slice. For files >2000 lines, explicit budget upgrade required.",
-        "required_any": [("file",)],
+        "required_any": [("file", "content_ref")],
         "required_doc": "args.file required. Prefer repo_read_slice/around for files >100 lines.",
     },
     # --- 9 active tools with handlers but missing from contracts.py ---

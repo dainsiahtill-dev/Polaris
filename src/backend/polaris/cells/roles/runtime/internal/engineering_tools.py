@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import mimetypes
 import os
@@ -83,6 +84,8 @@ class EngineeringTools:
         artifact_binding: Callable[[], dict[str, Any]] | None = None,
         review_clauses: tuple[str, ...] = (),
         run_id: str | None = None,
+        file_card_resolver: Callable[[str], dict[str, Any]] | None = None,
+        revision_provider: Callable[[], int] | None = None,
     ) -> None:
         self.workspace = workspace.resolve(strict=True)
         # Acceptance clauses of the original goal, when this session is a QA
@@ -107,6 +110,8 @@ class EngineeringTools:
         self.observe = observe
         self.authorize = authorize
         self.artifact_binding = artifact_binding
+        self.file_card_resolver = file_card_resolver
+        self.revision_provider = revision_provider
         safe_run_id = re.sub(r"[^A-Za-z0-9_.-]", "_", run_id or "shared")[:96]
         self.run_output_root = self.workspace / ".polaris" / "runtime" / "run-output" / safe_run_id
         self.filesystem = KernelFileSystem(str(self.workspace), LocalFileSystemAdapter())
@@ -519,7 +524,25 @@ class EngineeringTools:
                             )
                 return self._observation(call_id, name, True, "\n".join(entries))
             if name == "read_file":
-                self._keys(args, {"file", "max_bytes", "start_line", "end_line", "range_required"})
+                self._keys(args, {"file", "content_ref", "max_bytes", "start_line", "end_line", "range_required"})
+                from polaris.cells.roles.runtime.internal.engineering_file_cards import build_file_card
+
+                reference = args.get("content_ref")
+                if reference is not None:
+                    if not isinstance(reference, str) or not reference.startswith("filecard:"):
+                        raise ValueError("content_ref must be a filecard:<sha256> reference")
+                    if self.file_card_resolver is None:
+                        raise ValueError("file_card reference resolution requires the active run journal")
+                    card = self.file_card_resolver(reference)
+                    if "file" in args and args["file"] != card["path"]:
+                        raise ValueError("file and content_ref must identify the same source path")
+                    target = self._path(str(card["path"]), write=False)
+                    if target.is_file():
+                        current = self.filesystem.workspace_read_text(str(target), encoding="utf-8")
+                        current_digest = hashlib.sha256(current.encode("utf-8")).hexdigest()
+                        if current_digest != card["sha256"]:
+                            card = {**card, "stale": True, "current_sha256": current_digest}
+                    return self._observation(call_id, name, True, json.dumps({"file_card": card}, ensure_ascii=False))
                 target = self._path(self._text(args, "file"), write=False)
                 if not target.is_file():
                     return self._observation(
@@ -542,11 +565,25 @@ class EngineeringTools:
                         args = {**args, "end_line": max(1, len(content.splitlines()))}
                 start = self._integer(args, "start_line", 1, minimum=1)
                 end = self._integer(args, "end_line", max(1, len(content.splitlines())), minimum=start)
-                content = "".join(content.splitlines(keepends=True)[start - 1 : end])
-                maximum = self._integer(args, "max_bytes", self.limits.max_tool_output_bytes, minimum=1)
-                return self._observation(
-                    call_id, name, True, bounded_output(content, min(maximum, self.limits.max_tool_output_bytes))
+                selected = "".join(content.splitlines(keepends=True)[start - 1 : end])
+                default_preview = min(8000, self.limits.max_tool_output_bytes)
+                maximum = (
+                    default_preview
+                    if args.get("max_bytes") in {200000, 200001}
+                    else self._integer(args, "max_bytes", default_preview, minimum=1)
                 )
+                preview = bounded_output(selected, max(1, min(maximum, self.limits.max_tool_output_bytes) - 64))
+                card = build_file_card(
+                    target.relative_to(self.workspace).as_posix(),
+                    content,
+                    revision=self.revision_provider() if self.revision_provider is not None else None,
+                    preview=preview,
+                    truncated=len(preview.encode("utf-8")) < len(selected.encode("utf-8"))
+                    or end < len(content.splitlines()),
+                    start_line=start,
+                    end_line=end,
+                )
+                return self._observation(call_id, name, True, json.dumps({"file_card": card}, ensure_ascii=False))
             if name == "write_file":
                 self._keys(args, {"file", "content"})
                 file_argument = self._text(args, "file")
