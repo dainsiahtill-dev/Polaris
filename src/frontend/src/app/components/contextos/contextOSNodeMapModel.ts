@@ -206,6 +206,7 @@ export function nodesFromManifest(manifest: ContextProjectionManifest): ContextN
     phase: null,
     ok: card.unresolved === undefined ? null : !card.unresolved,
     approxTokens: approxTokens(card.summary),
+    parentId: 'memory-cards',
     pinReason: card.pin_reason,
   }));
   return [...projectionNodes, ...memoryNodes];

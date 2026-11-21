@@ -124,8 +124,25 @@ export function ContextOSNodeMap({ content, finalRequest, events = [], manifest 
   );
   const counts = useMemo(() => foldStateCounts(nodes), [nodes]);
   const cards = useMemo<ProjectionRunCard[]>(() => {
-    if (manifest) return manifest.run_cards;
-    return [{ id: 'all', seq: 0, role: 'all', phase: null, verification: 'unknown', workspace_revision: null, child_ids: nodes.map((node) => node.id) }];
+    if (!manifest) {
+      return [
+        { id: 'all', seq: 0, role: 'all', phase: null, verification: 'unknown', workspace_revision: null, child_ids: nodes.map((node) => node.id) },
+      ];
+    }
+    const memoryCards: ProjectionRunCard[] = manifest.memory_cards?.length
+      ? [
+          {
+            id: 'memory-cards',
+            seq: 0,
+            role: 'ContextOS',
+            phase: 'long-term-memory',
+            verification: 'unknown',
+            workspace_revision: null,
+            child_ids: manifest.memory_cards.map((card) => card.id),
+          },
+        ]
+      : [];
+    return [...manifest.run_cards, ...memoryCards];
   }, [manifest, nodes]);
   const selected = nodes.find((node) => node.id === selectedId) ?? null;
   const original = manifest?.summary.original_tokens ?? nodes.reduce((sum, node) => sum + (node.originalTokens ?? node.approxTokens ?? 0), 0);
@@ -133,7 +150,12 @@ export function ContextOSNodeMap({ content, finalRequest, events = [], manifest 
   const ratio = original > 0 ? projected / original : null;
 
   return (
-    <section className="flex min-h-0 flex-col rounded-lg border border-white/[0.07] bg-black/20" data-testid="contextos-node-map">
+    <section
+      className="flex min-h-0 flex-col rounded-lg border border-white/[0.07] bg-black/20"
+      data-testid="contextos-node-map"
+      data-manifest-loaded={manifest ? 'yes' : 'no'}
+      data-memory-cards={manifest?.memory_cards?.length ?? 0}
+    >
       <header className="border-b border-white/[0.06] px-3 py-2">
         <div className="flex items-center gap-2 text-[11px] font-semibold text-text-main">
           <GitBranch className="h-4 w-4 text-accent-secondary" />
@@ -200,7 +222,7 @@ export function ContextOSNodeMap({ content, finalRequest, events = [], manifest 
                 data-testid={`contextos-runcard-${card.id}`}
               >
                 {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                <span className="font-semibold text-text-main">RunCard #{card.seq}</span>
+                <span className="font-semibold text-text-main">{card.id === 'memory-cards' ? '长期记忆卡' : `RunCard #${card.seq}`}</span>
                 <span>{card.role}</span>
                 {card.phase && <span>phase={card.phase}</span>}
                 {card.workspace_revision !== null && <span>rev={card.workspace_revision}</span>}

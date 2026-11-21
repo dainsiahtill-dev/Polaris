@@ -67,6 +67,7 @@ describe('ContextOS node folding model', () => {
     });
     expect(nodes[0].kind).toBe('failure_cluster');
     expect(nodes[0].evidenceRef).toBe('verify-1');
+    expect(nodes[0].parentId).toBe('memory-cards');
     expect(nodes[1].kind).toBe('epoch_card');
   });
 });
