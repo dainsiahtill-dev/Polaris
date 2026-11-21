@@ -5,8 +5,9 @@ import json
 import time
 from pathlib import Path
 
+from polaris.cells.roles.runtime.internal.engineering_session import EngineeringSessionStore
 from polaris.cells.roles.runtime.internal.engineering_tools import EngineeringTools
-from polaris.cells.roles.runtime.public.contracts.engineering_run import PermissionScope, RunLimits
+from polaris.cells.roles.runtime.public.contracts.engineering_run import PermissionScope, RoleRunCommand, RunLimits
 from polaris.cells.roles.runtime.tests.engineering_support import isolated_workspace as isolated_workspace
 
 
@@ -49,3 +50,24 @@ def test_mutating_or_complex_shell_is_not_normalized(isolated_workspace: Path) -
     assert name == "execute_command"
     name, _args = tools.normalize("execute_command", {"command": "cat app.js > copy.js"})
     assert name == "execute_command"
+
+
+def test_normalized_dispatch_and_observation_have_matching_tool(isolated_workspace: Path) -> None:
+    (isolated_workspace / "app.js").write_text("one\n", encoding="utf-8")
+    tools = _tools(isolated_workspace)
+    store = EngineeringSessionStore(isolated_workspace)
+    command = RoleRunCommand("run-1", "director", "read app", isolated_workspace, "direct", ())
+    scope = PermissionScope(
+        (isolated_workspace,), (isolated_workspace,), frozenset({"read_file", "execute_command"}), False
+    )
+    limits = RunLimits(time.time() + 15, 10000, 2000)
+    store.create_run(command, scope=scope, limits=limits, engine_version="engineering_v2", request_key="normalize-1")
+    turn_seq = store.append_event("run-1", kind="turn_started", role="director", payload={})
+    canonical, normalized = tools.normalize("execute_command", {"command": "cat app.js"})
+    store.record_tool_dispatch(
+        "run-1", turn_seq=turn_seq, call_id="call-1", tool=canonical, arguments=normalized, role="director"
+    )
+    observation = asyncio.run(tools.execute("call-1", canonical, normalized))
+    store.record_tool_observation("run-1", turn_seq=turn_seq, observation=observation, role="director")
+    assert observation.tool == "read_file"
+    assert store.pending_tool_calls("run-1") == []

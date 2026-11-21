@@ -1283,12 +1283,16 @@ async def run_engineering_loop(
                     return finish(
                         "cancelled", "Engineering role cancelled; remaining native calls were not dispatched."
                     )
+                try:
+                    canonical, normalized = tools.normalize(call.name, call.arguments)
+                except ValueError:
+                    canonical, normalized = call.name, call.arguments
                 store.record_tool_dispatch(
                     command.session_id,
                     turn_seq=turn_seq,
                     call_id=call.id,
-                    tool=call.name,
-                    arguments=call.arguments,
+                    tool=canonical,
+                    arguments=normalized,
                     role=command.role,
                 )
                 from polaris.cells.roles.runtime.internal.engineering_artifacts import (
@@ -1302,7 +1306,6 @@ async def run_engineering_loop(
                     contextlib.nullcontext(None)
                 )
                 try:
-                    canonical, normalized = tools.normalize(call.name, call.arguments)
                     if canonical == "execute_command":
                         selected = requested_artifacts(normalized.get("artifacts", []))
                         if selected and tools.artifact_binding is None:
@@ -1345,12 +1348,12 @@ async def run_engineering_loop(
                             # blocked (observed 23 execute_command interceptions
                             # across real L1 runs).
                             gate_blocked_tools = ("write_file", "edit_file", "repo_tree", "repo_rg")
-                            if preparation_pending and command.role == "director" and call.name == "verify_project":
+                            if preparation_pending and command.role == "director" and canonical == "verify_project":
                                 # Preparation gate: the same writing check fails
                                 # deterministically under read-only verification.
                                 observation = ToolObservation(
                                     call_id=call.id,
-                                    tool=call.name,
+                                    tool=canonical,
                                     ok=False,
                                     content=(
                                         "Preparation gate: the previous verification failed because its check tried "
@@ -1373,7 +1376,7 @@ async def run_engineering_loop(
                                 and wrap_up_gate_enabled
                                 and post_pass_write_cycles >= wrap_up_cycle_allowance
                                 and command.role == "director"
-                                and call.name in {"write_file", "edit_file", "execute_command"}
+                                and canonical in {"write_file", "edit_file", "execute_command"}
                             ):
                                 # Wrap-up gate: the current candidate already
                                 # passed verification. An explicit source write
@@ -1382,7 +1385,7 @@ async def run_engineering_loop(
                                 wrap_up_blocks += 1
                                 observation = ToolObservation(
                                     call_id=call.id,
-                                    tool=call.name,
+                                    tool=canonical,
                                     ok=False,
                                     content=(
                                         "Wrap-up gate: the current candidate's verification already passed. "
@@ -1401,7 +1404,7 @@ async def run_engineering_loop(
                                     payload={
                                         "turn_seq": turn_seq,
                                         "call_id": call.id,
-                                        "tool": call.name,
+                                        "tool": canonical,
                                         "blocks": wrap_up_blocks,
                                     },
                                 )
@@ -1414,7 +1417,7 @@ async def run_engineering_loop(
                                     first_verification_due
                                     or (stage_gate_writes > 0 and writes_since_verification >= stage_gate_writes)
                                 )
-                                and call.name in set(gate_blocked_tools)
+                                and canonical in set(gate_blocked_tools)
                             ):
                                 # Stage gate: the Director must verify before
                                 # writing more OR re-probing the workspace.
@@ -1423,7 +1426,7 @@ async def run_engineering_loop(
                                 # of verifying.
                                 observation = ToolObservation(
                                     call_id=call.id,
-                                    tool=call.name,
+                                    tool=canonical,
                                     ok=False,
                                     content=(
                                         (
@@ -1460,10 +1463,10 @@ async def run_engineering_loop(
                                 # change action instead of looping forever.
                                 observation = ToolObservation(
                                     call_id=call.id,
-                                    tool=call.name,
+                                    tool=canonical,
                                     ok=False,
                                     content=(
-                                        f"Loop break: you repeated the identical {call.name} call for the last "
+                                        f"Loop break: you repeated the identical {canonical} call for the last "
                                         f"{loop_run_count + 1} turns. "
                                         + _loop_recovery_instruction(command.role, tools.enabled)
                                     ),
@@ -1475,19 +1478,19 @@ async def run_engineering_loop(
                                     command.session_id,
                                     kind="loop_enforced",
                                     role=command.role,
-                                    payload={"turn_seq": turn_seq, "call_id": call.id, "tool": call.name},
+                                    payload={"turn_seq": turn_seq, "call_id": call.id, "tool": canonical},
                                 )
                             elif output_capture is not None:
                                 observation = await tools.execute(
                                     call.id,
-                                    call.name,
-                                    call.arguments,
+                                    canonical,
+                                    normalized,
                                     execution_policy=execution_policy,
                                     output_capture=output_capture,
                                 )
                             else:
                                 observation = await tools.execute(
-                                    call.id, call.name, call.arguments, execution_policy=execution_policy
+                                    call.id, canonical, normalized, execution_policy=execution_policy
                                 )
                         finally:
                             active_dispatch = None
