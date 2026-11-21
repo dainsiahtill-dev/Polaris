@@ -106,15 +106,29 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
             last_error = str(payload.get("content") or "")[:1200]
             if len(failure_refs) >= 4:
                 break
+    evidence_refs = set(failure_refs)
+    for event in events[-12:]:
+        payload = event["payload"]
+        if payload.get("tool") != "execute_command":
+            continue
+        try:
+            observation = json.loads(str(payload.get("content") or "{}"))
+        except json.JSONDecodeError:
+            continue
+        card = observation.get("command_card") if isinstance(observation, dict) else None
+        reference = card.get("content_ref") if isinstance(card, dict) else None
+        if isinstance(reference, str) and reference:
+            evidence_refs.add(reference)
     activity = last_error or str(run.get("verification") or "not_run")
     request = {"task": run.get("instruction") or "", "activity": activity, "candidates": candidates[-4:]}
-    refs = CandidateRefs(node_ids=node_ids, slice_ids=slice_ids, evidence_refs=set(failure_refs))
+    refs = CandidateRefs(node_ids=node_ids, slice_ids=slice_ids, evidence_refs=evidence_refs)
     fingerprint = hashlib.sha256(
         json.dumps(
             {
                 "revision": run.get("workspace_revision"),
                 "activity": activity,
                 "candidates": [item["snapshot_id"] for item in candidates[-4:]],
+                "evidence_refs": sorted(evidence_refs),
             },
             sort_keys=True,
             ensure_ascii=False,

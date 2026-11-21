@@ -67,11 +67,20 @@ def test_facts_for_advice_bounds_candidates_and_failure() -> None:
         },
         {
             "kind": "tool_observed",
+            "payload": {
+                "tool": "execute_command",
+                "ok": True,
+                "content": json.dumps({"command_card": {"content_ref": "command:abc"}}),
+            },
+        },
+        {
+            "kind": "tool_observed",
             "payload": {"tool": "execute_command", "ok": False, "call_id": "failure_1", "content": "assertion failed"},
         },
     ]
     request, refs, fingerprint = facts_for_advice({"instruction": "fix", "workspace_revision": 2}, events)
     assert refs.node_ids == {"a.py"}
     assert "failure_1" in refs.evidence_refs
+    assert "command:abc" in refs.evidence_refs
     assert len(fingerprint) == 64
     assert request["activity"] == "assertion failed"
