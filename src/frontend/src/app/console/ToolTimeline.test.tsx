@@ -40,6 +40,34 @@ describe('ToolTimeline live ordering', () => {
     expect(screen.getByTestId('fold-marker')).toHaveTextContent('DUPLICATE_PAYLOAD');
   });
 
+  it('renders a realtime context_projection_folded event as an animated card', () => {
+    const folded: EngineeringEvent = {
+      session_id: 'run',
+      workspace: '/ws',
+      seq: 5,
+      role: 'director',
+      kind: 'context_projection_folded',
+      payload: {
+        path: 'index.html',
+        projection_ref: 'filecard:abc',
+        fold_state: 'FOLDED',
+        fold_reason_code: 'INACTIVE_PAYLOAD',
+      },
+    };
+    render(
+      <ToolTimeline
+        events={[folded]}
+        selectedSeq={null}
+        onSelect={vi.fn()}
+        onOpenContext={vi.fn()}
+        emptyHint="empty"
+      />,
+    );
+    expect(screen.getByTestId('story-fold-5')).toHaveTextContent('智能折叠已触发');
+    expect(screen.getByTestId('story-fold-5')).toHaveTextContent('index.html');
+    expect(screen.getByTestId('fold-marker')).toHaveTextContent('INACTIVE_PAYLOAD');
+  });
+
   it('shows the newest event first so users do not need to scroll to the bottom', () => {
     render(
       <ToolTimeline

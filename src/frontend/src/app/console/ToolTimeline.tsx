@@ -23,11 +23,12 @@ export type StoryKind =
   | 'loop_guard'     // loop_detected
   | 'visual_qa'      // visual_observation_completed
   | 'llm_call'       // llm_request_observed
+  | 'fold'           // context_projection_folded
   | 'verification';  // verification_started / completed
 
 const DISPLAY_KINDS = new Set([
   'message', 'tool_observed', 'stage_gate_enforced', 'loop_detected',
-  'visual_observation_completed', 'llm_request_observed',
+  'visual_observation_completed', 'llm_request_observed', 'context_projection_folded',
   'verification_started', 'verification_completed',
 ]);
 
@@ -39,6 +40,7 @@ export function storyKindOf(event: EngineeringEvent): StoryKind | null {
     case 'loop_detected': return 'loop_guard';
     case 'visual_observation_completed': return 'visual_qa';
     case 'llm_request_observed': return 'llm_call';
+    case 'context_projection_folded': return 'fold';
     case 'verification_started':
     case 'verification_completed': return 'verification';
     default: return null;
@@ -158,8 +160,21 @@ export function ToolTimeline({ events, selectedSeq, onSelect, onOpenContext, emp
           0% { background-position: 0% 50%; }
           100% { background-position: 200% 50%; }
         }
+        @keyframes foldEventEnter {
+          from { opacity: 0; transform: translateY(-10px) scale(.97); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes foldEventGlow {
+          0%, 100% { border-color: rgba(144,133,233,.38); box-shadow: 0 0 0 rgba(144,133,233,0); }
+          50% { border-color: rgba(144,133,233,.85); box-shadow: 0 0 18px rgba(144,133,233,.18); }
+        }
+        .fold-event {
+          border-color: rgba(144,133,233,.38);
+          background: linear-gradient(120deg, rgba(98,80,214,.07), rgba(27,175,122,.04));
+          animation: foldEventEnter .55s ease-out, foldEventGlow 2.8s ease-in-out infinite;
+        }
         @media (prefers-reduced-motion: reduce) {
-          .fold-badge { animation: none !important; }
+          .fold-badge, .fold-event { animation: none !important; }
         }
       `}</style>
       {story.length === 0 ? <p className="px-1 py-8 text-center text-sm text-[var(--cx-ink-faint)]">{emptyHint}</p> : null}
@@ -182,6 +197,24 @@ export function ToolTimeline({ events, selectedSeq, onSelect, onOpenContext, emp
               {text.length > 500 ? (
                 <button type="button" className="mt-1 text-xs text-[var(--cx-teal-strong)] hover:underline" onClick={() => setExpanded((p) => ({ ...p, [event.seq]: !isOpen }))}>{isOpen ? '收起' : '展开全部'}</button>
               ) : null}
+            </article>
+          );
+        }
+        if (kind === 'fold') {
+          const fold = foldMeta(event);
+          const path = textOf(event.payload.path) || textOf(event.payload.projection_ref);
+          return (
+            <article key={event.seq} data-testid={`story-fold-${event.seq}`} className="fold-event rounded-xl border px-3 py-2.5">
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[rgba(98,80,214,0.14)] text-[#9085e9]">
+                  <IconChevronRight className="h-4 w-4 rotate-90" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold text-[var(--cx-ink)]">智能折叠已触发</p>
+                  <p className="truncate text-[0.7rem] text-[var(--cx-ink-dim)]">{path}</p>
+                </div>
+                <FoldBadge reason={fold.reason} />
+              </div>
             </article>
           );
         }

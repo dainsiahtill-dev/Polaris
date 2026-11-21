@@ -1,0 +1,60 @@
+from __future__ import annotations
+
+import json
+from types import SimpleNamespace
+from typing import Any
+
+from polaris.cells.roles.runtime.internal.engineering_file_cards import build_file_card
+from polaris.cells.roles.runtime.internal.engineering_loop import _bounded_request_messages
+
+
+class _Store:
+    def __init__(self) -> None:
+        self.appended: list[dict[str, Any]] = []
+
+    def load_events(self, *_args: object, **_kwargs: object) -> list[dict[str, Any]]:
+        return []
+
+    def append_event(self, _session_id: str, *, kind: str, role: str, payload: dict[str, Any]) -> int:
+        self.appended.append({"kind": kind, "role": role, "payload": payload})
+        return len(self.appended)
+
+
+def _message(preview: str) -> dict[str, object]:
+    card = build_file_card(
+        "a.py",
+        preview,
+        revision=1,
+        preview=preview,
+        truncated=False,
+        start_line=1,
+        end_line=1,
+        snapshot_ref="filecard:a",
+    )
+    return {
+        "role": "tool",
+        "content": json.dumps(
+            {"call_id": "call-1", "tool": "read_file", "ok": True, "content": json.dumps({"file_card": card})}
+        ),
+    }
+
+
+def test_first_fold_emits_realtime_event() -> None:
+    store = _Store()
+    messages: list[dict[str, Any]] = [{"role": "user", "content": "fix the project"}]
+    for index in range(4):
+        messages.append({"role": "assistant", "content": f"step-{index}"})
+        messages.append(_message("x" * 600))
+    _bounded_request_messages(
+        messages,
+        store=store,
+        command=SimpleNamespace(session_id="run"),
+        role="director",
+        context_window_tokens=0,
+        visual_binding=None,
+        audit={},
+    )
+    folds = [event for event in store.appended if event["kind"] == "context_projection_folded"]
+    assert len(folds) == 1
+    assert folds[0]["payload"]["projection_ref"] == "filecard:a"
+    assert folds[0]["payload"]["fold_state"] == "FOLDED"

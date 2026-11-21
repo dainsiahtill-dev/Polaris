@@ -291,12 +291,26 @@ def _bounded_request_messages(
     bounded before the request is built, by dropping whole older turns. The
     durable journal keeps every observation, so nothing is lost.
     """
-    from polaris.cells.roles.runtime.internal.engineering_file_card_projection import fold_file_card_previews
+    from polaris.cells.roles.runtime.internal.engineering_file_card_projection import (
+        fold_file_card_previews,
+        folded_card_projections,
+    )
 
     messages = fold_file_card_previews(
         messages,
         semantic_pins=semantic_runtime.pin_reasons() if semantic_runtime is not None else None,
     )
+    prior_fold_refs = {
+        str(event["payload"].get("projection_ref"))
+        for event in store.load_events(command.session_id, kinds=("context_projection_folded",), role=role)
+        if event["payload"].get("projection_ref")
+    }
+    for projection in folded_card_projections(messages):
+        reference = str(projection["projection_ref"])
+        if reference in prior_fold_refs:
+            continue
+        store.append_event(command.session_id, kind="context_projection_folded", role=role, payload=projection)
+        prior_fold_refs.add(reference)
     events = store.load_events(
         command.session_id,
         kinds=(

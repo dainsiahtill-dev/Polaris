@@ -70,6 +70,44 @@ def _write_targets(messages: Sequence[Mapping[str, Any]]) -> set[str]:
     return targets
 
 
+def folded_card_projections(messages: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Describe folded snapshots for realtime UI events and idempotent provenance."""
+
+    projections: list[dict[str, Any]] = []
+    for message in messages:
+        if message.get("role") != "tool":
+            continue
+        try:
+            payload = json.loads(str(message.get("content") or "{}"))
+        except json.JSONDecodeError:
+            continue
+        card_payload, _nested = _card_payload(payload)
+        if card_payload is None:
+            continue
+        for node_kind in ("file_card", "command_card"):
+            card = card_payload.get(node_kind)
+            if not isinstance(card, dict) or card.get("fold_state") != "FOLDED":
+                continue
+            reference = card.get("content_ref") or card.get("snapshot_ref")
+            if not isinstance(reference, str) or not reference:
+                continue
+            reason = str(card.get("fold_reason") or "outside_current_focus")
+            projections.append(
+                {
+                    "node_kind": node_kind,
+                    "path": card.get("path") or card.get("command") or reference,
+                    "projection_ref": reference,
+                    "fold_state": "FOLDED",
+                    "fold_reason_code": "DUPLICATE_PAYLOAD"
+                    if reason == "superseded_by_newer_card"
+                    else "INACTIVE_PAYLOAD",
+                    "fold_reason": reason,
+                    "activity_seq": card.get("last_fold_activity_seq"),
+                }
+            )
+    return projections
+
+
 def fold_file_card_previews(
     messages: Sequence[Mapping[str, Any]], *, semantic_pins: Mapping[str, str] | None = None
 ) -> list[dict[str, Any]]:
