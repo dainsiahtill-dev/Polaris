@@ -83,6 +83,23 @@ def test_parse_semantic_advice_clears_slices_for_non_slice_views() -> None:
     assert validated["assessments"][0]["keep_slice_ids"] == []
 
 
+def test_parse_semantic_advice_drops_unauthorized_nodes() -> None:
+    payload = valid_advice()
+    payload["assessments"].append(
+        {
+            "node_id": "electron-test-failure",
+            "relation": "FAILURE_CANDIDATE",
+            "suggested_view": "CARD",
+            "keep_slice_ids": [],
+            "evidence_refs": [],
+            "uncertain": True,
+            "reason": "模型虚构的节点。",
+        }
+    )
+    validated = parse_semantic_advice(json.dumps(payload), candidates())
+    assert [item["node_id"] for item in validated["assessments"]] == ["file_util_hpp"]
+
+
 def summary_request() -> dict[str, object]:
     return {
         "node_id": "obs_read_312",

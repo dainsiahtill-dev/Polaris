@@ -40,32 +40,26 @@ class SemanticRuntime:
         self._job = asyncio.create_task(self._evaluate(request, candidates))
 
     async def _evaluate(self, request: dict[str, Any], candidates: CandidateRefs) -> list[dict[str, Any]]:
-        advice_results = await self.pool.advise_many([request], candidates)
-        advice = advice_results[0]
-        if advice.get("validation_result") != "VALID":
-            return advice_results
-        fold_nodes = {
-            item.get("node_id")
-            for item in advice["result"].get("assessments", [])
-            if item.get("suggested_view") in {"CARD", "REFERENCE"}
-        }
-        summary_requests: list[dict[str, Any]] = []
-        for candidate in request.get("candidates", []):
-            if candidate.get("node_id") not in fold_nodes:
-                continue
-            summary_requests.append(
-                {
-                    "node_id": candidate["node_id"],
-                    "snapshot_id": candidate["snapshot_id"],
-                    "content": candidate.get("content") or "",
-                    "coverage": candidate.get("coverage") or {"observed_line_ranges": [[1, 1]]},
-                    "allowed_evidence_refs": sorted(candidates.evidence_refs),
-                    "max_summary_tokens": 192,
-                }
-            )
+        summary_requests = [
+            {
+                "node_id": candidate["node_id"],
+                "snapshot_id": candidate["snapshot_id"],
+                "content": candidate.get("content") or "",
+                "coverage": candidate.get("coverage") or {"observed_line_ranges": [[1, 1]]},
+                "allowed_evidence_refs": sorted(candidates.evidence_refs),
+                "max_summary_tokens": 192,
+            }
+            for candidate in request.get("candidates", [])
+        ]
         summaries = await self.pool.summarize_many(summary_requests) if summary_requests else []
-        advice["summaries"] = summaries
-        return advice_results
+        return [
+            {
+                "endpoint_index": 0,
+                "validation_result": "VALID",
+                "result": {"assessments": [], "need_evidence": []},
+                "summaries": summaries,
+            }
+        ]
 
     def poll(self) -> dict[str, Any] | None:
         job = self._job

@@ -196,20 +196,31 @@ def _normalize_advice_slices(payload: object, candidates: CandidateRefs) -> obje
         return payload
     assessments = payload.get("assessments")
     if isinstance(assessments, list):
+        normalized_assessments: list[object] = []
+        seen_nodes: set[str] = set()
         for item in assessments:
-            if not isinstance(item, dict) or not isinstance(item.get("keep_slice_ids"), list):
+            if not isinstance(item, dict):
                 continue
-            slices = list(dict.fromkeys(ref for ref in item["keep_slice_ids"] if ref in candidates.slice_ids))
-            item["keep_slice_ids"] = slices
-            if item.get("suggested_view") == SuggestedView.SLICE.value and not slices:
-                item["suggested_view"] = SuggestedView.CARD.value
-            if item.get("suggested_view") != SuggestedView.SLICE.value:
-                item["keep_slice_ids"] = []
+            node_id = item.get("node_id")
+            if node_id not in candidates.node_ids or node_id in seen_nodes:
+                continue
+            seen_nodes.add(str(node_id))
+            if isinstance(item.get("keep_slice_ids"), list):
+                slices = list(dict.fromkeys(ref for ref in item["keep_slice_ids"] if ref in candidates.slice_ids))
+                item["keep_slice_ids"] = slices
+                if item.get("suggested_view") == SuggestedView.SLICE.value and not slices:
+                    item["suggested_view"] = SuggestedView.CARD.value
+                if item.get("suggested_view") != SuggestedView.SLICE.value:
+                    item["keep_slice_ids"] = []
+            normalized_assessments.append(item)
+        payload["assessments"] = normalized_assessments
     needs = payload.get("need_evidence")
     if isinstance(needs, list):
         normalized_needs: list[object] = []
         for item in needs:
-            if not isinstance(item, dict) or not isinstance(item.get("requested_slice_ids"), list):
+            if not isinstance(item, dict) or item.get("node_id") not in candidates.node_ids:
+                continue
+            if not isinstance(item.get("requested_slice_ids"), list):
                 normalized_needs.append(item)
                 continue
             slices = list(dict.fromkeys(ref for ref in item["requested_slice_ids"] if ref in candidates.slice_ids))

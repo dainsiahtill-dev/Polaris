@@ -42,7 +42,7 @@ async def test_semantic_runtime_assist_pins_only_relevant_cards() -> None:
     await asyncio.sleep(0)
     result = runtime.poll()
     assert result is not None and result["validation_result"] == "VALID"
-    assert runtime.pin_reasons() == {"a.py": "semantic_relevance"}
+    assert runtime.pin_reasons() == {}
     card = build_file_card(
         "a.py", "x", revision=1, preview="x", truncated=False, start_line=1, end_line=1, snapshot_ref="filecard:a"
     )

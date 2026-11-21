@@ -223,8 +223,19 @@ class RemoteSemanticAdvisor:
                         coverage["summary_complete"] = False
                         self.last_normalization.append("coverage.summary_complete=host_default_false")
                         payload["coverage"] = coverage
+                    allowed_refs = set(request.get("allowed_evidence_refs", [])) | {str(request["snapshot_id"])}
+                    raw_refs = payload.get("evidence_refs")
+                    if isinstance(raw_refs, list):
+                        payload["evidence_refs"] = list(dict.fromkeys(ref for ref in raw_refs if ref in allowed_refs))[
+                            :12
+                        ]
+                        if not payload["evidence_refs"]:
+                            payload["evidence_refs"] = [request["snapshot_id"]]
+                        self.last_normalization.append("evidence_refs=whitelist_dedup_cap12")
                     if "evidence_refs" not in payload:
-                        payload["evidence_refs"] = [request["snapshot_id"], *request.get("allowed_evidence_refs", [])]
+                        payload["evidence_refs"] = [request["snapshot_id"], *request.get("allowed_evidence_refs", [])][
+                            :12
+                        ]
                         self.last_normalization.append("evidence_refs=host_whitelist")
                     if "uncertain" not in payload:
                         payload["uncertain"] = True

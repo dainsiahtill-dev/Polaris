@@ -182,13 +182,8 @@ def fold_file_card_previews(
                 )
                 if already_folded:
                     command_card["fold_state"] = "FOLDED"
-                elif (
-                    activity_age >= _inactive_fold_activities()
-                    and advisor_view in {"semantic_card", "semantic_reference"}
-                    and command_card.get("pin_reason") != "unresolved_failure"
-                    and large_payload
-                    and _apply_fold_summary(command_card, semantic_summaries, str(reference))
-                ):
+                elif activity_age >= _inactive_fold_activities() and large_payload:
+                    _apply_fold_summary(command_card, semantic_summaries, str(reference))
                     command_card["stdout_preview"] = ""
                     command_card["stderr_preview"] = ""
                     command_card["fold_state"] = "FOLDED"
@@ -219,17 +214,12 @@ def fold_file_card_previews(
                 rehydrated = card.get("recovered_from") is not None
                 duplicate = latest[path] != index
                 small_payload = len(str(card.get("content_preview") or "").encode("utf-8")) < _fold_min_bytes()
-                advisor_fold = advisor_view in {"semantic_card", "semantic_reference"}
                 if already_folded:
                     card["fold_state"] = "FOLDED"
                 elif small_payload:
                     card["fold_state"] = "ACTIVE"
-                elif (
-                    duplicate
-                    and advisor_fold
-                    and pin_reason not in {"current_edit", "acceptance_clause", "semantic_relevance"}
-                    and _apply_fold_summary(card, semantic_summaries, path)
-                ):
+                elif duplicate and activity_age >= _inactive_fold_activities():
+                    _apply_fold_summary(card, semantic_summaries, path)
                     card["content_preview"] = ""
                     card["content_bounds"] = {**card.get("content_bounds", {}), "truncated": True}
                     card["fold_state"] = "FOLDED"
@@ -239,18 +229,13 @@ def fold_file_card_previews(
                     activity_age < _inactive_fold_activities()
                 ):
                     card["fold_state"] = "ACTIVE"
-                elif (
-                    advisor_fold
-                    and pin_reason not in {"current_edit", "acceptance_clause", "semantic_relevance"}
-                    and _apply_fold_summary(card, semantic_summaries, path)
-                ):
+                else:
+                    _apply_fold_summary(card, semantic_summaries, path)
                     card["content_preview"] = ""
                     card["content_bounds"] = {**card.get("content_bounds", {}), "truncated": True}
                     card["fold_state"] = "FOLDED"
                     card["fold_reason"] = "outside_current_focus"
                     card["last_fold_activity_seq"] = activity_indices[index]
-                else:
-                    card["fold_state"] = "ACTIVE"
                 if nested and isinstance(payload, dict):
                     payload["content"] = json.dumps(card_payload, ensure_ascii=False)
                 projected_message["content"] = json.dumps(payload, ensure_ascii=False)

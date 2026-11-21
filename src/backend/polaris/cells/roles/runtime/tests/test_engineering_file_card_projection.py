@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from polaris.cells.roles.runtime.internal.engineering_file_card_projection import fold_file_card_previews
 from polaris.cells.roles.runtime.internal.engineering_file_cards import build_file_card
 
@@ -20,13 +21,24 @@ def _message(path: str, preview: str) -> dict[str, object]:
     return {"role": "tool", "content": json.dumps({"file_card": card})}
 
 
-def test_duplicate_file_cards_keep_only_latest_preview() -> None:
+def test_duplicate_file_cards_keep_only_latest_preview(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "3")
     folded = fold_file_card_previews(
-        [_message("a.py", "o" * 600), _message("a.py", "n" * 600), _message("b.py", "keep")],
+        [
+            {"role": "assistant", "content": "step-1"},
+            _message("a.py", "o" * 600),
+            {"role": "assistant", "content": "step-2"},
+            _message("a.py", "n" * 600),
+            {"role": "assistant", "content": "step-3"},
+            _message("b.py", "keep"),
+            {"role": "assistant", "content": "step-4"},
+            _message("c.py", "keep"),
+        ],
         semantic_pins={"a.py": "semantic_card"},
         semantic_summaries={"a.py": {"summary": "旧文件摘要"}},
     )
-    first, second, third = (json.loads(message["content"])["file_card"] for message in folded)
+    tool_messages = [message for message in folded if message["role"] == "tool"]
+    first, second, third, _fourth = (json.loads(message["content"])["file_card"] for message in tool_messages)
     assert first["content_preview"] == "" and first["fold_state"] == "FOLDED"
     assert second["content_preview"] == "n" * 600 and second["fold_state"] == "ACTIVE"
     assert third["content_preview"] == "keep" and third["fold_state"] == "ACTIVE"

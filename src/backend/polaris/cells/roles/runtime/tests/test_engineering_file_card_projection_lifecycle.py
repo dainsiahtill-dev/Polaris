@@ -90,7 +90,8 @@ def test_small_duplicate_payload_is_not_folded() -> None:
     assert json.loads(first["content"])["file_card"]["fold_state"] == "ACTIVE"
 
 
-def test_large_duplicate_payload_can_fold() -> None:
+def test_large_duplicate_payload_can_fold(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "3")
     large = "x" * 600
     folded = fold_file_card_previews(
         [
@@ -164,7 +165,8 @@ def test_rehydration_grace_blocks_immediate_refold() -> None:
     assert json.loads(folded[0]["content"])["file_card"]["fold_state"] == "ACTIVE"
 
 
-def test_nested_tool_envelope_is_folded_without_losing_wrapper() -> None:
+def test_nested_tool_envelope_is_folded_without_losing_wrapper(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "3")
     large = "x" * 600
     folded = fold_file_card_previews(
         [
