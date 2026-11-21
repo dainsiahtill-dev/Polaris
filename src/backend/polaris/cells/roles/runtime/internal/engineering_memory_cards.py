@@ -324,6 +324,38 @@ def build_evidence_lease_cards(events: Sequence[Mapping[str, Any]]) -> list[dict
     return leases[-32:]
 
 
+def build_context_memory_messages(
+    run: Mapping[str, Any], events: Sequence[Mapping[str, Any]], *, limit_chars: int = 4000
+) -> list[dict[str, str]]:
+    """Inject the highest-value long-term memory into the provider request.
+
+    Only unresolved failures, the latest verification contract and recent epoch
+    summaries are injected, so the model keeps the facts that prevent repeated
+    exploration without re-reading the full history.
+    """
+
+    cards = build_memory_cards(run, events)
+    sections: list[str] = []
+    failures = [card for card in cards if card.get("kind") == "failure_cluster" and card.get("unresolved") is not False]
+    failures.sort(key=lambda card: (-int(card.get("count") or 0), str(card.get("title") or "")))
+    if failures:
+        lines = [f"- {card.get('title')}: {card.get('summary')}" for card in failures[:5]]
+        sections.append("未解决失败聚类（避免重复探索）：\n" + "\n".join(lines))
+    contracts = [card for card in cards if card.get("kind") == "verification_contract"]
+    if contracts:
+        latest = contracts[-1]
+        sections.append(f"最近验证契约：{latest.get('summary')} · {latest.get('title')}")
+    epochs = [card for card in cards if card.get("kind") == "epoch_card" and card.get("summary")]
+    for card in epochs[-2:]:
+        sections.append(f"Epoch 记忆 {card.get('id')}：{card.get('summary')}")
+    if not sections:
+        return []
+    content = "\n\n".join(sections)
+    if len(content) > limit_chars:
+        content = content[:limit_chars]
+    return [{"role": "system", "content": "ContextOS 长期记忆（摘要，非验收证据）：\n" + content}]
+
+
 def build_memory_cards(run: Mapping[str, Any], events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Build all deterministic memory cards without model inference."""
 

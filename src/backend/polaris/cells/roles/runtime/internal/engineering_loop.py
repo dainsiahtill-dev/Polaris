@@ -330,6 +330,15 @@ def _bounded_request_messages(
         semantic_summaries=semantic_runtime.fold_summaries() if semantic_runtime is not None else None,
         inactive_fold_activities=fold_window,
     )
+    from polaris.cells.roles.runtime.internal.engineering_memory_cards import build_context_memory_messages
+
+    try:
+        memory_run = store.load_run(command.session_id, workspace=command.workspace)
+        memory_messages = build_context_memory_messages(memory_run, store.load_events(command.session_id))
+    except (KeyError, OSError, ValueError):
+        memory_messages = []
+    if memory_messages:
+        messages = [*memory_messages, *messages]
     prior_fold_refs = {
         str(event["payload"].get("projection_ref"))
         for event in store.load_events(command.session_id, kinds=("context_projection_folded",), role=role)

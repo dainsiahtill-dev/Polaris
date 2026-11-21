@@ -5,7 +5,10 @@ import json
 from polaris.cells.roles.runtime.internal.engineering_command_cards import build_command_card
 from polaris.cells.roles.runtime.internal.engineering_epoch_runtime import EpochRuntime, facts_for_epoch
 from polaris.cells.roles.runtime.internal.engineering_file_cards import build_file_card
-from polaris.cells.roles.runtime.internal.engineering_memory_cards import build_memory_cards
+from polaris.cells.roles.runtime.internal.engineering_memory_cards import (
+    build_context_memory_messages,
+    build_memory_cards,
+)
 from polaris.cells.roles.runtime.internal.engineering_semantic_advice import CandidateRefs
 
 
@@ -87,6 +90,26 @@ def test_memory_cards_cover_long_term_engineering_facts() -> None:
     contract = next(card for card in cards if card["kind"] == "verification_contract")
     assert contract["status"] == "failed"
     assert contract["evidence_refs"] == ["verify-1"]
+
+
+def test_context_memory_injection_surfaces_unresolved_failures_and_contracts() -> None:
+    events = [
+        _command_event("node test.js", "ReferenceError: root is not defined", 1, 1),
+        {
+            "seq": 2,
+            "kind": "verification_completed",
+            "payload": {
+                "verification": "failed",
+                "workspace_revision": 4,
+                "checks": [{"call_id": "verify-1", "content": "[FAIL] 交互：刹车无效"}],
+            },
+        },
+    ]
+    messages = build_context_memory_messages({"instruction": "支持刹车"}, events)
+    assert len(messages) == 1 and messages[0]["role"] == "system"
+    assert "未解决失败聚类" in messages[0]["content"]
+    assert "ReferenceError" in messages[0]["content"]
+    assert "最近验证契约" in messages[0]["content"]
 
 
 def test_epoch_selection_waits_until_fifty_activities_behind() -> None:
