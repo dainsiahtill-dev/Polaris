@@ -45,6 +45,7 @@ const KIND_STYLE: Record<ContextNodeKind, { color: string; label: string; icon: 
   tool_pattern: { color: '#199e70', label: '工具经验', icon: Terminal },
   file_diff: { color: '#9085e9', label: '文件变更', icon: FileText },
   verification_contract: { color: '#e66767', label: '验证契约', icon: ShieldCheck },
+  decision_journal: { color: '#3987e5', label: '决策日志', icon: GitBranch },
   evidence_lease: { color: '#1f7a8c', label: '证据租约', icon: Link2 },
   epoch_card: { color: '#d55181', label: 'Epoch记忆', icon: Layers },
 };

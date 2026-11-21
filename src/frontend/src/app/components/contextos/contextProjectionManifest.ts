@@ -41,6 +41,7 @@ export interface ContextMemoryCard {
     | 'tool_pattern'
     | 'file_diff'
     | 'verification_contract'
+    | 'decision_journal'
     | 'evidence_lease'
     | 'epoch_card';
   id: string;

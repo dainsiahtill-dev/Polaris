@@ -20,6 +20,7 @@ export type ContextNodeKind =
   | 'tool_pattern'
   | 'file_diff'
   | 'verification_contract'
+  | 'decision_journal'
   | 'evidence_lease'
   | 'epoch_card';
 export type ContextFoldState = 'ACTIVE' | 'FOLDED' | 'REFERENCE' | 'EVICTED' | 'UNKNOWN';

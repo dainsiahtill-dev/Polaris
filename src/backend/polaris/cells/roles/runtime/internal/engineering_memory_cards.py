@@ -357,6 +357,12 @@ def build_context_memory_messages(
             f"最近验证契约：{latest.get('summary')} · {latest.get('title')}"
             + (f" · 证据: {', '.join(refs[-3:])}" if refs else "")
         )
+    decisions = [card for card in cards if card.get("kind") == "decision_journal"]
+    if decisions:
+        sections.append(
+            "已确定的设计决策（除非有新的反证，否则保持）：\n"
+            + "\n".join(f"- {card.get('title')}" for card in decisions[-5:])
+        )
     epochs = [card for card in cards if card.get("kind") == "epoch_card" and card.get("summary")]
     for card in epochs[-2:]:
         sections.append(f"Epoch 记忆 {card.get('id')}：{card.get('summary')}")
@@ -366,6 +372,38 @@ def build_context_memory_messages(
     if len(content) > limit_chars:
         content = content[:limit_chars]
     return [{"role": "system", "content": "ContextOS 长期记忆（摘要，非验收证据）：\n" + content}]
+
+
+_DECISION_RE = re.compile(r"(?:我决定|决定采用|决定|采用|改为|选择|将使用|不再使用)[^\n。]{0,160}")
+
+
+def build_decision_journal_cards(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Capture explicit design decisions so later turns do not silently revert them."""
+
+    cards: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for event in events:
+        if event.get("kind") != "message":
+            continue
+        message = event["payload"].get("message")
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        text = str(message.get("content") or "")
+        for match in _DECISION_RE.finditer(text):
+            statement = re.sub(r"\s+", " ", match.group(0).strip())
+            if len(statement) < 8 or statement in seen:
+                continue
+            seen.add(statement)
+            cards.append(
+                {
+                    "kind": "decision_journal",
+                    "id": _id("decision", f"{event['seq']}:{statement}"),
+                    "title": statement[:160],
+                    "summary": statement[:240],
+                    "evidence_refs": [],
+                }
+            )
+    return cards[-24:]
 
 
 def build_prior_run_memory(
@@ -407,5 +445,6 @@ def build_memory_cards(run: Mapping[str, Any], events: Sequence[Mapping[str, Any
         *build_tool_pattern_cards(events),
         *build_file_diff_cards(events),
         *build_verification_contract_cards(events),
+        *build_decision_journal_cards(events),
         *build_evidence_lease_cards(events),
     ]
