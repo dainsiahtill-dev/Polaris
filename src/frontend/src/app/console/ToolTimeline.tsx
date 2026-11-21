@@ -100,7 +100,7 @@ export function ToolTimeline({ events, selectedSeq, onSelect, onOpenContext, emp
   emptyHint: string;
 }): ReactElement {
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
-  const story = useMemo(() => events.filter((event) => DISPLAY_KINDS.has(event.kind)).slice(-120), [events]);
+  const story = useMemo(() => events.filter((event) => DISPLAY_KINDS.has(event.kind)).slice(-120).reverse(), [events]);
   return (
     <div className="space-y-2 p-3">
       {story.length === 0 ? <p className="px-1 py-8 text-center text-sm text-[var(--cx-ink-faint)]">{emptyHint}</p> : null}
