@@ -52,7 +52,9 @@ import {
   X,
 } from 'lucide-react';
 import { apiFetch } from '@/api';
+import type { EngineeringEvent } from '@/services/api.types';
 import { cn } from '@/app/components/ui/utils';
+import { ContextOSNodeMap } from './ContextOSNodeMap';
 import {
   buildFullMarkdown,
   buildMessageMarkdown,
@@ -98,6 +100,8 @@ export interface ContextViewerModalProps {
    * 后端当前按 worker 复用同一份 snapshot 落盘；该字段仅展示用，不影响 hash 解析。
    */
   workerId?: string | null;
+  /** Engineering journal used to distinguish folded, referenced and evicted nodes. */
+  events?: EngineeringEvent[];
 }
 
 interface ContextViewerErrorBody {
@@ -799,7 +803,7 @@ function GroupSection({ role, count, totalTokens, children }: GroupSectionProps)
 // Main component
 // ---------------------------------------------------------------------------
 
-export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, workspace, workerId, initialTab = 'messages' }: ContextViewerModalProps) {
+export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, workspace, workerId, events = [], initialTab = 'messages' }: ContextViewerModalProps) {
   const [content, setContent] = useState<ContextPayload | null>(null);
   const [finalRequest, setFinalRequest] = useState<FinalProviderRequestPayload | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1128,7 +1132,7 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worksp
     >
       <div
         ref={containerRef}
-        className="flex max-h-[85vh] w-[92vw] max-w-3xl flex-col rounded-xl border border-white/[0.08] bg-bg-panel shadow-2xl"
+        className="flex max-h-[88vh] w-[96vw] max-w-7xl flex-col rounded-xl border border-white/[0.08] bg-bg-panel shadow-2xl"
       >
         {/* Header */}
         <header className="flex items-center justify-between gap-3 border-b border-white/[0.06] px-4 py-3">
@@ -1352,12 +1356,23 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worksp
               </div>
 
               {activeTab === 'final-request' ? (
-                <FinalRequestPanel
-                  payload={finalRequest}
-                  loading={finalRequestLoading}
-                  error={finalRequestError}
-                  onRetry={() => void fetchFinalRequest()}
-                />
+                <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_380px]" data-testid="contextos-final-request-split">
+                  <FinalRequestPanel
+                    payload={finalRequest}
+                    loading={finalRequestLoading}
+                    error={finalRequestError}
+                    onRetry={() => void fetchFinalRequest()}
+                  />
+                  <ContextOSNodeMap
+                    content={content}
+                    finalRequest={finalRequest}
+                    events={events}
+                    onEvidenceSelect={(reference) => {
+                      setSearch(reference);
+                      setActiveTab('messages');
+                    }}
+                  />
+                </div>
               ) : content.messages.length === 0 ? (
                 <EmptyState reason="上下文文件无消息内容" />
               ) : filteredMessages.length === 0 ? (

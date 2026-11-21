@@ -2667,7 +2667,7 @@ export function EngineeringContextView({ engineering, workspace, onBackToMain }:
         <details><summary className="cursor-pointer py-2 text-sm text-slate-300">查看请求审计与覆盖度</summary><pre className="whitespace-pre-wrap break-words rounded-lg bg-black/20 p-3 text-xs leading-relaxed text-slate-400">{JSON.stringify(row.audit, null, 2)}</pre></details>
       </section>)}
     </main>
-    {selected && <ContextViewerModal initialTab="final-request" contextSnapshotRef={selected.ref} roleId={selected.role} workspace={workspace} onClose={() => setSelected(null)} />}
+    {selected && <ContextViewerModal initialTab="final-request" contextSnapshotRef={selected.ref} roleId={selected.role} workspace={workspace} events={engineering.projection.events} onClose={() => setSelected(null)} />}
   </div>;
 }
 
