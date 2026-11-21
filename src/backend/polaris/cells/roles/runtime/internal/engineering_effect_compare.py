@@ -15,7 +15,9 @@ def load_effect_reports(workspace: Path, *, limit: int = 10) -> list[dict[str, A
     if not root.is_dir():
         return []
     reports: list[dict[str, Any]] = []
-    for path in sorted(root.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)[: max(1, limit)]:
+    for path in sorted(root.glob("*.json"), key=lambda item: (item.stat().st_mtime, item.name), reverse=True)[
+        : max(1, limit)
+    ]:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
