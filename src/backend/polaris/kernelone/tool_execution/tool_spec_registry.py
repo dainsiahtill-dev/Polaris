@@ -1362,6 +1362,17 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
         "required_doc": "args.file required. Prefer repo_read_slice/around for files >100 lines.",
     },
     # --- 9 active tools with handlers but missing from contracts.py ---
+    "read_command_result": {
+        "category": "read",
+        "description": "Recover exact stdout/stderr from a command:<sha256> CommandCard reference.",
+        "aliases": ["command_result", "read_output"],
+        "arg_aliases": {"ref": "content_ref", "snapshot_ref": "content_ref"},
+        "arguments": [
+            {"name": "content_ref", "type": "string", "required": True, "pattern": "^command:[0-9a-f]{64}$"},
+            {"name": "max_bytes", "type": "integer", "required": False, "default": 200001},
+        ],
+        "required_any": [("content_ref",)],
+    },
     "execute_command": {
         "category": "exec",
         "description": "Execute a shell command in the workspace and return its output.",

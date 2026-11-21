@@ -19,6 +19,11 @@ def _tokens(value: object) -> int:
 
 
 def _ref(event: Mapping[str, Any]) -> str | None:
+    command = _command_card(event)
+    if command is not None:
+        reference = command.get("content_ref")
+        if isinstance(reference, str):
+            return reference
     card = _file_card(event)
     if card is not None:
         reference = card.get("content_ref")
@@ -30,6 +35,17 @@ def _ref(event: Mapping[str, Any]) -> str | None:
         if isinstance(value, str) and value:
             return value
     return None
+
+
+def _command_card(event: Mapping[str, Any]) -> dict[str, Any] | None:
+    if event["kind"] != "tool_observed" or event["payload"].get("tool") != "execute_command":
+        return None
+    try:
+        payload = json.loads(str(event["payload"].get("content") or "{}"))
+    except json.JSONDecodeError:
+        return None
+    card = payload.get("command_card") if isinstance(payload, dict) else None
+    return card if isinstance(card, dict) and card.get("schema_version") == "engineering.command_card.v1" else None
 
 
 def _file_card(event: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -46,6 +62,8 @@ def _file_card(event: Mapping[str, Any]) -> dict[str, Any] | None:
 def _kind(event: Mapping[str, Any]) -> str:
     if _file_card(event) is not None:
         return "file_card"
+    if _command_card(event) is not None:
+        return "command_card"
     kind = event["kind"]
     if kind == "tool_started":
         return "tool_call"
@@ -61,6 +79,9 @@ def _kind(event: Mapping[str, Any]) -> str:
 
 
 def _title(event: Mapping[str, Any]) -> str:
+    command = _command_card(event)
+    if command is not None:
+        return str(command.get("command") or "execute_command")[:100]
     card = _file_card(event)
     if card is not None:
         path = card.get("path")
@@ -79,6 +100,9 @@ def _title(event: Mapping[str, Any]) -> str:
 
 
 def _summary(event: Mapping[str, Any]) -> str:
+    command = _command_card(event)
+    if command is not None:
+        return f"{command.get('summary', '')} · exit={command.get('exit_code')}"
     card = _file_card(event)
     if card is not None:
         return f"{card.get('summary', '')} · stale={card.get('stale', False)}"
@@ -135,6 +159,7 @@ def build_projection_manifest(
             continue
         payload = event["payload"]
         card = _file_card(event)
+        command = _command_card(event)
         ref = _ref(event)
         index = _request_index(messages, ref)
         if index is not None or (ref and ref in active_wire):
@@ -229,11 +254,21 @@ def build_projection_manifest(
                 if latest_card is not None:
                     projection_ref = str(latest_card["content_ref"])
                 projected = 24
-        original_tokens = (
-            max(1, (int(card["size_bytes"]) + 3) // 4)
-            if card is not None
-            else _tokens(payload.get("content") or payload.get("feedback") or payload.get("message"))
-        )
+        original_tokens = _tokens(payload.get("content") or payload.get("feedback") or payload.get("message"))
+        if command is not None:
+            original_tokens = max(
+                1, (int(command.get("stdout_bytes", 0)) + int(command.get("stderr_bytes", 0)) + 3) // 4
+            )
+            if state == "ACTIVE":
+                projected = max(
+                    1,
+                    _tokens(str(command.get("stdout_preview") or ""))
+                    + _tokens(str(command.get("stderr_preview") or "")),
+                )
+            elif state == "REFERENCE":
+                projection_ref = str(command["content_ref"])
+                projected = 24
+        original_tokens = max(1, (int(card["size_bytes"]) + 3) // 4) if card is not None else original_tokens
         nodes.append(
             {
                 "id": f"event-{event['seq']}",

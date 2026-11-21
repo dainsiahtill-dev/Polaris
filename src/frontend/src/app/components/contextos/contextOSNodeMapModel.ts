@@ -3,7 +3,7 @@ import type { ContextPayload } from './ContextViewerModal';
 import type { FinalProviderRequestPayload } from './finalProviderRequestProtocol';
 import type { ContextProjectionManifest } from './contextProjectionManifest';
 
-export type ContextNodeKind = 'goal' | 'message' | 'tool_call' | 'tool_log' | 'verification' | 'run_card' | 'artifact' | 'request' | 'file_card';
+export type ContextNodeKind = 'goal' | 'message' | 'tool_call' | 'tool_log' | 'verification' | 'run_card' | 'artifact' | 'request' | 'file_card' | 'command_card';
 export type ContextFoldState = 'ACTIVE' | 'FOLDED' | 'REFERENCE' | 'EVICTED' | 'UNKNOWN';
 
 export interface ContextNode {

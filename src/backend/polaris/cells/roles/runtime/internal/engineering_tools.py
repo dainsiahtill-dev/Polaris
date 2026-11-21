@@ -48,7 +48,9 @@ from polaris.kernelone.process.sandbox import WorkspaceSandboxUnavailableError, 
 from polaris.kernelone.tool_execution.contracts import frozen_node_to_value
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
-ENGINEERING_TOOLS = frozenset({"read_file", "repo_tree", "repo_rg", "write_file", "edit_file", "execute_command"})
+ENGINEERING_TOOLS = frozenset(
+    {"read_file", "read_command_result", "repo_tree", "repo_rg", "write_file", "edit_file", "execute_command"}
+)
 COMMAND_TIMEOUT_DEFAULT = 30
 COMMAND_TIMEOUT_MINIMUM = 1
 COMMAND_TIMEOUT_MAXIMUM = 120
@@ -421,7 +423,18 @@ class EngineeringTools:
                         else {}
                     ),
                 )
-                content = f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+                from polaris.cells.roles.runtime.internal.engineering_command_cards import (
+                    build_command_card,
+                    persist_command_result,
+                )
+
+                snapshot_ref = persist_command_result(
+                    self.workspace, command, completed.stdout, completed.stderr, completed.returncode
+                )
+                card = build_command_card(
+                    command, completed.stdout, completed.stderr, completed.returncode, snapshot_ref
+                )
+                content = json.dumps({"command_card": card}, ensure_ascii=False)
                 observation = self._observation(call_id, name, completed.returncode == 0, content, completed.returncode)
                 from polaris.cells.roles.runtime.internal.engineering_verification import (
                     is_read_only_failure,
@@ -458,12 +471,33 @@ class EngineeringTools:
                         artifacts = capture_artifacts(output_capture, capture_names, before, after)
                         observation = replace(observation, artifacts=artifacts)
                     except (ValueError, OSError, PathSecurityError, GuardedRegularFileSnapshotError) as error:
-                        observation = replace(
-                            observation,
-                            ok=False,
-                            content=observation.content + f"\nArtifact capture failed: {type(error).__name__}: {error}",
-                        )
+                        try:
+                            payload = json.loads(observation.content)
+                            card = payload.get("command_card")
+                            if isinstance(card, dict):
+                                card["artifact_error"] = f"{type(error).__name__}: {error}"
+                                content = json.dumps(payload, ensure_ascii=False)
+                            else:
+                                content = (
+                                    observation.content + f"\nArtifact capture failed: {type(error).__name__}: {error}"
+                                )
+                        except json.JSONDecodeError:
+                            content = (
+                                observation.content + f"\nArtifact capture failed: {type(error).__name__}: {error}"
+                            )
+                        observation = replace(observation, ok=False, content=content)
                 return observation
+            if name == "read_command_result":
+                self._keys(args, {"content_ref", "max_bytes"})
+                from polaris.cells.roles.runtime.internal.engineering_command_cards import read_command_result
+
+                payload = read_command_result(self.workspace, self._text(args, "content_ref"))
+                maximum = self._integer(args, "max_bytes", self.limits.max_tool_output_bytes, minimum=1)
+                payload["stdout"] = str(payload.get("stdout") or "")[:maximum]
+                payload["stderr"] = str(payload.get("stderr") or "")[:maximum]
+                return self._observation(
+                    call_id, name, True, json.dumps({"command_result": payload}, ensure_ascii=False)
+                )
             if name == "repo_rg":
                 self._keys(args, set(_REPO_RG_KEYS))
                 pattern = self._text(args, "pattern")
