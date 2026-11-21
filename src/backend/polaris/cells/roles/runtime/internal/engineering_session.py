@@ -1793,6 +1793,20 @@ def query_resource_state(
                 metadata = path.lstat()
                 if (metadata.st_dev, metadata.st_ino) != identity:
                     raise PermissionError("engineering resource namespace changed during query")
+        if result.get("safe_to_stop"):
+            # WAL lets a read proceed while a writer holds the database, so a
+            # clean snapshot alone does not prove it is safe to stop. Probe the
+            # write lock: an active writer means the state may still change.
+            probe = sqlite3.connect(database, timeout=0, isolation_level=None)
+            try:
+                probe.execute("PRAGMA busy_timeout=0")
+                probe.execute("BEGIN IMMEDIATE")
+                probe.execute("ROLLBACK")
+            except sqlite3.Error:
+                result["safe_to_stop"] = False
+                result["error_type"] = "database_busy"
+            finally:
+                probe.close()
         return result
     except (OSError, ValueError, TypeError, KeyError, RuntimeError, sqlite3.Error) as error:
         result.update(status="unknown", safe_to_stop=False, error_type=type(error).__name__)
