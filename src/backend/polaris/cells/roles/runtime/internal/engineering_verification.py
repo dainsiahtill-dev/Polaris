@@ -54,6 +54,10 @@ class CandidateObservationUnavailableError(ValueError):
 _MAX_CAPTURE_ROOT_ENTRIES = 10_000
 
 _EROFS_PATH = re.compile(r"(?:Could not write file|cannot create directory|mkdir)\D{0,40}?'([^']+)'")
+_EROFS_WRITE_PATH = re.compile(
+    r"(?:open|cannot create regular file)\s+'?([^':\n]+?)'?\s*:\s*(?:read-only file system|EROFS)",
+    re.IGNORECASE,
+)
 # A failed check tried to create/write inside the read-only verification scope.
 # Coreutils prints "Read-only file system"; tsc prints "EROFS: read-only file
 # system"; npm reports a failed mkdir as "npm ERR! code ENOENT ... syscall
@@ -78,10 +82,11 @@ def read_only_write_targets(content: str) -> list[str]:
     if not is_read_only_failure(content):
         return []
     targets: list[str] = []
-    for match in _EROFS_PATH.finditer(content):
-        path = match.group(1)
-        if path not in targets:
-            targets.append(path)
+    for pattern in (_EROFS_PATH, _EROFS_WRITE_PATH):
+        for match in pattern.finditer(content):
+            path = match.group(1)
+            if path not in targets:
+                targets.append(path)
     return targets[:3]
 
 

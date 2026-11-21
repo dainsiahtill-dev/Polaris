@@ -32,3 +32,14 @@ L1-06 run `3ee2e82d5e3144c4958f618580ef4094` 在 5352/5400 秒才第一次 verif
 L1-01 run `53eac3bdbcdb410cb2b9609b5f41775f` 的 QA 已批准所有功能条款，但 `| 输入／操作 | 预期结果 |` 被错误抽成独立 clause。QA 只能将其标为 unknown，最终 run interrupted/unknown。
 
 `_goal_clause_candidates` 现在识别“紧接分隔行的 Markdown 表头”并跳过，保留真实数据行；目标验收测试 27 passed，clause/fidelity 回归 19 passed。
+
+## 调用参数与 artifact 归一化（L1-05/L1-06 统计后）
+
+- `write_file.file` 含换行时前置报出“正文应放 content”，避免整篇文档进入路径后由 OS 报 File name too long；NUL 给出明确 UTF-8 纠错。
+- `repo_rg` 对只读查询中的幻觉元数据（如 `context_labels`）忽略并在结果中注明，查询参数仍严格校验。
+- `browser_observe` viewport 宽高钳制到宿主范围；frame/action 时间仍严格。
+- artifact 在命令执行前拒绝不支持的类型（如 `.txt`），只允许 SVG/HTML/PNG/JPEG，并明确必须在本调用 `POLARIS_SANDBOX_OUTPUT` 生成。
+- EROFS 反馈覆盖 `open ./mpqa` 与 `cp: cannot create regular file ...`，指出实际写入目标，并说明 `POLARIS_SANDBOX_OUTPUT` 与 `/tmp`/HOME 单调用生命周期。
+- 无效 artifact_ref 提示使用当前 run 中 execute_command 返回的 `artifact_[0-9a-f]{32}`。
+
+目标测试 78 passed，ruff/mypy 通过。

@@ -378,6 +378,15 @@ def _integer(value: object, *, label: str, minimum: int, maximum: int) -> int:
     return value
 
 
+def _viewport_integer(value: object, *, label: str, minimum: int, maximum: int) -> int:
+    if type(value) is not int:
+        raise ValueError(f"{label} must be an integer in [{minimum}, {maximum}]")
+    # Viewport size is a rendering hint, not a semantic requirement. Compatible
+    # providers sometimes exceed the advertised bound; clamp instead of burning
+    # a turn. Frame times and action waits remain strict below.
+    return min(max(value, minimum), maximum)
+
+
 def _settings(
     arguments: dict[str, Any],
     *,
@@ -448,8 +457,8 @@ def _settings(
     if not isinstance(viewport, dict) or viewport.keys() != {"width", "height"}:
         raise ValueError("viewport must contain only width and height")
     viewport = {
-        "width": _integer(viewport["width"], label="viewport.width", minimum=320, maximum=1600),
-        "height": _integer(viewport["height"], label="viewport.height", minimum=240, maximum=1200),
+        "width": _viewport_integer(viewport["width"], label="viewport.width", minimum=320, maximum=1600),
+        "height": _viewport_integer(viewport["height"], label="viewport.height", minimum=240, maximum=1200),
     }
     frames = arguments.get("frame_times_ms", [0, 400])
     if not isinstance(frames, list) or not 1 <= len(frames) <= 4:

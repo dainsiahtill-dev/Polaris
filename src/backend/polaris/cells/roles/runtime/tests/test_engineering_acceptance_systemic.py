@@ -443,6 +443,13 @@ def test_read_only_write_targets_names_build_output() -> None:
     assert not is_read_only_failure("AssertionError: expected 1 got 2")
 
 
+def test_read_only_targets_cover_open_and_cp_write_failures() -> None:
+    from polaris.cells.roles.runtime.internal.engineering_verification import read_only_write_targets
+
+    assert read_only_write_targets("magicpet: open ./mpqa: read-only file system") == ["./mpqa"]
+    assert read_only_write_targets("cp: cannot create regular file 'card1.svg': Read-only file system") == ["card1.svg"]
+
+
 def test_distilled_verification_failure_names_read_only_write() -> None:
     """A read-only write failure must not be reported as a code location to fix."""
     from polaris.cells.roles.runtime.internal.engineering_loop import _distill_verification_failure

@@ -48,6 +48,7 @@ ENGINEERING_TOOLS = frozenset({"read_file", "repo_tree", "repo_rg", "write_file"
 COMMAND_TIMEOUT_DEFAULT = 30
 COMMAND_TIMEOUT_MINIMUM = 1
 COMMAND_TIMEOUT_MAXIMUM = 120
+_REPO_RG_KEYS = frozenset({"pattern", "paths", "path", "max_results", "glob", "context_lines", "case_sensitive"})
 
 
 def bounded_output(content: str, maximum: int) -> str:
@@ -187,7 +188,9 @@ class EngineeringTools:
                     )
                     + "Command execution is also bounded by the remaining run deadline."
                     + (
-                        " Select artifacts as relative file names under POLARIS_SANDBOX_OUTPUT to save bounded actual bytes for later browser_observe(artifact_ref)."
+                        " Select artifacts as relative .svg/.html/.png/.jpg file names generated under this call's "
+                        "POLARIS_SANDBOX_OUTPUT for later browser_observe(artifact_ref). Do not select workspace or /tmp "
+                        "files; private files from earlier calls no longer exist."
                         if self.artifact_binding is not None
                         else ""
                     )
@@ -196,6 +199,12 @@ class EngineeringTools:
                     default=COMMAND_TIMEOUT_DEFAULT,
                     minimum=COMMAND_TIMEOUT_MINIMUM,
                     maximum=COMMAND_TIMEOUT_MAXIMUM,
+                )
+            if name == "write_file":
+                function = schema["function"]
+                function["description"] = (
+                    str(function.get("description") or "")
+                    + " file is one relative path only; put the complete document body in content, never in file."
                 )
             if name == "report_review" and len(self.review_clauses) >= 2:
                 # The clause matrix is the fidelity measurement for a
@@ -218,7 +227,9 @@ class EngineeringTools:
             schemas.append(schema)
         return schemas
 
-    def normalize(self, tool: str, arguments: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    def normalize(
+        self, tool: str, arguments: dict[str, Any], *, ignored: list[str] | None = None
+    ) -> tuple[str, dict[str, Any]]:
         """Normalize one native call through the sole registry owner."""
         snapshot = ToolSpecRegistry.capture_effective_spec(tool)
         if not snapshot.registered:
@@ -226,6 +237,13 @@ class EngineeringTools:
         name = snapshot.canonical_tool_name
         specification = frozen_node_to_value(snapshot.canonical_effective_spec)
         aliases = specification.get("arg_aliases", {}) if isinstance(specification, dict) else {}
+        if name == "repo_rg":
+            # Read-only search can safely ignore hallucinated metadata fields
+            # (observed context_labels) without changing the query semantics.
+            unknown = sorted(arguments.keys() - _REPO_RG_KEYS)
+            if ignored is not None:
+                ignored.extend(unknown)
+            arguments = {key: value for key, value in arguments.items() if key in _REPO_RG_KEYS}
         # A transport synonym cannot choose between two different destinations
         # or payloads. Edit dialect disambiguation belongs to the K1 normalizer.
         if name != "edit_file" and isinstance(aliases, dict):
@@ -257,8 +275,9 @@ class EngineeringTools:
     ) -> ToolObservation:
         """Execute one call in source order; errors remain explicit observations."""
         name = tool
+        ignored_arguments: list[str] = []
         try:
-            name, args = self.normalize(tool, arguments)
+            name, args = self.normalize(tool, arguments, ignored=ignored_arguments)
             if self.authorize is not None:
                 self.authorize()
             if self.cancel.is_set():
@@ -370,6 +389,22 @@ class EngineeringTools:
                 )
                 content = f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
                 observation = self._observation(call_id, name, completed.returncode == 0, content, completed.returncode)
+                from polaris.cells.roles.runtime.internal.engineering_verification import (
+                    is_read_only_failure,
+                    read_only_write_targets,
+                )
+
+                if is_read_only_failure(content):
+                    targets = read_only_write_targets(content)
+                    observation = replace(
+                        observation,
+                        content=observation.content
+                        + "\nRead-only scope rejected the write"
+                        + (f" to {', '.join(targets)}" if targets else "")
+                        + ". Do not copy/build into the candidate workspace. Write only to this call's "
+                        + "POLARIS_SANDBOX_OUTPUT; /tmp and HOME are discarded when the call ends, so later calls "
+                        + "must recreate any files they need.",
+                    )
                 if names and output_capture is not None and self.artifact_binding is not None:
                     try:
                         artifacts = capture_artifacts(output_capture, names, before, self.artifact_binding())
@@ -382,7 +417,7 @@ class EngineeringTools:
                         )
                 return observation
             if name == "repo_rg":
-                self._keys(args, {"pattern", "paths", "path", "max_results", "glob", "context_lines", "case_sensitive"})
+                self._keys(args, set(_REPO_RG_KEYS))
                 pattern = self._text(args, "pattern")
                 maximum = self._integer(args, "max_results", 50, minimum=1, maximum=10000)
                 context = self._integer(args, "context_lines", 0, minimum=0, maximum=100)
@@ -411,6 +446,13 @@ class EngineeringTools:
                 content = completed.stdout.replace(str(self.workspace) + "/", "")
                 if completed.stderr:
                     content += "\nstderr:\n" + completed.stderr
+                if ignored_arguments:
+                    content = (
+                        "Normalized read-only search: ignored unsupported arguments "
+                        + ", ".join(ignored_arguments)
+                        + ".\n"
+                        + content
+                    )
                 return self._observation(call_id, name, completed.returncode in {0, 1}, content, completed.returncode)
             if name == "repo_tree":
                 self._keys(args, {"path", "depth", "max_entries", "recursive", "include_hidden"})
@@ -477,7 +519,12 @@ class EngineeringTools:
                 )
             if name == "write_file":
                 self._keys(args, {"file", "content"})
-                target = self._path(self._text(args, "file"), write=True)
+                file_argument = self._text(args, "file")
+                if "\n" in file_argument or "\r" in file_argument:
+                    raise ValueError(
+                        "write_file file must be one relative path; put the document body in content, not in file"
+                    )
+                target = self._path(file_argument, write=True)
                 receipt = self.filesystem.workspace_write_text_atomic(
                     str(target), self._text(args, "content", allow_empty=True), encoding="utf-8"
                 )
@@ -664,7 +711,9 @@ class EngineeringTools:
     @staticmethod
     def _text(arguments: dict[str, Any], name: str, default: str | None = None, *, allow_empty: bool = False) -> str:
         value = arguments.get(name, default)
-        if not isinstance(value, str) or "\0" in value or (not allow_empty and not value.strip()):
+        if isinstance(value, str) and "\0" in value:
+            raise ValueError(f"{name} contains NUL; remove the NUL byte and resend valid UTF-8 text")
+        if not isinstance(value, str) or (not allow_empty and not value.strip()):
             raise ValueError(f"{name} must be a {'possibly empty ' if allow_empty else 'nonempty '}string without NUL")
         return value
 

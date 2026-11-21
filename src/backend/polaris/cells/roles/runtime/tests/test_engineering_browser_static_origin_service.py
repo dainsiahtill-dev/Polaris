@@ -212,3 +212,14 @@ async def test_static_origin_registry_json_native_service_and_cold_original_pixe
     fs.write_text(
         str(artifact / "observation.json"), json.dumps(observation, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+
+
+def test_viewport_dimensions_are_clamped_without_relaxing_other_timing_fields() -> None:
+    from polaris.cells.roles.runtime.internal.engineering_browser import _integer, _viewport_integer
+
+    assert _viewport_integer(2000, label="viewport.width", minimum=320, maximum=1600) == 1600
+    assert _viewport_integer(100, label="viewport.height", minimum=240, maximum=1200) == 240
+    with pytest.raises(ValueError, match="must be an integer"):
+        _viewport_integer("900", label="viewport.height", minimum=240, maximum=1200)
+    with pytest.raises(ValueError, match="must be an integer"):
+        _integer(20000, label="frame offset", minimum=0, maximum=10000)

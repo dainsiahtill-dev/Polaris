@@ -1120,7 +1120,9 @@ class EngineeringRunService:
         from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
         if not isinstance(reference, str) or re.fullmatch(r"artifact_[0-9a-f]{32}", reference) is None:
-            raise ValueError("invalid artifact_ref")
+            raise ValueError(
+                "invalid artifact_ref; use an artifact_[0-9a-f]{32} reference returned by execute_command in this run"
+            )
         artifact = self.store.artifact(session_id, reference)
         producer = self.store.artifact_producer(session_id, reference)
         if artifact is None or producer is None:

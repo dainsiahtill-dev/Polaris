@@ -25,14 +25,16 @@ from polaris.kernelone.storage.io_paths import resolve_storage_roots
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
 
-def _tools(workspace: Path, *, write: bool = True, network: bool = False) -> EngineeringTools:
+def _tools(
+    workspace: Path, *, write: bool = True, network: bool = False, names: frozenset[str] | None = None
+) -> EngineeringTools:
     (workspace / ".polaris").mkdir(exist_ok=True)
     return EngineeringTools(
         workspace,
         PermissionScope(
             (workspace,),
             (workspace / "allowed",) if write else (),
-            frozenset({"execute_command", "read_file"}),
+            names or frozenset({"execute_command", "read_file"}),
             network,
         ),
         RunLimits(None, 100_000, 16_000),
@@ -249,3 +251,27 @@ def test_provider_timeout_schema_describes_the_enforced_default_and_limits(isola
     function = next(_function(row) for row in tools.schemas() if _function(row)["name"] == "execute_command")
     timeout = function["parameters"]["properties"]["timeout"]
     assert (timeout.get("minimum"), timeout.get("maximum"), timeout.get("default")) == (1, 120, 30)
+
+
+async def test_write_file_path_body_confusion_gets_a_corrective_error(isolated_workspace: Path) -> None:
+    tools = _tools(isolated_workspace, names=frozenset({"write_file"}))
+    result = await tools.execute("bad-path", "write_file", {"file": '[package]\nname = "demo"\n', "content": "body"})
+    assert not result.ok and "put the document body in content" in result.content
+
+
+def test_repo_rg_ignores_hallucinated_read_only_metadata(isolated_workspace: Path) -> None:
+    tools = _tools(isolated_workspace, names=frozenset({"repo_rg"}))
+    ignored: list[str] = []
+    name, arguments = tools.normalize("repo_rg", {"pattern": "needle", "context_labels": 2}, ignored=ignored)
+    assert name == "repo_rg" and "context_labels" not in arguments and ignored == ["context_labels"]
+
+
+async def test_read_only_command_feedback_names_output_and_tmp_lifecycle(isolated_workspace: Path) -> None:
+    tools = _tools(isolated_workspace, write=False)
+    result = await tools.execute(
+        "erofs",
+        "execute_command",
+        {"command": "printf 'open ./mpqa: read-only file system\\n' >&2; exit 1"},
+    )
+    assert not result.ok and "./mpqa" in result.content
+    assert "POLARIS_SANDBOX_OUTPUT" in result.content and "/tmp and HOME are discarded" in result.content

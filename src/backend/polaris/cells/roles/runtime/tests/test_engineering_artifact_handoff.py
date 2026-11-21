@@ -378,7 +378,7 @@ async def test_actual_qa_frame_consumes_original_saved_artifact_before_report_an
 
 
 @pytest.mark.parametrize(
-    "selection", [["../escape.svg"], ["/absolute.svg"], ["dup.svg", "dup.svg"], ["x"] * 17, "file.svg"]
+    "selection", [["../escape.svg"], ["/absolute.svg"], ["dup.svg", "dup.svg"], ["x"] * 17, "file.svg", ["card.txt"]]
 )
 @pytest.mark.asyncio
 async def test_invalid_requested_names_fail_before_any_real_effect(isolated_workspace: Path, selection: object) -> None:

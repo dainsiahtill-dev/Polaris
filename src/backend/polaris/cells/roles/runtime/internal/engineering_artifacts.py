@@ -13,6 +13,8 @@ from uuid import uuid4
 from polaris.cells.roles.runtime.public.contracts.engineering_run import ArtifactObservation
 from polaris.kernelone.process import CommandOutputCapture
 
+_SUPPORTED_MEDIA_TYPES = frozenset({"image/svg+xml", "text/html", "image/png", "image/jpeg"})
+
 
 def requested_artifacts(value: object) -> tuple[str, ...]:
     """Validate model-selected relative names before allocating or executing."""
@@ -30,6 +32,11 @@ def requested_artifacts(value: object) -> tuple[str, ...]:
             or name in names
         ):
             raise ValueError("artifacts must contain unique canonical relative file names")
+        if mimetypes.guess_type(name)[0] not in _SUPPORTED_MEDIA_TYPES:
+            raise ValueError(
+                f"unsupported artifact type for {name!r}; use .svg, .html, .htm, .png, .jpg or .jpeg. "
+                "Generate the file under this call's POLARIS_SANDBOX_OUTPUT before selecting it."
+            )
         names.append(name)
     return tuple(names)
 
