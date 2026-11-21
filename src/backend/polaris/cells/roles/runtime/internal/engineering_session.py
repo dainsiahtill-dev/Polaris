@@ -395,6 +395,19 @@ class EngineeringSessionStore:
         row, _ = self.load_projection_inputs(session_id, workspace=workspace, kinds=())
         return row
 
+    def list_runs(self, *, workspace: Path, limit: int = 5) -> list[dict[str, Any]]:
+        """List recent runs for cross-run learning, newest first."""
+
+        self._assert_workspace(workspace)
+        bounded = max(1, min(int(limit), 20))
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT session_id, workspace, role, instruction, workflow, status, text, verification, "
+                "workspace_revision, created_at FROM runs WHERE workspace=? ORDER BY created_at DESC LIMIT ?",
+                (str(self.workspace), bounded),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def load_projection_inputs(
         self, session_id: str, *, workspace: Path, kinds: tuple[str, ...]
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:

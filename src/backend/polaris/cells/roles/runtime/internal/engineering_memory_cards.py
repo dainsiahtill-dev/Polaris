@@ -368,6 +368,35 @@ def build_context_memory_messages(
     return [{"role": "system", "content": "ContextOS 长期记忆（摘要，非验收证据）：\n" + content}]
 
 
+def build_prior_run_memory(
+    prior_run: Mapping[str, Any],
+    prior_events: Sequence[Mapping[str, Any]],
+    *,
+    limit_chars: int = 2400,
+) -> list[dict[str, str]]:
+    """Carry the previous run's unresolved failures into the next run.
+
+    A repeated environment or verification trap should not be rediscovered from
+    scratch. Only unresolved failures and the previous verdict are carried.
+    """
+
+    cards = build_memory_cards(prior_run, prior_events)
+    failures = [card for card in cards if card.get("kind") == "failure_cluster" and card.get("unresolved") is not False]
+    failures.sort(key=lambda card: -int(card.get("count") or 0))
+    if not failures:
+        return []
+    lines = [f"- {card.get('title')}: {card.get('summary')}" for card in failures[:5]]
+    verdict = str(prior_run.get("verification") or "unknown")
+    content = (
+        f"上一轮工程（{prior_run.get('session_id', '')[:12]}）验证结论 {verdict}，"
+        "以下未解决失败已被携带，避免重复探索；可用 read_command_result/read_file 按证据取回原始输出：\n"
+        + "\n".join(lines)
+    )
+    if len(content) > limit_chars:
+        content = content[:limit_chars]
+    return [{"role": "system", "content": "ContextOS 跨运行记忆（摘要，非验收证据）：\n" + content}]
+
+
 def build_memory_cards(run: Mapping[str, Any], events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Build all deterministic memory cards without model inference."""
 

@@ -734,19 +734,30 @@ async def run_engineering_loop(
     # (e.g. a fresh run with system + user instruction but no tool results yet).
     history_notice_sent = False
     if not messages:
-        messages = [
-            {
-                "role": "system",
-                "content": role_instruction(
-                    command.role,
-                    visual="browser_observe" in tools.enabled,
-                    observation_mode=scope.browser.observation_mode if scope.browser else "images",
-                    require_visual_review=bool(scope.browser and scope.browser.require_visual_review),
-                    require_qa=bool(store.load_run(command.session_id, workspace=command.workspace)["require_qa"]),
-                ),
-            },
-            {"role": "user", "content": command.instruction},
-        ]
+        system_message = {
+            "role": "system",
+            "content": role_instruction(
+                command.role,
+                visual="browser_observe" in tools.enabled,
+                observation_mode=scope.browser.observation_mode if scope.browser else "images",
+                require_visual_review=bool(scope.browser and scope.browser.require_visual_review),
+                require_qa=bool(store.load_run(command.session_id, workspace=command.workspace)["require_qa"]),
+            ),
+        }
+        prior_messages: list[dict[str, Any]] = []
+        try:
+            from polaris.cells.roles.runtime.internal.engineering_memory_cards import build_prior_run_memory
+
+            previous = [
+                row
+                for row in store.list_runs(workspace=command.workspace, limit=3)
+                if row.get("session_id") != command.session_id
+            ]
+            if previous:
+                prior_messages = build_prior_run_memory(previous[0], store.load_events(str(previous[0]["session_id"])))
+        except (KeyError, OSError, ValueError):
+            prior_messages = []
+        messages = [system_message, *prior_messages, {"role": "user", "content": command.instruction}]
         for message in messages:
             store.append_message(command.session_id, role=command.role, message=message)
     if project_run:
