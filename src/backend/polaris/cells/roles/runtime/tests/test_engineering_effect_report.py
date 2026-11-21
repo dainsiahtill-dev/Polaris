@@ -5,14 +5,17 @@ import json
 from polaris.cells.roles.runtime.internal.engineering_effect_report import build_effect_report
 
 
-def _prepared_request(content: str) -> dict[str, object]:
+def _prepared_request(*states: str) -> dict[str, object]:
     return {
         "seq": 1,
         "kind": "request_prepared",
         "payload": {
             "request": {
                 "options": {
-                    "messages": [{"role": "tool", "content": json.dumps({"file_card": {"fold_state": content}})}]
+                    "messages": [
+                        {"role": "tool", "content": json.dumps({"file_card": {"fold_state": state}})}
+                        for state in states
+                    ]
                 }
             }
         },
@@ -22,8 +25,7 @@ def _prepared_request(content: str) -> dict[str, object]:
 def test_effect_report_counts_folds_and_injections() -> None:
     events = [
         {"seq": 1, "kind": "turn_started", "payload": {}},
-        _prepared_request("FOLDED"),
-        _prepared_request("ACTIVE"),
+        _prepared_request("FOLDED", "ACTIVE"),
         {
             "seq": 4,
             "kind": "request_prepared",
