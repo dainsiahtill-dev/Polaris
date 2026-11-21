@@ -354,11 +354,11 @@ class ServerConfig(BaseModel):
         default_factory=lambda: {"workspace": EngineeringPermissionProfile()}
     )
     engineering_default_permission_profile_id: str = "workspace"
-    engineering_run_timeout_seconds: float = Field(default=0, ge=0, allow_inf_nan=False)
+    engineering_run_timeout_seconds: float = Field(default=3600, ge=0, allow_inf_nan=False)
     engineering_max_output_bytes: int = Field(default=1_000_000, gt=0)
     engineering_max_tool_output_bytes: int = Field(default=64_000, gt=0)
     engineering_verification_output_roots: tuple[str, ...] = ()
-    engineering_require_qa: bool = False
+    engineering_require_qa: bool = True
     engineering_retain_verified_candidate: bool = False
     engineering_routing_record_file: str | None = None
     engineering_routing_record_sha256: str | None = None
