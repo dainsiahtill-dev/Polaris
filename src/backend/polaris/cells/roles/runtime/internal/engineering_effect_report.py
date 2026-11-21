@@ -27,8 +27,18 @@ def _count_folded_cards(events: Sequence[Mapping[str, Any]]) -> tuple[int, int]:
                 payload = json.loads(content)
             except json.JSONDecodeError:
                 continue
+            if not isinstance(payload, dict):
+                continue
+            nested = payload.get("content")
+            if isinstance(nested, str):
+                try:
+                    payload = json.loads(nested)
+                except json.JSONDecodeError:
+                    payload = None
+            if not isinstance(payload, dict):
+                continue
             for key in ("file_card", "command_card"):
-                card = payload.get(key) if isinstance(payload, dict) else None
+                card = payload.get(key)
                 if not isinstance(card, dict):
                     continue
                 total += 1

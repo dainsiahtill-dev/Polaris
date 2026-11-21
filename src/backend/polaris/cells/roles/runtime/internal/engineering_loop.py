@@ -796,6 +796,8 @@ async def run_engineering_loop(
                 store.load_run(command.session_id, workspace=command.workspace),
                 store.load_events(command.session_id),
             )
+            report["status"] = result.status
+            report["verification"] = result.verification
             report_root = command.workspace / ".polaris" / "runtime" / "contextos" / "effect-reports"
             report_root.mkdir(parents=True, exist_ok=True)
             (report_root / f"{command.session_id}.json").write_text(

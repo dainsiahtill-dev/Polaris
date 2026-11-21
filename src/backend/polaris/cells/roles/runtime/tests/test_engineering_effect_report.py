@@ -13,7 +13,12 @@ def _prepared_request(*states: str) -> dict[str, object]:
             "request": {
                 "options": {
                     "messages": [
-                        {"role": "tool", "content": json.dumps({"file_card": {"fold_state": state}})}
+                        {
+                            "role": "tool",
+                            "content": json.dumps(
+                                {"content": json.dumps({"file_card": {"fold_state": state}})}
+                            ),
+                        }
                         for state in states
                     ]
                 }
