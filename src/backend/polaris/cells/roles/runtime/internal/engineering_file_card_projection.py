@@ -4,8 +4,17 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 from collections.abc import Mapping, Sequence
 from typing import Any
+
+
+def _inactive_fold_activities() -> int:
+    return max(0, int(os.environ.get("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "3")))
+
+
+def _rehydration_grace_activities() -> int:
+    return max(0, int(os.environ.get("KERNELONE_CONTEXTOS_REHYDRATION_GRACE_ACTIVITIES", "2")))
 
 
 def _write_targets(messages: Sequence[Mapping[str, Any]]) -> set[str]:
@@ -70,17 +79,30 @@ def fold_file_card_previews(
                 )
                 if pin_reason:
                     card["pin_reason"] = pin_reason
-                if latest[path] != index and pin_reason not in {
-                    "current_edit",
-                    "acceptance_clause",
-                    "semantic_relevance",
-                }:
+                activity_age = len(messages) - 1 - index
+                already_folded = card.get("fold_state") == "FOLDED"
+                rehydrated = card.get("recovered_from") is not None
+                duplicate = latest[path] != index
+                if (
+                    duplicate
+                    and not already_folded
+                    and pin_reason not in {"current_edit", "acceptance_clause", "semantic_relevance"}
+                ):
                     card["content_preview"] = ""
                     card["content_bounds"] = {**card.get("content_bounds", {}), "truncated": True}
                     card["fold_state"] = "FOLDED"
-                    card["fold_reason"] = (
-                        "superseded_by_newer_card" if index < latest[path] else "outside_current_focus"
-                    )
+                    card["fold_reason"] = "superseded_by_newer_card"
+                    card["last_fold_activity_seq"] = index
+                elif (rehydrated and activity_age < _rehydration_grace_activities()) or (
+                    activity_age < _inactive_fold_activities() and not already_folded
+                ):
+                    card["fold_state"] = "ACTIVE"
+                elif not already_folded:
+                    card["content_preview"] = ""
+                    card["content_bounds"] = {**card.get("content_bounds", {}), "truncated": True}
+                    card["fold_state"] = "FOLDED"
+                    card["fold_reason"] = "outside_current_focus"
+                    card["last_fold_activity_seq"] = index
                 else:
                     card["fold_state"] = "ACTIVE"
                 projected_message["content"] = json.dumps(payload, ensure_ascii=False)
