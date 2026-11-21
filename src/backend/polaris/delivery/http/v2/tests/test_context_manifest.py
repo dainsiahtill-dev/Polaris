@@ -105,6 +105,7 @@ def test_manifest_deduplicates_same_path_cards() -> None:
     manifest = build_projection_manifest(run, events, {"messages": []})
     old, new = manifest["nodes"]
     assert old["fold_state"] == "FOLDED" and old["projection_ref"] == "filecard:new"
+    assert old["fold_reason_code"] == "DUPLICATE_PAYLOAD"
     assert new["fold_state"] == "REFERENCE" and new["projection_ref"] == "filecard:new"
 
 

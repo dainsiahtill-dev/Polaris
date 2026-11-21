@@ -15,6 +15,9 @@ export interface ProjectionManifestNode {
   projection_ref: string | null;
   request_message_index: number | null;
   phase: string | null;
+  pin_reason?: string | null;
+  fold_reason_code?: string | null;
+  superseded_by?: string | null;
   ok: boolean | null;
   original_tokens: number;
   projected_tokens: number;

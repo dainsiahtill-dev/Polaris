@@ -101,7 +101,7 @@ function NodeButton({ node, selected, onSelect }: { node: ContextNode; selected:
       </span>
       <span className={cn('mt-0.5 flex shrink-0 items-center gap-1 text-[8px]', FOLD_STYLE[node.foldState].className)}>
         <FoldIcon className="h-3 w-3" />
-        {node.foldState}
+        {node.foldReasonCode || node.foldState}
       </span>
     </button>
   );
@@ -218,6 +218,8 @@ export function ContextOSNodeMap({ content, finalRequest, events = [], manifest 
           <p className="mt-1 text-[10px] leading-relaxed text-text-muted">{selected.summary || '—'}</p>
           <p className="mt-1 text-[9px] leading-relaxed text-text-dim">{selected.foldReason}</p>
           {selected.projectionRef && <p className="mt-1 font-mono text-[9px] text-text-dim">projection: {selected.projectionRef}</p>}
+          {selected.pinReason && <p className="mt-1 text-[9px] text-cyan-300">pin: {selected.pinReason}</p>}
+          {selected.supersededBy && <p className="mt-1 text-[9px] text-violet-300">superseded by: {selected.supersededBy}</p>}
           {selected.evidenceRef && (
             <button
               type="button"

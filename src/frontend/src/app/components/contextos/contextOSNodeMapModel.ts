@@ -25,6 +25,9 @@ export interface ContextNode {
   requestMessageIndex?: number | null;
   originalTokens?: number;
   projectedTokens?: number;
+  foldReasonCode?: string | null;
+  pinReason?: string | null;
+  supersededBy?: string | null;
 }
 
 function text(value: unknown, limit = 160): string {
@@ -185,6 +188,9 @@ export function nodesFromManifest(manifest: ContextProjectionManifest): ContextN
     requestMessageIndex: node.request_message_index,
     originalTokens: node.original_tokens,
     projectedTokens: node.projected_tokens,
+    foldReasonCode: node.fold_reason_code,
+    pinReason: node.pin_reason,
+    supersededBy: node.superseded_by,
   }));
 }
 

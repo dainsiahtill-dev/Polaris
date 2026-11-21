@@ -162,6 +162,7 @@ def build_projection_manifest(
         command = _command_card(event)
         ref = _ref(event)
         index = _request_index(messages, ref)
+        reason_code = "CURRENT_REQUEST"
         if index is not None or (ref and ref in active_wire):
             state, reason, projection_ref = "ACTIVE", "当前最终请求仍包含该节点或证据引用", f"request:{index}"
             projected = _tokens(payload.get("content") or payload.get("feedback") or payload.get("message"))
@@ -172,6 +173,7 @@ def build_projection_manifest(
                     "已折叠为当前 WorkingState / RunCard 状态投影",
                     f"working-state:{current_revision}",
                 )
+                reason_code = "CHECKPOINT_REPLACEMENT"
                 projected = 24
             else:
                 state, reason, projection_ref = (
@@ -227,6 +229,7 @@ def build_projection_manifest(
             elif pin_reason:
                 state = "FOLDED"
                 reason = f"FileCard pinned by {pin_reason}; full source remains recoverable"
+                reason_code = pin_reason
                 projection_ref = str(card["content_ref"])
                 projected = 24
             elif state == "REFERENCE":
@@ -251,9 +254,12 @@ def build_projection_manifest(
                 )
                 state = "FOLDED"
                 reason = "superseded by a newer FileCard for the same path"
+                reason_code = "DUPLICATE_PAYLOAD"
                 if latest_card is not None:
                     projection_ref = str(latest_card["content_ref"])
                 projected = 24
+        if state in {"REFERENCE", "EVICTED"}:
+            reason_code = "INACTIVE_PAYLOAD"
         original_tokens = _tokens(payload.get("content") or payload.get("feedback") or payload.get("message"))
         if command is not None:
             original_tokens = max(
@@ -281,6 +287,7 @@ def build_projection_manifest(
                 "role": event["role"],
                 "fold_state": state,
                 "fold_reason": reason,
+                "fold_reason_code": reason_code,
                 "evidence_ref": ref,
                 "projection_ref": projection_ref,
                 "request_message_index": index,
