@@ -47,7 +47,8 @@ def _failure_text(content: object) -> str:
 
 
 _FAILURE_MARK = re.compile(
-    r"(?:\bfail(?:ed|ure)?\b|\berror\b|\bexception\b|\btraceback\b|\bassert(?:ion)?\b|\[FAIL\]|✗)",
+    r"(?:\bfail(?:ed|ure)?\b|\berror\b|referenceerror|assertionerror|typeerror|syntaxerror|runtimeerror"
+    r"|\bexception\b|\btraceback\b|\bassert(?:ion)?\b|\[FAIL\]|✗)",
     re.IGNORECASE,
 )
 

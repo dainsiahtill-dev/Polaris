@@ -17,7 +17,8 @@ from polaris.kernelone.fs import (
 _MAX_OUTPUT_BYTES = 16 * 1024 * 1024
 _PREVIEW_BYTES = 4000
 _ERROR_PATTERN = re.compile(
-    r"(?:\bfail(?:ed|ure)?\b|\berror\b|\bexception\b|\btraceback\b|\bassert(?:ion)?\b|\bdenied\b|\bcannot\b|\bnot found\b|\[FAIL\]|✗)",
+    r"(?:\bfail(?:ed|ure)?\b|\berror\b|referenceerror|assertionerror|typeerror|syntaxerror|runtimeerror"
+    r"|\bexception\b|\btraceback\b|\bassert(?:ion)?\b|\bdenied\b|\bcannot\b|\bnot found\b|\[FAIL\]|✗)",
     re.IGNORECASE,
 )
 
