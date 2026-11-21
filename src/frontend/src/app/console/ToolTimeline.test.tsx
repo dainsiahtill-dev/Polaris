@@ -15,8 +15,41 @@ function event(seq: number): EngineeringEvent {
 }
 
 describe('ToolTimeline live ordering', () => {
+  it('shows an animated folding marker with the fold reason code', () => {
+    const folded: EngineeringEvent = {
+      session_id: 'run',
+      workspace: '/ws',
+      seq: 4,
+      role: 'director',
+      kind: 'tool_observed',
+      payload: {
+        tool: 'execute_command',
+        ok: true,
+        command_card: { fold_state: 'FOLDED', fold_reason_code: 'DUPLICATE_PAYLOAD' },
+      },
+    };
+    render(
+      <ToolTimeline
+        events={[event(1), folded]}
+        selectedSeq={null}
+        onSelect={vi.fn()}
+        onOpenContext={vi.fn()}
+        emptyHint="empty"
+      />,
+    );
+    expect(screen.getByTestId('fold-marker')).toHaveTextContent('DUPLICATE_PAYLOAD');
+  });
+
   it('shows the newest event first so users do not need to scroll to the bottom', () => {
-    render(<ToolTimeline events={[event(1), event(2), event(3)]} selectedSeq={null} onSelect={vi.fn()} onOpenContext={vi.fn()} emptyHint="empty" />);
+    render(
+      <ToolTimeline
+        events={[event(1), event(2), event(3)]}
+        selectedSeq={null}
+        onSelect={vi.fn()}
+        onOpenContext={vi.fn()}
+        emptyHint="empty"
+      />,
+    );
     const tools = screen.getAllByTestId(/^story-tool-/);
     expect(tools[0]).toHaveAttribute('data-testid', 'story-tool-3');
     expect(tools[1]).toHaveAttribute('data-testid', 'story-tool-2');

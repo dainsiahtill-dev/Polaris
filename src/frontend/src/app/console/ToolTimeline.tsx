@@ -91,6 +91,52 @@ function beatText(event: EngineeringEvent): string {
   }
 }
 
+function FoldBadge({ reason }: { reason: string }) {
+  return (
+    <span
+      className="fold-badge"
+      data-testid="fold-marker"
+      role="status"
+      aria-label={`已智能折叠：${reason}`}
+      title={reason}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        padding: '2px 7px',
+        borderRadius: 999,
+        color: '#c4b5fd',
+        background: 'linear-gradient(110deg, rgba(98,80,214,0.25), rgba(27,175,122,0.18), rgba(98,80,214,0.25))',
+        backgroundSize: '220% 100%',
+        border: '1px solid rgba(144,133,233,0.55)',
+        boxShadow: '0 0 12px rgba(144,133,233,0.22)',
+        fontSize: 9,
+        fontWeight: 650,
+        letterSpacing: '.02em',
+        animation: 'foldEnter .35s ease-out, foldShimmer 2.8s linear infinite',
+      }}
+    >
+      <IconChevronRight className="h-3 w-3 rotate-90" aria-hidden="true" />
+      {reason}
+    </span>
+  );
+}
+
+function foldMeta(event: EngineeringEvent): { folded: boolean; reason: string } {
+  const payload = event.payload as Record<string, unknown>;
+  const direct = payload.fold_state === 'FOLDED';
+  const nested = ['file_card', 'command_card'].some((key) => {
+    const card = payload[key] as Record<string, unknown> | undefined;
+    return card?.fold_state === 'FOLDED';
+  });
+  const nestedReason = ['file_card', 'command_card'].map((key) => {
+    const card = payload[key] as Record<string, unknown> | undefined;
+    return textOf(card?.fold_reason_code) || textOf(card?.fold_reason) || '';
+  }).find(Boolean) || '';
+  const reason = nestedReason || textOf(payload.fold_reason_code) || textOf(payload.fold_reason) || 'FOLDED';
+  return { folded: direct || nested, reason };
+}
+
 /** The live run story: narration first, tools as annotations, platform beats in between. */
 export function ToolTimeline({ events, selectedSeq, onSelect, onOpenContext, emptyHint }: {
   events: EngineeringEvent[];
@@ -103,6 +149,19 @@ export function ToolTimeline({ events, selectedSeq, onSelect, onOpenContext, emp
   const story = useMemo(() => events.filter((event) => DISPLAY_KINDS.has(event.kind)).slice(-120).reverse(), [events]);
   return (
     <div className="space-y-2 p-3">
+      <style>{`
+        @keyframes foldEnter {
+          from { opacity: 0; transform: translateY(-4px) scale(.92); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes foldShimmer {
+          0% { background-position: 0% 50%; }
+          100% { background-position: 200% 50%; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .fold-badge { animation: none !important; }
+        }
+      `}</style>
       {story.length === 0 ? <p className="px-1 py-8 text-center text-sm text-[var(--cx-ink-faint)]">{emptyHint}</p> : null}
       {story.map((event) => {
         const kind = storyKindOf(event);
@@ -130,6 +189,7 @@ export function ToolTimeline({ events, selectedSeq, onSelect, onOpenContext, emp
           const payload = event.payload;
           const tool = textOf(payload.tool) || event.kind;
           const ok = payload.ok !== false;
+          const fold = foldMeta(event);
           const glyphKind = toolGlyph(tool);
           const Glyph = GLYPHS[glyphKind];
           return (
@@ -139,6 +199,7 @@ export function ToolTimeline({ events, selectedSeq, onSelect, onOpenContext, emp
               <span className="min-w-0 flex-1">
                 <span className="flex items-center justify-between gap-3">
                   <span className="truncate text-[0.82rem] font-medium text-[var(--cx-ink)]">{toolLabel(tool)} · {toolSummary(event)}</span>
+                  {fold.folded ? <FoldBadge reason={fold.reason} /> : null}
                   {ok ? <IconCheck className="h-4 w-4 shrink-0 text-[var(--cx-teal-bright)]" /> : <span className="cx-pill cx-pill--bad">失败</span>}
                 </span>
               </span>
