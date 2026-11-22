@@ -1215,27 +1215,42 @@ async def run_engineering_loop(
                         parsed = None
                     cartographer_events = store.load_events(command.session_id)
                     facts = current_facts(run_now, cartographer_events)
+                    observed_phase = facts.get("phase")
+                    returned_phase = (parsed or {}).get("phase") if isinstance(parsed, dict) else None
                     try:
                         validated = validate_run_card_narrative(parsed, facts, allowed_refs=facts["evidence_refs"])
-                    except NarrativeRejectedError as rejection:
+                    except NarrativeRejectedError as exc:
                         validated = None
-                        store.append_event(
-                            command.session_id,
-                            kind="cartographer_rejected",
-                            role="cartographer",
-                            payload={"reason": rejection.code},
-                        )
-                    if validated is None:
-                        store.append_event(
-                            command.session_id,
-                            kind="cartographer_rejected",
-                            role="cartographer",
-                            payload={
-                                "reason": "narrative_disagrees_with_facts",
-                                "observed_phase": facts.get("phase"),
-                                "returned_phase": (parsed or {}).get("phase") if isinstance(parsed, dict) else None,
-                            },
-                        )
+                        detail = exc.detail or exc.code
+                        if cartographer_runtime.note_rejection(exc.code, detail):
+                            store.append_event(
+                                command.session_id,
+                                kind="cartographer_rejected",
+                                role="cartographer",
+                                payload={
+                                    "reason": exc.code,
+                                    "detail": detail,
+                                    "observed_phase": observed_phase,
+                                    "returned_phase": returned_phase,
+                                    "fingerprint": cartographer_runtime.fingerprint,
+                                },
+                            )
+                    else:
+                        if validated is None:
+                            detail = f"returned_phase={returned_phase!r} observed_phase={observed_phase!r}"
+                            if cartographer_runtime.note_rejection("narrative_disagrees_with_facts", detail):
+                                store.append_event(
+                                    command.session_id,
+                                    kind="cartographer_rejected",
+                                    role="cartographer",
+                                    payload={
+                                        "reason": "narrative_disagrees_with_facts",
+                                        "detail": detail,
+                                        "observed_phase": observed_phase,
+                                        "returned_phase": returned_phase,
+                                        "fingerprint": cartographer_runtime.fingerprint,
+                                    },
+                                )
                     if validated is not None:
                         cartographer_card = {**validated, "agent_role": "cartographer"}
                         key = f"{cartographer_runtime.fingerprint}:{json.dumps(validated, sort_keys=True, ensure_ascii=False)}"

@@ -39,8 +39,13 @@ class CartographerPool:
             "You are the Cartographer for ContextOS. Draw the current engineering stage as a short map. "
             "Return ONLY one JSON object, with no commentary and no thinking: "
             "schema_version,phase,intent,completed,blocker,next_actions,evidence_refs,uncertain,reason. "
-            "phase must be DIAGNOSE, EDIT or RETEST. State fields must match the supplied WorkingState exactly. "
-            "Do not invent failures or evidence. Keep reason within 160 characters and each completed item within 80 characters."
+            "phase must be DIAGNOSE, EDIT or RETEST and must match the supplied WorkingState. "
+            "completed must be an array of at most 8 strings, each at most 80 characters. "
+            "next_actions must be an array of at most 3 objects with action, why and expected. "
+            "blocker.signature must be copied from the supplied failure_signatures array; "
+            "use null when no failure is known. "
+            "evidence_refs must be an array of strings drawn from the supplied evidence_refs. "
+            "Do not invent failures or evidence. Keep reason within 160 characters."
         )
         body = {
             "model": self.model,
@@ -268,9 +273,10 @@ def _normalize_narrative(payload: object) -> dict[str, Any] | None:
 class NarrativeRejectedError(Exception):
     """Exact validation failure for diagnostics."""
 
-    def __init__(self, code: str) -> None:
-        super().__init__(code)
+    def __init__(self, code: str, detail: str = "") -> None:
+        super().__init__(f"{code}: {detail}" if detail else code)
         self.code = code
+        self.detail = detail
 
 
 def validate_run_card_narrative(
@@ -283,21 +289,48 @@ def validate_run_card_narrative(
 
     data = _normalize_narrative(payload)
     if data is None:
-        raise NarrativeRejectedError("unparsable_or_non_object")
+        raise NarrativeRejectedError(
+            "unparsable_or_non_object",
+            f"payload of type {type(payload).__name__} did not normalize to a JSON object",
+        )
     phase = data.get("phase")
     observed_phase = str(facts.get("phase") or "DIAGNOSE")
     allowed_phases = facts.get("allowed_phases") or {observed_phase if observed_phase in PHASES else "DIAGNOSE"}
     if str(facts.get("verification") or "") in {"passed", "failed"}:
         allowed_phases = set(allowed_phases) | {"RETEST"}
-    if phase not in PHASES or phase not in allowed_phases:
-        raise NarrativeRejectedError("invalid")
+    if phase not in PHASES:
+        raise NarrativeRejectedError(
+            "phase_not_allowed",
+            f"phase={phase!r} not in allowed={sorted(PHASES)}",
+        )
+    if phase not in allowed_phases:
+        raise NarrativeRejectedError(
+            "phase_not_allowed",
+            f"phase={phase!r} not in allowed_phases={sorted(allowed_phases)}",
+        )
     completed = data.get("completed")
-    if not isinstance(completed, list) or len(completed) > 8:
-        raise NarrativeRejectedError("invalid")
+    if not isinstance(completed, list):
+        raise NarrativeRejectedError(
+            "completed_out_of_bounds",
+            f"completed must be an array, got {type(completed).__name__}",
+        )
+    if len(completed) > 8:
+        raise NarrativeRejectedError(
+            "completed_out_of_bounds",
+            f"completed has {len(completed)} items, limit is 8",
+        )
     completed = [str(item)[:80] for item in completed]
     next_actions = data.get("next_actions")
-    if not isinstance(next_actions, list) or len(next_actions) > _MAX_NEXT_ACTIONS:
-        raise NarrativeRejectedError("invalid")
+    if not isinstance(next_actions, list):
+        raise NarrativeRejectedError(
+            "next_actions_out_of_bounds",
+            f"next_actions must be an array, got {type(next_actions).__name__}",
+        )
+    if len(next_actions) > _MAX_NEXT_ACTIONS:
+        raise NarrativeRejectedError(
+            "next_actions_out_of_bounds",
+            f"next_actions has {len(next_actions)} items, limit is {_MAX_NEXT_ACTIONS}",
+        )
     normalized_actions: list[dict[str, str]] = []
     for item in next_actions:
         if not isinstance(item, dict):
@@ -320,15 +353,22 @@ def validate_run_card_narrative(
         blocker_payload = None
     else:
         if not isinstance(blocker, dict):
-            raise NarrativeRejectedError("invalid")
+            raise NarrativeRejectedError(
+                "blocker_not_object",
+                f"blocker must be an object or null, got {type(blocker).__name__}",
+            )
         signature = str(blocker.get("signature") or "")
         if signature:
+            known = facts.get("failure_signatures") or set()
             match = next(
-                (known for known in facts["failure_signatures"] if signature in known or known in signature),
+                (item for item in known if signature in item or item in signature),
                 None,
             )
             if match is None:
-                raise NarrativeRejectedError("invalid")
+                raise NarrativeRejectedError(
+                    "unknown_blocker_signature",
+                    f"blocker.signature={signature!r} not in failure_signatures={sorted(known)[:8]}",
+                )
             signature = match
         blocker_payload = {
             "signature": signature[:240],
@@ -337,11 +377,17 @@ def validate_run_card_narrative(
         }
     refs = data.get("evidence_refs")
     if not isinstance(refs, list):
-        raise NarrativeRejectedError("invalid")
+        raise NarrativeRejectedError(
+            "evidence_refs_not_array",
+            f"evidence_refs must be an array, got {type(refs).__name__}",
+        )
     evidence_refs = [str(ref) for ref in refs if str(ref) in allowed_refs][:12]
     reason = str(data.get("reason") or "")
     if len(reason) > 160:
-        raise NarrativeRejectedError("invalid")
+        raise NarrativeRejectedError(
+            "reason_too_long",
+            f"reason has {len(reason)} characters, limit is 160",
+        )
     return {
         "schema_version": SCHEMA_VERSION,
         "phase": phase,
@@ -363,6 +409,7 @@ class CartographerRuntime:
         self._job: asyncio.Task[list[str]] | None = None
         self._fingerprint = ""
         self._request: dict[str, Any] = {}
+        self._rejections: set[str] = set()
 
     def schedule(self, request: dict[str, Any], *, fingerprint: str) -> None:
         # Never abandon an in-flight draw: the model may take longer than one
@@ -387,3 +434,16 @@ class CartographerRuntime:
     @property
     def fingerprint(self) -> str:
         return self._fingerprint
+
+    def note_rejection(self, code: str, detail: str = "") -> bool:
+        """Return True only the first time this fingerprint rejection is seen.
+
+        A completed draw is re-validated on every host poll, so the same
+        rejection would otherwise flood the event journal.
+        """
+
+        key = f"{self._fingerprint}:{code}:{detail}"
+        if key in self._rejections:
+            return False
+        self._rejections.add(key)
+        return True

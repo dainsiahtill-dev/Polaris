@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import urllib.request
+from typing import Any
 
 import pytest
 from polaris.cells.roles.runtime.internal.engineering_cartographer import (
+    CartographerPool,
+    CartographerRuntime,
     NarrativeRejectedError,
     current_facts,
     facts_for_run_card,
@@ -153,3 +158,103 @@ def test_fingerprint_changes_with_stage() -> None:
     _, fingerprint_two = facts_for_run_card(changed, _events())
     assert fingerprint_one != fingerprint_two
     assert first["working_state"]["phase"] == "EDIT"
+
+
+def _facts(verification: str = "failed") -> dict[str, Any]:
+    return current_facts(dict(_run(), verification=verification), _events())
+
+
+def _payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "schema_version": "run_card_narrative.v1",
+        "phase": "EDIT",
+        "intent": "",
+        "completed": [],
+        "blocker": None,
+        "next_actions": [],
+        "evidence_refs": [],
+        "uncertain": True,
+        "reason": "",
+    }
+    payload.update(overrides)
+    return payload
+
+
+@pytest.mark.parametrize(
+    ("payload", "verification", "fragment"),
+    [
+        ("not json", "failed", "did not normalize to a JSON object"),
+        (_payload(phase="NOPE"), "failed", "phase="),
+        (_payload(phase="RETEST"), "not_run", "allowed_phases"),
+        (_payload(completed=["done"] * 9), "failed", "completed has 9 items"),
+        (_payload(next_actions=[{"action": "act"}] * 4), "failed", "next_actions has 4 items"),
+        (_payload(blocker={"signature": "虚构症状"}), "failed", "blocker.signature="),
+        (_payload(reason="x" * 161), "failed", "reason has 161 characters"),
+    ],
+)
+def test_rejection_carries_auditable_detail(payload: object, verification: str, fragment: str) -> None:
+    facts = _facts(verification)
+    with pytest.raises(NarrativeRejectedError) as excinfo:
+        validate_run_card_narrative(payload, facts, allowed_refs=set())
+    assert excinfo.value.code
+    assert excinfo.value.detail
+    assert fragment in excinfo.value.detail
+
+
+def test_repeated_rejection_is_recorded_once_per_fingerprint() -> None:
+    async def main() -> None:
+        class _Pool:
+            async def draw_many(self, requests: list[dict[str, Any]]) -> list[str]:
+                await asyncio.sleep(0)
+                return ["{}"]
+
+        runtime = CartographerRuntime(_Pool())
+        runtime.schedule({"a": 1}, fingerprint="fp1")
+        await asyncio.sleep(0.01)
+        assert runtime.note_rejection("phase_not_allowed", "detail") is True
+        assert runtime.note_rejection("phase_not_allowed", "detail") is False
+        assert runtime.note_rejection("phase_not_allowed", "other") is True
+        runtime.schedule({"a": 2}, fingerprint="fp2")
+        await asyncio.sleep(0.01)
+        assert runtime.note_rejection("phase_not_allowed", "detail") is True
+
+    asyncio.run(main())
+
+
+class _FakeResponse:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._data = json.dumps(payload).encode("utf-8")
+
+    def __enter__(self) -> _FakeResponse:
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+    def read(self) -> bytes:
+        return self._data
+
+
+def test_system_prompt_states_narrative_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_urlopen(request: urllib.request.Request, timeout: float | None = None) -> _FakeResponse:
+        captured["request"] = request
+        return _FakeResponse({"content": [{"type": "text", "text": "{}"}]})
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    pool = CartographerPool(base_url="http://cartographer.test", api_key="key", model="model")
+    pool._post({"working_state": {}})
+    request = captured["request"]
+    assert isinstance(request, urllib.request.Request)
+    data = request.data
+    assert isinstance(data, bytes)
+    body = json.loads(data.decode("utf-8"))
+    messages = body["messages"]
+    assert isinstance(messages, list) and messages
+    system = str(messages[0]["content"])
+    assert "at most 8" in system
+    assert "80 characters" in system
+    assert "at most 3" in system
+    assert "failure_signatures" in system
+    assert "array" in system
