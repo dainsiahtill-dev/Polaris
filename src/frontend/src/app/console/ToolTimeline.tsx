@@ -229,8 +229,9 @@ export function ToolTimeline({ events, selectedSeq, onSelect, onOpenContext, emp
             <article key={event.seq} data-testid={`story-advisor-${event.seq}`} className="rounded-xl border border-[rgba(31,122,140,.28)] bg-[rgba(31,122,140,.05)] px-3 py-2">
               <div className="flex items-center gap-2">
                 <IconGauge className="h-4 w-4 text-[#1f7a8c]" />
-                <p className="text-xs font-semibold text-[var(--cx-ink)]">蒸馏器 · 蒸馏内容</p>
-                <span className="text-[0.65rem] text-[var(--cx-ink-faint)]">{textOf(event.payload.validation_result)}</span>
+                <p className="text-xs font-semibold text-[var(--cx-ink)]">
+                  蒸馏器 · 蒸馏内容{lines.length ? ` · ${lines.length} 个节点` : ''}
+                </p>
               </div>
               {lines.length === 0 ? (
                 <p className="mt-1 text-[0.7rem] text-[var(--cx-ink-dim)]">暂无蒸馏结果</p>
