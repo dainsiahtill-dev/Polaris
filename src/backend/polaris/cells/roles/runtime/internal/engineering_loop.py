@@ -930,16 +930,25 @@ async def run_engineering_loop(
                     )
                 )
         if resident_runtime is not None:
-            from polaris.cells.roles.runtime.internal.engineering_resident_agi import _normalize_decision
+            try:
+                from polaris.cells.roles.runtime.internal.engineering_resident_agi import _normalize_decision
 
-            signals = collect_signals(command.workspace)
-            raw = resident_runtime.poll()
-            deadline = time.monotonic() + 75.0
-            while raw is None and time.monotonic() < deadline:
-                await asyncio.sleep(0.5)
+                signals = collect_signals(command.workspace)
                 raw = resident_runtime.poll()
-            if raw:
-                resident_decision = _normalize_decision(raw, signals)
+                deadline = time.monotonic() + 75.0
+                while raw is None and time.monotonic() < deadline:
+                    await asyncio.sleep(0.5)
+                    raw = resident_runtime.poll()
+                if raw:
+                    resident_decision = _normalize_decision(raw, signals)
+            except Exception as error:  # noqa: BLE001 - agent wiring must never abort a run
+                store.append_event(
+                    command.session_id,
+                    kind="agent_channel_error",
+                    role="resident_agi",
+                    payload={"stage": "first_decision", "error_type": type(error).__name__, "error": str(error)[:300]},
+                )
+                resident_decision = None
         if resident_decision is None and os.environ.get(
             "KERNELONE_RESIDENT_PROJECT_PROFILE", "1"
         ).strip().lower() not in {
