@@ -5,6 +5,12 @@
  * produced it, and unknown fold state stays UNKNOWN.
  */
 import type { EngineeringEvent } from '@/services/api.types';
+import {
+  compressionFromEvents,
+  preparedRequestMessages,
+  type ContextCompressionFact,
+  type ContextMessageLike,
+} from './contextOSCompression';
 
 export type LiveNodeKind =
   | 'working_state'
@@ -21,6 +27,22 @@ export type LiveNodeKind =
 
 export type LiveFoldState = 'ACTIVE' | 'FOLDED' | 'REFERENCE' | 'EVICTED' | 'UNKNOWN';
 
+/**
+ * Who produced the summary a folded card displays. `model_inference` is the
+ * distiller, `card_default` is the card's own summary, and `structural` is the
+ * deterministic fallback. A folded card without an explicit kind still shows
+ * the card's own summary, so it is reported as `card_default`.
+ */
+export type LiveSummaryKind = 'model_inference' | 'card_default' | 'structural';
+
+export const LIVE_SUMMARY_KIND_LABELS: Record<LiveSummaryKind, string> = {
+  model_inference: '蒸馏折叠',
+  card_default: '卡片自带',
+  structural: '结构性兜底',
+};
+
+export const LIVE_SUMMARY_KIND_ORDER: LiveSummaryKind[] = ['model_inference', 'card_default', 'structural'];
+
 export interface LiveContextNode {
   id: string;
   seq: number;
@@ -30,6 +52,8 @@ export interface LiveContextNode {
   role: string;
   foldState: LiveFoldState;
   foldReason: string;
+  /** Summary provenance for cards; null for node kinds without a card summary. */
+  summaryKind: LiveSummaryKind | null;
   tokens: number | null;
   layer: number;
   turn: number | null;
@@ -72,6 +96,27 @@ export interface LiveContextMetrics {
   peakTokenEstimate: number | null;
   contextWindowTokens: number | null;
   contextUtilization: number | null;
+  /** Folded / unfolded card counts, so the rail can explain the projection. */
+  cardFoldCounts: { folded: number; active: number };
+  /** Summary provenance over folded cards: distiller / card / structural. */
+  summaryKindCounts: Record<LiveSummaryKind, number>;
+  /** Latest host compression marker parsed from the prepared request. */
+  compression: ContextCompressionFact | null;
+  /** Working-set budget: the host-stated prompt budget, else the model window. */
+  workingSetBudgetTokens: number | null;
+  workingSetBudgetSource: 'compression_note' | 'model_window' | null;
+  workingSetUsedTokens: number | null;
+  workingSetUtilization: number | null;
+}
+
+export interface LiveProjectedCard {
+  /** Card identity (content_ref / path / command) used to match a graph node. */
+  nodeId: string;
+  path: string;
+  foldState: LiveFoldState;
+  foldReason: string;
+  summaryKind: LiveSummaryKind;
+  summary: string;
 }
 
 export interface LiveMemoryCard {
@@ -194,6 +239,13 @@ function foldStateOf(card: Record<string, unknown>): { state: LiveFoldState; rea
   return { state: 'UNKNOWN', reason: '卡片未声明折叠状态' };
 }
 
+/** Summary provenance, defaulting to the card's own summary when unannotated. */
+function summaryKindOf(card: Record<string, unknown> | null): LiveSummaryKind {
+  const raw = typeof card?.summary_kind === 'string' ? card.summary_kind : '';
+  if (raw === 'model_inference' || raw === 'card_default' || raw === 'structural') return raw;
+  return 'card_default';
+}
+
 function tokenEstimateOf(value: unknown): number | null {
   if (typeof value !== 'string' || !value) return null;
   return Math.max(1, Math.ceil(value.length / 4));
@@ -263,6 +315,7 @@ export function buildLiveContextGraph(events: EngineeringEvent[], limit = 90): L
         role: event.role,
         foldState: 'ACTIVE',
         foldReason: '当前工作状态投影',
+        summaryKind: null,
         tokens: null,
         layer: LIVE_LAYERS.working_state,
         turn: null,
@@ -284,6 +337,7 @@ export function buildLiveContextGraph(events: EngineeringEvent[], limit = 90): L
         role: event.role,
         foldState: 'REFERENCE',
         foldReason: '项目类型与能力绑定决策',
+        summaryKind: null,
         tokens: null,
         layer: LIVE_LAYERS.agent,
         turn: null,
@@ -305,6 +359,7 @@ export function buildLiveContextGraph(events: EngineeringEvent[], limit = 90): L
         role: event.role,
         foldState: 'REFERENCE',
         foldReason: '长期记忆卡 · 证据引用保留',
+        summaryKind: null,
         tokens: null,
         layer: LIVE_LAYERS.epoch,
         turn: null,
@@ -330,6 +385,7 @@ export function buildLiveContextGraph(events: EngineeringEvent[], limit = 90): L
         role: event.role,
         foldState: rejected ? 'EVICTED' : 'REFERENCE',
         foldReason: rejected ? '叙述与持久事实不一致，未进入投影' : '当前阶段 RunCard 投影',
+        summaryKind: null,
         tokens: null,
         layer: LIVE_LAYERS.run_card,
         turn: null,
@@ -355,6 +411,7 @@ export function buildLiveContextGraph(events: EngineeringEvent[], limit = 90): L
         role: event.role,
         foldState: 'ACTIVE',
         foldReason: '当前请求窗口',
+        summaryKind: null,
         tokens: null,
         layer: LIVE_LAYERS.request,
         turn,
@@ -378,6 +435,7 @@ export function buildLiveContextGraph(events: EngineeringEvent[], limit = 90): L
         role: event.role,
         foldState: 'ACTIVE',
         foldReason: '最终 provider 请求观察',
+        summaryKind: null,
         tokens: numberOr(audit.final_request_token_estimate),
         layer: LIVE_LAYERS.model_call,
         turn,
@@ -408,6 +466,7 @@ export function buildLiveContextGraph(events: EngineeringEvent[], limit = 90): L
         role: event.role,
         foldState: fold.state,
         foldReason: fold.reason,
+        summaryKind: card && fold.state === 'FOLDED' ? summaryKindOf(card) : null,
         tokens: tokenEstimateOf(card?.content_preview) ?? tokenEstimateOf(payload.content),
         layer: LIVE_LAYERS[kind],
         turn,
@@ -435,6 +494,7 @@ export function buildLiveContextGraph(events: EngineeringEvent[], limit = 90): L
         role: event.role,
         foldState: 'FOLDED',
         foldReason: '蒸馏摘要替代原始卡片进入投影',
+        summaryKind: 'model_inference',
         tokens: null,
         layer: LIVE_LAYERS.distill,
         turn: null,
@@ -461,6 +521,7 @@ export function buildLiveContextGraph(events: EngineeringEvent[], limit = 90): L
         role: event.role,
         foldState: 'FOLDED',
         foldReason: text(payload.fold_reason) || '超出当前活动窗口',
+        summaryKind: null,
         tokens: null,
         layer: LIVE_LAYERS.fold,
         turn: numberOr(payload.activity_seq),
@@ -484,6 +545,7 @@ export function buildLiveContextGraph(events: EngineeringEvent[], limit = 90): L
         role: event.role,
         foldState: 'REFERENCE',
         foldReason: '验证证据绑定当前源码',
+        summaryKind: null,
         tokens: null,
         layer: LIVE_LAYERS.verification,
         turn,
@@ -503,6 +565,40 @@ export function buildLiveContextGraph(events: EngineeringEvent[], limit = 90): L
   return { nodes: [...nodes.values()], edges, truncated, total: relevant.length };
 }
 
+/**
+ * Cards as the host actually projected them in the most recent prepared
+ * request that carried cards.
+ *
+ * `tool_observed` carries the raw observation; the fold decision and the
+ * summary provenance are only in the projected request messages, so the fold
+ * counts and the distiller/structural split must be read here. A prepared
+ * request with no cards carries no fold evidence, so the last card-bearing
+ * projection is used rather than reporting an empty current state.
+ */
+export function liveProjectedCards(events: EngineeringEvent[]): LiveProjectedCard[] {
+  let messages: ContextMessageLike[] = [];
+  for (const event of events) {
+    if (event.kind !== 'request_prepared') continue;
+    const parsed = preparedRequestMessages(event.payload);
+    if (parsed.length > 0) messages = parsed;
+  }
+  const cards: LiveProjectedCard[] = [];
+  for (const message of messages) {
+    const card = cardFromContent(message.content);
+    if (!card) continue;
+    const fold = foldStateOf(card);
+    cards.push({
+      nodeId: text(card.content_ref) || text(card.path) || text(card.command),
+      path: text(card.path) || text(card.command),
+      foldState: fold.state,
+      foldReason: fold.reason,
+      summaryKind: summaryKindOf(card),
+      summary: text(card.summary),
+    });
+  }
+  return cards;
+}
+
 export function liveContextMetrics(events: EngineeringEvent[]): LiveContextMetrics {
   const graph = buildLiveContextGraph(events, Number.MAX_SAFE_INTEGER);
   const foldCounts: Record<LiveFoldState, number> = { ACTIVE: 0, FOLDED: 0, REFERENCE: 0, EVICTED: 0, UNKNOWN: 0 };
@@ -510,6 +606,21 @@ export function liveContextMetrics(events: EngineeringEvent[]): LiveContextMetri
   for (const node of graph.nodes) {
     foldCounts[node.foldState] += 1;
     kindCounts[node.kind] = (kindCounts[node.kind] ?? 0) + 1;
+  }
+  let foldedCards = 0;
+  let activeCards = 0;
+  const summaryKindCounts: Record<LiveSummaryKind, number> = {
+    model_inference: 0,
+    card_default: 0,
+    structural: 0,
+  };
+  for (const card of liveProjectedCards(events)) {
+    if (card.foldState === 'FOLDED') {
+      foldedCards += 1;
+      summaryKindCounts[card.summaryKind] += 1;
+    } else if (card.foldState === 'ACTIVE') {
+      activeCards += 1;
+    }
   }
   let lastSnapshotRef: string | null = null;
   let lastTokenEstimate: number | null = null;
@@ -531,6 +642,17 @@ export function liveContextMetrics(events: EngineeringEvent[]): LiveContextMetri
     const ref = text(event.payload.context_snapshot_ref);
     if (ref) lastSnapshotRef = ref;
   }
+  const compression = compressionFromEvents(events);
+  const workingSetUsedTokens = lastTokenEstimate;
+  const workingSetBudgetTokens = compression?.budgetTokens ?? contextWindowTokens;
+  const workingSetBudgetSource = compression?.budgetTokens
+    ? 'compression_note'
+    : contextWindowTokens !== null
+      ? 'model_window'
+      : null;
+  const workingSetUtilization = workingSetBudgetTokens !== null && workingSetUsedTokens !== null
+    ? workingSetUsedTokens / workingSetBudgetTokens
+    : null;
   return {
     nodeCount: graph.nodes.length,
     edgeCount: graph.edges.length,
@@ -549,6 +671,13 @@ export function liveContextMetrics(events: EngineeringEvent[]): LiveContextMetri
     peakTokenEstimate,
     contextWindowTokens,
     contextUtilization,
+    cardFoldCounts: { folded: foldedCards, active: activeCards },
+    summaryKindCounts,
+    compression,
+    workingSetBudgetTokens,
+    workingSetBudgetSource,
+    workingSetUsedTokens,
+    workingSetUtilization,
   };
 }
 

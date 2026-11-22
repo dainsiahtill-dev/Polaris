@@ -18,15 +18,46 @@ const fileCard = JSON.stringify({
     fold_state: 'FOLDED',
     fold_reason: 'superseded_by_newer_card',
     summary: '入口文件',
+    summary_kind: 'model_inference',
     content_preview: 'x'.repeat(400),
   },
 });
+
+const compressionMarker = '【上下文已压缩】为控制在有界上下文预算（约 32000 tokens）内，省略了 69 条较早的工具轮次；这些轮次的完整记录仍在工程运行日志中，可按证据引用取回。以下保留最近的关键轮次。';
 
 const journal: EngineeringEvent[] = [
   event(1, 'run_updated', { workspace_revision: 3, verification: 'not_run', status: 'running' }),
   event(2, 'resident_agi_decision', { project_type: 'node', reason: 'package.json 与 tsconfig 指向 Node' }, 'resident_agi'),
   event(3, 'cartographer_completed', { phase: 'EDIT', intent: '实现入口' }, 'cartographer'),
-  event(4, 'request_prepared', { turn_seq: 8, evidence_kind: 'auxiliary_prepared_request', request: { context: { phase: 'EDIT' } } }),
+  event(4, 'request_prepared', {
+    turn_seq: 8,
+    evidence_kind: 'auxiliary_prepared_request',
+    request: {
+      context: { phase: 'EDIT' },
+      options: {
+        messages: [
+          { role: 'user', content: compressionMarker },
+          {
+            role: 'tool',
+            content: JSON.stringify({
+              call_id: 'call_1',
+              tool: 'read_file',
+              content: JSON.stringify({
+                file_card: {
+                  path: 'src/app.ts',
+                  content_ref: 'filecard:src/app.ts',
+                  fold_state: 'FOLDED',
+                  fold_reason: 'superseded_by_newer_card',
+                  summary: '入口文件',
+                  summary_kind: 'model_inference',
+                },
+              }),
+            }),
+          },
+        ],
+      },
+    },
+  }),
   event(5, 'llm_request_observed', {
     turn_seq: 8,
     model: 'kimi-for-coding',
@@ -66,6 +97,8 @@ describe('buildLiveContextGraph', () => {
     expect(distill?.title).toBe('蒸馏 1');
     expect(graph.edges.some((edge) => edge.source === distill?.id && edge.target === card?.id && edge.label === '蒸馏')).toBe(true);
     expect(card?.foldState).toBe('FOLDED');
+    expect(card?.foldReason).toBe('superseded_by_newer_card');
+    expect(card?.summaryKind).toBe('model_inference');
     expect(card?.evidenceRef).toBe('filecard:src/app.ts');
     expect(card?.tokens).toBeGreaterThan(0);
 
@@ -105,6 +138,41 @@ describe('liveContextMetrics', () => {
     expect(metrics.verificationCount).toBe(1);
     expect(metrics.agentDecisionCount).toBe(1);
     expect(metrics.foldCounts.FOLDED).toBeGreaterThan(0);
+  });
+
+  it('parses the host compression marker and the folded-card summary provenance', () => {
+    const metrics = liveContextMetrics(journal);
+    expect(metrics.compression?.droppedTurns).toBe(69);
+    expect(metrics.compression?.budgetTokens).toBe(32000);
+    expect(metrics.compression?.dropUnit).toBe('tool_turns');
+    expect(metrics.compression?.sourceSeq).toBe(4);
+    expect(metrics.compression?.text).toContain('省略了 69 条较早的工具轮次');
+    expect(metrics.cardFoldCounts.folded).toBe(1);
+    expect(metrics.cardFoldCounts.active).toBe(0);
+    expect(metrics.summaryKindCounts.model_inference).toBe(1);
+    expect(metrics.summaryKindCounts.card_default).toBe(0);
+    expect(metrics.summaryKindCounts.structural).toBe(0);
+    expect(metrics.workingSetBudgetTokens).toBe(32000);
+    expect(metrics.workingSetBudgetSource).toBe('compression_note');
+    expect(metrics.workingSetUsedTokens).toBe(6335);
+    expect(metrics.workingSetUtilization).toBeCloseTo(6335 / 32000);
+  });
+
+  it('falls back to the model window when the host states no prompt budget', () => {
+    const marker = '【上下文已压缩】为适配模型窗口，省略了 11 条较早的工具轮次；这些轮次的完整记录仍在工程运行日志中。以下保留最近的关键轮次。';
+    const metrics = liveContextMetrics([
+      event(1, 'request_prepared', { request: { options: { messages: [{ role: 'user', content: marker }] } } }),
+      event(2, 'llm_request_observed', {
+        turn_seq: 1,
+        audit: { final_request_token_estimate: 35058, context_window_tokens: 1000000, context_window_utilization: 0.0351 },
+      }),
+    ]);
+    expect(metrics.compression?.droppedTurns).toBe(11);
+    expect(metrics.compression?.budgetTokens).toBeNull();
+    expect(metrics.workingSetBudgetTokens).toBe(1000000);
+    expect(metrics.workingSetBudgetSource).toBe('model_window');
+    expect(metrics.workingSetUsedTokens).toBe(35058);
+    expect(metrics.workingSetUtilization).toBeCloseTo(0.035058);
   });
 });
 

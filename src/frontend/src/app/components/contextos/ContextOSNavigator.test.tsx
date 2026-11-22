@@ -46,6 +46,52 @@ const events: EngineeringEvent[] = [
   { session_id: 'run', workspace: '/ws', seq: 4, role: 'resident_agi', kind: 'resident_agi_decision', payload: { project_type: 'node', reason: 'Node 项目' }, created_at: 4 },
 ];
 
+const compressionMarker = '【上下文已压缩】为控制在有界上下文预算（约 32000 tokens）内，省略了 69 条较早的工具轮次；这些轮次的完整记录仍在工程运行日志中，可按证据引用取回。以下保留最近的关键轮次。';
+
+const compressionEvents: EngineeringEvent[] = [
+  ...events,
+  {
+    session_id: 'run', workspace: '/ws', seq: 5, role: 'director', kind: 'request_prepared',
+    payload: {
+      turn_seq: 8,
+      request: {
+        context: { phase: 'EDIT' },
+        options: {
+          messages: [
+            { role: 'user', content: compressionMarker },
+            {
+              role: 'tool',
+              content: JSON.stringify({
+                call_id: 'call_2',
+                tool: 'execute_command',
+                content: JSON.stringify({
+                  command_card: {
+                    command: 'npm test',
+                    content_ref: 'command:call_2',
+                    fold_state: 'FOLDED',
+                    fold_reason: 'outside_current_focus',
+                    summary: '测试通过',
+                    summary_kind: 'model_inference',
+                  },
+                }),
+              }),
+            },
+          ],
+        },
+      },
+    },
+    created_at: 5,
+  },
+  {
+    session_id: 'run', workspace: '/ws', seq: 6, role: 'director', kind: 'tool_observed',
+    payload: {
+      turn_seq: 8, call_id: 'call_2', tool: 'execute_command', ok: true,
+      content: JSON.stringify({ command_card: { command: 'npm test', content_ref: 'command:call_2', fold_state: 'FOLDED', fold_reason: 'outside_current_focus', summary: '测试通过', summary_kind: 'model_inference' } }),
+    },
+    created_at: 6,
+  },
+];
+
 describe('ContextOSNavigator', () => {
   it('renders the live structure rail with fold legend and node counts', () => {
     render(<ContextOSNavigator events={events} workspace="/ws" />);
@@ -82,6 +128,26 @@ describe('ContextOSNavigator', () => {
     const detail = screen.getByTestId('contextos-nav-detail');
     expect(detail).toBeInTheDocument();
     expect(detail).toHaveTextContent('FileCard · src/app.ts');
+  });
+
+  it('shows the real host compression note and the working-set numbers', () => {
+    render(<ContextOSNavigator events={compressionEvents} workspace="/ws" />);
+    expect(screen.getByTestId('contextos-nav-compression-chip')).toHaveTextContent('丢弃 69 条工具轮次');
+    fireEvent.click(screen.getByTestId('contextos-nav-tab-metrics'));
+    const note = screen.getByTestId('contextos-nav-compression');
+    expect(note).toHaveTextContent(compressionMarker);
+    expect(note).toHaveTextContent('预算约 32,000 tokens');
+    expect(screen.getByTestId('contextos-nav-metrics')).toHaveTextContent('蒸馏折叠（model_inference）');
+    expect(screen.getByTestId('contextos-nav-metrics')).toHaveTextContent('折叠 / 未折叠卡片');
+  });
+
+  it('distinguishes distiller folding from structural fallback in the node detail', () => {
+    render(<ContextOSNavigator events={compressionEvents} workspace="/ws" />);
+    fireEvent.click(screen.getByTestId('nav-node-card:call_2'));
+    const detail = screen.getByTestId('contextos-nav-detail');
+    expect(detail).toHaveTextContent('摘要来源 · 蒸馏折叠（model_inference）');
+    expect(detail).toHaveTextContent('outside_current_focus');
+    expect(screen.getByTestId('contextos-nav-dropped-note')).toHaveTextContent(compressionMarker);
   });
 
   it('switches to the opt-in 3D exploration view', () => {

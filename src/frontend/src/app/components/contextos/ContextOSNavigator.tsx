@@ -36,14 +36,18 @@ import {
   LIVE_FOLD_LABELS,
   LIVE_KIND_LABELS,
   LIVE_LAYER_LABELS,
+  LIVE_SUMMARY_KIND_LABELS,
+  LIVE_SUMMARY_KIND_ORDER,
   buildLiveContextGraph,
   layoutLiveContextNodes,
   liveContextMetrics,
   liveMemoryCards,
+  liveProjectedCards,
   type LiveContextNode,
   type LiveFoldState,
   type LiveNodeKind,
 } from './contextOSNavigatorModel';
+import { COMPRESSION_DROP_UNIT_LABELS, type ContextCompressionFact } from './contextOSCompression';
 import { ContextOSNavigator3D } from './ContextOSNavigator3D';
 
 const KIND_ICON: Record<LiveNodeKind, typeof FileText> = {
@@ -76,6 +80,7 @@ export interface LiveNodeData extends Record<string, unknown> {
   sublabel: string;
   meta: string;
   foldLabel: string;
+  summaryKindLabel: string;
   color: string;
   icon: LiveNodeKind;
 }
@@ -97,7 +102,10 @@ function LiveNode({ data, selected }: NodeProps<LiveFlowNode>): ReactElement {
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[10px] font-medium text-[#f0efec]" title={data.label}>{data.label}</span>
         <span className="block truncate text-[9px] text-[#c3c2b7]" title={data.sublabel}>{data.sublabel}</span>
-        <span className="mt-0.5 block truncate text-[8px] text-[#898781]">{data.meta}</span>
+        <span className="mt-0.5 block truncate text-[8px] text-[#898781]">
+          {data.meta}
+          {data.summaryKindLabel ? <span className="text-[#c3c2b7]"> · {data.summaryKindLabel}</span> : null}
+        </span>
       </span>
       <span className="mt-0.5 shrink-0 text-[8px]" style={{ color: data.color }}>
         {data.foldLabel.split(' · ')[0]}
@@ -126,6 +134,35 @@ function metricsRow(label: string, value: string | number): ReactElement {
   );
 }
 
+/**
+ * Quote the host's own compression marker. The text is never rewritten: the
+ * numbers below are parsed from it, so a missing budget stays visible as a
+ * missing budget instead of being filled with a plausible-looking default.
+ */
+function CompressionNote({ compression, used, budgetSource, utilized }: {
+  compression: ContextCompressionFact;
+  used: number | null;
+  budgetSource: 'compression_note' | 'model_window' | null;
+  utilized: number | null;
+}): ReactElement {
+  return (
+    <div
+      className="rounded-md border border-white/[0.06] bg-white/[0.02] px-2 py-1.5"
+      data-testid="contextos-nav-compression"
+    >
+      <p className="text-[9px] font-semibold text-[#f0efec]">宿主压缩说明</p>
+      <p className="mt-0.5 text-[9px] leading-relaxed text-[#c3c2b7]">{compression.text}</p>
+      <p className="mt-1 text-[8px] text-[#898781]">
+        丢弃 {compression.droppedTurns} 条较早的{COMPRESSION_DROP_UNIT_LABELS[compression.dropUnit]}
+        {compression.budgetTokens !== null ? ` · 预算约 ${compression.budgetTokens.toLocaleString()} tokens` : ''}
+        {used !== null ? ` · 实际占用 ${used.toLocaleString()} tokens` : ''}
+        {utilized !== null ? ` · 占用率 ${(utilized * 100).toFixed(2)}%` : ''}
+        {budgetSource === 'model_window' ? ' · 预算取模型窗口' : ''}
+      </p>
+    </div>
+  );
+}
+
 export function ContextOSNavigator({ events, selectedSeq = null, onOpenContext }: ContextOSNavigatorProps): ReactElement {
   const [tab, setTab] = useState<Tab>('structure');
   const [view, setView] = useState<ViewMode>('2d');
@@ -133,6 +170,7 @@ export function ContextOSNavigator({ events, selectedSeq = null, onOpenContext }
   const graph = useMemo(() => buildLiveContextGraph(events, 90), [events]);
   const metrics = useMemo(() => liveContextMetrics(events), [events]);
   const memory = useMemo(() => liveMemoryCards(events), [events]);
+  const projectedCards = useMemo(() => liveProjectedCards(events), [events]);
   const positions = useMemo(() => layoutLiveContextNodes(graph.nodes), [graph.nodes]);
 
   const flowNodes = useMemo<LiveFlowNode[]>(() => graph.nodes.map((node) => {
@@ -146,6 +184,7 @@ export function ContextOSNavigator({ events, selectedSeq = null, onOpenContext }
         sublabel: node.summary || '—',
         meta: `${LIVE_KIND_LABELS[node.kind]} · ${node.role}${node.tokens !== null ? ` · ≈${node.tokens} tok` : ''}`,
         foldLabel: LIVE_FOLD_LABELS[node.foldState],
+        summaryKindLabel: node.summaryKind ? LIVE_SUMMARY_KIND_LABELS[node.summaryKind] : '',
         color: FOLD_COLOR[node.foldState],
         icon: node.kind,
       },
@@ -177,6 +216,13 @@ export function ContextOSNavigator({ events, selectedSeq = null, onOpenContext }
   const selected = graph.nodes.find((node) => node.id === selectedId)
     ?? graph.nodes.find((node) => node.seq === selectedSeq)
     ?? null;
+  // Fold state and summary provenance live in the projected request, not in the
+  // raw tool observation, so the detail looks the card up by its content_ref.
+  const projectedCard = selected?.evidenceRef
+    ? projectedCards.find((card) => card.nodeId === selected.evidenceRef) ?? null
+    : null;
+  const detailSummaryKind = projectedCard?.summaryKind ?? selected?.summaryKind ?? null;
+  const detailFoldReason = projectedCard?.foldReason || selected?.foldReason || '';
   const layerOptions = [...new Set(graph.nodes.map((node) => node.layer))].sort((a, b) => a - b);
 
   return (
@@ -231,6 +277,15 @@ export function ContextOSNavigator({ events, selectedSeq = null, onOpenContext }
                 <span className="cx-mono text-[#898781]">{metrics.foldCounts[state]}</span>
               </span>
             ))}
+            {metrics.compression ? (
+              <span
+                className="ml-auto flex items-center gap-1 rounded bg-white/[0.03] px-1.5 py-0.5 text-[8px] text-[#c3c2b7]"
+                data-testid="contextos-nav-compression-chip"
+                title={metrics.compression.text}
+              >
+                丢弃 {metrics.compression.droppedTurns} 条{COMPRESSION_DROP_UNIT_LABELS[metrics.compression.dropUnit]}
+              </span>
+            ) : null}
           </div>
           <div className="relative min-h-0 flex-1">
             {view === '2d' ? (
@@ -290,7 +345,30 @@ export function ContextOSNavigator({ events, selectedSeq = null, onOpenContext }
 
       {tab === 'metrics' ? (
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2 cx-scroll" data-testid="contextos-nav-metrics">
-          <p className="mb-1 text-[10px] font-semibold text-[#f0efec]">上下文成本</p>
+          {metrics.compression ? (
+            <CompressionNote
+              compression={metrics.compression}
+              used={metrics.workingSetUsedTokens}
+              budgetSource={metrics.workingSetBudgetSource}
+              utilized={metrics.workingSetUtilization}
+            />
+          ) : null}
+          <p className="mb-1 mt-3 text-[10px] font-semibold text-[#f0efec]">工作集与压缩</p>
+          {metricsRow(
+            '工作集预算',
+            metrics.workingSetBudgetTokens === null
+              ? '—'
+              : `${metrics.workingSetBudgetTokens.toLocaleString()} tok${metrics.workingSetBudgetSource === 'model_window' ? '（模型窗口）' : ''}`,
+          )}
+          {metricsRow('实际占用', metrics.workingSetUsedTokens === null ? '—' : `${metrics.workingSetUsedTokens.toLocaleString()} tok`)}
+          {metricsRow('占用率', metrics.workingSetUtilization === null ? '—' : `${(metrics.workingSetUtilization * 100).toFixed(2)}%`)}
+          {metricsRow(
+            '丢弃轮次',
+            metrics.compression
+              ? `${metrics.compression.droppedTurns} 条${COMPRESSION_DROP_UNIT_LABELS[metrics.compression.dropUnit]}`
+              : '—',
+          )}
+          <p className="mb-1 mt-3 text-[10px] font-semibold text-[#f0efec]">上下文成本</p>
           {metricsRow('最近请求约 tokens', metrics.lastTokenEstimate ?? '—')}
           {metricsRow('峰值请求约 tokens', metrics.peakTokenEstimate ?? '—')}
           {metricsRow('窗口 tokens', metrics.contextWindowTokens ?? '—')}
@@ -304,6 +382,12 @@ export function ContextOSNavigator({ events, selectedSeq = null, onOpenContext }
           {metricsRow('Resident 决策', metrics.agentDecisionCount)}
           <p className="mb-1 mt-3 text-[10px] font-semibold text-[#f0efec]">折叠状态</p>
           {FOLD_ORDER.map((state) => metricsRow(LIVE_FOLD_LABELS[state], metrics.foldCounts[state]))}
+          <p className="mb-1 mt-3 text-[10px] font-semibold text-[#f0efec]">最近卡片投影与摘要来源</p>
+          {metricsRow('折叠 / 未折叠卡片', `${metrics.cardFoldCounts.folded} / ${metrics.cardFoldCounts.active}`)}
+          {LIVE_SUMMARY_KIND_ORDER.map((kind) => metricsRow(
+            `${LIVE_SUMMARY_KIND_LABELS[kind]}（${kind}）`,
+            metrics.summaryKindCounts[kind],
+          ))}
           {metrics.lastSnapshotRef ? (
             <button
               type="button"
@@ -328,7 +412,17 @@ export function ContextOSNavigator({ events, selectedSeq = null, onOpenContext }
           <p className="mt-1 text-[8px] text-[#898781]">
             {LIVE_KIND_LABELS[selected.kind]} · {selected.role} · {LIVE_FOLD_LABELS[selected.foldState]}
           </p>
-          <p className="mt-0.5 text-[8px] text-[#898781]">{selected.foldReason}</p>
+          {detailSummaryKind ? (
+            <p className="mt-0.5 text-[8px] text-[#898781]" data-testid="contextos-nav-summary-kind">
+              摘要来源 · {LIVE_SUMMARY_KIND_LABELS[detailSummaryKind]}（{detailSummaryKind}）
+            </p>
+          ) : null}
+          <p className="mt-0.5 text-[8px] text-[#898781]">{detailFoldReason}</p>
+          {metrics.compression ? (
+            <p className="mt-1 text-[8px] leading-relaxed text-[#898781]" data-testid="contextos-nav-dropped-note">
+              丢弃说明 · {metrics.compression.text}
+            </p>
+          ) : null}
           {selected.evidenceRef ? (
             <button
               type="button"
