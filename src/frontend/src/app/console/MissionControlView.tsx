@@ -25,7 +25,20 @@ const AGENT_ROLES: Record<string, string> = {
   resident_agi: 'Resident AGI',
 };
 
-function agentText(value: unknown, limit = 160): string {
+function agentText(value: unknown, limit = 200): string {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        if (item && typeof item === 'object') {
+          const record = item as Record<string, unknown>;
+          return String(record.summary ?? record.action ?? record.signal ?? record.phase ?? '');
+        }
+        return String(item ?? '');
+      })
+      .filter(Boolean)
+      .join('；')
+      .slice(0, limit);
+  }
   if (typeof value !== 'string') return '';
   return value.replace(/\s+/g, ' ').trim().slice(0, limit);
 }
@@ -40,16 +53,16 @@ function buildAgentTraces(events: EngineeringEvent[]) {
     let output = '';
     if (event.role === 'resident_agi') {
       input = agentText(payload.signals) || agentText(payload.reason);
-      output = agentText(payload.reason) || agentText(payload.guidance);
+      output = agentText(payload.guidance) || agentText(payload.reason);
     } else if (event.role === 'cartographer') {
-      input = agentText(payload.working_state) || agentText(payload.signals);
-      output = agentText(payload.summary) || agentText(payload.guidance) || agentText(payload.next_actions);
+      input = agentText(payload.phase) || agentText(payload.intent) || agentText(payload.signals);
+      output = agentText(payload.intent) || agentText(payload.completed) || agentText(payload.next_actions) || agentText(payload.blocker);
     } else if (event.role === 'devourer') {
       input = agentText(payload.facts) || agentText(payload.working_state);
       output = agentText(payload.summary) || agentText(payload.reason);
     } else {
       input = agentText(payload.summaries) || agentText(payload.signals);
-      output = agentText(payload.summary) || agentText(payload.guidance) || agentText(payload.reason);
+      output = agentText(payload.result) || agentText(payload.validation_result) || agentText(payload.summaries);
     }
     traces.push({ kind: event.kind, seq: event.seq, created_at: event.created_at ?? 0, role, input, output });
   }
