@@ -789,23 +789,6 @@ async def run_engineering_loop(
             "unknown" if status == "interrupted" else "not_run",
             (),
         )
-        try:
-            from polaris.cells.roles.runtime.internal.engineering_effect_report import build_effect_report
-
-            report = build_effect_report(
-                store.load_run(command.session_id, workspace=command.workspace),
-                store.load_events(command.session_id),
-            )
-            report["status"] = result.status
-            report["verification"] = result.verification
-            report_root = command.workspace / ".polaris" / "runtime" / "contextos" / "effect-reports"
-            report_root.mkdir(parents=True, exist_ok=True)
-            (report_root / f"{command.session_id}.json").write_text(
-                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-            )
-        except (KeyError, OSError, ValueError):
-            # The effect report is diagnostics; it must never change a run verdict.
-            pass
         store.append_event(
             command.session_id,
             kind="role_finished",
@@ -816,6 +799,21 @@ async def run_engineering_loop(
             store.update_run(
                 command.session_id, status=result.status, text=result.text, verification=result.verification, checks=()
             )
+        try:
+            from polaris.cells.roles.runtime.internal.engineering_effect_report import build_effect_report
+
+            final_run = store.load_run(command.session_id, workspace=command.workspace)
+            report = build_effect_report(final_run, store.load_events(command.session_id))
+            report["role_status"] = result.status
+            report["role_verification"] = result.verification
+            report_root = command.workspace / ".polaris" / "runtime" / "contextos" / "effect-reports"
+            report_root.mkdir(parents=True, exist_ok=True)
+            (report_root / f"{command.session_id}.json").write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+        except (KeyError, OSError, ValueError):
+            # The effect report is diagnostics; it must never change a run verdict.
+            pass
         return result
 
     context_window_tokens = _model_context_window(Path(command.workspace), command.role)
