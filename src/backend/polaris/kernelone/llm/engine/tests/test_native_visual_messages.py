@@ -401,3 +401,84 @@ def test_mandatory_visual_overflow_never_drops_original_reference() -> None:
     ]
     with pytest.raises(ValueError, match="required_visual_input_budget_exceeded"):
         select_visual_working_set(messages, [], hard_allowance=100, optional_allowance=50)
+
+
+def _attachment_message(frames: list[bytes]) -> dict[str, object]:
+    import base64
+
+    blocks: list[dict[str, object]] = []
+    for frame in frames:
+        blocks.append({"type": "text", "text": "capture"})
+        blocks.append(
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": base64.b64encode(frame).decode("ascii")}}
+        )
+    return {"role": "user", "content": blocks}
+
+
+def test_rebind_visual_input_sets_follows_prepended_host_messages() -> None:
+    import hashlib
+
+    from polaris.kernelone.llm.engine.visual_working_set import rebind_visual_input_sets
+
+    same = b"x" * 4000
+    message = _attachment_message([same, same])
+    digests = [hashlib.sha256(same).hexdigest(), hashlib.sha256(same).hexdigest()]
+    stale = [{"call_id": "cap", "message_index": 2, "block_indices": [1, 3], "image_sha256": digests, "required": True}]
+    # A host injection prepended two system messages, so the attachment moved 2 -> 0.
+    rebound, dropped = rebind_visual_input_sets([{"role": "system", "content": "a"}, {"role": "system", "content": "b"}, message], stale)
+    assert dropped == []
+    assert rebound[0]["message_index"] == 2
+    assert rebound[0]["block_indices"] == [1, 3]
+    # Rebinding is content-addressed, so it re-locates even an already-valid set.
+    again, again_dropped = rebind_visual_input_sets([message], rebound)
+    assert again_dropped == []
+    assert again[0]["message_index"] == 0
+    assert again[0]["block_indices"] == [1, 3]
+    # An origin whose pixels are gone is reported, never fatal.
+    assert rebind_visual_input_sets([{"role": "user", "content": "no images"}], stale)[1] == [
+        {"call_id": "cap", "reason": "origin_not_in_final_request"}
+    ]
+
+
+def test_stale_visual_origin_is_dropped_instead_of_ending_the_run() -> None:
+    import hashlib
+
+    from polaris.kernelone.llm.engine.visual_working_set import select_visual_working_set
+
+    frame = b"y" * 4000
+    messages = [
+        {"role": "user", "content": "host note"},
+        _attachment_message([frame]),
+    ]
+    stale = [
+        {
+            "call_id": "cap",
+            "required": True,
+            "message_index": 5,
+            "block_indices": [1],
+            "image_sha256": [hashlib.sha256(frame).hexdigest()],
+        }
+    ]
+    selected, audit = select_visual_working_set(messages, stale, hard_allowance=5000, optional_allowance=3500)
+    assert audit["dropped_origins"] == [{"call_id": "cap", "reason": "origin_message_absent", "required": True}]
+    assert audit["dropped_mandatory_call_ids"] == ["cap"]
+    assert selected == messages
+
+
+def test_non_image_origin_block_is_dropped_with_reason() -> None:
+    import hashlib
+
+    from polaris.kernelone.llm.engine.visual_working_set import select_visual_working_set
+
+    messages = [{"role": "user", "content": [{"type": "text", "text": "plain"}]}]
+    origins = [
+        {
+            "call_id": "cap",
+            "required": False,
+            "message_index": 0,
+            "block_indices": [0],
+            "image_sha256": [hashlib.sha256(b"irrelevant").hexdigest()],
+        }
+    ]
+    _selected, audit = select_visual_working_set(messages, origins, hard_allowance=5000, optional_allowance=3500)
+    assert audit["dropped_origins"][0]["reason"] == "origin_block_not_image"

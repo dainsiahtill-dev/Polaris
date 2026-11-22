@@ -7,6 +7,7 @@ serialization proxies, not measured or bounded provider vision-token usage.
 from __future__ import annotations
 
 import base64
+import binascii
 import copy
 import hashlib
 import json
@@ -27,6 +28,72 @@ def _image_data(block: Mapping[str, Any]) -> str | None:
         if isinstance(value, str) and value.startswith("data:") and ";base64," in value:
             return value.split(",", 1)[1]
     return None
+
+
+def _image_digest(block: Mapping[str, Any]) -> str | None:
+    """sha256 of an image block's bytes, or None when the block is not decodable."""
+
+    data = _image_data(block)
+    if data is None:
+        return None
+    try:
+        return hashlib.sha256(base64.b64decode(data, validate=True)).hexdigest()
+    except (ValueError, binascii.Error):
+        return None
+
+
+def _match_image_sequence(blocks: Sequence[Mapping[str, Any]], expected: Sequence[str]) -> list[int] | None:
+    """Indices of the first in-order image-block run matching ``expected``.
+
+    Frames of the same capture can be byte-identical, so a digest-set lookup is
+    ambiguous; the host always emits attachment images in capture order, so an
+    ordered subsequence match is the honest rebinding.
+    """
+
+    indexed = [(index, digest) for index, block in enumerate(blocks) if (digest := _image_digest(block)) is not None]
+    if len(indexed) < len(expected):
+        return None
+    digests = [digest for _index, digest in indexed]
+    for start in range(len(digests) - len(expected) + 1):
+        if digests[start : start + len(expected)] == list(expected):
+            return [indexed[offset][0] for offset in range(start, start + len(expected))]
+    return None
+
+
+def rebind_visual_input_sets(
+    messages: Sequence[Mapping[str, Any]],
+    image_sets: Sequence[Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Re-locate host visual origins in the final request messages.
+
+    The host may prepend system reminders, or drop a repeated injection, after
+    the visual projection was computed. Passing those now-stale indices to
+    ``select_visual_working_set`` reads the wrong message. Origins are therefore
+    re-bound by their image bytes. Returns ``(rebound, dropped)``; a dropped
+    origin is reported, never fatal.
+    """
+
+    rebound: list[dict[str, Any]] = []
+    dropped: list[dict[str, Any]] = []
+    for item in image_sets:
+        expected = [str(value) for value in (item.get("image_sha256") or []) if isinstance(value, str)]
+        call_id = str(item.get("call_id", ""))
+        located: tuple[int, list[int]] | None = None
+        if expected:
+            for message_index, message in enumerate(messages):
+                content = message.get("content")
+                if not isinstance(content, list):
+                    continue
+                indices = _match_image_sequence(content, expected)
+                if indices is not None:
+                    located = (message_index, indices)
+                    break
+        if located is None:
+            dropped.append({"call_id": call_id, "reason": "origin_not_in_final_request"})
+            continue
+        message_index, block_indices = located
+        rebound.append({**item, "message_index": message_index, "block_indices": block_indices})
+    return rebound, dropped
 
 
 def _proxy(messages: Sequence[Mapping[str, Any]]) -> int:
@@ -91,38 +158,58 @@ def select_visual_working_set(
     exact original pixels stay inspectable on demand
     (``browser_observe(revisit_call_ids=[capture IDs])``) instead of killing
     the run on its own evidence.
+
+    An origin that no longer resolves against ``messages`` is dropped and
+    reported in the audit. Visual evidence is optional input: a stale index must
+    never end the run that produced it.
     """
     original = copy.deepcopy([dict(item) for item in messages])
     optional: list[tuple[str, frozenset[tuple[int, int]]]] = []
     mandatory: list[tuple[str, frozenset[tuple[int, int]]]] = []
     owned: set[tuple[int, int]] = set()
     claimed: set[tuple[int, int]] = set()
+    dropped: list[dict[str, Any]] = []
     for origin in origins:
         mi, indices, hashes = origin.get("message_index"), origin.get("block_indices"), origin.get("image_sha256")
+        call_id = str(origin.get("call_id", ""))
+        required = origin.get("required") is not False
         if type(mi) is not int or not isinstance(indices, list) or not isinstance(hashes, list):
-            raise ValueError("invalid_host_visual_origin")
+            dropped.append({"call_id": call_id, "reason": "malformed_origin", "required": required})
+            continue
         if not 0 <= mi < len(original) or not isinstance(original[mi].get("content"), list):
-            raise ValueError("invalid_host_visual_origin")
+            dropped.append({"call_id": call_id, "reason": "origin_message_absent", "required": required})
+            continue
         if not indices or len(indices) != len(hashes) or any(type(index) is not int for index in indices):
-            raise ValueError("invalid_host_visual_origin")
+            dropped.append({"call_id": call_id, "reason": "origin_block_mismatch", "required": required})
+            continue
         positions: set[tuple[int, int]] = set()
+        reason: str | None = None
         for index, expected in zip(indices, hashes, strict=True):
             content = original[mi]["content"]
             if not 0 <= index < len(content) or not isinstance(content[index], dict):
-                raise ValueError("invalid_host_visual_origin")
-            data = _image_data(content[index])
-            if data is None or hashlib.sha256(base64.b64decode(data, validate=True)).hexdigest() != expected:
-                raise ValueError("host_visual_origin_integrity_mismatch")
+                reason = "origin_block_absent"
+                break
+            digest = _image_digest(content[index])
+            if digest is None:
+                reason = "origin_block_not_image"
+                break
+            if digest != expected:
+                reason = "origin_integrity_mismatch"
+                break
             position = (mi, index)
             if position in claimed:
-                raise ValueError("ambiguous_host_visual_origin")
+                reason = "ambiguous_host_visual_origin"
+                break
             positions.add(position)
             claimed.add(position)
-        if origin.get("required") is False:
-            optional.append((str(origin.get("call_id", "")), frozenset(positions)))
-            owned |= positions
+        if reason is not None:
+            dropped.append({"call_id": call_id, "reason": reason, "required": required})
+            continue
+        if required:
+            mandatory.append((call_id, frozenset(positions)))
         else:
-            mandatory.append((str(origin.get("call_id", "")), frozenset(positions)))
+            optional.append((call_id, frozenset(positions)))
+            owned |= positions
 
     def project(removed: set[tuple[int, int]]) -> list[dict[str, Any]]:
         result = copy.deepcopy(original)
@@ -181,5 +268,7 @@ def select_visual_working_set(
         "optional_allowance": soft,
         "omitted_call_ids": [identity for identity, _positions in optional if identity in omitted],
         "demoted_call_ids": demoted,
+        "dropped_origins": dropped,
+        "dropped_mandatory_call_ids": [item["call_id"] for item in dropped if item["required"]],
         "selection_reason": "resolved_model_budget_whole_capture_sets",
     }

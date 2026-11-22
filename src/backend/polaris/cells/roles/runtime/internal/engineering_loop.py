@@ -10,6 +10,7 @@ import json
 import os
 import re
 import time
+import traceback
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict
 from pathlib import Path
@@ -900,6 +901,11 @@ async def run_engineering_loop(
     # prior turns; it is not needed when there are only initial messages
     # (e.g. a fresh run with system + user instruction but no tool results yet).
     history_notice_sent = False
+    # Resident AGI state must exist for every frame. A continued frame replays
+    # earlier turns and skips the fresh-frame setup below; leaving these unbound
+    # made the first resident check raise UnboundLocalError and kill the resume.
+    resident_decision: dict[str, Any] | None = None
+    resident_runtime: Any = None
     if not messages:
         system_message = {
             "role": "system",
@@ -925,8 +931,6 @@ async def run_engineering_loop(
         except (KeyError, OSError, ValueError):
             prior_messages = []
         profile_messages: list[dict[str, Any]] = []
-        resident_decision: dict[str, Any] | None = None
-        resident_runtime = None
         if os.environ.get("KERNELONE_RESIDENT_AGI", "0").strip().lower() in {
             "1",
             "true",
@@ -1592,6 +1596,29 @@ async def run_engineering_loop(
                 preparation_pending=preparation_pending,
                 qa_report_required=qa_report_required,
             )
+            # Every host injection above can prepend or drop a message after the
+            # visual projection recorded its indices. Re-bind the origins against
+            # the final request messages so a shifted index cannot make the host
+            # read the wrong message and end the run on its own evidence.
+            from polaris.kernelone.llm.engine.visual_working_set import (
+                rebind_visual_input_sets,
+            )
+
+            rebound_sets, dropped_sets = rebind_visual_input_sets(
+                request_messages, visual_projection.get("image_sets", [])
+            )
+            if dropped_sets:
+                store.append_event(
+                    command.session_id,
+                    kind="visual_origin_dropped",
+                    role=command.role,
+                    payload={"turn_seq": turn_seq, "dropped": dropped_sets},
+                )
+            visual_projection = {
+                **visual_projection,
+                "image_sets": rebound_sets,
+                "dropped_origins": dropped_sets,
+            }
             request = AIRequest(
                 task_type=TaskType.DIALOGUE,
                 role=command.role,
@@ -2215,10 +2242,16 @@ async def run_engineering_loop(
             raise drain_error from journal_error
         raise
     except Exception as exc:  # noqa: BLE001 - report a provider/tool failure at the role boundary, never retry effects.
+        # A bare message name is not auditable: keep a bounded stack so the exact
+        # owner line survives in the journal instead of only the text.
         store.append_event(
             command.session_id,
             kind="role_error",
             role=command.role,
-            payload={"error_type": type(exc).__name__, "error": str(exc)},
+            payload={
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "traceback": traceback.format_exc(limit=16)[-4000:],
+            },
         )
         return finish("failed", f"{type(exc).__name__}: {exc}")

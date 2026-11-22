@@ -679,3 +679,67 @@ def test_native_response_identity_guards_remain_before_dispatch(protocol: str, i
     )
     with pytest.raises(ValueError, match="call id"):
         _native_calls(response)
+
+
+class _TwoTurnClient:
+    """First turn reads a file, second turn answers; the loop and journal stay real."""
+
+    def __init__(self) -> None:
+        self.requests: list[AIRequest] = []
+        self.calls = 0
+
+    async def invoke(self, request: AIRequest) -> AIResponse:
+        self.requests.append(request)
+        self.calls += 1
+        if self.calls == 1:
+            return AIResponse(ok=True, output="", raw=_native(("read-1", "read_file", {"file": "a.txt"})))
+        return AIResponse(ok=True, output="done", raw=_native(text="done"))
+
+
+async def test_prepared_visual_origins_stay_bound_after_repeated_injection(
+    isolated_workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A repeated ContextOS injection is deduped after projection; origins must follow.
+
+    Regression for the L1-01 bench death: the dedupe removed the injected system
+    message after the visual projection recorded its indices, so the host read a
+    plain-text message as an image block and raised invalid_host_visual_origin.
+    """
+    from polaris.cells.roles.runtime.internal import engineering_memory_cards
+
+    stable = {"role": "system", "content": "ContextOS 长期记忆（摘要，非验收证据）：\nstable"}
+    monkeypatch.setattr(
+        engineering_memory_cards, "build_context_memory_messages", lambda *_args, **_kwargs: [stable]
+    )
+    store, command, _scope, limits = _history(isolated_workspace)
+    scope = replace(_scope, enabled_tools=frozenset({"read_file"}))
+    client = _TwoTurnClient()
+    result = await run_engineering_loop(
+        command,
+        scope=scope,
+        limits=limits,
+        cancel=asyncio.Event(),
+        store=store,
+        client=cast(Any, client),
+        visual_binding=lambda: _binding(2),
+    )
+    if result.status != "completed":
+        errors = [event["payload"] for event in store.load_events("projection") if event["kind"] == "role_error"]
+        pytest.fail(f"{result.text}\n{errors[-1].get('traceback') if errors else ''}")
+    assert len(client.requests) >= 2
+    prepared = [
+        event["payload"]
+        for event in store.load_events("projection")
+        if event["kind"] == "request_prepared"
+    ]
+    assert len(prepared) >= 2
+    for payload in prepared:
+        messages = payload["request"]["options"]["messages"]
+        for item in payload["visual_projection"]["image_sets"]:
+            assert 0 <= item["message_index"] < len(messages)
+            content = messages[item["message_index"]]["content"]
+            assert isinstance(content, list)
+            assert all(0 <= index < len(content) for index in item["block_indices"])
+    # The second request deduped the repeated injection, so no ContextOS system
+    # message remains there.
+    assert "ContextOS" not in json.dumps(prepared[-1]["request"]["options"]["messages"], ensure_ascii=False)
