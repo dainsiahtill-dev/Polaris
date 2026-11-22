@@ -21,6 +21,7 @@ import {
   Brain,
   ChevronRight,
   FileText,
+  FlaskConical,
   Layers,
   Map as MapIcon,
   Send,
@@ -55,6 +56,7 @@ const KIND_ICON: Record<LiveNodeKind, typeof FileText> = {
   command_card: Terminal,
   verification: ShieldCheck,
   fold: Archive,
+  distill: FlaskConical,
 };
 
 /** Fold state is the status channel; kind identity is carried by icon + label. */
@@ -291,6 +293,7 @@ export function ContextOSNavigator({ events, selectedSeq = null, onOpenContext }
           {metricsRow('节点 / 边', `${metrics.nodeCount} / ${metrics.edgeCount}`)}
           {metricsRow('请求 / 模型调用', `${metrics.requestCount} / ${metrics.modelCallCount}`)}
           {metricsRow('工具观察 / 折叠', `${metrics.toolCallCount} / ${metrics.foldEventCount}`)}
+          {metricsRow('蒸馏节点 / 智能体', `${metrics.distillCount} / ${metrics.agentDecisionCount}`)}
           {metricsRow('验证 / Epoch', `${metrics.verificationCount} / ${metrics.epochCount}`)}
           {metricsRow('Resident 决策', metrics.agentDecisionCount)}
           <p className="mb-1 mt-3 text-[10px] font-semibold text-[#f0efec]">折叠状态</p>

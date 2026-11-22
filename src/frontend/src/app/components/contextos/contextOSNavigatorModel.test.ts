@@ -38,6 +38,12 @@ const journal: EngineeringEvent[] = [
   event(6, 'tool_observed', { turn_seq: 8, call_id: 'call_1', tool: 'read_file', ok: true, content: fileCard }),
   event(7, 'context_projection_folded', { projection_ref: 'filecard:src/app.ts', node_kind: 'file_card', path: 'src/app.ts', fold_reason: 'superseded_by_newer_card' }),
   event(8, 'verification_completed', { turn_seq: 8, verification: 'passed', feedback: 'ok' }),
+  event(9, 'semantic_advice_completed', {
+    agent_role: 'distiller',
+    fingerprint: 'fp-1',
+    validation_result: 'VALID',
+    result: { summaries: [{ node_id: 'src/app.ts', summary: '入口文件摘要' }] },
+  }, 'distiller'),
 ];
 
 describe('buildLiveContextGraph', () => {
@@ -53,8 +59,12 @@ describe('buildLiveContextGraph', () => {
     expect(kinds).toContain('file_card');
     expect(kinds).toContain('verification');
     expect(kinds).toContain('fold');
+    expect(kinds).toContain('distill');
 
     const card = graph.nodes.find((node) => node.kind === 'file_card');
+    const distill = graph.nodes.find((node) => node.kind === 'distill');
+    expect(distill?.title).toBe('蒸馏 1');
+    expect(graph.edges.some((edge) => edge.source === distill?.id && edge.target === card?.id && edge.label === '蒸馏')).toBe(true);
     expect(card?.foldState).toBe('FOLDED');
     expect(card?.evidenceRef).toBe('filecard:src/app.ts');
     expect(card?.tokens).toBeGreaterThan(0);

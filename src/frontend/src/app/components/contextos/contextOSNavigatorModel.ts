@@ -16,7 +16,8 @@ export type LiveNodeKind =
   | 'file_card'
   | 'command_card'
   | 'verification'
-  | 'fold';
+  | 'fold'
+  | 'distill';
 
 export type LiveFoldState = 'ACTIVE' | 'FOLDED' | 'REFERENCE' | 'EVICTED' | 'UNKNOWN';
 
@@ -63,6 +64,7 @@ export interface LiveContextMetrics {
   toolCallCount: number;
   verificationCount: number;
   foldEventCount: number;
+  distillCount: number;
   agentDecisionCount: number;
   epochCount: number;
   lastSnapshotRef: string | null;
@@ -94,6 +96,7 @@ export const LIVE_LAYERS: Record<LiveNodeKind, number> = {
   command_card: 3,
   verification: 3,
   fold: 4,
+  distill: 0,
 };
 
 export const LIVE_LAYER_LABELS: Record<number, string> = {
@@ -115,6 +118,7 @@ export const LIVE_KIND_LABELS: Record<LiveNodeKind, string> = {
   command_card: 'CommandCard',
   verification: '验证',
   fold: '折叠节点',
+  distill: '蒸馏节点',
 };
 
 export const LIVE_FOLD_LABELS: Record<LiveFoldState, string> = {
@@ -211,7 +215,19 @@ export const LIVE_RELEVANT_KINDS = new Set([
   'verification_completed',
   'cartographer_completed',
   'cartographer_rejected',
+  'semantic_advice_completed',
 ]);
+
+/** Distiller summaries carry the FileCard/CommandCard path as their node_id. */
+function distillTargets(payload: Record<string, unknown>): string[] {
+  const result = payload.result;
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return [];
+  const summaries = (result as Record<string, unknown>).summaries;
+  if (!Array.isArray(summaries)) return [];
+  return summaries
+    .map((item) => (item && typeof item === 'object' ? (item as Record<string, unknown>).node_id : null))
+    .filter((value): value is string => typeof value === 'string' && value.length > 0);
+}
 
 export function buildLiveContextGraph(events: EngineeringEvent[], limit = 90): LiveContextGraph {
   const relevant = events.filter((event) => LIVE_RELEVANT_KINDS.has(event.kind));
@@ -220,6 +236,7 @@ export function buildLiveContextGraph(events: EngineeringEvent[], limit = 90): L
   const nodes = new Map<string, LiveContextNode>();
   const edges: LiveContextEdge[] = [];
   const cardRefs = new Map<string, string>();
+  const cardPaths = new Map<string, string>();
   const edgeKeys = new Set<string>();
   const addEdge = (source: string, target: string, label: string, animated = false) => {
     const key = `${source}->${target}`;
@@ -400,8 +417,36 @@ export function buildLiveContextGraph(events: EngineeringEvent[], limit = 90): L
         createdAt: event.created_at ?? 0,
       });
       if (reference) cardRefs.set(reference, id);
+      const cardPath = card?.path;
+      if (typeof cardPath === 'string' && cardPath) cardPaths.set(cardPath, id);
       const model = nodes.get(`model:${turn ?? seq}`);
       if (model) addEdge(model.id, id, '观察');
+      continue;
+    }
+    if (event.kind === 'semantic_advice_completed') {
+      const targets = distillTargets(payload);
+      const id = `distill:${text(payload.fingerprint, 64) || seq}`;
+      nodes.set(id, {
+        id,
+        seq,
+        kind: 'distill',
+        title: `蒸馏 ${targets.length || ''}`.trim(),
+        summary: targets.slice(0, 3).join('、') || text(payload.validation_result, 60) || '节点摘要',
+        role: event.role,
+        foldState: 'FOLDED',
+        foldReason: '蒸馏摘要替代原始卡片进入投影',
+        tokens: null,
+        layer: LIVE_LAYERS.distill,
+        turn: null,
+        evidenceRef: null,
+        phase: null,
+        ok: text(payload.validation_result) === 'VALID',
+        createdAt: event.created_at ?? 0,
+      });
+      for (const target of targets) {
+        const cardId = cardPaths.get(target) ?? cardRefs.get(target);
+        if (cardId) addEdge(id, cardId, '蒸馏', true);
+      }
       continue;
     }
     if (event.kind === 'context_projection_folded') {
@@ -496,6 +541,7 @@ export function liveContextMetrics(events: EngineeringEvent[]): LiveContextMetri
     toolCallCount: graph.nodes.filter((node) => node.kind === 'file_card' || node.kind === 'command_card').length,
     verificationCount: graph.nodes.filter((node) => node.kind === 'verification').length,
     foldEventCount: graph.nodes.filter((node) => node.kind === 'fold').length,
+    distillCount: graph.nodes.filter((node) => node.kind === 'distill').length,
     agentDecisionCount: events.filter((event) => event.kind === 'resident_agi_decision').length,
     epochCount: events.filter((event) => event.kind === 'epoch_card_completed').length,
     lastSnapshotRef,
