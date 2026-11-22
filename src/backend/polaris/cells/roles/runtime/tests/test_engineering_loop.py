@@ -689,6 +689,62 @@ async def test_qa_reserves_last_minute_of_240s_for_evidence_bound_report(
     assert event["payload"]["reserve_seconds"] == 60 and event["payload"]["source_call_id"] == "qa-read"
 
 
+@pytest.mark.parametrize("protocol", ["openai", "anthropic"])
+async def test_qa_receives_the_acceptance_clause_matrix(
+    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch, protocol: str
+) -> None:
+    """Without the verbatim clauses the reviewer cannot cover them and every
+    report_review is rejected, which burns the budget in a resubmit loop."""
+
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from polaris.cells.roles.runtime.internal import engineering_loop
+
+    (isolated_workspace / "note.txt").write_text("inspected", encoding="utf-8")
+    loop, store, _tools, command, scope, limits = _setup(
+        isolated_workspace, enabled=frozenset({"read_file", "report_review"})
+    )
+    command = replace(command, role="qa")
+    clauses = ("条款一：悲伤改兴奋后 10 秒内闪光增加", "条款二：月相只改亮度不改周期")
+    created = store.load_run(command.session_id, workspace=isolated_workspace)["created_at"]
+    limits = replace(limits, deadline=created + 240)
+    monkeypatch.setattr(engineering_loop, "time", SimpleNamespace(time=lambda: created + 185, monotonic=time.monotonic))
+    scripted_provider.enqueue_json(_native(("qa-read", "read_file", {"file": "note.txt"}), protocol=protocol))
+    scripted_provider.enqueue_json(
+        _native(
+            (
+                "qa-review",
+                "report_review",
+                {
+                    "approved": False,
+                    "feedback": "Insufficient evidence",
+                    "clause_findings": [
+                        {"clause": clause, "status": "unknown", "evidence": "Unavailable oracle"} for clause in clauses
+                    ],
+                },
+            ),
+            protocol=protocol,
+        )
+    )
+    result = await loop(
+        command,
+        scope=scope,
+        limits=limits,
+        cancel=asyncio.Event(),
+        store=store,
+        client=scripted_provider.client(protocol, isolated_workspace, monkeypatch),
+        review_clauses=clauses,
+    )
+    assert result.status == "completed"
+    tail = json.dumps(scripted_provider.requests[-1]["body"]["messages"][-1], ensure_ascii=False)
+    assert "acceptance clause" in tail
+    for clause in clauses:
+        assert clause in tail
+    event = store.load_events(command.session_id, role="qa", kinds=("qa_report_requested",))[-1]
+    assert list(event["payload"]["acceptance_clauses"]) == list(clauses)
+
+
 async def test_qa_forced_report_limits_wire_and_rejects_ignored_provider_choice(
     isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:

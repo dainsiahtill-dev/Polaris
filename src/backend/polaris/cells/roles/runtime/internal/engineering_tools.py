@@ -269,8 +269,10 @@ class EngineeringTools:
                 if isinstance(clause_property, dict):
                     clause_property["description"] = (
                         "Required for this multi-clause goal: one entry per acceptance clause "
-                        f"({len(self.review_clauses)} clauses). Each entry needs clause, status pass|fail|unknown, "
-                        "and evidence. For pass, use the exact call ID of a current check or earlier successful QA observation."
+                        f"({len(self.review_clauses)} clauses). Copy each clause text verbatim from the numbered "
+                        "acceptance-clause list in the current QA instruction. Each entry needs clause, status "
+                        "pass|fail|unknown, and evidence. For pass, use the exact call ID of a current check or "
+                        "earlier successful QA observation."
                     )
                 required = [item for item in (parameters.get("required") or []) if item != "clause_findings"]
                 required.append("clause_findings")

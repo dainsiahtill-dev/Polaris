@@ -1626,10 +1626,20 @@ async def run_engineering_loop(
                             if ((schema.get("function") or {}).get("name") or schema.get("name")) == "report_review"
                         ]
                         options["tool_choice"] = {"type": "function", "function": {"name": "report_review"}}
+                        # The clause matrix must travel with the ask. Without the
+                        # verbatim clauses the reviewer cannot cover them and the
+                        # dispatch boundary rejects every report, which burns the
+                        # remaining budget in a read/resubmit loop.
+                        clause_matrix = "\n".join(
+                            f"{index}. {clause}" for index, clause in enumerate(review_clauses, start=1)
+                        )
                         instruction = (
                             f"Current QA source receipt ID: {source}. Current host check IDs: "
                             + json.dumps([check["call_id"] for check in run["checks"] if check.get("ok") is True])
-                            + ". In each passing finding copy a supporting call ID into evidence; "
+                            + ". report_review clause_findings needs one entry for EVERY acceptance clause "
+                            f"({len(review_clauses)}). Copy each clause text from this list verbatim so coverage "
+                            "matches:\n" + clause_matrix + "\n"
+                            "In each passing finding copy a supporting call ID into evidence; "
                             "put the explanation in feedback. Mark unverifiable clauses unknown."
                         )
                     else:
@@ -1654,6 +1664,7 @@ async def run_engineering_loop(
                             "source_call_id": source,
                             "tool_choice": options["tool_choice"],
                             "available_tools": sorted(tools.enabled),
+                            "acceptance_clauses": list(review_clauses),
                         },
                     )
             from polaris.cells.roles.runtime.internal.engineering_phase_policy import phase_for
