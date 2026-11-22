@@ -171,11 +171,15 @@ def current_facts(run: Mapping[str, Any], events: Sequence[Mapping[str, Any]]) -
             value = payload.get(key)
             if isinstance(value, str) and value:
                 evidence.add(value)
+    normalized_phase = phase if phase in PHASES else "DIAGNOSE"
+    allowed = {normalized_phase}
+    if verification in {"passed", "failed"}:
+        allowed.add("RETEST")
     return {
         "verification": verification,
         "workspace_revision": revision,
-        "phase": phase if phase in PHASES else "DIAGNOSE",
-        "allowed_phases": allowed_phases,
+        "phase": normalized_phase,
+        "allowed_phases": allowed,
         "failure_signatures": signatures,
         "evidence_refs": evidence,
     }
