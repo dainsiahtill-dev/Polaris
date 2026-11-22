@@ -52,8 +52,9 @@ def test_narrative_accepted_when_state_matches() -> None:
     assert validated is not None and validated["phase"] == "EDIT"
 
 
-def test_narrative_rejected_when_phase_disagrees() -> None:
-    facts = current_facts(_run(), _events())
+def test_narrative_rejected_when_phase_outside_allowed_set() -> None:
+    run = dict(_run(), verification="not_run")
+    facts = current_facts(run, _events())
     payload = {
         "schema_version": "run_card_narrative.v1",
         "phase": "RETEST",
@@ -66,6 +67,44 @@ def test_narrative_rejected_when_phase_disagrees() -> None:
         "reason": "",
     }
     assert validate_run_card_narrative(payload, facts, allowed_refs=set()) is None
+
+
+def test_retest_phase_allowed_after_real_verification() -> None:
+    facts = current_facts(_run(), _events())
+    assert "RETEST" in facts["allowed_phases"]
+    payload = {
+        "schema_version": "run_card_narrative.v1",
+        "phase": "RETEST",
+        "intent": "",
+        "completed": [],
+        "blocker": None,
+        "next_actions": [],
+        "evidence_refs": [],
+        "uncertain": True,
+        "reason": "",
+    }
+    assert validate_run_card_narrative(payload, facts, allowed_refs=set()) is not None
+
+
+def test_narrative_normalizes_model_drift() -> None:
+    facts = current_facts(_run(), _events())
+    payload = {
+        "schema_version": "1.0",
+        "phase": "EDIT",
+        "intent": "修复",
+        "completed": ["读取接口"],
+        "blocker": "刹车无效",
+        "next_actions": ["检查控制绑定"],
+        "evidence_refs": [],
+        "uncertain": "unknown",
+        "reason": "证据有限",
+    }
+    validated = validate_run_card_narrative(payload, facts, allowed_refs=set())
+    assert validated is not None
+    assert validated["schema_version"] == "run_card_narrative.v1"
+    assert validated["blocker"]["signature"] == "[FAIL] 交互：刹车无效"
+    assert validated["next_actions"][0]["action"] == "检查控制绑定"
+    assert validated["uncertain"] is True
 
 
 def test_narrative_rejects_invented_blocker() -> None:

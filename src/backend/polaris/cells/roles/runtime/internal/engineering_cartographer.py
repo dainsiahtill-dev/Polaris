@@ -37,14 +37,16 @@ class CartographerPool:
     def _post(self, request: dict[str, Any]) -> str:
         system = (
             "You are the Cartographer for ContextOS. Draw the current engineering stage as a short map. "
-            "Return only one JSON object with schema_version,phase,intent,completed,blocker,next_actions,evidence_refs,uncertain,reason. "
+            "Return ONLY one JSON object, with no commentary and no thinking: "
+            "schema_version,phase,intent,completed,blocker,next_actions,evidence_refs,uncertain,reason. "
             "phase must be DIAGNOSE, EDIT or RETEST. State fields must match the supplied WorkingState exactly. "
             "Do not invent failures or evidence. Keep reason within 160 characters and each completed item within 80 characters."
         )
         body = {
             "model": self.model,
-            "max_tokens": 900,
+            "max_tokens": 2400,
             "temperature": 0,
+            "thinking": {"type": "disabled"},
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": json.dumps(request, ensure_ascii=False)},
@@ -64,6 +66,12 @@ class CartographerPool:
         content = payload.get("content") or []
         text = "".join(str(item.get("text") or "") for item in content if isinstance(item, dict))
         if not text:
+            # Some reasoning models put the answer in a thinking block when the
+            # output budget is tight. Recover the JSON object rather than fail.
+            thinking = "".join(str(item.get("thinking") or "") for item in content if isinstance(item, dict))
+            start, end = thinking.find("{"), thinking.rfind("}")
+            if start >= 0 and end > start:
+                return thinking[start : end + 1]
             raise ValueError("Cartographer returned no text")
         return text
 
@@ -144,10 +152,14 @@ def current_facts(run: Mapping[str, Any], events: Sequence[Mapping[str, Any]]) -
             value = payload.get(key)
             if isinstance(value, str) and value:
                 evidence.add(value)
+    allowed_phases = {phase if phase in PHASES else "DIAGNOSE"}
+    if verification in {"passed", "failed"}:
+        allowed_phases.add("RETEST")
     return {
         "verification": verification,
         "workspace_revision": revision,
         "phase": phase if phase in PHASES else "DIAGNOSE",
+        "allowed_phases": allowed_phases,
         "failure_signatures": signatures,
         "evidence_refs": evidence,
     }
@@ -177,6 +189,51 @@ def facts_for_run_card(run: Mapping[str, Any], events: Sequence[Mapping[str, Any
     return request, fingerprint
 
 
+def _extract_json(text: str) -> str:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        stripped = "\n".join(lines).strip()
+    start, end = stripped.find("{"), stripped.rfind("}")
+    if start >= 0 and end > start:
+        return stripped[start : end + 1]
+    return stripped
+
+
+def _normalize_narrative(payload: object) -> dict[str, Any] | None:
+    """Accept reasonable model drift without inventing facts."""
+
+    try:
+        data = json.loads(_extract_json(payload)) if isinstance(payload, str) else payload
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    normalized = dict(data)
+    normalized["schema_version"] = SCHEMA_VERSION
+    blocker = normalized.get("blocker")
+    if isinstance(blocker, str):
+        normalized["blocker"] = {"signature": blocker} if blocker else None
+    uncertain = normalized.get("uncertain")
+    if isinstance(uncertain, str):
+        lowered = uncertain.lower()
+        normalized["uncertain"] = "unknown" in lowered or "uncertain" in lowered or not lowered
+    actions = normalized.get("next_actions")
+    if isinstance(actions, list):
+        normalized_actions: list[object] = []
+        for item in actions:
+            if isinstance(item, str):
+                normalized_actions.append({"action": item})
+            else:
+                normalized_actions.append(item)
+        normalized["next_actions"] = normalized_actions
+    return normalized
+
+
 def validate_run_card_narrative(
     payload: object,
     facts: Mapping[str, Any],
@@ -185,16 +242,12 @@ def validate_run_card_narrative(
 ) -> dict[str, Any] | None:
     """Return a bounded narrative or None when it disagrees with durable facts."""
 
-    try:
-        data = json.loads(payload) if isinstance(payload, str) else payload
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(data, dict):
-        return None
-    if data.get("schema_version") != SCHEMA_VERSION:
+    data = _normalize_narrative(payload)
+    if data is None:
         return None
     phase = data.get("phase")
-    if phase not in PHASES or phase != facts["phase"]:
+    allowed_phases = facts.get("allowed_phases") or {facts["phase"]}
+    if phase not in PHASES or phase not in allowed_phases:
         return None
     completed = data.get("completed")
     if not isinstance(completed, list) or len(completed) > 8:
@@ -225,8 +278,14 @@ def validate_run_card_narrative(
         if not isinstance(blocker, dict):
             return None
         signature = str(blocker.get("signature") or "")
-        if signature and signature not in facts["failure_signatures"]:
-            return None
+        if signature:
+            match = next(
+                (known for known in facts["failure_signatures"] if signature in known or known in signature),
+                None,
+            )
+            if match is None:
+                return None
+            signature = match
         blocker_payload = {
             "signature": signature[:240],
             "occurrences": int(blocker.get("occurrences") or 0),
