@@ -70,7 +70,7 @@ def resolve_engineering_profile(settings: Settings, workspace: Path, profile_id:
             profile.browser = EngineeringBrowserObservationConfig(
                 executable=executable,
                 python_executable=sys.executable,
-                python_paths=[str(Path(__import__("site").getsitepackages()[0]))],
+                python_paths=(str(Path(__import__("site").getsitepackages()[0])),),
                 require_visual_review=False,
                 observation_mode="images",
             )
