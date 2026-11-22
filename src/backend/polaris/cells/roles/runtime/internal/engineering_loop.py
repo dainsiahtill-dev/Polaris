@@ -1124,6 +1124,7 @@ async def run_engineering_loop(
                 )
             if cartographer_runtime is not None:
                 from polaris.cells.roles.runtime.internal.engineering_cartographer import (
+                    NarrativeRejected,
                     current_facts,
                     facts_for_run_card,
                     validate_run_card_narrative,
