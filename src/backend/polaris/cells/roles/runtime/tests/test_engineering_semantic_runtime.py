@@ -56,6 +56,67 @@ async def test_semantic_runtime_assist_pins_only_relevant_cards() -> None:
     assert json.loads(folded[1]["content"])["file_card"]["content_preview"] == "y"
 
 
+class _AssessPool:
+    def __init__(self) -> None:
+        self.advised = 0
+
+    async def summarize_many(self, requests: list[dict[str, object]]) -> list[dict[str, object]]:
+        return []
+
+    async def advise_many(
+        self, requests: list[dict[str, object]], candidates: CandidateRefs
+    ) -> list[dict[str, object]]:
+        self.advised += 1
+        return [
+            {
+                "endpoint_index": 0,
+                "validation_result": "VALID",
+                "result": {
+                    "assessments": [
+                        {
+                            "node_id": "a.py",
+                            "relation": "EDIT_RELATED",
+                            "suggested_view": "FULL",
+                            "keep_slice_ids": [],
+                            "evidence_refs": ["filecard:a"],
+                            "uncertain": False,
+                            "reason": "与当前编辑直接相关。",
+                        }
+                    ],
+                    "need_evidence": [],
+                },
+            }
+        ]
+
+
+async def test_assist_uses_the_model_assessment_to_pin_cards() -> None:
+    """assist mode must be model-driven: the assessment becomes a host pin."""
+
+    pool = _AssessPool()
+    runtime = SemanticRuntime(pool, "assist")
+    refs = CandidateRefs(node_ids={"a.py"}, slice_ids=set(), evidence_refs={"filecard:a"})
+    runtime.schedule({"candidates": [{"node_id": "a.py"}]}, refs, fingerprint="assess")
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    result = runtime.poll()
+    assert result is not None
+    assert pool.advised == 1
+    assert runtime.pin_reasons() == {"a.py": "semantic_relevance"}
+    card = build_file_card(
+        "a.py",
+        "x" * 1200,
+        revision=1,
+        preview="x" * 1200,
+        truncated=False,
+        start_line=1,
+        end_line=1,
+        snapshot_ref="filecard:a",
+    )
+    older = {"role": "tool", "content": json.dumps({"file_card": card})}
+    folded = fold_file_card_previews([older], semantic_pins=runtime.pin_reasons())
+    assert json.loads(folded[0]["content"])["file_card"]["fold_state"] == "ACTIVE"
+
+
 class _SummaryPool:
     async def advise_many(self, requests, candidates):
         return [
@@ -126,6 +187,17 @@ class _RejectingPool:
                 "endpoint_index": 0,
                 "validation_result": "REJECTED",
                 "error": "ValueError: summary must describe the payload, not a status word or a verbatim excerpt",
+            }
+        ]
+
+    async def advise_many(
+        self, requests: list[dict[str, object]], candidates: CandidateRefs
+    ) -> list[dict[str, object]]:
+        return [
+            {
+                "endpoint_index": 0,
+                "validation_result": "VALID",
+                "result": {"assessments": [], "need_evidence": []},
             }
         ]
 

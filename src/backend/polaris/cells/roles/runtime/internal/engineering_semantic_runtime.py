@@ -43,7 +43,7 @@ class SemanticRuntime:
         summary_requests = [
             {
                 "node_id": candidate["node_id"],
-                "snapshot_id": candidate["snapshot_id"],
+                "snapshot_id": candidate.get("snapshot_id") or candidate["node_id"],
                 "content": candidate.get("content") or "",
                 "coverage": candidate.get("coverage") or {"observed_line_ranges": [[1, 1]]},
                 "allowed_evidence_refs": sorted(candidates.evidence_refs),
@@ -52,14 +52,20 @@ class SemanticRuntime:
             for candidate in request.get("candidates", [])
         ]
         summaries = await self.pool.summarize_many(summary_requests) if summary_requests else []
-        return [
-            {
-                "endpoint_index": 0,
-                "validation_result": "VALID",
-                "result": {"assessments": [], "need_evidence": []},
-                "summaries": summaries,
-            }
-        ]
+        # The assessment is what makes folding model-driven: its suggested_view
+        # becomes a host pin. Returning an empty assessment list here reduced the
+        # whole assist mode to rule-based folding with an unused model call.
+        advice = await self.pool.advise_many([request], candidates) if candidates.node_ids else []
+        if not advice:
+            return [
+                {
+                    "endpoint_index": 0,
+                    "validation_result": "VALID",
+                    "result": {"assessments": [], "need_evidence": []},
+                    "summaries": summaries,
+                }
+            ]
+        return [{**endpoint, "summaries": summaries} for endpoint in advice]
 
     def poll(self) -> dict[str, Any] | None:
         job = self._job

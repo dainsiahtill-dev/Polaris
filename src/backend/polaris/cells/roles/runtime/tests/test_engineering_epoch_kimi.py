@@ -51,3 +51,57 @@ def test_kimi_epoch_pool_validates_summary() -> None:
         )
     )
     assert result[0]["validation_result"] == "VALID"
+
+
+def _epoch_request() -> dict[str, object]:
+    return {
+        "node_id": "epoch-0001-0010",
+        "snapshot_id": "epoch-0001-0010",
+        "coverage": {"observed_line_ranges": [[1, 1]]},
+        "allowed_evidence_refs": [],
+    }
+
+
+def _epoch_payload(summary: str) -> str:
+    return json.dumps(
+        {
+            "node_id": "epoch-0001-0010",
+            "snapshot_id": "epoch-0001-0010",
+            "summary": summary,
+            "summary_kind": "model_inference",
+            "coverage": {"observed_line_ranges": [[1, 1]], "summary_complete": False},
+            "evidence_refs": [],
+            "uncertain": False,
+            "reason": "基于关闭 epoch。",
+        }
+    )
+
+
+def test_kimi_epoch_pool_retries_once_after_a_rejected_summary() -> None:
+    """One over-long summary must not permanently starve the epoch memory."""
+
+    pool = KimiEpochPool(base_url="https://kimi.example", api_key="secret", model="kimi-for-coding-highspeed")
+    calls = {"count": 0}
+    responses = [_epoch_payload("S" * 2000), _epoch_payload("完成基础模块并保留未解决失败。")]
+
+    def _post(messages: list[dict[str, str]]) -> str:
+        response = responses[calls["count"]]
+        calls["count"] += 1
+        return response
+
+    pool._post = _post  # type: ignore[method-assign]
+    result = asyncio.run(pool.summarize_many([_epoch_request()]))
+    assert calls["count"] == 2
+    assert result[0]["validation_result"] == "VALID"
+
+
+def test_kimi_epoch_pool_reports_rejection_after_the_retry() -> None:
+    pool = KimiEpochPool(base_url="https://kimi.example", api_key="secret", model="kimi-for-coding-highspeed")
+
+    def _post(messages: list[dict[str, str]]) -> str:
+        return _epoch_payload("S" * 2000)
+
+    pool._post = _post  # type: ignore[method-assign]
+    result = asyncio.run(pool.summarize_many([_epoch_request()]))
+    assert result[0]["validation_result"] == "REJECTED"
+    assert "summary" in result[0]["error"]

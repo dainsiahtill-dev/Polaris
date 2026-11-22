@@ -69,21 +69,20 @@ class KimiEpochPool:
         self.timeout_seconds = timeout_seconds
         self._lock = asyncio.Lock()
 
-    def _post(self, request: dict[str, Any]) -> str:
+    def _post(self, messages: list[dict[str, str]]) -> str:
         system = (
             "You are the ContextOS Epoch devourer. Summarize one closed engineering epoch into useful long-term memory. "
             "Return only one JSON object with node_id,snapshot_id,summary,summary_kind,coverage,evidence_refs,uncertain,reason. "
             "summary_kind=model_inference. Preserve unresolved failures, UNKNOWN, key decisions, changed files, verification history "
-            "and current dependencies. Do not claim acceptance or invent evidence. observed_line_ranges must exactly match the request."
+            "and current dependencies. Do not claim acceptance or invent evidence. observed_line_ranges must exactly match the request. "
+            "Keep summary within 1000 characters and reason within 160 characters; the summary replaces the epoch detail, so "
+            "describe it rather than quoting it."
         )
         body = {
             "model": self.model,
             "max_tokens": 1400,
             "temperature": 0,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": json.dumps(request, ensure_ascii=False)},
-            ],
+            "messages": [{"role": "system", "content": system}, *messages],
         }
         http_request = urllib.request.Request(
             self.base_url.rstrip("/") + "/v1/messages",
@@ -106,17 +105,39 @@ class KimiEpochPool:
         results: list[dict[str, Any]] = []
         for request in requests:
             async with self._lock:
-                try:
-                    content = await asyncio.to_thread(self._post, request)
-                    payload = _parse_lenient_json(_json_content(content))
-                    result = validate_node_summary(_normalize_epoch_payload(payload, request), request)
-                    results.append({"endpoint_index": 0, "validation_result": "VALID", "result": result})
-                except (ValueError, OSError, asyncio.TimeoutError) as error:
+                messages: list[dict[str, str]] = [{"role": "user", "content": json.dumps(request, ensure_ascii=False)}]
+                last_content = ""
+                failure: str | None = None
+                for _ in range(2):
+                    try:
+                        last_content = await asyncio.to_thread(self._post, messages)
+                        payload = _parse_lenient_json(_json_content(last_content))
+                        result = validate_node_summary(_normalize_epoch_payload(payload, request), request)
+                        results.append({"endpoint_index": 0, "validation_result": "VALID", "result": result})
+                        failure = None
+                        break
+                    except (ValueError, OSError, asyncio.TimeoutError) as error:
+                        # One corrective retry: without it a single over-long
+                        # summary permanently starves the epoch memory.
+                        failure = f"{type(error).__name__}: {error}"
+                        messages = [
+                            *messages,
+                            {"role": "assistant", "content": last_content},
+                            {
+                                "role": "user",
+                                "content": (
+                                    "The previous JSON failed host validation: "
+                                    + failure
+                                    + ". Return the corrected complete JSON object with every required key, and no other text."
+                                ),
+                            },
+                        ]
+                if failure is not None:
                     results.append(
                         {
                             "endpoint_index": 0,
                             "validation_result": "REJECTED",
-                            "error": f"{type(error).__name__}: {error}",
+                            "error": failure,
                         }
                     )
         return results
