@@ -174,7 +174,6 @@ export function MissionControlView({ workspace, binding, role }: {
         <div className="xl:col-span-3">
           <ContextOSNavigator
             events={events}
-            workspace={workspace}
             selectedSeq={selectedSeq}
             onOpenContext={openContext}
           />

@@ -34,7 +34,6 @@ import {
   LIVE_FOLD_LABELS,
   LIVE_KIND_LABELS,
   LIVE_LAYER_LABELS,
-  LIVE_LAYERS,
   buildLiveContextGraph,
   layoutLiveContextNodes,
   liveContextMetrics,
@@ -106,8 +105,6 @@ type ViewMode = '2d' | '3d';
 
 export interface ContextOSNavigatorProps {
   events: EngineeringEvent[];
-  workspace: string;
-  now?: number;
   selectedSeq?: number | null;
   onOpenContext?: (ref: string, role: string) => void;
 }
@@ -121,7 +118,7 @@ function metricsRow(label: string, value: string | number): ReactElement {
   );
 }
 
-export function ContextOSNavigator({ events, workspace, now = Date.now(), selectedSeq = null, onOpenContext }: ContextOSNavigatorProps): ReactElement {
+export function ContextOSNavigator({ events, selectedSeq = null, onOpenContext }: ContextOSNavigatorProps): ReactElement {
   const [tab, setTab] = useState<Tab>('structure');
   const [view, setView] = useState<ViewMode>('2d');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -335,8 +332,6 @@ export function ContextOSNavigator({ events, workspace, now = Date.now(), select
           ) : null}
         </aside>
       ) : null}
-      <span className="hidden" data-testid="contextos-nav-workspace">{workspace}</span>
-      <span className="hidden" data-testid="contextos-nav-now">{now}</span>
     </section>
   );
 }
