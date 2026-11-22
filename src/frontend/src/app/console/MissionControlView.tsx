@@ -18,6 +18,44 @@ function timelineEvents(events: EngineeringEvent[]): EngineeringEvent[] {
   return events;
 }
 
+const AGENT_ROLES: Record<string, string> = {
+  distiller: 'Distiller 蒸馏器',
+  devourer: 'Devourer 吞噬兽',
+  cartographer: 'Cartographer 制图师',
+  resident_agi: 'Resident AGI',
+};
+
+function agentText(value: unknown, limit = 160): string {
+  if (typeof value !== 'string') return '';
+  return value.replace(/\s+/g, ' ').trim().slice(0, limit);
+}
+
+function buildAgentTraces(events: EngineeringEvent[]) {
+  const traces: { kind: string; seq: number; created_at: number; role: string; input: string; output: string }[] = [];
+  for (const event of events) {
+    const role = AGENT_ROLES[event.role];
+    if (!role) continue;
+    const payload = event.payload as Record<string, unknown>;
+    let input = '';
+    let output = '';
+    if (event.role === 'resident_agi') {
+      input = agentText(payload.signals) || agentText(payload.reason);
+      output = agentText(payload.reason) || agentText(payload.guidance);
+    } else if (event.role === 'cartographer') {
+      input = agentText(payload.working_state) || agentText(payload.signals);
+      output = agentText(payload.summary) || agentText(payload.guidance) || agentText(payload.next_actions);
+    } else if (event.role === 'devourer') {
+      input = agentText(payload.facts) || agentText(payload.working_state);
+      output = agentText(payload.summary) || agentText(payload.reason);
+    } else {
+      input = agentText(payload.summaries) || agentText(payload.signals);
+      output = agentText(payload.summary) || agentText(payload.guidance) || agentText(payload.reason);
+    }
+    traces.push({ kind: event.kind, seq: event.seq, created_at: event.created_at ?? 0, role, input, output });
+  }
+  return traces.slice(-40).reverse();
+}
+
 function firstLine(text: string | undefined): string {
   return (text || '').split('\n')[0].trim();
 }
@@ -35,6 +73,7 @@ export function MissionControlView({ workspace, binding, role }: {
   const projection = binding.projection;
   const run = projection.snapshot;
   const events = useMemo(() => timelineEvents(projection.events), [projection.events]);
+  const agentTraces = useMemo(() => buildAgentTraces(events), [events]);
   const selectedEvent = events.find((event) => event.seq === selectedSeq) ?? null;
   const failedEvent = useMemo(() => {
     for (let index = events.length - 1; index >= 0; index -= 1) {
@@ -162,6 +201,28 @@ export function MissionControlView({ workspace, binding, role }: {
           )}
         </section>
       </div>
+      <section className="cx-card" data-testid="agent-activity-pane">
+        <div className="cx-card-head">
+          <h2 className="cx-card-title"><IconClapper className="h-4.5 w-4.5 text-[var(--cx-teal)]" />智能体活动</h2>
+          <span className="cx-pill cx-pill--idle">{agentTraces.length} 次</span>
+        </div>
+        <div className="max-h-72 space-y-2 overflow-y-auto p-3 cx-scroll">
+          {agentTraces.length === 0 ? (
+            <p className="px-1 py-6 text-center text-xs text-[var(--cx-ink-faint)]">等待智能体活动</p>
+          ) : (
+            agentTraces.map((trace) => (
+              <article key={`${trace.kind}-${trace.seq}`} className="rounded-lg border border-[var(--cx-line)] px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[0.75rem] font-semibold text-[var(--cx-ink)]">{trace.role}</span>
+                  <span className="cx-mono text-[0.62rem] text-[var(--cx-ink-faint)]">{formatClock(trace.created_at)}</span>
+                </div>
+                {trace.input ? <p className="mt-1 text-[0.68rem] text-[var(--cx-ink-dim)]">输入：{trace.input}</p> : null}
+                <p className="mt-0.5 text-[0.68rem] text-[var(--cx-ink)]">{trace.output}</p>
+              </article>
+            ))
+          )}
+        </div>
+      </section>
       <section className="cx-card cx-enter cx-enter-5">
         <VerdictBoard
           status={run.status}
