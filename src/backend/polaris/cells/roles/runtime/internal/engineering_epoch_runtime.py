@@ -27,6 +27,33 @@ def _activity_events(events: Sequence[Mapping[str, Any]]) -> list[tuple[int, lis
     return groups
 
 
+def _reported_epoch_ids(events: Sequence[Mapping[str, Any]]) -> set[str]:
+    """Epoch ids already emitted as ``epoch_card_completed`` in this journal.
+
+    The selection must advance past reported epochs. Without this, the oldest
+    eligible epoch is selected forever: the loop suppresses the duplicate emit
+    by fingerprint, but ``facts_for_epoch`` keeps returning the same epoch and
+    no later epoch is ever scheduled (observed: one card in 88 activities).
+    """
+
+    reported: set[str] = set()
+    for event in events:
+        if event.get("kind") != "epoch_card_completed":
+            continue
+        payload = event.get("payload")
+        if not isinstance(payload, Mapping):
+            continue
+        for key in ("id", "node_id"):
+            value = payload.get(key)
+            if isinstance(value, str) and value:
+                reported.add(value)
+    return reported
+
+
+def _epoch_id(start: int, activity: int) -> str:
+    return f"epoch-{start:04d}-{activity:04d}"
+
+
 def _epoch_facts(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     files: set[str] = set()
     verification: list[str] = []
@@ -61,17 +88,21 @@ def facts_for_epoch(
 
     groups = _activity_events(events)
     current = groups[-1][0] if groups else 0
+    reported = _reported_epoch_ids(events)
     eligible = [
         (activity, group)
         for activity, group in groups
-        if activity >= 10 and activity % 10 == 0 and activity <= current - 50
+        if activity >= 10
+        and activity % 10 == 0
+        and activity <= current - 50
+        and _epoch_id(activity - 9, activity) not in reported
     ]
     if not eligible:
         empty = CandidateRefs(node_ids=set(), slice_ids=set(), evidence_refs=set())
         return {"candidates": []}, empty, ""
     activity, group = eligible[0]
     start = activity - 9
-    epoch_id = f"epoch-{start:04d}-{activity:04d}"
+    epoch_id = _epoch_id(start, activity)
     facts = _epoch_facts(group)
     evidence_refs = set(facts["evidence_refs"])
     refs = CandidateRefs(node_ids={epoch_id}, slice_ids={"slice_epoch"}, evidence_refs=evidence_refs)

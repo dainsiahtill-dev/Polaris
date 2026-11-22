@@ -126,6 +126,60 @@ def test_epoch_selection_waits_until_fifty_activities_behind() -> None:
     assert request["candidates"][0]["node_id"] == "epoch-0001-0010"
 
 
+def _activity_events(count: int) -> list[dict[str, object]]:
+    events: list[dict[str, object]] = []
+    seq = 0
+    for activity in range(1, count + 1):
+        seq += 1
+        events.append({"seq": seq, "kind": "turn_started", "payload": {}})
+        seq += 1
+        events.append({"seq": seq, "kind": "message", "payload": {"content": f"step-{activity}"}})
+    return events
+
+
+def _epoch_completed(epoch_id: str) -> dict[str, object]:
+    return {
+        "seq": 0,
+        "kind": "epoch_card_completed",
+        "payload": {"id": epoch_id, "kind": "epoch_card", "fingerprint": epoch_id},
+    }
+
+
+def test_epoch_selection_advances_past_reported_epochs() -> None:
+    # 88 activities mirror the real journal: eligible epochs are 10, 20 and 30.
+    events = _activity_events(88)
+    _request, refs, _fingerprint = facts_for_epoch({"instruction": "build"}, events)
+    assert refs.node_ids == {"epoch-0001-0010"}
+
+    events.append(_epoch_completed("epoch-0001-0010"))
+    _request, refs, _fingerprint = facts_for_epoch({"instruction": "build"}, events)
+    assert refs.node_ids == {"epoch-0011-0020"}
+
+    events.append(_epoch_completed("epoch-0011-0020"))
+    _request, refs, _fingerprint = facts_for_epoch({"instruction": "build"}, events)
+    assert refs.node_ids == {"epoch-0021-0030"}
+
+    # Every eligible epoch is reported: selection is empty, not stuck on epoch 10.
+    events.append(_epoch_completed("epoch-0021-0030"))
+    request, refs, fingerprint = facts_for_epoch({"instruction": "build"}, events)
+    assert request == {"candidates": []}
+    assert refs.node_ids == set()
+    assert fingerprint == ""
+
+
+def test_epoch_selection_ignores_reported_epoch_by_node_id() -> None:
+    events = _activity_events(88)
+    events.append(
+        {
+            "seq": 0,
+            "kind": "epoch_card_completed",
+            "payload": {"node_id": "epoch-0001-0010", "fingerprint": "epoch-0001-0010"},
+        }
+    )
+    _request, refs, _fingerprint = facts_for_epoch({"instruction": "build"}, events)
+    assert refs.node_ids == {"epoch-0011-0020"}
+
+
 class _Pool:
     async def summarize_many(self, requests):
         return [

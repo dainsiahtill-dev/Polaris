@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from enum import StrEnum
 from typing import Any
@@ -241,6 +242,50 @@ def parse_semantic_advice(raw: str, candidates: CandidateRefs) -> dict[str, Any]
     return validate_semantic_advice(_normalize_advice_slices(payload, candidates), candidates)
 
 
+_STOCK_SUMMARY_MARKERS = frozenset(
+    {
+        "completed",
+        "done",
+        "ok",
+        "success",
+        "failed",
+        "command failed",
+        "passed",
+        "error",
+        "unknown",
+        "skipped",
+        "skip",
+    }
+)
+_MIN_INFORMATIVE_SUMMARY_CHARS = 4
+
+
+def _summary_is_informative(summary: str, content: object) -> bool:
+    """Require a summary that explains the payload, never a status word or excerpt.
+
+    Folding replaces the payload with this text in the next request, so a bare
+    status (``completed``) or a verbatim fragment of the input destroys evidence
+    without buying understanding. Rejecting here keeps the non-explanation out
+    of the distiller store so the host structural fallback is used instead.
+    """
+
+    stripped = summary.strip()
+    if len(stripped) < _MIN_INFORMATIVE_SUMMARY_CHARS:
+        return False
+    lowered = stripped.lower().rstrip(".")
+    if lowered in _STOCK_SUMMARY_MARKERS:
+        return False
+    # "completed successfully" is still a status, not an explanation.
+    if len(stripped.split()) <= 3 and any(lowered.startswith(marker) for marker in _STOCK_SUMMARY_MARKERS):
+        return False
+    if isinstance(content, str) and content.strip():
+        normalized = re.sub(r"\s+", " ", stripped).lower()
+        original = re.sub(r"\s+", " ", content).lower()
+        if normalized in original:
+            return False
+    return True
+
+
 def validate_node_summary(payload: object, request: Mapping[str, Any]) -> dict[str, Any]:
     """Validate one NodeSummary response against its exact snapshot and coverage."""
 
@@ -252,6 +297,8 @@ def validate_node_summary(payload: object, request: Mapping[str, Any]) -> dict[s
         if root[key] != request.get(key):
             raise ValueError(f"node summary {key} does not match the requested snapshot")
     summary = _text(root["summary"], "summary", maximum=1024)
+    if not _summary_is_informative(summary, request.get("content")):
+        raise ValueError("summary must describe the payload, not a status word or a verbatim excerpt")
     max_tokens = request.get("max_summary_tokens", 192)
     if type(max_tokens) is not int or max_tokens < 1 or _tokens(summary) > max_tokens:
         raise ValueError("summary exceeds max_summary_tokens")

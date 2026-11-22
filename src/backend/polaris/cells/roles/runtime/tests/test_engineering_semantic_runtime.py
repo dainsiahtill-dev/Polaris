@@ -119,6 +119,38 @@ async def test_semantic_runtime_stores_remote_fold_summary() -> None:
     assert runtime.fold_summaries()["a.py"]["summary"] == "旧文件主要负责输入处理。"
 
 
+class _RejectingPool:
+    async def summarize_many(self, requests: list[dict[str, object]]) -> list[dict[str, object]]:
+        return [
+            {
+                "endpoint_index": 0,
+                "validation_result": "REJECTED",
+                "error": "ValueError: summary must describe the payload, not a status word or a verbatim excerpt",
+            }
+        ]
+
+
+async def test_semantic_runtime_drops_rejected_summary_so_host_falls_back() -> None:
+    runtime = SemanticRuntime(_RejectingPool(), "assist")
+    refs = CandidateRefs(node_ids={"a.py"}, slice_ids={"slice_file"}, evidence_refs={"filecard:a"})
+    request = {
+        "candidates": [
+            {
+                "node_id": "a.py",
+                "snapshot_id": "filecard:a",
+                "content": "input",
+                "coverage": {"observed_line_ranges": [[1, 1]]},
+            }
+        ]
+    }
+    runtime.schedule(request, refs, fingerprint="fold")
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    result = runtime.poll()
+    assert result is not None and result["validation_result"] == "VALID"
+    assert runtime.fold_summaries() == {}
+
+
 def test_facts_for_advice_bounds_candidates_and_failure() -> None:
     card = build_file_card(
         "a.py",

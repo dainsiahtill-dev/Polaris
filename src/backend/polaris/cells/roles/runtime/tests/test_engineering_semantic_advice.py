@@ -142,3 +142,24 @@ def test_node_summary_rejects_stale_identity_fake_kind_and_bad_coverage() -> Non
     payload["coverage"]["observed_line_ranges"] = [[1, 100]]
     with pytest.raises(ValueError, match="coverage differs"):
         validate_node_summary(payload, summary_request())
+
+
+def test_node_summary_rejects_status_words_and_verbatim_excerpts() -> None:
+    content = "74:  private accumulator = 0;\n75:  private error: string | null = null;\n"
+    for bad in ("completed", "completed successfully", "ok", "failed"):
+        payload = valid_summary()
+        payload["summary"] = bad
+        with pytest.raises(ValueError, match="describe the payload"):
+            validate_node_summary(payload, summary_request())
+    payload = valid_summary()
+    payload["summary"] = "75:  private error: string | null = null;"
+    with pytest.raises(ValueError, match="describe the payload"):
+        validate_node_summary(payload, {**summary_request(), "content": content})
+
+
+def test_node_summary_accepts_substantive_description_of_content() -> None:
+    payload = valid_summary()
+    payload["summary"] = "该文件负责显示宽度与 Unicode 边界计算。"
+    request = {**summary_request(), "content": "75: private error: string | null = null;"}
+    validated = validate_node_summary(payload, request)
+    assert validated["summary"] == "该文件负责显示宽度与 Unicode 边界计算。"
