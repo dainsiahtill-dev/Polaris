@@ -258,3 +258,19 @@ def test_system_prompt_states_narrative_limits(monkeypatch: pytest.MonkeyPatch) 
     assert "at most 3" in system
     assert "failure_signatures" in system
     assert "array" in system
+
+
+def test_draw_many_retries_once_when_the_model_answers_in_prose() -> None:
+    """One corrective ask keeps a prose answer from losing the whole draw."""
+
+    pool = CartographerPool(base_url="https://cartographer.example", api_key="secret", model="small-model")
+    calls = {"count": 0}
+
+    def _post(messages: list[dict[str, str]]) -> str:
+        calls["count"] += 1
+        return "sure, here is the map" if calls["count"] == 1 else json.dumps({"phase": "DIAGNOSE"})
+
+    pool._post = _post  # type: ignore[method-assign]
+    results = asyncio.run(pool.draw_many([{"working_state": {"phase": "DIAGNOSE"}}]))
+    assert calls["count"] == 2
+    assert json.loads(results[0])["phase"] == "DIAGNOSE"

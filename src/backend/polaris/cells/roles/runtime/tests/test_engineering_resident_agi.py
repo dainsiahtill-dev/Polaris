@@ -47,12 +47,27 @@ def test_decision_rejected_for_unknown_type() -> None:
     assert _normalize_decision(payload, {"signals": []}) is None
 
 
+def test_decide_retries_once_when_the_model_answers_in_prose() -> None:
+    from polaris.cells.roles.runtime.internal.engineering_resident_agi import ResidentAGIPool
+
+    pool = ResidentAGIPool(base_url="https://resident.example", api_key="secret", model="small-model")
+    calls = {"count": 0}
+
+    def _post(messages: list[dict[str, str]]) -> str:
+        calls["count"] += 1
+        return "I think this is a web project." if calls["count"] == 1 else json.dumps({"project_type": "web"})
+
+    pool._post = _post  # type: ignore[method-assign]
+    assert json.loads(pool.decide({"signals": ["package.json"]}))["project_type"] == "web"
+    assert calls["count"] == 2
+
+
 def test_valid_types_cover_expected_families() -> None:
     assert {"web", "rust", "go", "python", "reverse_engineering", "generic"} <= VALID_TYPES
 
 
 class _InstantPool:
-    def _post(self, request: dict[str, object]) -> str:
+    def decide(self, request: dict[str, object]) -> str:
         return json.dumps({"project_type": "web", "reason": "signals"})
 
 

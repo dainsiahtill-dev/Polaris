@@ -34,7 +34,7 @@ class CartographerPool:
         self.timeout_seconds = timeout_seconds
         self._lock = asyncio.Lock()
 
-    def _post(self, request: dict[str, Any]) -> str:
+    def _post(self, messages: list[dict[str, str]]) -> str:
         system = (
             "You are the Cartographer for ContextOS. Draw the current engineering stage as a short map. "
             "Return ONLY one JSON object, with no commentary and no thinking: "
@@ -52,10 +52,7 @@ class CartographerPool:
             "max_tokens": 2400,
             "temperature": 0,
             "thinking": {"type": "disabled"},
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": json.dumps(request, ensure_ascii=False)},
-            ],
+            "messages": [{"role": "system", "content": system}, *messages],
         }
         http_request = urllib.request.Request(
             self.base_url.rstrip("/") + "/v1/messages",
@@ -84,10 +81,30 @@ class CartographerPool:
         results: list[str] = []
         for request in requests:
             async with self._lock:
-                try:
-                    results.append(await asyncio.to_thread(self._post, request))
-                except (OSError, ValueError, asyncio.TimeoutError):
-                    results.append("")
+                messages: list[dict[str, str]] = [{"role": "user", "content": json.dumps(request, ensure_ascii=False)}]
+                text = ""
+                for _ in range(2):
+                    try:
+                        text = await asyncio.to_thread(self._post, messages)
+                    except (OSError, ValueError, asyncio.TimeoutError):
+                        text = ""
+                    if _has_json_object(text):
+                        break
+                    # The small model frequently answers in prose. One
+                    # corrective ask beats losing the whole RunCard draw.
+                    messages = [
+                        *messages,
+                        {"role": "assistant", "content": text or "{}"},
+                        {
+                            "role": "user",
+                            "content": (
+                                "The previous response was not a JSON object. Return only the JSON object "
+                                "with schema_version,phase,intent,completed,blocker,next_actions,evidence_refs,"
+                                "uncertain,reason, and no other text."
+                            ),
+                        },
+                    ]
+                results.append(text)
         return results
 
 
@@ -227,6 +244,13 @@ def _extract_json(text: str) -> str:
     if start >= 0 and end > start:
         return stripped[start : end + 1]
     return stripped
+
+
+def _has_json_object(text: str) -> bool:
+    try:
+        return isinstance(json.loads(_extract_json(text)), dict)
+    except (json.JSONDecodeError, TypeError):
+        return False
 
 
 def _normalize_narrative(payload: object) -> dict[str, Any] | None:

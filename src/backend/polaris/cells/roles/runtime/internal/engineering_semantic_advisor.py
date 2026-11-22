@@ -294,13 +294,29 @@ class RemoteSemanticAdvisor:
         raise ValueError(f"node summary failed validation after one corrective retry: {last_error}")
 
     async def advise(self, request: dict[str, Any], candidates: CandidateRefs) -> dict[str, Any]:
+        example = {
+            "assessments": [
+                {
+                    "node_id": request["candidates"][0]["node_id"] if request.get("candidates") else "node-1",
+                    "relation": "FAILURE_CANDIDATE",
+                    "suggested_view": "SLICE",
+                    "keep_slice_ids": ["slice_output"],
+                    "evidence_refs": sorted(candidates.evidence_refs)[:1],
+                    "uncertain": True,
+                    "reason": "该节点与最近失败引用相关，保留关键片段即可。",
+                }
+            ],
+            "need_evidence": [],
+        }
         system = (
             "You are a read-only ContextOS semantic advisor. Return only JSON with keys assessments,need_evidence. "
             "Each assessment has node_id,relation,suggested_view,keep_slice_ids,evidence_refs,uncertain,reason. "
             "relation must be one of EDIT_RELATED,FAILURE_CANDIDATE,REQUIREMENT_CANDIDATE,BACKGROUND,UNKNOWN. "
             "suggested_view must be KEEP_CURRENT,FULL,SLICE,CARD,REFERENCE,ABSTAIN. "
-            "Use only supplied references. SLICE requires keep_slice_ids. Do not claim completion or test success. "
-            "Keep reason within 160 characters."
+            "Use only supplied references. SLICE requires keep_slice_ids; every other view requires an empty "
+            "keep_slice_ids. Do not claim completion or test success. "
+            "Keep reason within 160 characters and output no commentary. Example: "
+            + json.dumps(example, ensure_ascii=False)
         )
         messages: list[dict[str, str]] = [
             {"role": "system", "content": system},

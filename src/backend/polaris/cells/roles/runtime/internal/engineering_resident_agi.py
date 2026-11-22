@@ -27,6 +27,13 @@ VALID_STAGES = {"DIAGNOSE", "EDIT", "VERIFY", "RETEST", "ANY"}
 _VALIDATION_RE = re.compile(r"[^a-z0-9_]+")
 
 
+def _has_json_object(text: str) -> bool:
+    try:
+        return isinstance(json.loads(text), dict)
+    except (json.JSONDecodeError, TypeError):
+        return False
+
+
 class ResidentAGIPool:
     """Kimi client for short structured Resident AGI decisions."""
 
@@ -37,7 +44,7 @@ class ResidentAGIPool:
         self.timeout_seconds = timeout_seconds
         self._lock = asyncio.Lock()
 
-    def _post(self, request: dict[str, Any]) -> str:
+    def _post(self, messages: list[dict[str, str]]) -> str:
         system = (
             "You are the Resident AGI for Polaris. Decide the project type and the capability binding "
             "for the supplied engineering stage from the repository signals. Return ONLY one JSON object with "
@@ -52,10 +59,7 @@ class ResidentAGIPool:
             "max_tokens": 1200,
             "temperature": 0,
             "thinking": {"type": "disabled"},
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": json.dumps(request, ensure_ascii=False)},
-            ],
+            "messages": [{"role": "system", "content": system}, *messages],
         }
         http_request = urllib.request.Request(
             self.base_url.rstrip("/") + "/v1/messages",
@@ -76,6 +80,28 @@ class ResidentAGIPool:
             if start >= 0 and end > start:
                 return thinking[start : end + 1]
             raise ValueError("Resident AGI returned no text")
+        return text
+
+    def decide(self, request: dict[str, Any]) -> str:
+        """Ask once, then correct once: the small model often answers in prose."""
+
+        messages: list[dict[str, str]] = [{"role": "user", "content": json.dumps(request, ensure_ascii=False)}]
+        text = ""
+        for _ in range(2):
+            text = self._post(messages)
+            if _has_json_object(text):
+                return text
+            messages = [
+                *messages,
+                {"role": "assistant", "content": text},
+                {
+                    "role": "user",
+                    "content": (
+                        "The previous response was not a JSON object. Return only the JSON object with "
+                        "schema_version, project_type, stage, capabilities, mcp_hints, guidance, reason."
+                    ),
+                },
+            ]
         return text
 
 
@@ -244,7 +270,7 @@ class ResidentAGIRuntime:
 
         if self._job is not None:
             return False
-        self._job = asyncio.create_task(asyncio.to_thread(self.pool._post, request))
+        self._job = asyncio.create_task(asyncio.to_thread(self.pool.decide, request))
         return True
 
     def poll(self) -> str | None:
