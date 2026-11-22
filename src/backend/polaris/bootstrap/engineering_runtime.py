@@ -75,6 +75,33 @@ def resolve_engineering_profile(settings: Settings, workspace: Path, profile_id:
                 observation_mode="images",
             )
             profile.enabled_tools = frozenset(set(profile.enabled_tools) | {"browser_observe"})
+            import site as _site
+
+            executable_path = Path(executable).expanduser().resolve()
+            site_packages = tuple(
+                str(Path(path).expanduser().resolve())
+                for path in (_site.getsitepackages() + [_site.getusersitepackages()])
+                if Path(path).expanduser().exists()
+            )
+            extra_roots = tuple(
+                dict.fromkeys(
+                    tuple(profile.read_roots)
+                    + (str(executable_path.parent), "/usr/lib", "/usr/share", "/opt")
+                    + site_packages
+                    + tuple(
+                        str(path)
+                        for path in (
+                            Path.home() / ".cache" / "ms-playwright",
+                            Path.home() / ".cache" / "playwright",
+                        )
+                        if path.exists()
+                    )
+                )
+            )
+            profile.read_roots = tuple(
+                str(Path(root).expanduser().resolve()) if Path(root).expanduser().exists() else str(root)
+                for root in extra_roots
+            )
     supported = {
         "read_file",
         "read_command_result",
