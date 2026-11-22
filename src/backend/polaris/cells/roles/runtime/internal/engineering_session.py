@@ -696,11 +696,18 @@ class EngineeringSessionStore:
         """Commit actual bytes and their candidate/resource completion together."""
         with self._transaction() as connection:
             if capture_completion is None:
-                if advance_workspace_revision or expected_workspace_revision is not None:
-                    raise ValueError("capture revision metadata requires capture completion")
+                # Capture metadata can be unavailable when the host skips output
+                # capture. Keep the observation; advance the candidate revision
+                # only when the host supplied the expected revision.
                 self._record_tool_observation(
                     connection, session_id, turn_seq=turn_seq, observation=observation, role=role
                 )
+                if advance_workspace_revision and type(expected_workspace_revision) is int:
+                    connection.execute(
+                        "UPDATE runs SET workspace_revision=workspace_revision+1,verification='not_run',"
+                        "checks='[]',updated_at=? WHERE session_id=?",
+                        (time.time(), session_id),
+                    )
                 return
             from polaris.cells.roles.runtime.internal.engineering_artifacts import inputs_digest
 
