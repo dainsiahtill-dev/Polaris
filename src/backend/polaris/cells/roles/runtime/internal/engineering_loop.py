@@ -72,6 +72,64 @@ _TRANSIENT_PROVIDER_EXCEPTIONS = (
 )
 
 
+def _active_structured_repairs(
+    events: list[dict[str, Any]], *, threshold: int = 2, limit: int = 3
+) -> list[dict[str, Any]]:
+    """Find symptoms that survived real re-tests on different candidates."""
+
+    from polaris.cells.roles.runtime.internal.engineering_validation_fingerprint import _FAILURE_MARK, _check_text
+
+    counts: dict[str, int] = {}
+    revisions: dict[str, set[object]] = {}
+    for event in events:
+        if event.get("kind") != "verification_completed":
+            continue
+        payload = event["payload"]
+        for check in payload.get("checks") or []:
+            text = _check_text(check.get("content") if isinstance(check, dict) else None)
+            for line in text.splitlines():
+                stripped = line.strip()
+                if not stripped or stripped.startswith("[PASS]") or not _FAILURE_MARK.search(stripped):
+                    continue
+                signature = re.sub(r"\s+", " ", stripped).split("——", 1)[0].strip()[:240]
+                if not signature:
+                    continue
+                counts[signature] = counts.get(signature, 0) + 1
+                revisions.setdefault(signature, set()).add(payload.get("workspace_revision"))
+    active = [
+        signature
+        for signature, count in counts.items()
+        if count >= threshold and len(revisions.get(signature, set())) >= 2
+    ]
+    active.sort(key=lambda signature: -counts[signature])
+    return [
+        {
+            "signature": signature,
+            "occurrences": counts[signature],
+            "candidate_revisions": len(revisions.get(signature, set())),
+        }
+        for signature in active[:limit]
+    ]
+
+
+def _structured_repair_message(repairs: list[dict[str, Any]]) -> dict[str, Any]:
+    lines = [
+        f"- {item['signature']}（已在 {item['candidate_revisions']} 个候选上复现 {item['occurrences']} 次）"
+        for item in repairs
+    ]
+    return {
+        "role": "system",
+        "content": (
+            "结构化修复已触发：以下症状在多个候选上真实复现，说明当前修复没有消除根因。\n"
+            + "\n".join(lines)
+            + "\n\n请一次只检验一个可证伪假设，并给出：观察（具体回执）、假设（最能解释它的原因）、"
+            "区分方法（能把它与其他解释区分开的检查）、预测（假设成立时应观察到的变化）、动作（读代码/查环境/最小修改）、"
+            "复测（支持、反驳还是证据不足）。动作可以是读取或环境检查，不必每轮改生产代码；"
+            "允许为同一假设修改多个文件，但所有修改必须服务于该假设。"
+        ),
+    }
+
+
 def _provider_transport_message(error: object) -> dict[str, Any]:
     """A recoverable provider interruption that ran no tool from this turn."""
 
@@ -936,6 +994,15 @@ async def run_engineering_loop(
                 semantic_runtime=semantic_runtime,
                 fold_window=fold_window,
             )
+            structured_repairs = _active_structured_repairs(store.load_events(command.session_id))
+            if structured_repairs:
+                request_messages = [_structured_repair_message(structured_repairs), *request_messages]
+                store.append_event(
+                    command.session_id,
+                    kind="structured_repair_engaged",
+                    role=command.role,
+                    payload={"repairs": structured_repairs},
+                )
             options: dict[str, Any] = {
                 "messages": request_messages,
                 "tools": tools.schemas(),
