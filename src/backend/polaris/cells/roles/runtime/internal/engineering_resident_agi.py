@@ -24,14 +24,6 @@ from polaris.cells.roles.runtime.internal.engineering_project_profile import (
 SCHEMA_VERSION = "resident_agi_decision.v1"
 VALID_TYPES = {kind for _name, kind, _patterns in _SIGNATURES} | {"generic"}
 VALID_STAGES = {"DIAGNOSE", "EDIT", "VERIFY", "RETEST", "ANY"}
-# Capabilities that are only meaningful for the acceptance stage.
-_STAGE_CAPABILITIES = {
-    "DIAGNOSE": {"read_file", "repo_rg", "repo_tree", "read_command_result", "execute_command"},
-    "EDIT": {"write_file", "edit_file", "read_file", "execute_command"},
-    "VERIFY": {"verify_project", "browser_observe", "execute_command", "read_command_result"},
-    "RETEST": {"verify_project", "browser_observe", "execute_command"},
-    "ANY": set(),
-}
 _VALIDATION_RE = re.compile(r"[^a-z0-9_]+")
 
 
@@ -88,6 +80,8 @@ class ResidentAGIPool:
 
 
 def resident_agi_pool_from_environment() -> ResidentAGIPool | None:
+    """Bind the resident_agi role from the unified LLM config."""
+
     path = Path(os.environ.get("KERNELONE_LLM_CONFIG", "/home/dains/.polaris/config/llm/llm_config.json"))
     if not path.is_file():
         return None
@@ -105,21 +99,6 @@ def resident_agi_pool_from_environment() -> ResidentAGIPool | None:
         )
     except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError):
         return None
-
-
-def detect_stage(events: Sequence[Mapping[str, Any]], run: Mapping[str, Any]) -> str:
-    """Deterministic stage inference from durable facts."""
-
-    verification = str(run.get("verification") or "not_run")
-    recent = events[-12:]
-    tools = [event["payload"].get("tool") for event in recent if event.get("kind") == "tool_observed"]
-    if "verify_project" in tools:
-        return "VERIFY"
-    if verification in {"passed", "failed"}:
-        return "RETEST"
-    if "write_file" in tools or "edit_file" in tools:
-        return "EDIT"
-    return "DIAGNOSE"
 
 
 def collect_signals(workspace: Path) -> dict[str, Any]:
@@ -141,6 +120,39 @@ def collect_signals(workspace: Path) -> dict[str, Any]:
     }
 
 
+def _normalize_decision(payload: object, signals: Mapping[str, Any]) -> dict[str, Any] | None:
+    try:
+        data = json.loads(payload) if isinstance(payload, str) else payload
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    normalized = dict(data)
+    project_type = _VALIDATION_RE.sub("_", str(normalized.get("project_type") or "").strip().lower()).strip("_")
+    if project_type not in VALID_TYPES:
+        return None
+    normalized["project_type"] = project_type
+    normalized["schema_version"] = SCHEMA_VERSION
+    normalized["intent"] = str(normalized.get("intent") or "").strip() or "推进当前阶段"
+    blocker = normalized.get("blocker")
+    if isinstance(blocker, str):
+        normalized["blocker"] = {"signature": blocker} if blocker else None
+    elif not isinstance(blocker, (dict, type(None))):
+        normalized["blocker"] = None
+    actions = normalized.get("next_actions")
+    if not isinstance(actions, list):
+        normalized["next_actions"] = []
+    completed = normalized.get("completed")
+    if not isinstance(completed, list):
+        normalized["completed"] = []
+    if not isinstance(normalized.get("evidence_refs"), list):
+        normalized["evidence_refs"] = []
+    capabilities = normalized.get("capabilities")
+    normalized["capabilities"] = _map_capabilities(capabilities) if isinstance(capabilities, list) else []
+    normalized["signals"] = [str(item) for item in signals.get("signals") or []][:24]
+    return normalized
+
+
 def facts_for_decision(workspace: Path, events: Sequence[Mapping[str, Any]], run: Mapping[str, Any]) -> dict[str, Any]:
     stage = detect_stage(events, run)
     signals = collect_signals(workspace)
@@ -155,22 +167,6 @@ def facts_for_decision(workspace: Path, events: Sequence[Mapping[str, Any]], run
     }
 
 
-_TOOL_ALIASES = {
-    "browser_observe": "browser_observe",
-    "browser": "browser_observe",
-    "playwright": "browser_observe",
-    "web": "browser_observe",
-    "web:frontend": "browser_observe",
-    "web:browser": "browser_observe",
-    "frontend": "browser_observe",
-    "node": "",
-    "node:runtime": "",
-    "python": "",
-    "rust": "",
-    "go": "",
-}
-
-
 def _map_capabilities(capabilities: Sequence[str]) -> list[str]:
     """Translate model capability names into host tool names."""
 
@@ -178,7 +174,26 @@ def _map_capabilities(capabilities: Sequence[str]) -> list[str]:
     for item in capabilities:
         raw = str(item).strip().lower()
         lowered = _VALIDATION_RE.sub("_", raw).strip("_")
-        host = _TOOL_ALIASES.get(raw) or _TOOL_ALIASES.get(lowered, "")
+        host = {
+            "browser_observe": "browser_observe",
+            "browser": "browser_observe",
+            "playwright": "browser_observe",
+            "web": "browser_observe",
+            "web:frontend": "browser_observe",
+            "frontend": "browser_observe",
+            "node": "",
+            "node:runtime": "",
+            "python": "",
+            "rust": "",
+            "go": "",
+        }.get(raw) or {
+            "browser_observe": "browser_observe",
+            "browser": "browser_observe",
+            "playwright": "browser_observe",
+            "web": "browser_observe",
+            "web:frontend": "browser_observe",
+            "frontend": "browser_observe",
+        }.get(lowered, "")
         if not host:
             host = lowered or ""
         if host and host not in mapped:
@@ -186,42 +201,19 @@ def _map_capabilities(capabilities: Sequence[str]) -> list[str]:
     return mapped
 
 
-def _normalize_decision(payload: object, signals: Mapping[str, Any]) -> dict[str, Any] | None:
-    try:
-        data = json.loads(payload) if isinstance(payload, str) else payload
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(data, dict):
-        return None
-    project_type = str(data.get("project_type") or "").strip().lower()
-    project_type = _VALIDATION_RE.sub("_", project_type).strip("_")
-    if project_type not in VALID_TYPES:
-        return None
-    stage = str(data.get("stage") or "ANY").strip().upper()
-    if stage not in VALID_STAGES:
-        stage = "ANY"
-    capabilities = data.get("capabilities")
-    if not isinstance(capabilities, list):
-        return None
-    mapped = _map_capabilities([str(item) for item in capabilities][:8])
-    allowed = _STAGE_CAPABILITIES.get(stage) or _STAGE_CAPABILITIES["ANY"]
-    capabilities = [item for item in mapped if not allowed or item in allowed]
-    mcp_hints = data.get("mcp_hints")
-    mcp_hints = [str(item)[:80] for item in mcp_hints][:8] if isinstance(mcp_hints, list) else []
-    guidance = str(data.get("guidance") or "").strip()
-    reason = str(data.get("reason") or "").strip()
-    if len(guidance) > 200 or len(reason) > 200:
-        return None
-    return {
-        "schema_version": SCHEMA_VERSION,
-        "project_type": project_type,
-        "stage": stage,
-        "capabilities": capabilities,
-        "mcp_hints": mcp_hints,
-        "guidance": guidance,
-        "reason": reason,
-        "signals": [str(item) for item in signals.get("signals") or []][:24],
-    }
+def detect_stage(events: Sequence[Mapping[str, Any]], run: Mapping[str, Any]) -> str:
+    """Deterministic stage inference from durable facts."""
+
+    verification = str(run.get("verification") or "not_run")
+    recent = events[-12:]
+    tools = [event["payload"].get("tool") for event in recent if event.get("kind") == "tool_observed"]
+    if "verify_project" in tools:
+        return "VERIFY"
+    if verification in {"passed", "failed"}:
+        return "RETEST"
+    if "write_file" in tools or "edit_file" in tools:
+        return "EDIT"
+    return "DIAGNOSE"
 
 
 class ResidentAGIRuntime:

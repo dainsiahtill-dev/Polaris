@@ -777,6 +777,18 @@ async def run_engineering_loop(
     )
 
     semantic_runtime = semantic_runtime_from_environment()
+    if semantic_runtime is not None:
+        try:
+            from polaris.cells.roles.runtime.internal.engineering_semantic_advisor import (
+                advisor_configs_from_workspace,
+            )
+            from polaris.cells.roles.runtime.internal.engineering_semantic_advisor_pool import RemoteAdvisorPool
+
+            workspace_configs = advisor_configs_from_workspace(command.workspace)
+            if workspace_configs:
+                semantic_runtime.pool = RemoteAdvisorPool(workspace_configs)
+        except (TypeError, ValueError):
+            pass
     from polaris.cells.roles.runtime.internal.engineering_epoch_kimi import kimi_epoch_pool_from_environment
     from polaris.cells.roles.runtime.internal.engineering_epoch_runtime import EpochRuntime, facts_for_epoch
 
