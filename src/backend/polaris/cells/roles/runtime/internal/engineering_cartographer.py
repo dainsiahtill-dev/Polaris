@@ -171,10 +171,6 @@ def current_facts(run: Mapping[str, Any], events: Sequence[Mapping[str, Any]]) -
             value = payload.get(key)
             if isinstance(value, str) and value:
                 evidence.add(value)
-    observed = str(facts.get("phase") or "DIAGNOSE")
-    allowed_phases = {observed if observed in PHASES else "DIAGNOSE"}
-    if verification in {"passed", "failed"}:
-        allowed_phases.add("RETEST")
     return {
         "verification": verification,
         "workspace_revision": revision,
@@ -266,7 +262,10 @@ def validate_run_card_narrative(
     if data is None:
         return None
     phase = data.get("phase")
-    allowed_phases = facts.get("allowed_phases") or {facts["phase"]}
+    observed_phase = str(facts.get("phase") or "DIAGNOSE")
+    allowed_phases = facts.get("allowed_phases") or {observed_phase if observed_phase in PHASES else "DIAGNOSE"}
+    if str(facts.get("verification") or "") in {"passed", "failed"}:
+        allowed_phases = set(allowed_phases) | {"RETEST"}
     if phase not in PHASES or phase not in allowed_phases:
         return None
     completed = data.get("completed")
