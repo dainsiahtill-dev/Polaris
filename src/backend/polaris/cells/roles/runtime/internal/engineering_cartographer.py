@@ -263,11 +263,13 @@ def validate_run_card_narrative(
         action = str(item.get("action") or "").strip()
         if not action:
             continue
+        why = str(item.get("why") or "").strip()
+        expected = str(item.get("expected") or "").strip()
         normalized_actions.append(
             {
                 "action": action[:160],
-                "why": str(item.get("why") or "")[:160],
-                "expected": str(item.get("expected") or "")[:160],
+                "why": (why or "推进当前阶段")[:160],
+                "expected": (expected or "产生可观察的进展")[:160],
             }
         )
     normalized_actions = normalized_actions[:_MAX_NEXT_ACTIONS]
