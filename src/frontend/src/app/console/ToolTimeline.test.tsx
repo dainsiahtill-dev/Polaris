@@ -115,6 +115,32 @@ describe('ToolTimeline live ordering', () => {
     expect(screen.getByTestId('story-epoch-7')).toHaveTextContent('Devourer 吞噬兽 · epoch-0001-0010');
   });
 
+  it('renders browser screenshots for browser_observe observations', () => {
+    const shot = Buffer.from('fake-jpeg').toString('base64');
+    const observed: EngineeringEvent = {
+      session_id: 'run',
+      workspace: '/ws',
+      seq: 8,
+      role: 'director',
+      kind: 'tool_observed',
+      payload: {
+        tool: 'browser_observe',
+        ok: true,
+        images: [{ data_base64: shot, media_type: 'image/jpeg', sha256: 'abc' }],
+      },
+    };
+    render(
+      <ToolTimeline
+        events={[observed]}
+        selectedSeq={null}
+        onSelect={vi.fn()}
+        onOpenContext={vi.fn()}
+        emptyHint="empty"
+      />,
+    );
+    expect(screen.getByTestId('browser-shot-8-0')).toHaveAttribute('src', `data:image/jpeg;base64,${shot}`);
+  });
+
   it('shows the newest event first so users do not need to scroll to the bottom', () => {
     render(
       <ToolTimeline

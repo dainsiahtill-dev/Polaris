@@ -266,6 +266,34 @@ export function ToolTimeline({ events, selectedSeq, onSelect, onOpenContext, emp
           const fold = foldMeta(event);
           const glyphKind = toolGlyph(tool);
           const Glyph = GLYPHS[glyphKind];
+          const images = Array.isArray(payload.images) ? payload.images as Record<string, unknown>[] : [];
+          if (images.length > 0) {
+            return (
+              <article key={event.seq} data-testid={`story-tool-${event.seq}`} className="rounded-xl border border-white/[0.07] bg-black/20 p-2">
+                <button type="button" className="flex w-full items-center gap-2 text-left" onClick={() => onSelect(event)}>
+                  <span className="cx-tl-glyph !h-7 !w-7"><Glyph className="h-3.5 w-3.5" /></span>
+                  <span className="min-w-0 flex-1 truncate text-[0.8rem] text-[var(--cx-ink)]">
+                    {toolLabel(tool)} · {toolSummary(event)}
+                  </span>
+                  {ok ? <IconCheck className="h-4 w-4 text-[var(--cx-teal-bright)]" /> : <span className="cx-pill cx-pill--bad">失败</span>}
+                </button>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {images.slice(0, 4).map((image, index) => {
+                    const source = textOf(image.data_base64);
+                    return (
+                      <img
+                        key={`${event.seq}-${index}`}
+                        src={`data:${textOf(image.media_type) || 'image/jpeg'};base64,${source}`}
+                        alt={`浏览器截图 ${index + 1}`}
+                        data-testid={`browser-shot-${event.seq}-${index}`}
+                        className="h-24 rounded-lg border border-white/10 object-cover"
+                      />
+                    );
+                  })}
+                </div>
+              </article>
+            );
+          }
           return (
             <button key={event.seq} type="button" data-testid={`story-tool-${event.seq}`} data-selected={selectedSeq === event.seq} className="cx-tl-row !py-2.5" onClick={() => onSelect(event)}>
               <span className="cx-tl-time">{formatClock(event.created_at)}</span>
