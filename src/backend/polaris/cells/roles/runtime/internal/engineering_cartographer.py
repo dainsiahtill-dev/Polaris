@@ -27,7 +27,7 @@ _FAILURE_MARK = re.compile(
 class CartographerPool:
     """Small Kimi client for short, structured RunCard narratives."""
 
-    def __init__(self, *, base_url: str, api_key: str, model: str, timeout_seconds: float = 90.0) -> None:
+    def __init__(self, *, base_url: str, api_key: str, model: str, timeout_seconds: float = 45.0) -> None:
         self.base_url = base_url
         self.api_key = api_key
         self.model = model
@@ -262,10 +262,12 @@ class CartographerRuntime:
         self._request: dict[str, Any] = {}
 
     def schedule(self, request: dict[str, Any], *, fingerprint: str) -> None:
-        if fingerprint == self._fingerprint and self._job is not None and not self._job.done():
-            return
+        # Never abandon an in-flight draw: the model may take longer than one
+        # turn, and cancelling on every fingerprint change would starve it.
         if self._job is not None and not self._job.done():
-            self._job.cancel()
+            return
+        if fingerprint == self._fingerprint:
+            return
         self._fingerprint = fingerprint
         self._request = request
         self._job = asyncio.create_task(self.pool.draw_many([request]))

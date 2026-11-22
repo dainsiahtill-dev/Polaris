@@ -1060,7 +1060,7 @@ async def run_engineering_loop(
                                 payload=cartographer_card,
                             )
                             cartographer_reported.add(key)
-                if turn_seq % 8 == 0:
+                if turn_seq % 12 == 0:
                     run_card_request, run_card_fingerprint = facts_for_run_card(
                         run_now, store.load_events(command.session_id)
                     )

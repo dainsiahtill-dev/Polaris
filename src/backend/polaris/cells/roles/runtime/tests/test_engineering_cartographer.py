@@ -84,6 +84,26 @@ def test_narrative_rejects_invented_blocker() -> None:
     assert validate_run_card_narrative(payload, facts, allowed_refs=set()) is None
 
 
+def test_schedule_does_not_cancel_in_flight_draw() -> None:
+    import asyncio
+
+    from polaris.cells.roles.runtime.internal.engineering_cartographer import CartographerRuntime
+
+    class _SlowPool:
+        async def draw_many(self, requests):
+            await asyncio.sleep(0.05)
+            return ["drawing"]
+
+    async def main() -> None:
+        runtime = CartographerRuntime(_SlowPool())
+        runtime.schedule({"a": 1}, fingerprint="one")
+        runtime.schedule({"a": 2}, fingerprint="two")
+        await asyncio.sleep(0.08)
+        assert runtime.poll() == "drawing"
+
+    asyncio.run(main())
+
+
 def test_fingerprint_changes_with_stage() -> None:
     first, fingerprint_one = facts_for_run_card(_run(), _events())
     changed = dict(_run(), verification="passed")
