@@ -21,7 +21,7 @@ def test_decision_accepted_when_type_valid() -> None:
     payload = {
         "schema_version": "resident_agi_decision.v1",
         "project_type": "web",
-        "capabilities": ["browser_observe"],
+        "capabilities": ["web:frontend", "node:runtime"],
         "mcp_hints": [],
         "guidance": "用浏览器验收",
         "reason": "检测到 package.json",
@@ -29,6 +29,7 @@ def test_decision_accepted_when_type_valid() -> None:
     signals = {"signals": ["web:package.json"]}
     validated = _normalize_decision(payload, signals)
     assert validated is not None and validated["project_type"] == "web"
+    assert "browser_observe" in validated["capabilities"]
     assert validated["signals"] == ["web:package.json"]
 
 

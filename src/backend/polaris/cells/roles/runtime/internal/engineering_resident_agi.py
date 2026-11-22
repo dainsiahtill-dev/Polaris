@@ -116,6 +116,36 @@ def collect_signals(workspace: Path) -> dict[str, Any]:
     }
 
 
+_TOOL_ALIASES = {
+    "browser_observe": "browser_observe",
+    "browser": "browser_observe",
+    "playwright": "browser_observe",
+    "web": "browser_observe",
+    "web:frontend": "browser_observe",
+    "web:browser": "browser_observe",
+    "frontend": "browser_observe",
+    "node": "",
+    "node:runtime": "",
+    "python": "",
+    "rust": "",
+    "go": "",
+}
+
+
+def _map_capabilities(capabilities: Sequence[str]) -> list[str]:
+    """Translate model capability names into host tool names."""
+
+    mapped: list[str] = []
+    for item in capabilities:
+        lowered = _VALIDATION_RE.sub("_", str(item).strip().lower()).strip("_")
+        host = _TOOL_ALIASES.get(lowered, "")
+        if not host:
+            host = lowered or ""
+        if host and host not in mapped:
+            mapped.append(host)
+    return mapped
+
+
 def _normalize_decision(payload: object, signals: Mapping[str, Any]) -> dict[str, Any] | None:
     try:
         data = json.loads(payload) if isinstance(payload, str) else payload
@@ -130,7 +160,7 @@ def _normalize_decision(payload: object, signals: Mapping[str, Any]) -> dict[str
     capabilities = data.get("capabilities")
     if not isinstance(capabilities, list):
         return None
-    capabilities = [str(item)[:80] for item in capabilities][:8]
+    capabilities = _map_capabilities([str(item) for item in capabilities][:8])
     mcp_hints = data.get("mcp_hints")
     mcp_hints = [str(item)[:80] for item in mcp_hints][:8] if isinstance(mcp_hints, list) else []
     guidance = str(data.get("guidance") or "").strip()
