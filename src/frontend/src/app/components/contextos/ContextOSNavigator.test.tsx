@@ -77,6 +77,13 @@ describe('ContextOSNavigator', () => {
     expect(onOpenContext).toHaveBeenCalledWith('b'.repeat(24), 'director');
   });
 
+  it('shows the detail of the node backing a selected timeline seq', () => {
+    render(<ContextOSNavigator events={events} selectedSeq={3} />);
+    const detail = screen.getByTestId('contextos-nav-detail');
+    expect(detail).toBeInTheDocument();
+    expect(detail).toHaveTextContent('FileCard · src/app.ts');
+  });
+
   it('switches to the opt-in 3D exploration view', () => {
     render(<ContextOSNavigator events={events} workspace="/ws" />);
     fireEvent.click(screen.getByTestId('contextos-nav-view-3d'));

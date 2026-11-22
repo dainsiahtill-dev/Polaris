@@ -13,6 +13,7 @@ import {
   type Edge,
   type Node,
   type NodeMouseHandler,
+  type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
@@ -74,27 +75,32 @@ export interface LiveNodeData extends Record<string, unknown> {
   label: string;
   sublabel: string;
   meta: string;
-  kindLabel: string;
   foldLabel: string;
   color: string;
   icon: LiveNodeKind;
-  selected: boolean;
 }
 
 type LiveFlowNode = Node<LiveNodeData, 'live'>;
 
-function LiveNode({ data }: { data: LiveNodeData }): ReactElement {
+function LiveNode({ data, selected }: NodeProps<LiveFlowNode>): ReactElement {
   const Icon = KIND_ICON[data.icon];
   return (
     <div
       className="flex min-w-0 items-start gap-2 rounded-md border border-white/10 bg-[#141413] px-2 py-1.5 shadow-sm"
-      style={{ borderLeftWidth: 3, borderLeftColor: data.color }}
+      style={{
+        borderLeftWidth: 3,
+        borderLeftColor: data.color,
+        boxShadow: selected ? `0 0 0 1px ${data.color}` : undefined,
+      }}
     >
       <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0" style={{ color: data.color }} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[10px] font-medium text-[#f0efec]" title={data.label}>{data.label}</span>
         <span className="block truncate text-[9px] text-[#c3c2b7]" title={data.sublabel}>{data.sublabel}</span>
         <span className="mt-0.5 block truncate text-[8px] text-[#898781]">{data.meta}</span>
+      </span>
+      <span className="mt-0.5 shrink-0 text-[8px]" style={{ color: data.color }}>
+        {data.foldLabel.split(' · ')[0]}
       </span>
     </div>
   );
@@ -139,14 +145,12 @@ export function ContextOSNavigator({ events, selectedSeq = null, onOpenContext }
         label: node.title,
         sublabel: node.summary || '—',
         meta: `${LIVE_KIND_LABELS[node.kind]} · ${node.role}${node.tokens !== null ? ` · ≈${node.tokens} tok` : ''}`,
-        kindLabel: LIVE_KIND_LABELS[node.kind],
         foldLabel: LIVE_FOLD_LABELS[node.foldState],
         color: FOLD_COLOR[node.foldState],
         icon: node.kind,
-        selected: selectedId === node.id || (node.seq !== undefined && node.seq === selectedSeq),
       },
     };
-  }), [graph.nodes, positions, selectedId, selectedSeq]);
+  }), [graph.nodes, positions]);
 
   const flowEdges = useMemo<Edge[]>(() => graph.edges.map((edge) => ({
     id: edge.id,
@@ -170,7 +174,9 @@ export function ContextOSNavigator({ events, selectedSeq = null, onOpenContext }
     setSelectedId(node.id);
   }, []);
 
-  const selected = graph.nodes.find((node) => node.id === selectedId) ?? null;
+  const selected = graph.nodes.find((node) => node.id === selectedId)
+    ?? graph.nodes.find((node) => node.seq === selectedSeq)
+    ?? null;
   const layerOptions = [...new Set(graph.nodes.map((node) => node.layer))].sort((a, b) => a - b);
 
   return (
