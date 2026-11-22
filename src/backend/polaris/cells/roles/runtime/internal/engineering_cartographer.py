@@ -265,7 +265,7 @@ def _normalize_narrative(payload: object) -> dict[str, Any] | None:
     return normalized
 
 
-class NarrativeRejected(Exception):
+class NarrativeRejectedError(Exception):
     """Exact validation failure for diagnostics."""
 
     def __init__(self, code: str) -> None:
@@ -283,21 +283,21 @@ def validate_run_card_narrative(
 
     data = _normalize_narrative(payload)
     if data is None:
-        raise NarrativeRejected("unparsable_or_non_object")
+        raise NarrativeRejectedError("unparsable_or_non_object")
     phase = data.get("phase")
     observed_phase = str(facts.get("phase") or "DIAGNOSE")
     allowed_phases = facts.get("allowed_phases") or {observed_phase if observed_phase in PHASES else "DIAGNOSE"}
     if str(facts.get("verification") or "") in {"passed", "failed"}:
         allowed_phases = set(allowed_phases) | {"RETEST"}
     if phase not in PHASES or phase not in allowed_phases:
-        raise NarrativeRejected("invalid")
+        raise NarrativeRejectedError("invalid")
     completed = data.get("completed")
     if not isinstance(completed, list) or len(completed) > 8:
-        raise NarrativeRejected("invalid")
+        raise NarrativeRejectedError("invalid")
     completed = [str(item)[:80] for item in completed]
     next_actions = data.get("next_actions")
     if not isinstance(next_actions, list) or len(next_actions) > _MAX_NEXT_ACTIONS:
-        raise NarrativeRejected("invalid")
+        raise NarrativeRejectedError("invalid")
     normalized_actions: list[dict[str, str]] = []
     for item in next_actions:
         if not isinstance(item, dict):
@@ -320,7 +320,7 @@ def validate_run_card_narrative(
         blocker_payload = None
     else:
         if not isinstance(blocker, dict):
-            raise NarrativeRejected("invalid")
+            raise NarrativeRejectedError("invalid")
         signature = str(blocker.get("signature") or "")
         if signature:
             match = next(
@@ -328,7 +328,7 @@ def validate_run_card_narrative(
                 None,
             )
             if match is None:
-                raise NarrativeRejected("invalid")
+                raise NarrativeRejectedError("invalid")
             signature = match
         blocker_payload = {
             "signature": signature[:240],
@@ -337,11 +337,11 @@ def validate_run_card_narrative(
         }
     refs = data.get("evidence_refs")
     if not isinstance(refs, list):
-        raise NarrativeRejected("invalid")
+        raise NarrativeRejectedError("invalid")
     evidence_refs = [str(ref) for ref in refs if str(ref) in allowed_refs][:12]
     reason = str(data.get("reason") or "")
     if len(reason) > 160:
-        raise NarrativeRejected("invalid")
+        raise NarrativeRejectedError("invalid")
     return {
         "schema_version": SCHEMA_VERSION,
         "phase": phase,

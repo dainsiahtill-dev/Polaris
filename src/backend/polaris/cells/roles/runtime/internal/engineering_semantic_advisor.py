@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from polaris.cells.roles.runtime.internal.engineering_semantic_advice import (
@@ -37,6 +39,30 @@ class RemoteAdvisorConfig:
     model: str
     timeout_seconds: float = 120.0
     max_output_tokens: int = 800
+
+
+def advisor_configs_from_workspace(workspace: Path) -> list[RemoteAdvisorConfig]:
+    """Read the advisor pool from workspace-local config, falling back to env."""
+
+    path = Path(workspace) / ".polaris" / "config.json"
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            agents = (data.get("agents") or {}).get("distiller") or []
+            if agents:
+                return [
+                    RemoteAdvisorConfig(base_url=str(item["base_url"]), model=str(item["model"])) for item in agents
+                ]
+        except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError):
+            pass
+    raw = os.environ.get("KERNELONE_CONTEXTOS_SEMANTIC_ADVISOR_CONFIG", "").strip()
+    if not raw:
+        return []
+    try:
+        items = json.loads(raw)
+        return [RemoteAdvisorConfig(base_url=str(item["base_url"]), model=str(item["model"])) for item in items]
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return []
 
 
 _ADVICE_SCHEMA: dict[str, Any] = {

@@ -772,11 +772,26 @@ async def run_engineering_loop(
         raise ValueError(f"unknown file_card reference: {reference}")
 
     from polaris.cells.roles.runtime.internal.engineering_semantic_runtime import (
+        SemanticRuntime,
         facts_for_advice,
         semantic_runtime_from_environment,
     )
 
-    semantic_runtime = semantic_runtime_from_environment()
+    semantic_runtime: SemanticRuntime | None = None
+    try:
+        semantic_runtime = semantic_runtime_from_environment()
+    except Exception as error:  # noqa: BLE001 - optional assist wiring must never terminate the run
+        store.append_event(
+            command.session_id,
+            kind="run_diagnostic",
+            role=command.role,
+            payload={
+                "area": "semantic_advisor_runtime",
+                "error": f"{type(error).__name__}: {error}",
+                "fatal": False,
+            },
+        )
+        semantic_runtime = None
     if semantic_runtime is not None:
         try:
             from polaris.cells.roles.runtime.internal.engineering_semantic_advisor import (
@@ -787,8 +802,17 @@ async def run_engineering_loop(
             workspace_configs = advisor_configs_from_workspace(command.workspace)
             if workspace_configs:
                 semantic_runtime.pool = RemoteAdvisorPool(workspace_configs)
-        except (TypeError, ValueError):
-            pass
+        except Exception as error:  # noqa: BLE001 - optional assist wiring must never terminate the run
+            store.append_event(
+                command.session_id,
+                kind="run_diagnostic",
+                role=command.role,
+                payload={
+                    "area": "semantic_advisor_pool_config",
+                    "error": f"{type(error).__name__}: {error}",
+                    "fatal": False,
+                },
+            )
     from polaris.cells.roles.runtime.internal.engineering_epoch_kimi import kimi_epoch_pool_from_environment
     from polaris.cells.roles.runtime.internal.engineering_epoch_runtime import EpochRuntime, facts_for_epoch
 
@@ -1145,7 +1169,7 @@ async def run_engineering_loop(
                 )
             if cartographer_runtime is not None:
                 from polaris.cells.roles.runtime.internal.engineering_cartographer import (
-                    NarrativeRejected,
+                    NarrativeRejectedError,
                     current_facts,
                     facts_for_run_card,
                     validate_run_card_narrative,
@@ -1161,7 +1185,7 @@ async def run_engineering_loop(
                     facts = current_facts(run_now, cartographer_events)
                     try:
                         validated = validate_run_card_narrative(parsed, facts, allowed_refs=facts["evidence_refs"])
-                    except NarrativeRejected as rejection:
+                    except NarrativeRejectedError as rejection:
                         validated = None
                         store.append_event(
                             command.session_id,

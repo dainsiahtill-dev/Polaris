@@ -4,7 +4,7 @@ import json
 
 import pytest
 from polaris.cells.roles.runtime.internal.engineering_cartographer import (
-    NarrativeRejected,
+    NarrativeRejectedError,
     current_facts,
     facts_for_run_card,
     validate_run_card_narrative,
@@ -68,7 +68,7 @@ def test_narrative_rejected_when_phase_outside_allowed_set() -> None:
         "uncertain": True,
         "reason": "",
     }
-    with pytest.raises(NarrativeRejected):
+    with pytest.raises(NarrativeRejectedError):
         validate_run_card_narrative(payload, facts, allowed_refs=set())
 
 
@@ -123,7 +123,7 @@ def test_narrative_rejects_invented_blocker() -> None:
         "uncertain": True,
         "reason": "",
     }
-    with pytest.raises(NarrativeRejected):
+    with pytest.raises(NarrativeRejectedError):
         validate_run_card_narrative(payload, facts, allowed_refs=set())
 
 
