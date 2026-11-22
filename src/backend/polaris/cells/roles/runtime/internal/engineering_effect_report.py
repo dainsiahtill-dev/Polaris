@@ -93,7 +93,12 @@ def build_effect_report(run: Mapping[str, Any], events: Sequence[Mapping[str, An
     for event in events:
         if event.get("kind") != "tool_observed" or event["payload"].get("ok") is not False:
             continue
-        category = classify_tool_failure(event["payload"].get("content"))
+        payload = event["payload"]
+        content = payload.get("content")
+        if payload.get("tool") == "verify_project" and "rejects" in str(content):
+            category = "policy_blocked"
+        else:
+            category = classify_tool_failure(content)
         tool_failure_breakdown[category] = tool_failure_breakdown.get(category, 0) + 1
     transport_failures = sum(
         1

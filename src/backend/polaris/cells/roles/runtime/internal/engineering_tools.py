@@ -364,9 +364,11 @@ class EngineeringTools:
                         )
                 masked = [command for command in commands if _EXIT_MASKING_SUFFIX.search(command.strip())]
                 if masked:
+                    cleaned = [_EXIT_MASKING_SUFFIX.sub("", command.strip()).strip(" ;&|") for command in masked]
                     raise ValueError(
-                        "verify_project rejects exit-status masking (for example '; true', '|| true', '; echo' or '|| exit 0'): "
-                        + json.dumps(masked, ensure_ascii=False)
+                        "verify_project rejects exit-status masking (for example '; true', '|| true', '; echo' or '|| exit 0'). "
+                        "Remove the masking suffix; the exit code must reflect the real check. Suggested command(s): "
+                        + json.dumps([item for item in cleaned if item], ensure_ascii=False)
                     )
                 if self.verify is None:
                     raise ValueError("verify_project requires the active Director session owner")
