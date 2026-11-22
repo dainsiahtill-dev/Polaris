@@ -58,11 +58,39 @@ def _summary_is_informative(text: object, original: str) -> bool:
     stripped = text.strip()
     if len(stripped) < 4:
         return False
-    if stripped.lower().rstrip(".") in _STOCK_SUMMARY_MARKERS:
+    lowered = stripped.lower().rstrip(".")
+    if lowered in _STOCK_SUMMARY_MARKERS:
+        return False
+    # "completed successfully" is still a status, not an explanation.
+    if len(stripped.split()) <= 3 and any(lowered.startswith(marker) for marker in _STOCK_SUMMARY_MARKERS):
         return False
     normalized = re.sub(r"\s+", " ", stripped).lower()
     original_normalized = re.sub(r"\s+", " ", original).lower()
     return not (original_normalized and normalized in original_normalized)
+
+
+def _structural_summary(card: dict[str, Any], original: str) -> str | None:
+    """Deterministic fallback so folding never depends on the distiller alone.
+
+    Without this, a silent distiller makes folding inert and the working-set cap
+    silently drops whole turns instead of compressing them.
+    """
+
+    path = card.get("path")
+    if isinstance(path, str) and path:
+        return (
+            f"文件 {path}：{card.get('line_count', '?')} 行，"
+            f"{card.get('size_bytes', len(original.encode('utf-8')))} 字节，"
+            f"符号 {len(card.get('symbols') or [])} 个；原文可按 content_ref 取回。"
+        )
+    command = str(card.get("command") or "").strip()
+    if not command:
+        return None
+    return (
+        f"命令 `{command[:120]}` 退出码 {card.get('exit_code')}，"
+        f"stdout {card.get('stdout_bytes', 0)} 字节 / stderr {card.get('stderr_bytes', 0)} 字节；"
+        f"原始输出可按 content_ref 取回。"
+    )
 
 
 def _choose_fold_summary(
@@ -82,6 +110,9 @@ def _choose_fold_summary(
     for text, kind in candidates:
         if _summary_is_informative(text, original):
             return str(text), kind
+    structural = _structural_summary(card, original)
+    if structural is not None:
+        return structural, "structural"
     return None
 
 

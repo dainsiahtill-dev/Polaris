@@ -60,27 +60,63 @@ def test_old_failed_command_folds_without_current_dependency(monkeypatch: pytest
     assert json.loads(first["content"])["command_card"]["fold_state"] == "FOLDED"
 
 
-def test_fold_refuses_stock_or_copied_summary(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A fold must replace payload with an explanation, not a status or an excerpt."""
+def test_fold_uses_structural_summary_when_the_distiller_is_silent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A silent distiller must not make folding inert and force turn dropping."""
 
     monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "1")
     messages: list[dict[str, object]] = []
     for index in range(4):
         messages.append({"role": "assistant", "content": f"step-{index}"})
         messages.append(_command_message())
-    # The card's own summary is the stock status "completed" and the distiller
-    # returns a verbatim excerpt of stdout; neither explains anything.
-    for uninformative in ("completed", "xxxxxxxxxxxxxxxxxxxx"):
+    folded = fold_file_card_previews(messages)
+    card = json.loads(next(message for message in folded if message["role"] == "tool")["content"])["command_card"]
+    assert card["fold_state"] == "FOLDED" and card["stdout_preview"] == ""
+    assert "make test" in card["summary"] and card["summary_kind"] == "structural"
+
+
+def test_uninformative_summaries_fall_back_to_structural(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A status word or a copied excerpt must never replace the payload as-is.
+
+    Folding still happens, but with a deterministic structural summary that keeps
+    the recovery pointer, so compression never depends on the distiller alone.
+    """
+
+    monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "1")
+    messages: list[dict[str, object]] = []
+    for index in range(4):
+        messages.append({"role": "assistant", "content": f"step-{index}"})
+        messages.append(_command_message())
+    for uninformative in ("completed", "completed successfully", "xxxxxxxxxxxxxxxxxxxx"):
         folded = fold_file_card_previews(
             messages,
             semantic_summaries={"command:abc": {"summary": uninformative}},
         )
-        for message in folded:
-            if message["role"] != "tool":
-                continue
-            card = json.loads(message["content"])["command_card"]
-            assert card["fold_state"] == "ACTIVE", (uninformative, card)
-            assert card["stdout_preview"] == "x" * 1200
+        cards = [json.loads(message["content"])["command_card"] for message in folded if message["role"] == "tool"]
+        folded_card = cards[0]
+        assert folded_card["fold_state"] == "FOLDED", (uninformative, folded_card)
+        assert folded_card["stdout_preview"] == ""
+        assert folded_card["summary_kind"] == "structural", (uninformative, folded_card)
+        assert "make test" in folded_card["summary"]
+        # The current turn is never folded away.
+        assert cards[-1]["fold_state"] == "ACTIVE"
+
+
+def test_real_distiller_summary_wins_over_structural(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "1")
+    messages: list[dict[str, object]] = []
+    for index in range(4):
+        messages.append({"role": "assistant", "content": f"step-{index}"})
+        messages.append(_command_message())
+    folded = fold_file_card_previews(
+        messages,
+        semantic_summaries={
+            "command:abc": {"summary": "该命令执行了测试套件，末尾输出了汇总行，原始输出可按引用取回。"}
+        },
+    )
+    card = json.loads(next(message for message in folded if message["role"] == "tool")["content"])["command_card"]
+    assert card["fold_state"] == "FOLDED"
+    assert card["summary_kind"] == "model_inference"
+    assert card["summary"].startswith("该命令执行了测试套件")
 
 
 def test_failed_command_current_reasoning_is_protected() -> None:

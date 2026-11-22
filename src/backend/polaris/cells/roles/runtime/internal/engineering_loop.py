@@ -421,9 +421,15 @@ def _retention_fold_window(
 
     if not fold_window:
         return fold_window
-    if history_tokens <= _history_allowances(context_window_tokens)[0]:
-        return fold_window
-    return max(1, fold_window // 2)
+    allowance = _history_allowances(context_window_tokens)[0]
+    window = fold_window
+    # Bounded: at most two halvings, never below four activities, so the current
+    # turn and its immediate context are never folded away.
+    for _ in range(2):
+        if history_tokens <= allowance or window <= 4:
+            break
+        window = max(4, window // 2)
+    return window
 
 
 def _history_allowances(window: int) -> list[int]:
@@ -1333,7 +1339,6 @@ async def run_engineering_loop(
                     ).encode("utf-8")
                 ).hexdigest()
                 if fingerprint != resident_profile_fingerprint and turn_seq % 8 == 0:
-                    resident_profile_fingerprint = fingerprint
                     resident_runtime.start(facts_for_decision(command.workspace, journal_events, run_now))
                 raw = resident_runtime.poll()
                 if raw:
@@ -1341,6 +1346,9 @@ async def run_engineering_loop(
                     if refreshed:
                         resident_decision = refreshed
                         resident_stage = stage
+                        # Only a real decision consumes the fingerprint, so a
+                        # failed ask is retried on the next eligible turn.
+                        resident_profile_fingerprint = fingerprint
                         store.append_event(
                             command.session_id,
                             kind="resident_agi_decision",

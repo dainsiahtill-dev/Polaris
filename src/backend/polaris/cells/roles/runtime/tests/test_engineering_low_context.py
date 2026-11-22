@@ -44,8 +44,10 @@ def test_retention_fold_window_narrows_only_when_history_exceeds_the_working_set
     # Healthy history keeps the configured fold window.
     assert _retention_fold_window(24, history_tokens=1_000, context_window_tokens=1_000_000) == 24
     # History that cannot fit the retained working set is folded harder first,
-    # so distillation compresses it instead of wholesale turn dropping.
-    assert _retention_fold_window(24, history_tokens=900_000, context_window_tokens=1_000_000) == 12
+    # so distillation compresses it instead of wholesale turn dropping. The
+    # narrowing is bounded: two halvings, never below four activities.
+    assert _retention_fold_window(24, history_tokens=900_000, context_window_tokens=1_000_000) == 6
+    assert _retention_fold_window(8, history_tokens=900_000, context_window_tokens=1_000_000) == 4
     # A disabled fold window stays disabled.
     assert _retention_fold_window(None, history_tokens=900_000, context_window_tokens=1_000_000) is None
     assert _retention_fold_window(0, history_tokens=900_000, context_window_tokens=1_000_000) == 0
@@ -187,7 +189,7 @@ def test_bounded_request_messages_caps_long_history(tmp_path: Path) -> None:
     assert after < before * 0.6
     note = next(message["content"] for message in bounded if "上下文已压缩" in str(message.get("content")))
     # The model must be told the real constraint, not a false window excuse.
-    assert "有界工作集预算" in note
+    assert "有界上下文预算" in note
     assert "模型窗口" not in note
 
 
