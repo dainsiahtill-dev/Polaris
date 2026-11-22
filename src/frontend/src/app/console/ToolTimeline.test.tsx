@@ -91,7 +91,8 @@ describe('ToolTimeline live ordering', () => {
         emptyHint="empty"
       />,
     );
-    expect(screen.getByTestId('story-advisor-6')).toHaveTextContent('蒸馏器 · 节点摘要 core.js：状态机与循环入口');
+    expect(screen.getByTestId('story-advisor-6')).toHaveTextContent('蒸馏器 · 蒸馏内容');
+    expect(screen.getByTestId('story-advisor-6')).toHaveTextContent('core.js → 状态机与循环入口');
   });
 
   it('shows Devourer epoch summaries in the live timeline', () => {
