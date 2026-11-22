@@ -224,13 +224,25 @@ class ResidentAGIRuntime:
         self._job: asyncio.Task[str] | None = None
 
     @property
+    def done(self) -> bool:
+        """A job exists and has finished; it still must be consumed."""
+
+        return self._job is not None and self._job.done()
+
+    @property
     def idle(self) -> bool:
-        return self._job is None or self._job.done()
+        """True only when no job exists.
+
+        A finished-but-unconsumed job is not idle: treating it as idle lets a new
+        start discard a decision the run has already paid for.
+        """
+
+        return self._job is None
 
     def start(self, request: dict[str, Any]) -> bool:
-        """Schedule one decision; a decision still in flight is never abandoned."""
+        """Schedule one decision; an existing job is never abandoned or replaced."""
 
-        if not self.idle:
+        if self._job is not None:
             return False
         self._job = asyncio.create_task(asyncio.to_thread(self.pool._post, request))
         return True

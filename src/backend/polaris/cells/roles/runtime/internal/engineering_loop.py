@@ -1353,8 +1353,8 @@ async def run_engineering_loop(
                         ensure_ascii=False,
                     ).encode("utf-8")
                 ).hexdigest()
-                if fingerprint != resident_profile_fingerprint and turn_seq % 8 == 0:
-                    resident_runtime.start(facts_for_decision(command.workspace, journal_events, run_now))
+                # Consume a finished decision before scheduling a new one;
+                # otherwise start() would replace an already-paid-for result.
                 raw = resident_runtime.poll()
                 if raw:
                     refreshed = _normalize_decision(raw, signals)
@@ -1370,6 +1370,12 @@ async def run_engineering_loop(
                             role="resident_agi",
                             payload={**refreshed, "reassessed": True},
                         )
+                if (
+                    resident_runtime.idle
+                    and fingerprint != resident_profile_fingerprint
+                    and turn_seq % 8 == 0
+                ):
+                    resident_runtime.start(facts_for_decision(command.workspace, journal_events, run_now))
                 resident_stage = stage or resident_stage
                 bound_capabilities = (resident_decision or {}).get("capabilities") or []
                 for event in journal_events[-40:]:
@@ -1671,8 +1677,11 @@ async def run_engineering_loop(
                 rebind_visual_input_sets,
             )
 
+            # Bind against the array that is actually sent: the QA forced-report
+            # path replaces options["messages"] with a fresh list, so the earlier
+            # request_messages binding is stale there.
             rebound_sets, dropped_sets = rebind_visual_input_sets(
-                request_messages, visual_projection.get("image_sets", [])
+                options["messages"], visual_projection.get("image_sets", [])
             )
             if dropped_sets:
                 store.append_event(

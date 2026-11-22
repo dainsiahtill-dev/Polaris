@@ -230,7 +230,9 @@ async def test_absent_deadline_and_other_roles_keep_original_system(
     )
     assert result.status == "completed"
     body = scripted_provider.requests[0]["body"]
-    assert _system(body, "openai") == role_instruction(role)
+    # Protocol-native merging may append the Resident AGI profile block to the
+    # leading system message; the original role instruction must still lead it.
+    assert _system(body, "openai").startswith(role_instruction(role))
     assert _MARKER not in json.dumps(body, ensure_ascii=False)
 
 
@@ -264,7 +266,7 @@ async def test_new_service_resume_uses_saved_deadline_and_fresh_observation(
     assert row["status"] == "completed" and row["verification"] == "not_run"
     assert row["limits"]["deadline"] == limits.deadline
     last_body = scripted_provider.requests[-1]["body"]
-    assert _system(last_body, "openai") == role_instruction("director")
+    assert _system(last_body, "openai").startswith(role_instruction("director"))
     assert _budget(_tail_observation(last_body)) == pytest.approx((deadline, deadline - 475, 475), rel=0, abs=0.001)
     durable = resumed.store.load_message_history(command.session_id, role="director")
     assert durable[: len(prior_history)] == prior_history

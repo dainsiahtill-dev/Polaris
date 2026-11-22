@@ -60,6 +60,33 @@ def test_old_failed_command_folds_without_current_dependency(monkeypatch: pytest
     assert json.loads(first["content"])["command_card"]["fold_state"] == "FOLDED"
 
 
+def test_fold_refused_when_projection_would_grow(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A summary larger than the preview must not fold: folding has to buy room."""
+
+    from polaris.cells.roles.runtime.internal.engineering_file_cards import build_file_card
+
+    monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "1")
+    card = build_file_card(
+        "a.py",
+        "x" * 1200,
+        revision=1,
+        preview="x" * 1200,
+        truncated=False,
+        start_line=1,
+        end_line=1,
+        snapshot_ref="filecard:a",
+    )
+    card["summary"] = "S" * 4000  # card_default summary bigger than the preview
+    messages: list[dict[str, object]] = []
+    for index in range(4):
+        messages.append({"role": "assistant", "content": f"step-{index}"})
+        messages.append({"role": "tool", "content": json.dumps({"file_card": dict(card)})})
+    folded = fold_file_card_previews(messages)
+    cards = [json.loads(message["content"])["file_card"] for message in folded if message["role"] == "tool"]
+    assert cards[0]["fold_state"] == "ACTIVE"
+    assert cards[0]["content_preview"] == "x" * 1200
+
+
 def test_fold_uses_structural_summary_when_the_distiller_is_silent(monkeypatch: pytest.MonkeyPatch) -> None:
     """A silent distiller must not make folding inert and force turn dropping."""
 

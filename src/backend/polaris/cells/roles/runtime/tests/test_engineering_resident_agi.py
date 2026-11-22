@@ -68,9 +68,13 @@ def test_runtime_poll_consumes_a_finished_decision_and_start_is_gated() -> None:
         # A decision still in flight is never abandoned for a newer request.
         assert runtime.start({"signals": []}) is False
         for _ in range(200):
-            if runtime.idle:
+            if runtime.done:
                 break
             await asyncio.sleep(0.01)
+        # A finished-but-unconsumed job is not idle: replacing it would throw away
+        # a decision the run already paid for.
+        assert runtime.done and runtime.idle is False
+        assert runtime.start({"signals": []}) is False
         assert runtime.poll() is not None
         # Consumed: without a new start the caller must not re-read the stale
         # first decision forever.

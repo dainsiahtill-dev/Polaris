@@ -116,6 +116,10 @@ def _choose_fold_summary(
     return None
 
 
+def _card_bytes(card: Mapping[str, Any]) -> int:
+    return len(json.dumps(card, ensure_ascii=False).encode("utf-8"))
+
+
 def _fold_file_card(
     card: dict[str, Any],
     path: str,
@@ -124,14 +128,38 @@ def _fold_file_card(
     reason: str,
     original: str,
 ) -> bool:
-    """Fold a FileCard only when an informative summary replaces its preview."""
+    """Fold only when an informative summary actually buys room.
 
+    A long path or an already-large summary can make the projected card bigger
+    than the preview it replaces; folding then costs context without compressing.
+    """
+
+    keys = (
+        "summary",
+        "summary_kind",
+        "summary_evidence_refs",
+        "summary_uncertain",
+        "summary_reason",
+        "content_preview",
+        "content_bounds",
+        "fold_state",
+        "fold_reason",
+    )
+    snapshot = {key: copy.deepcopy(card.get(key)) for key in keys}
+    had_source_summary = "source_summary" in card
+    before = _card_bytes(card)
     if not _apply_fold_summary(card, summaries, path, original=original):
         return False
     card["content_preview"] = ""
     card["content_bounds"] = {**card.get("content_bounds", {}), "truncated": True}
     card["fold_state"] = "FOLDED"
     card["fold_reason"] = reason
+    if _card_bytes(card) >= before:
+        for key, value in snapshot.items():
+            card[key] = value
+        if not had_source_summary:
+            card.pop("source_summary", None)
+        return False
     return True
 
 
@@ -151,9 +179,16 @@ def _apply_fold_summary(
     card["source_summary"] = card.get("summary")
     card["summary"] = text
     card["summary_kind"] = kind
-    card["summary_evidence_refs"] = summary.get("evidence_refs") or []
-    card["summary_uncertain"] = summary.get("uncertain", True)
-    card["summary_reason"] = summary.get("reason") or ""
+    if kind == "model_inference":
+        card["summary_evidence_refs"] = summary.get("evidence_refs") or []
+        card["summary_uncertain"] = summary.get("uncertain", True)
+        card["summary_reason"] = summary.get("reason") or ""
+    else:
+        # A card-default or deterministic structural fallback must not inherit
+        # model provenance: it is not an inference and has no model evidence.
+        card["summary_evidence_refs"] = []
+        card["summary_uncertain"] = True
+        card["summary_reason"] = ""
     return True
 
 

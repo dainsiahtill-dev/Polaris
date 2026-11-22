@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from polaris.cells.roles.runtime.internal.engineering_file_cards import build_file_card
 from polaris.cells.roles.runtime.internal.engineering_loop import _bounded_request_messages
 
@@ -14,6 +15,15 @@ class _Store:
 
     def load_events(self, *_args: object, **_kwargs: object) -> list[dict[str, Any]]:
         return []
+
+    def load_run(self, *_args: object, **_kwargs: object) -> dict[str, Any]:
+        return {
+            "session_id": "fold-events",
+            "workspace": ".",
+            "status": "running",
+            "verification": "not_run",
+            "workspace_revision": 0,
+        }
 
     def append_event(self, _session_id: str, *, kind: str, role: str, payload: dict[str, Any]) -> int:
         self.appended.append({"kind": kind, "role": role, "payload": payload})
@@ -47,16 +57,20 @@ def _message(preview: str) -> dict[str, object]:
     }
 
 
-def test_first_fold_emits_realtime_event() -> None:
+def test_first_fold_emits_realtime_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The default fold window is 24 activities; this fixture has 11 turns, so
+    # pin a smaller window to exercise the first-fold path.
+    monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "4")
     store = _Store()
     messages: list[dict[str, Any]] = [{"role": "user", "content": "fix the project"}]
     for index in range(11):
         messages.append({"role": "assistant", "content": f"step-{index}"})
-        messages.append(_message("x" * 600))
+        # Above the fold byte floor, otherwise the card is never a fold candidate.
+        messages.append(_message("x" * 1200))
     _bounded_request_messages(
         messages,
         store=store,
-        command=SimpleNamespace(session_id="run"),
+        command=SimpleNamespace(session_id="run", workspace="."),
         role="director",
         context_window_tokens=0,
         visual_binding=None,
