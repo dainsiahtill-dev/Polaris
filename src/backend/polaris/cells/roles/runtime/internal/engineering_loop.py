@@ -885,7 +885,32 @@ async def run_engineering_loop(
                 prior_messages = build_prior_run_memory(previous[0], store.load_events(str(previous[0]["session_id"])))
         except (KeyError, OSError, ValueError):
             prior_messages = []
-        messages = [system_message, *prior_messages, {"role": "user", "content": command.instruction}]
+        profile_messages: list[dict[str, Any]] = []
+        if os.environ.get("KERNELONE_RESIDENT_PROJECT_PROFILE", "1").strip().lower() not in {
+            "0",
+            "false",
+            "off",
+        }:
+            from polaris.cells.roles.runtime.internal.engineering_project_profile import (
+                detect_project_profile,
+                profile_fingerprint,
+                prompt_additions,
+            )
+
+            profile = detect_project_profile(command.workspace)
+            profile_messages = prompt_additions(profile)
+            store.append_event(
+                command.session_id,
+                kind="project_profile_detected",
+                role="resident_agi",
+                payload={**profile, "fingerprint": profile_fingerprint(profile)},
+            )
+        messages = [
+            system_message,
+            *profile_messages,
+            *prior_messages,
+            {"role": "user", "content": command.instruction},
+        ]
         for message in messages:
             store.append_message(command.session_id, role=command.role, message=message)
     if project_run:
