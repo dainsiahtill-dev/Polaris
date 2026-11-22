@@ -79,7 +79,7 @@ describe('ToolTimeline live ordering', () => {
       kind: 'semantic_advice_completed',
       payload: {
         validation_result: 'VALID',
-        result: { assessments: [{ suggested_view: 'CARD' }] },
+        summaries: [{ node_id: 'core.js', summary: '状态机与循环入口' }],
       },
     };
     render(
@@ -91,7 +91,7 @@ describe('ToolTimeline live ordering', () => {
         emptyHint="empty"
       />,
     );
-    expect(screen.getByTestId('story-advisor-6')).toHaveTextContent('远程小模型评估 · CARD');
+    expect(screen.getByTestId('story-advisor-6')).toHaveTextContent('蒸馏器 · 节点摘要 core.js：状态机与循环入口');
   });
 
   it('shows Devourer epoch summaries in the live timeline', () => {

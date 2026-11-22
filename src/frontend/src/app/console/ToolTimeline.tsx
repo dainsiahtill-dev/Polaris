@@ -218,19 +218,21 @@ export function ToolTimeline({ events, selectedSeq, onSelect, onOpenContext, emp
           );
         }
         if (kind === 'advisor') {
-          const result = event.payload.result && typeof event.payload.result === 'object'
-            ? event.payload.result as Record<string, unknown>
-            : {};
-          const assessments = Array.isArray(result.assessments) ? result.assessments : [];
-          const views = assessments.map((item) => {
-            const assessment = item as Record<string, unknown>;
-            return textOf(assessment.suggested_view);
-          }).filter(Boolean).join(' / ') || textOf(event.payload.validation_result) || 'UNKNOWN';
+          const summaries = Array.isArray(event.payload.summaries) ? event.payload.summaries : [];
+          const nodes = summaries
+            .map((item) => {
+              const record = item as Record<string, unknown>;
+              const node = textOf(record.node_id);
+              const summary = textOf(record.summary);
+              return summary ? `${node}：${summary}` : node;
+            })
+            .filter(Boolean)
+            .join('；');
           return (
             <article key={event.seq} data-testid={`story-advisor-${event.seq}`} className="rounded-xl border border-[rgba(31,122,140,.28)] bg-[rgba(31,122,140,.05)] px-3 py-2">
               <div className="flex items-center gap-2">
                 <IconGauge className="h-4 w-4 text-[#1f7a8c]" />
-                <p className="min-w-0 flex-1 truncate text-xs text-[var(--cx-ink)]">远程小模型评估 · {views}</p>
+                <p className="min-w-0 flex-1 truncate text-xs text-[var(--cx-ink)]">蒸馏器 · 节点摘要 {nodes || '处理中'}</p>
                 <span className="text-[0.65rem] text-[var(--cx-ink-faint)]">{textOf(event.payload.validation_result)}</span>
               </div>
             </article>
