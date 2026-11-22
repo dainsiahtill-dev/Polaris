@@ -49,6 +49,24 @@ def _count_folded_cards(events: Sequence[Mapping[str, Any]]) -> tuple[int, int]:
     return best
 
 
+_POLICY_BLOCK_MARKERS = (
+    "First-verification budget",
+    "rejects exit-status masking",
+    "停滞检测",
+    "能力使用提醒",
+    "stage gate",
+)
+
+
+def classify_tool_failure(content: object) -> str:
+    """Separate host policy blocks from real tool failures."""
+
+    text = str(content or "")
+    if any(marker in text for marker in _POLICY_BLOCK_MARKERS):
+        return "policy_blocked"
+    return "tool_failure"
+
+
 def build_effect_report(run: Mapping[str, Any], events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """Summarize the real context effect of one run from its journal facts."""
 
@@ -71,6 +89,12 @@ def build_effect_report(run: Mapping[str, Any], events: Sequence[Mapping[str, An
         for event in events
         if event.get("kind") == "tool_observed" and event["payload"].get("tool") == "read_command_result"
     )
+    tool_failure_breakdown: dict[str, int] = {}
+    for event in events:
+        if event.get("kind") != "tool_observed" or event["payload"].get("ok") is not False:
+            continue
+        category = classify_tool_failure(event["payload"].get("content"))
+        tool_failure_breakdown[category] = tool_failure_breakdown.get(category, 0) + 1
     transport_failures = sum(
         1
         for event in events
@@ -100,6 +124,7 @@ def build_effect_report(run: Mapping[str, Any], events: Sequence[Mapping[str, An
         "cross_run_injected_requests": cross_run,
         "evidence_recoveries": recoveries,
         "provider_transport_failures": transport_failures,
+        "tool_failure_breakdown": tool_failure_breakdown,
         "verification_attempts": len(verifications),
         "verification_passed": passed,
         "validation_executions": len(executions),

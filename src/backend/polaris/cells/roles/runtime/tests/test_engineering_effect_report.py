@@ -49,6 +49,29 @@ def test_effect_report_counts_folds_and_injections() -> None:
     assert report["turns"] == 1
 
 
+def test_policy_blocks_are_separate_from_tool_failures() -> None:
+    events = [
+        {
+            "seq": 1,
+            "kind": "tool_observed",
+            "payload": {"tool": "write_file", "ok": False, "content": "First-verification budget: no verification"},
+        },
+        {
+            "seq": 2,
+            "kind": "tool_observed",
+            "payload": {"tool": "verify_project", "ok": False, "content": "verify_project rejects exit-status masking"},
+        },
+        {
+            "seq": 3,
+            "kind": "tool_observed",
+            "payload": {"tool": "execute_command", "ok": False, "content": "Command timed out after 120.0s"},
+        },
+    ]
+    report = build_effect_report({"session_id": "run", "workspace": "/ws", "status": "running"}, events)
+    assert report["tool_failure_breakdown"]["policy_blocked"] == 2
+    assert report["tool_failure_breakdown"]["tool_failure"] == 1
+
+
 def test_effect_report_handles_empty_run() -> None:
     report = build_effect_report({"session_id": "run", "workspace": "/ws", "status": "failed"}, [])
     assert report["cards_total"] == 0 and report["fold_rate"] is None
