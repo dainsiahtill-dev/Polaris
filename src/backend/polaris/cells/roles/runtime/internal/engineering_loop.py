@@ -994,7 +994,12 @@ async def run_engineering_loop(
                 semantic_runtime=semantic_runtime,
                 fold_window=fold_window,
             )
-            structured_repairs = _active_structured_repairs(store.load_events(command.session_id))
+            structured_repairs = (
+                _active_structured_repairs(store.load_events(command.session_id))
+                if os.environ.get("KERNELONE_ENGINEERING_STRUCTURED_REPAIR", "1").strip().lower()
+                not in {"0", "false", "off"}
+                else []
+            )
             if structured_repairs:
                 request_messages = [_structured_repair_message(structured_repairs), *request_messages]
                 store.append_event(

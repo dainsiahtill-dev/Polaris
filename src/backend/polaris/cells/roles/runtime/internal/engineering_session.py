@@ -1238,6 +1238,14 @@ class EngineeringSessionStore:
             )
             self._append_event(connection, session_id, kind="verification_completed", role="director", payload=payload)
             try:
+                import os as _os
+
+                if _os.environ.get("KERNELONE_CONTEXTOS_VALIDATION_MEASUREMENT", "1").strip().lower() in {
+                    "0",
+                    "false",
+                    "off",
+                }:
+                    raise ValueError("validation measurement disabled")
                 from polaris.cells.roles.runtime.internal.engineering_validation_fingerprint import (
                     build_validation_execution,
                     validation_key,
