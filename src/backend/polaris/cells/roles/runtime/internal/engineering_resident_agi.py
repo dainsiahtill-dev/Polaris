@@ -11,7 +11,7 @@ import json
 import os
 import re
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -137,8 +137,9 @@ def _map_capabilities(capabilities: Sequence[str]) -> list[str]:
 
     mapped: list[str] = []
     for item in capabilities:
-        lowered = _VALIDATION_RE.sub("_", str(item).strip().lower()).strip("_")
-        host = _TOOL_ALIASES.get(lowered, "")
+        raw = str(item).strip().lower()
+        lowered = _VALIDATION_RE.sub("_", raw).strip("_")
+        host = _TOOL_ALIASES.get(raw) or _TOOL_ALIASES.get(lowered, "")
         if not host:
             host = lowered or ""
         if host and host not in mapped:
