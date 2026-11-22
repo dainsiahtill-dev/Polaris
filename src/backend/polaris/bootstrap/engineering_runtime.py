@@ -51,6 +51,30 @@ def resolve_engineering_profile(settings: Settings, workspace: Path, profile_id:
     profile = settings.server.engineering_permission_profiles.get(profile_id)
     if profile is None:
         raise PermissionError(f"engineering permission profile is unavailable: {profile_id}")
+    if profile.browser is None:
+        # The persisted settings pipeline can drop the nested server section.
+        # When the host explicitly advertises browser_observe, recover a usable
+        # Chromium instead of silently losing browser verification.
+        import os
+        import shutil
+        import sys
+
+        executable = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
+        if executable and os.environ.get("KERNELONE_ENGINEERING_BROWSER_AUTODETECT", "1").strip().lower() not in {
+            "0",
+            "false",
+            "off",
+        }:
+            from polaris.bootstrap.config import EngineeringBrowserObservationConfig
+
+            profile.browser = EngineeringBrowserObservationConfig(
+                executable=executable,
+                python_executable=sys.executable,
+                python_paths=[str(Path(__import__("site").getsitepackages()[0]))],
+                require_visual_review=False,
+                observation_mode="images",
+            )
+            profile.enabled_tools = frozenset(set(profile.enabled_tools) | {"browser_observe"})
     supported = {
         "read_file",
         "read_command_result",
