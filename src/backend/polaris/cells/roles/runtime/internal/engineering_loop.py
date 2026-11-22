@@ -800,6 +800,7 @@ async def run_engineering_loop(
     cartographer_reported: set[str] = set()
     last_injection_fingerprint = ""
     capability_last_used: dict[str, int] = {}
+    capability_last_reminded: dict[str, int] = {}
     resident_stage: str | None = None
     tools = EngineeringTools(
         command.workspace,
@@ -1231,7 +1232,10 @@ async def run_engineering_loop(
                     capability
                     for capability in (resident_decision or {}).get("capabilities") or []
                     if capability_last_used.get(capability, -(10**9)) <= turn_seq - 5
+                    and capability_last_reminded.get(capability, -(10**9)) <= turn_seq - 10
                 ]
+                for capability in idle_capabilities:
+                    capability_last_reminded[capability] = turn_seq
                 if idle_capabilities:
                     request_messages = [
                         {
