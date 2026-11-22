@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactElement } from 'react';
 import type { EngineeringEvent, EngineeringRole } from '@/services/api.types';
 import type { EngineeringRunBinding } from '@/hooks/useEngineeringRun';
 import { ContextViewerModal } from '@/app/components/contextos/ContextViewerModal';
+import { ContextOSNavigator } from '@/app/components/contextos/ContextOSNavigator';
 import { GoalComposer } from './GoalComposer';
 import { RoleTracks } from './RoleTracks';
 import { ToolTimeline } from './ToolTimeline';
@@ -170,7 +171,15 @@ export function MissionControlView({ workspace, binding, role }: {
         </p>
       </div>
       <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-12">
-        <section className="cx-card flex max-h-[72vh] min-h-[20rem] flex-col overflow-hidden xl:col-span-7">
+        <div className="xl:col-span-3">
+          <ContextOSNavigator
+            events={events}
+            workspace={workspace}
+            selectedSeq={selectedSeq}
+            onOpenContext={openContext}
+          />
+        </div>
+        <section className="cx-card flex max-h-[72vh] min-h-[20rem] flex-col overflow-hidden xl:col-span-5">
           <div className="cx-card-head">
             <h2 className="cx-card-title"><IconInbox className="h-4.5 w-4.5 text-[var(--cx-teal)]" />运行实况</h2>
             <span className="cx-pill cx-pill--idle">{events.length} 条记录</span>
@@ -185,7 +194,7 @@ export function MissionControlView({ workspace, binding, role }: {
             />
           </div>
         </section>
-        <section className="cx-card flex max-h-[72vh] min-h-[20rem] flex-col overflow-hidden xl:col-span-5">
+        <section className="cx-card flex max-h-[72vh] min-h-[20rem] flex-col overflow-hidden xl:col-span-4" data-testid="output-detail-panel">
           <div className="cx-card-head">
             <h2 className="cx-card-title"><IconTerminal className="h-4.5 w-4.5 text-[var(--cx-teal)]" />输出详情</h2>
             {selectedEvent ? (

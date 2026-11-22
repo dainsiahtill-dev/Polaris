@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EngineeringEvent, EngineeringRunSnapshot } from '@/services/api.types';
 import { MissionControlView } from './MissionControlView';
@@ -85,8 +85,9 @@ describe('MissionControlView', () => {
     fireEvent.click(screen.getByTestId('story-tool-2'));
     expect(screen.getByText('工具 · execute_command')).toBeInTheDocument();
     expect(screen.getByText('检查未通过')).toBeInTheDocument();
-    expect(screen.getByText(/FAIL playback/)).toBeInTheDocument();
-    expect(screen.getByText('检查未通过，已回到修复流程')).toBeInTheDocument();
+    const detail = within(screen.getByTestId('output-detail-panel'));
+    expect(detail.getByText(/FAIL playback/)).toBeInTheDocument();
+    expect(detail.getByText('检查未通过，已回到修复流程')).toBeInTheDocument();
   });
 
   it('switches to acceptance title and banner once the project is accepted', () => {
