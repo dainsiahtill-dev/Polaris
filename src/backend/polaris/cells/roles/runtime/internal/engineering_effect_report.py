@@ -79,6 +79,13 @@ def build_effect_report(run: Mapping[str, Any], events: Sequence[Mapping[str, An
     )
     verifications = [event for event in events if event.get("kind") == "verification_completed"]
     passed = sum(1 for event in verifications if event["payload"].get("verification") == "passed")
+    executions = [
+        event["payload"]
+        for event in events
+        if event.get("kind") == "validation_execution" and isinstance(event["payload"].get("validation_key"), str)
+    ]
+    unique_keys = {payload["validation_key"] for payload in executions}
+    replayable_requests = max(0, len(executions) - len(unique_keys))
     return {
         "schema_version": "contextos.effect_report.v1",
         "session_id": run.get("session_id"),
@@ -95,4 +102,7 @@ def build_effect_report(run: Mapping[str, Any], events: Sequence[Mapping[str, An
         "provider_transport_failures": transport_failures,
         "verification_attempts": len(verifications),
         "verification_passed": passed,
+        "validation_executions": len(executions),
+        "unique_validation_keys": len(unique_keys),
+        "replayable_validation_requests": replayable_requests,
     }

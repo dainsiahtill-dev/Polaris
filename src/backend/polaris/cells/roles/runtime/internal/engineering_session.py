@@ -1237,6 +1237,34 @@ class EngineeringSessionStore:
                 (projected, self._json(payload["checks"]), time.time(), session_id),
             )
             self._append_event(connection, session_id, kind="verification_completed", role="director", payload=payload)
+            try:
+                from polaris.cells.roles.runtime.internal.engineering_validation_fingerprint import (
+                    build_validation_execution,
+                    validation_key,
+                )
+
+                commands = [str(command) for command in cast("list[str]", payload["verification_commands"])]
+                key = validation_key(
+                    commands=commands,
+                    workspace_revision=workspace_revision,
+                    input_binding=input_binding,
+                )
+                self._append_event(
+                    connection,
+                    session_id,
+                    kind="validation_execution",
+                    role="director",
+                    payload=build_validation_execution(
+                        validation_key=key,
+                        commands=commands,
+                        workspace_revision=workspace_revision,
+                        verification=projected,
+                        checks=checks,
+                    ),
+                )
+            except (TypeError, ValueError):
+                # Measurement must never break a durable verification record.
+                pass
         return cast("bool", (current))
 
     def continue_role(self, session_id: str, *, role: str, feedback: str) -> None:
