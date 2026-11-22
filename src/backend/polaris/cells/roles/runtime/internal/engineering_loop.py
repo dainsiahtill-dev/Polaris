@@ -1370,11 +1370,7 @@ async def run_engineering_loop(
                             role="resident_agi",
                             payload={**refreshed, "reassessed": True},
                         )
-                if (
-                    resident_runtime.idle
-                    and fingerprint != resident_profile_fingerprint
-                    and turn_seq % 8 == 0
-                ):
+                if resident_runtime.idle and fingerprint != resident_profile_fingerprint and turn_seq % 8 == 0:
                     resident_runtime.start(facts_for_decision(command.workspace, journal_events, run_now))
                 resident_stage = stage or resident_stage
                 bound_capabilities = (resident_decision or {}).get("capabilities") or []

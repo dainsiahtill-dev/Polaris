@@ -52,9 +52,7 @@ def test_old_failed_command_folds_without_current_dependency(monkeypatch: pytest
         messages.append(_command_message(exit_code=1 if index == 0 else 0))
     folded = fold_file_card_previews(
         messages,
-        semantic_summaries={
-            "command:abc": {"summary": "该命令较早执行，输出已超出当前关注窗口，可按证据引用取回。"}
-        },
+        semantic_summaries={"command:abc": {"summary": "该命令较早执行，输出已超出当前关注窗口，可按证据引用取回。"}},
     )
     first = next(message for message in folded if message["role"] == "tool")
     assert json.loads(first["content"])["command_card"]["fold_state"] == "FOLDED"

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
 from polaris.cells.roles.runtime.internal.engineering_resident_agi import (
     VALID_TYPES,
+    ResidentAGIRuntime,
     _normalize_decision,
     collect_signals,
 )
@@ -49,36 +51,45 @@ def test_valid_types_cover_expected_families() -> None:
     assert {"web", "rust", "go", "python", "reverse_engineering", "generic"} <= VALID_TYPES
 
 
-def test_runtime_poll_consumes_a_finished_decision_and_start_is_gated() -> None:
-    """A finished decision is returned once; a fresh one must be scheduled."""
+class _InstantPool:
+    def _post(self, request: dict[str, object]) -> str:
+        return json.dumps({"project_type": "web", "reason": "signals"})
 
-    import asyncio
 
-    from polaris.cells.roles.runtime.internal.engineering_resident_agi import ResidentAGIRuntime
+async def _wait_done(runtime: ResidentAGIRuntime) -> None:
+    for _ in range(200):
+        if runtime.done:
+            return
+        await asyncio.sleep(0.01)
 
-    class _Pool:
-        def _post(self, request: dict[str, object]) -> str:
-            return json.dumps({"project_type": "web", "reason": "signals"})
+
+def test_poll_returns_a_finished_decision_once() -> None:
+    """A finished decision is consumed: the caller must not re-read it forever."""
 
     async def scenario() -> None:
-        runtime = ResidentAGIRuntime(_Pool())  # type: ignore[arg-type]
-        assert runtime.idle is True
+        runtime = ResidentAGIRuntime(_InstantPool())  # type: ignore[arg-type]
+        assert runtime.idle
+        scheduled = runtime.start({"signals": ["web:package.json"]})
+        assert scheduled is True
+        await _wait_done(runtime)
+        assert runtime.poll() is not None
+        assert runtime.poll() is None
+        assert runtime.idle
+
+    asyncio.run(scenario())
+
+
+def test_start_never_replaces_an_existing_job() -> None:
+    """Neither an in-flight nor a finished-but-unconsumed job is replaced."""
+
+    async def scenario() -> None:
+        runtime = ResidentAGIRuntime(_InstantPool())  # type: ignore[arg-type]
         assert runtime.start({"signals": ["web:package.json"]}) is True
-        assert runtime.idle is False
-        # A decision still in flight is never abandoned for a newer request.
         assert runtime.start({"signals": []}) is False
-        for _ in range(200):
-            if runtime.done:
-                break
-            await asyncio.sleep(0.01)
-        # A finished-but-unconsumed job is not idle: replacing it would throw away
-        # a decision the run already paid for.
-        assert runtime.done and runtime.idle is False
+        await _wait_done(runtime)
+        idle_after_done = runtime.idle
+        assert idle_after_done is False
         assert runtime.start({"signals": []}) is False
         assert runtime.poll() is not None
-        # Consumed: without a new start the caller must not re-read the stale
-        # first decision forever.
-        assert runtime.poll() is None
-        assert runtime.idle is True
 
     asyncio.run(scenario())

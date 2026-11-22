@@ -94,7 +94,7 @@ const compressionEvents: EngineeringEvent[] = [
 
 describe('ContextOSNavigator', () => {
   it('renders the live structure rail with fold legend and node counts', () => {
-    render(<ContextOSNavigator events={events} workspace="/ws" />);
+    render(<ContextOSNavigator events={events} />);
     expect(screen.getByTestId('contextos-navigator')).toBeInTheDocument();
     expect(screen.getByTestId('nav-node-working_state')).toBeInTheDocument();
     expect(screen.getByTestId('nav-node-card:call_1')).toBeInTheDocument();
@@ -104,7 +104,7 @@ describe('ContextOSNavigator', () => {
 
   it('selects a node and links its evidence back to the final request', () => {
     const onOpenContext = vi.fn();
-    render(<ContextOSNavigator events={events} workspace="/ws" onOpenContext={onOpenContext} />);
+    render(<ContextOSNavigator events={events} onOpenContext={onOpenContext} />);
     fireEvent.click(screen.getByTestId('nav-node-card:call_1'));
     expect(screen.getByTestId('contextos-nav-detail')).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('contextos-nav-evidence-link'));
@@ -113,7 +113,7 @@ describe('ContextOSNavigator', () => {
 
   it('shows memory cards and live cost metrics', () => {
     const onOpenContext = vi.fn();
-    render(<ContextOSNavigator events={events} workspace="/ws" onOpenContext={onOpenContext} />);
+    render(<ContextOSNavigator events={events} onOpenContext={onOpenContext} />);
     fireEvent.click(screen.getByTestId('contextos-nav-tab-memory'));
     expect(screen.getByTestId('contextos-nav-memory')).toBeInTheDocument();
     expect(screen.getByTestId('contextos-nav-memory')).toHaveTextContent('Node 项目');
@@ -131,7 +131,7 @@ describe('ContextOSNavigator', () => {
   });
 
   it('shows the real host compression note and the working-set numbers', () => {
-    render(<ContextOSNavigator events={compressionEvents} workspace="/ws" />);
+    render(<ContextOSNavigator events={compressionEvents} />);
     expect(screen.getByTestId('contextos-nav-compression-chip')).toHaveTextContent('丢弃 69 条工具轮次');
     fireEvent.click(screen.getByTestId('contextos-nav-tab-metrics'));
     const note = screen.getByTestId('contextos-nav-compression');
@@ -142,7 +142,7 @@ describe('ContextOSNavigator', () => {
   });
 
   it('distinguishes distiller folding from structural fallback in the node detail', () => {
-    render(<ContextOSNavigator events={compressionEvents} workspace="/ws" />);
+    render(<ContextOSNavigator events={compressionEvents} />);
     fireEvent.click(screen.getByTestId('nav-node-card:call_2'));
     const detail = screen.getByTestId('contextos-nav-detail');
     expect(detail).toHaveTextContent('摘要来源 · 蒸馏折叠（model_inference）');
@@ -151,7 +151,7 @@ describe('ContextOSNavigator', () => {
   });
 
   it('switches to the opt-in 3D exploration view', () => {
-    render(<ContextOSNavigator events={events} workspace="/ws" />);
+    render(<ContextOSNavigator events={events} />);
     fireEvent.click(screen.getByTestId('contextos-nav-view-3d'));
     expect(screen.getByTestId('contextos-navigator')).toHaveAttribute('data-view', '3d');
     expect(screen.getByTestId('nav-3d')).toBeInTheDocument();

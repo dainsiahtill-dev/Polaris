@@ -728,9 +728,7 @@ def compress_native_tool_history(
             else json.dumps(message.get("content"), ensure_ascii=False),
             content_type,
         ) + (
-            TokenEstimator.estimate(
-                json.dumps(message["tool_calls"], ensure_ascii=False), content_type=content_type
-            )
+            TokenEstimator.estimate(json.dumps(message["tool_calls"], ensure_ascii=False), content_type=content_type)
             if message.get("tool_calls")
             else 0
         )

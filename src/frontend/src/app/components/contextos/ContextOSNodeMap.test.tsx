@@ -49,6 +49,7 @@ describe('ContextOSNodeMap', () => {
       workspace: '/ws',
       run_id: 'run',
       call_id: 'run:qa:9',
+      memory_cards: [],
       run_cards: [{ id: 'turn-1', seq: 1, role: 'qa', phase: 'qa_probe', verification: 'passed', workspace_revision: 7, child_ids: ['event-3'] }],
       nodes: [{
         id: 'event-3', parent_id: 'turn-1', seq: 3, turn: 1, kind: 'tool_log', title: 'execute_command', summary: 'done', role: 'qa',
