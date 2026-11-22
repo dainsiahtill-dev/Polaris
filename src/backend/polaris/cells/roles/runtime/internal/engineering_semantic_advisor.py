@@ -237,6 +237,9 @@ class RemoteSemanticAdvisor:
                             :12
                         ]
                         self.last_normalization.append("evidence_refs=host_whitelist")
+                    refs = payload.get("evidence_refs")
+                    if isinstance(refs, list):
+                        payload["evidence_refs"] = list(dict.fromkeys(str(ref) for ref in refs))[:12]
                     if "uncertain" not in payload:
                         payload["uncertain"] = True
                         self.last_normalization.append("uncertain=host_conservative_true")
