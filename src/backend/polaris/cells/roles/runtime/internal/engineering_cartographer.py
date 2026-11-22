@@ -87,15 +87,34 @@ class CartographerPool:
 
 
 def cartographer_pool_from_environment() -> CartographerPool | None:
-    """Bind the cartographer role from the unified LLM config."""
+    """Bind the cartographer role, falling back to the advisor endpoint.
+
+    Any instance must be able to draw a RunCard. When the cartographer role is
+    absent from the unified config, reuse the advisor provider so Bench and
+    regular projects behave identically.
+    """
 
     path = Path(__import__("os").environ.get("KERNELONE_LLM_CONFIG", "/home/dains/.polaris/config/llm/llm_config.json"))
-    if not path.is_file():
-        return None
     try:
-        config = json.loads(path.read_text(encoding="utf-8"))
-        role = config["roles"]["cartographer"]
-        provider = config["providers"][str(role["provider_id"])]
+        config = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    except (OSError, json.JSONDecodeError):
+        config = {}
+    role = (config.get("roles") or {}).get("cartographer")
+    if role is None:
+        raw = __import__("os").environ.get("KERNELONE_CONTEXTOS_SEMANTIC_ADVISOR_CONFIG", "").strip()
+        if not raw:
+            return None
+        try:
+            first = json.loads(raw)[0]
+            return CartographerPool(
+                base_url=str(first["base_url"]),
+                api_key="EMPTY",
+                model=str(first["model"]),
+            )
+        except (KeyError, TypeError, ValueError, IndexError, json.JSONDecodeError):
+            return None
+    try:
+        provider = (config.get("providers") or {})[str(role["provider_id"])]
         api_key = str(provider.get("api_key") or "")
         if not api_key:
             return None
@@ -104,7 +123,7 @@ def cartographer_pool_from_environment() -> CartographerPool | None:
             api_key=api_key,
             model=str(role["model"]),
         )
-    except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError):
+    except (KeyError, TypeError, ValueError):
         return None
 
 
