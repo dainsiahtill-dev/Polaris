@@ -219,22 +219,28 @@ export function ToolTimeline({ events, selectedSeq, onSelect, onOpenContext, emp
         }
         if (kind === 'advisor') {
           const summaries = Array.isArray(event.payload.summaries) ? event.payload.summaries : [];
-          const nodes = summaries
-            .map((item) => {
-              const record = item as Record<string, unknown>;
-              const node = textOf(record.node_id);
-              const summary = textOf(record.summary);
-              return summary ? `${node}：${summary}` : node;
-            })
-            .filter(Boolean)
-            .join('；');
+          const lines = summaries.map((item) => {
+            const record = item as Record<string, unknown>;
+            const node = textOf(record.node_id) || '节点';
+            const summary = textOf(record.summary) || '（无摘要）';
+            return `${node} → ${summary}`;
+          });
           return (
             <article key={event.seq} data-testid={`story-advisor-${event.seq}`} className="rounded-xl border border-[rgba(31,122,140,.28)] bg-[rgba(31,122,140,.05)] px-3 py-2">
               <div className="flex items-center gap-2">
                 <IconGauge className="h-4 w-4 text-[#1f7a8c]" />
-                <p className="min-w-0 flex-1 truncate text-xs text-[var(--cx-ink)]">蒸馏器 · 节点摘要 {nodes || '处理中'}</p>
+                <p className="text-xs font-semibold text-[var(--cx-ink)]">蒸馏器 · 蒸馏内容</p>
                 <span className="text-[0.65rem] text-[var(--cx-ink-faint)]">{textOf(event.payload.validation_result)}</span>
               </div>
+              {lines.length === 0 ? (
+                <p className="mt-1 text-[0.7rem] text-[var(--cx-ink-dim)]">暂无蒸馏结果</p>
+              ) : (
+                <ul className="mt-1 space-y-0.5">
+                  {lines.map((line, index) => (
+                    <li key={index} className="text-[0.7rem] leading-relaxed text-[var(--cx-ink)]">{line}</li>
+                  ))}
+                </ul>
+              )}
             </article>
           );
         }
