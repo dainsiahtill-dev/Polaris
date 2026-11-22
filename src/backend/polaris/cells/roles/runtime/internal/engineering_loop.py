@@ -1115,6 +1115,13 @@ async def run_engineering_loop(
                 if epoch_refs.node_ids:
                     epoch_runtime.schedule(epoch_request, epoch_refs, fingerprint=epoch_fingerprint)
             cartographer_card: dict[str, Any] | None = None
+            if cartographer_runtime is None and turn_seq == 1:
+                store.append_event(
+                    command.session_id,
+                    kind="cartographer_disabled",
+                    role="cartographer",
+                    payload={"reason": "pool_unavailable"},
+                )
             if cartographer_runtime is not None:
                 from polaris.cells.roles.runtime.internal.engineering_cartographer import (
                     current_facts,
@@ -1131,6 +1138,17 @@ async def run_engineering_loop(
                     cartographer_events = store.load_events(command.session_id)
                     facts = current_facts(run_now, cartographer_events)
                     validated = validate_run_card_narrative(parsed, facts, allowed_refs=facts["evidence_refs"])
+                    if validated is None:
+                        store.append_event(
+                            command.session_id,
+                            kind="cartographer_rejected",
+                            role="cartographer",
+                            payload={
+                                "reason": "narrative_disagrees_with_facts",
+                                "observed_phase": facts.get("phase"),
+                                "returned_phase": (parsed or {}).get("phase") if isinstance(parsed, dict) else None,
+                            },
+                        )
                     if validated is not None:
                         cartographer_card = {**validated, "agent_role": "cartographer"}
                         key = f"{cartographer_runtime.fingerprint}:{json.dumps(validated, sort_keys=True, ensure_ascii=False)}"
@@ -1147,6 +1165,12 @@ async def run_engineering_loop(
                         run_now, store.load_events(command.session_id)
                     )
                     cartographer_runtime.schedule(run_card_request, fingerprint=run_card_fingerprint)
+                    store.append_event(
+                        command.session_id,
+                        kind="cartographer_scheduled",
+                        role="cartographer",
+                        payload={"turn_seq": turn_seq},
+                    )
             first_verification_due = False
             if (
                 command.role == "director"
