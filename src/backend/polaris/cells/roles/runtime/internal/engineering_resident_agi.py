@@ -23,6 +23,15 @@ from polaris.cells.roles.runtime.internal.engineering_project_profile import (
 
 SCHEMA_VERSION = "resident_agi_decision.v1"
 VALID_TYPES = {kind for _name, kind, _patterns in _SIGNATURES} | {"generic"}
+VALID_STAGES = {"DIAGNOSE", "EDIT", "VERIFY", "RETEST", "ANY"}
+# Capabilities that are only meaningful for the acceptance stage.
+_STAGE_CAPABILITIES = {
+    "DIAGNOSE": {"read_file", "repo_rg", "repo_tree", "read_command_result", "execute_command"},
+    "EDIT": {"write_file", "edit_file", "read_file", "execute_command"},
+    "VERIFY": {"verify_project", "browser_observe", "execute_command", "read_command_result"},
+    "RETEST": {"verify_project", "browser_observe", "execute_command"},
+    "ANY": set(),
+}
 _VALIDATION_RE = re.compile(r"[^a-z0-9_]+")
 
 
@@ -39,10 +48,11 @@ class ResidentAGIPool:
     def _post(self, request: dict[str, Any]) -> str:
         system = (
             "You are the Resident AGI for Polaris. Decide the project type and the capability binding "
-            "from the supplied repository signals. Return ONLY one JSON object with schema_version, "
-            "project_type, capabilities, mcp_hints, guidance, reason. "
+            "for the supplied engineering stage from the repository signals. Return ONLY one JSON object with "
+            "schema_version, project_type, stage, capabilities, mcp_hints, guidance, reason. "
             "project_type must be one of: web, node, python, rust, go, java, cpp, embedded, "
-            "reverse_engineering, generic. State fields must match the signals. "
+            "reverse_engineering, generic. stage must be one of: DIAGNOSE, EDIT, VERIFY, RETEST, ANY. "
+            "capabilities must be host tool names relevant to the stage. "
             "Do not invent files or tools. Keep reason within 200 characters and guidance within 200 characters."
         )
         body = {
@@ -97,6 +107,21 @@ def resident_agi_pool_from_environment() -> ResidentAGIPool | None:
         return None
 
 
+def detect_stage(events: Sequence[Mapping[str, Any]], run: Mapping[str, Any]) -> str:
+    """Deterministic stage inference from durable facts."""
+
+    verification = str(run.get("verification") or "not_run")
+    recent = events[-12:]
+    tools = [event["payload"].get("tool") for event in recent if event.get("kind") == "tool_observed"]
+    if "verify_project" in tools:
+        return "VERIFY"
+    if verification in {"passed", "failed"}:
+        return "RETEST"
+    if "write_file" in tools or "edit_file" in tools:
+        return "EDIT"
+    return "DIAGNOSE"
+
+
 def collect_signals(workspace: Path) -> dict[str, Any]:
     """Deterministic signal collection; the model makes the decision."""
 
@@ -113,6 +138,20 @@ def collect_signals(workspace: Path) -> dict[str, Any]:
         "signals": signals[:24],
         "has_package_json": (root / "package.json").exists(),
         "has_index_html": (root / "index.html").exists(),
+    }
+
+
+def facts_for_decision(workspace: Path, events: Sequence[Mapping[str, Any]], run: Mapping[str, Any]) -> dict[str, Any]:
+    stage = detect_stage(events, run)
+    signals = collect_signals(workspace)
+    return {
+        "working_state": {
+            "verification": run.get("verification"),
+            "workspace_revision": run.get("workspace_revision"),
+            "status": run.get("status"),
+            "stage": stage,
+        },
+        **signals,
     }
 
 
@@ -158,10 +197,15 @@ def _normalize_decision(payload: object, signals: Mapping[str, Any]) -> dict[str
     project_type = _VALIDATION_RE.sub("_", project_type).strip("_")
     if project_type not in VALID_TYPES:
         return None
+    stage = str(data.get("stage") or "ANY").strip().upper()
+    if stage not in VALID_STAGES:
+        stage = "ANY"
     capabilities = data.get("capabilities")
     if not isinstance(capabilities, list):
         return None
-    capabilities = _map_capabilities([str(item) for item in capabilities][:8])
+    mapped = _map_capabilities([str(item) for item in capabilities][:8])
+    allowed = _STAGE_CAPABILITIES.get(stage) or _STAGE_CAPABILITIES["ANY"]
+    capabilities = [item for item in mapped if not allowed or item in allowed]
     mcp_hints = data.get("mcp_hints")
     mcp_hints = [str(item)[:80] for item in mcp_hints][:8] if isinstance(mcp_hints, list) else []
     guidance = str(data.get("guidance") or "").strip()
@@ -171,6 +215,7 @@ def _normalize_decision(payload: object, signals: Mapping[str, Any]) -> dict[str
     return {
         "schema_version": SCHEMA_VERSION,
         "project_type": project_type,
+        "stage": stage,
         "capabilities": capabilities,
         "mcp_hints": mcp_hints,
         "guidance": guidance,

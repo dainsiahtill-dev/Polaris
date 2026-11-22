@@ -799,6 +799,8 @@ async def run_engineering_loop(
     epoch_reported: set[str] = set()
     cartographer_reported: set[str] = set()
     last_injection_fingerprint = ""
+    capability_last_used: dict[str, int] = {}
+    resident_stage: str | None = None
     tools = EngineeringTools(
         command.workspace,
         scope,
@@ -888,21 +890,32 @@ async def run_engineering_loop(
         profile_messages: list[dict[str, Any]] = []
         resident_decision: dict[str, Any] | None = None
         resident_runtime = None
-        if os.environ.get("KERNELONE_RESIDENT_AGI", "1").strip().lower() not in {
-            "0",
-            "false",
-            "off",
+        if os.environ.get("KERNELONE_RESIDENT_AGI", "0").strip().lower() in {
+            "1",
+            "true",
+            "on",
         }:
             from polaris.cells.roles.runtime.internal.engineering_resident_agi import (
                 ResidentAGIRuntime,
                 collect_signals,
+                facts_for_decision,
                 resident_agi_pool_from_environment,
             )
 
             resident_pool = resident_agi_pool_from_environment()
             if resident_pool is not None:
                 resident_runtime = ResidentAGIRuntime(resident_pool)
-                resident_runtime.start(collect_signals(command.workspace))
+                resident_runtime.start(
+                    facts_for_decision(
+                        command.workspace,
+                        [],
+                        {
+                            "verification": "not_run",
+                            "workspace_revision": 0,
+                            "status": "running",
+                        },
+                    )
+                )
         if resident_runtime is not None:
             from polaris.cells.roles.runtime.internal.engineering_resident_agi import _normalize_decision
 
@@ -1183,6 +1196,60 @@ async def run_engineering_loop(
                     role=command.role,
                     payload={"streak": stall_streak, "repeated_reads": repeated_reads, "turn_seq": turn_seq},
                 )
+            if resident_runtime is not None and resident_decision is not None:
+                from polaris.cells.roles.runtime.internal.engineering_resident_agi import (
+                    _normalize_decision,
+                    detect_stage,
+                    facts_for_decision,
+                )
+
+                stage = detect_stage(journal_events, run_now)
+                if stage != resident_stage and turn_seq % 8 == 0:
+                    raw = resident_runtime.poll()
+                    if raw:
+                        refreshed = _normalize_decision(
+                            raw, facts_for_decision(command.workspace, journal_events, run_now)
+                        )
+                        if refreshed:
+                            resident_decision = refreshed
+                            resident_stage = stage
+                            store.append_event(
+                                command.session_id,
+                                kind="resident_agi_decision",
+                                role="resident_agi",
+                                payload={**refreshed, "reassessed": True},
+                            )
+                resident_stage = stage or resident_stage
+                bound_capabilities = (resident_decision or {}).get("capabilities") or []
+                for event in journal_events[-40:]:
+                    if event.get("kind") != "tool_observed":
+                        continue
+                    tool = event["payload"].get("tool")
+                    if tool in bound_capabilities:
+                        capability_last_used[tool] = turn_seq
+                idle_capabilities = [
+                    capability
+                    for capability in (resident_decision or {}).get("capabilities") or []
+                    if capability_last_used.get(capability, -(10**9)) <= turn_seq - 5
+                ]
+                if idle_capabilities:
+                    request_messages = [
+                        {
+                            "role": "system",
+                            "content": (
+                                "能力使用提醒：已装配但未使用的能力 "
+                                + "、".join(str(item) for item in idle_capabilities[:4])
+                                + "。请说明为何不使用，或在合适的下一步实际使用。"
+                            ),
+                        },
+                        *request_messages,
+                    ]
+                    store.append_event(
+                        command.session_id,
+                        kind="capability_usage_reminder",
+                        role="resident_agi",
+                        payload={"idle_capabilities": idle_capabilities, "turn_seq": turn_seq},
+                    )
             structured_repairs = (
                 _active_structured_repairs(store.load_events(command.session_id))
                 if os.environ.get("KERNELONE_ENGINEERING_STRUCTURED_REPAIR", "1").strip().lower()
