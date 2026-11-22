@@ -1137,7 +1137,16 @@ async def run_engineering_loop(
                         parsed = None
                     cartographer_events = store.load_events(command.session_id)
                     facts = current_facts(run_now, cartographer_events)
-                    validated = validate_run_card_narrative(parsed, facts, allowed_refs=facts["evidence_refs"])
+                    try:
+                        validated = validate_run_card_narrative(parsed, facts, allowed_refs=facts["evidence_refs"])
+                    except NarrativeRejected as rejection:
+                        validated = None
+                        store.append_event(
+                            command.session_id,
+                            kind="cartographer_rejected",
+                            role="cartographer",
+                            payload={"reason": rejection.code},
+                        )
                     if validated is None:
                         store.append_event(
                             command.session_id,
