@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -41,16 +42,84 @@ def _card_payload(payload: object) -> tuple[dict[str, Any] | None, bool]:
     return None, False
 
 
-def _apply_fold_summary(card: dict[str, Any], summaries: Mapping[str, Mapping[str, Any]] | None, node_id: str) -> bool:
+_STOCK_SUMMARY_MARKERS = {"completed", "done", "ok", "success", "failed", "command failed"}
+
+
+def _summary_is_informative(text: object, original: str) -> bool:
+    """A fold must replace payload with an explanation, never with a fragment.
+
+    Distiller output and card summaries can degenerate into a stock status
+    (``completed``) or a verbatim excerpt of the payload. Folding on either
+    destroys evidence without buying any understanding, so it is refused.
+    """
+
+    if not isinstance(text, str):
+        return False
+    stripped = text.strip()
+    if len(stripped) < 4:
+        return False
+    if stripped.lower().rstrip(".") in _STOCK_SUMMARY_MARKERS:
+        return False
+    normalized = re.sub(r"\s+", " ", stripped).lower()
+    original_normalized = re.sub(r"\s+", " ", original).lower()
+    return not (original_normalized and normalized in original_normalized)
+
+
+def _choose_fold_summary(
+    card: dict[str, Any],
+    summaries: Mapping[str, Mapping[str, Any]] | None,
+    node_id: str,
+    *,
+    original: str,
+) -> tuple[str, str] | None:
+    """Prefer the distiller summary; fall back to the card's own only if it explains."""
+
     summary = (summaries or {}).get(node_id)
-    if summary is None:
+    candidates: list[tuple[object, str]] = []
+    if isinstance(summary, dict):
+        candidates.append((summary.get("summary"), "model_inference"))
+    candidates.append((card.get("summary"), "card_default"))
+    for text, kind in candidates:
+        if _summary_is_informative(text, original):
+            return str(text), kind
+    return None
+
+
+def _fold_file_card(
+    card: dict[str, Any],
+    path: str,
+    *,
+    summaries: Mapping[str, Mapping[str, Any]] | None,
+    reason: str,
+    original: str,
+) -> bool:
+    """Fold a FileCard only when an informative summary replaces its preview."""
+
+    if not _apply_fold_summary(card, summaries, path, original=original):
         return False
-    text = summary.get("summary")
-    if not isinstance(text, str) or not text.strip():
+    card["content_preview"] = ""
+    card["content_bounds"] = {**card.get("content_bounds", {}), "truncated": True}
+    card["fold_state"] = "FOLDED"
+    card["fold_reason"] = reason
+    return True
+
+
+def _apply_fold_summary(
+    card: dict[str, Any],
+    summaries: Mapping[str, Mapping[str, Any]] | None,
+    node_id: str,
+    *,
+    original: str = "",
+) -> bool:
+    chosen = _choose_fold_summary(card, summaries, node_id, original=original)
+    if chosen is None:
         return False
+    text, kind = chosen
+    entry = (summaries or {}).get(node_id)
+    summary: Mapping[str, Any] = entry if isinstance(entry, dict) else {}
     card["source_summary"] = card.get("summary")
     card["summary"] = text
-    card["summary_kind"] = "model_inference"
+    card["summary_kind"] = kind
     card["summary_evidence_refs"] = summary.get("evidence_refs") or []
     card["summary_uncertain"] = summary.get("uncertain", True)
     card["summary_reason"] = summary.get("reason") or ""
@@ -198,12 +267,22 @@ def fold_file_card_previews(
                 if already_folded:
                     command_card["fold_state"] = "FOLDED"
                 elif activity_age >= fold_window and large_payload and not command_card.get("pin_reason"):
-                    _apply_fold_summary(command_card, semantic_summaries, str(reference))
-                    command_card["stdout_preview"] = ""
-                    command_card["stderr_preview"] = ""
-                    command_card["fold_state"] = "FOLDED"
-                    command_card["fold_reason"] = "outside_current_focus"
-                    command_card["last_fold_activity_seq"] = activity_indices[index]
+                    payload_text = (
+                        str(command_card.get("stdout_preview") or "")
+                        + "\n"
+                        + str(command_card.get("stderr_preview") or "")
+                    )
+                    if _apply_fold_summary(command_card, semantic_summaries, str(reference), original=payload_text):
+                        command_card["stdout_preview"] = ""
+                        command_card["stderr_preview"] = ""
+                        command_card["fold_state"] = "FOLDED"
+                        command_card["fold_reason"] = "outside_current_focus"
+                        command_card["last_fold_activity_seq"] = activity_indices[index]
+                    else:
+                        # No explanation available: keep the payload rather than
+                        # discarding evidence for no understanding.
+                        command_card["fold_state"] = "ACTIVE"
+                        command_card["fold_reason"] = None
                 else:
                     command_card["fold_state"] = "ACTIVE"
                 if nested and isinstance(payload, dict):
@@ -242,29 +321,44 @@ def fold_file_card_previews(
                 elif small_payload:
                     card["fold_state"] = "ACTIVE"
                 elif duplicate and activity_age >= fold_window and not protected:
-                    _apply_fold_summary(card, semantic_summaries, path)
-                    card["content_preview"] = ""
-                    card["content_bounds"] = {**card.get("content_bounds", {}), "truncated": True}
-                    card["fold_state"] = "FOLDED"
-                    card["fold_reason"] = "superseded_by_newer_card"
-                    card["last_fold_activity_seq"] = activity_indices[index]
+                    if _fold_file_card(
+                        card,
+                        path,
+                        summaries=semantic_summaries,
+                        reason="superseded_by_newer_card",
+                        original=str(card.get("content_preview") or ""),
+                    ):
+                        card["last_fold_activity_seq"] = activity_indices[index]
+                    else:
+                        card["fold_state"] = "ACTIVE"
+                        card["fold_reason"] = None
                 elif path in forced_paths and not protected and not small_payload and not already_folded:
-                    _apply_fold_summary(card, semantic_summaries, path)
-                    card["content_preview"] = ""
-                    card["content_bounds"] = {**card.get("content_bounds", {}), "truncated": True}
-                    card["fold_state"] = "FOLDED"
-                    card["fold_reason"] = "stalled_repeated_read"
-                    card["pin_reason"] = "stalled_repeated_read"
-                    card["last_fold_activity_seq"] = activity_indices[index]
+                    if _fold_file_card(
+                        card,
+                        path,
+                        summaries=semantic_summaries,
+                        reason="stalled_repeated_read",
+                        original=str(card.get("content_preview") or ""),
+                    ):
+                        card["pin_reason"] = "stalled_repeated_read"
+                        card["last_fold_activity_seq"] = activity_indices[index]
+                    else:
+                        card["fold_state"] = "ACTIVE"
+                        card["fold_reason"] = None
                 elif (rehydrated and activity_age < _rehydration_grace_activities()) or (activity_age < fold_window):
                     card["fold_state"] = "ACTIVE"
                 elif not protected:
-                    _apply_fold_summary(card, semantic_summaries, path)
-                    card["content_preview"] = ""
-                    card["content_bounds"] = {**card.get("content_bounds", {}), "truncated": True}
-                    card["fold_state"] = "FOLDED"
-                    card["fold_reason"] = "outside_current_focus"
-                    card["last_fold_activity_seq"] = activity_indices[index]
+                    if _fold_file_card(
+                        card,
+                        path,
+                        summaries=semantic_summaries,
+                        reason="outside_current_focus",
+                        original=str(card.get("content_preview") or ""),
+                    ):
+                        card["last_fold_activity_seq"] = activity_indices[index]
+                    else:
+                        card["fold_state"] = "ACTIVE"
+                        card["fold_reason"] = None
                 else:
                     card["fold_state"] = "ACTIVE"
                 if nested and isinstance(payload, dict):

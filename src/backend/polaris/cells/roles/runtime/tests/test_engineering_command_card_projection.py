@@ -50,9 +50,37 @@ def test_old_failed_command_folds_without_current_dependency(monkeypatch: pytest
     for index in range(11):
         messages.append({"role": "assistant", "content": f"step-{index}"})
         messages.append(_command_message(exit_code=1 if index == 0 else 0))
-    folded = fold_file_card_previews(messages)
+    folded = fold_file_card_previews(
+        messages,
+        semantic_summaries={
+            "command:abc": {"summary": "该命令较早执行，输出已超出当前关注窗口，可按证据引用取回。"}
+        },
+    )
     first = next(message for message in folded if message["role"] == "tool")
     assert json.loads(first["content"])["command_card"]["fold_state"] == "FOLDED"
+
+
+def test_fold_refuses_stock_or_copied_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A fold must replace payload with an explanation, not a status or an excerpt."""
+
+    monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "1")
+    messages: list[dict[str, object]] = []
+    for index in range(4):
+        messages.append({"role": "assistant", "content": f"step-{index}"})
+        messages.append(_command_message())
+    # The card's own summary is the stock status "completed" and the distiller
+    # returns a verbatim excerpt of stdout; neither explains anything.
+    for uninformative in ("completed", "xxxxxxxxxxxxxxxxxxxx"):
+        folded = fold_file_card_previews(
+            messages,
+            semantic_summaries={"command:abc": {"summary": uninformative}},
+        )
+        for message in folded:
+            if message["role"] != "tool":
+                continue
+            card = json.loads(message["content"])["command_card"]
+            assert card["fold_state"] == "ACTIVE", (uninformative, card)
+            assert card["stdout_preview"] == "x" * 1200
 
 
 def test_failed_command_current_reasoning_is_protected() -> None:

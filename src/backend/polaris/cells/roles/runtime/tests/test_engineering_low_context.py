@@ -11,8 +11,10 @@ from typing import Any, cast
 
 import pytest
 from polaris.cells.roles.runtime.internal.engineering_loop import (
+    _WORKING_SET_TOKENS_DEFAULT,
     _bounded_request_messages,
     _history_allowances,
+    _retention_fold_window,
 )
 from polaris.cells.roles.runtime.internal.engineering_state_projection import (
     working_state_facts,
@@ -29,8 +31,24 @@ from polaris.kernelone.llm.engine.token_estimator import TokenEstimator
 
 
 def test_history_allowances_tight_first_then_window_ceiling() -> None:
-    # 100000 * 0.95 - 24576 = 70424; the tight working set is the operating point.
-    assert _history_allowances(100_000) == [32_000, 70_424]
+    # The window ceiling is the window minus the output reserve; the tight
+    # working set is the configured cap clamped to that ceiling.
+    ceiling = 100_000 * 95 // 100 - (16_384 + 8_192)
+    assert ceiling == 70_424
+    assert _history_allowances(100_000) == sorted({min(_WORKING_SET_TOKENS_DEFAULT, ceiling), ceiling})
+    # With a window large enough, the configured cap is the operating point.
+    assert _history_allowances(1_000_000) == sorted({_WORKING_SET_TOKENS_DEFAULT, 1_000_000 * 95 // 100 - 24_576})
+
+
+def test_retention_fold_window_narrows_only_when_history_exceeds_the_working_set() -> None:
+    # Healthy history keeps the configured fold window.
+    assert _retention_fold_window(24, history_tokens=1_000, context_window_tokens=1_000_000) == 24
+    # History that cannot fit the retained working set is folded harder first,
+    # so distillation compresses it instead of wholesale turn dropping.
+    assert _retention_fold_window(24, history_tokens=900_000, context_window_tokens=1_000_000) == 12
+    # A disabled fold window stays disabled.
+    assert _retention_fold_window(None, history_tokens=900_000, context_window_tokens=1_000_000) is None
+    assert _retention_fold_window(0, history_tokens=900_000, context_window_tokens=1_000_000) == 0
 
 
 def test_history_allowances_honors_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -115,6 +133,15 @@ class _FakeStore:
     def load_events(self, *_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
         return []
 
+    def load_run(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {
+            "session_id": "low-context",
+            "workspace": ".",
+            "status": "running",
+            "verification": "not_run",
+            "workspace_revision": 0,
+        }
+
 
 def _long_history(turns: int, payload: str) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = [
@@ -141,7 +168,9 @@ def _long_history(turns: int, payload: str) -> list[dict[str, Any]]:
 
 def test_bounded_request_messages_caps_long_history(tmp_path: Path) -> None:
     payload = "x" * 8000
-    messages = _long_history(30, payload)
+    # Enough turns to exceed the window ceiling for a 100k window, so the
+    # compressor must elide older turns instead of shipping the full history.
+    messages = _long_history(60, payload)
     command = RoleRunCommand("low-context", "director", "Build the thing.", tmp_path)
     bounded = _bounded_request_messages(
         messages,
@@ -156,7 +185,10 @@ def test_bounded_request_messages_caps_long_history(tmp_path: Path) -> None:
     before = TokenEstimator.estimate(json.dumps(messages, ensure_ascii=False))
     after = TokenEstimator.estimate(json.dumps(bounded, ensure_ascii=False))
     assert after < before * 0.6
-    assert "上下文已压缩" in json.dumps(bounded, ensure_ascii=False)
+    note = next(message["content"] for message in bounded if "上下文已压缩" in str(message.get("content")))
+    # The model must be told the real constraint, not a false window excuse.
+    assert "有界工作集预算" in note
+    assert "模型窗口" not in note
 
 
 async def test_director_request_carries_working_state(

@@ -47,3 +47,34 @@ def test_decision_rejected_for_unknown_type() -> None:
 
 def test_valid_types_cover_expected_families() -> None:
     assert {"web", "rust", "go", "python", "reverse_engineering", "generic"} <= VALID_TYPES
+
+
+def test_runtime_poll_consumes_a_finished_decision_and_start_is_gated() -> None:
+    """A finished decision is returned once; a fresh one must be scheduled."""
+
+    import asyncio
+
+    from polaris.cells.roles.runtime.internal.engineering_resident_agi import ResidentAGIRuntime
+
+    class _Pool:
+        def _post(self, request: dict[str, object]) -> str:
+            return json.dumps({"project_type": "web", "reason": "signals"})
+
+    async def scenario() -> None:
+        runtime = ResidentAGIRuntime(_Pool())  # type: ignore[arg-type]
+        assert runtime.idle is True
+        assert runtime.start({"signals": ["web:package.json"]}) is True
+        assert runtime.idle is False
+        # A decision still in flight is never abandoned for a newer request.
+        assert runtime.start({"signals": []}) is False
+        for _ in range(200):
+            if runtime.idle:
+                break
+            await asyncio.sleep(0.01)
+        assert runtime.poll() is not None
+        # Consumed: without a new start the caller must not re-read the stale
+        # first decision forever.
+        assert runtime.poll() is None
+        assert runtime.idle is True
+
+    asyncio.run(scenario())

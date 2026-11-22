@@ -405,6 +405,27 @@ _QA_TURN_LIMIT_DEFAULT = 50
 _QA_TURN_GRACE = 5
 
 
+def _retention_fold_window(
+    fold_window: int | None,
+    *,
+    history_tokens: int,
+    context_window_tokens: int,
+) -> int | None:
+    """Narrow the fold window when the retained working set cannot hold the history.
+
+    The working-set cap drops whole turns by token budget while the fold window
+    is activity-based, so history can be discarded before the distiller ever sees
+    it. Folding harder first makes distillation the compression mechanism and
+    dropping turns the last resort.
+    """
+
+    if not fold_window:
+        return fold_window
+    if history_tokens <= _history_allowances(context_window_tokens)[0]:
+        return fold_window
+    return max(1, fold_window // 2)
+
+
 def _history_allowances(window: int) -> list[int]:
     """Ascending candidate budgets for the retained native history."""
     window_allowance = int(window * 0.95) - _WINDOW_RESERVE_TOKENS
@@ -1246,10 +1267,16 @@ async def run_engineering_loop(
             from polaris.cells.roles.runtime.internal.engineering_context_budget import context_fold_window
             from polaris.kernelone.llm.engine.token_estimator import TokenEstimator
 
-            fold_window = context_fold_window(
+            history_tokens = TokenEstimator.estimate(json.dumps(messages, ensure_ascii=False))
+            fold_window: int | None = context_fold_window(
                 limits=limits,
                 created_at=float(run_now["created_at"]),
-                current_tokens=TokenEstimator.estimate(json.dumps(messages, ensure_ascii=False)),
+                current_tokens=history_tokens,
+                context_window_tokens=context_window_tokens,
+            )
+            fold_window = _retention_fold_window(
+                fold_window,
+                history_tokens=history_tokens,
                 context_window_tokens=context_window_tokens,
             )
             journal_events = store.load_events(command.session_id)
@@ -1281,7 +1308,7 @@ async def run_engineering_loop(
                     role=command.role,
                     payload={"streak": stall_streak, "repeated_reads": repeated_reads, "turn_seq": turn_seq},
                 )
-            if resident_runtime is not None and resident_decision is not None:
+            if resident_runtime is not None:
                 from polaris.cells.roles.runtime.internal.engineering_resident_agi import (
                     _normalize_decision,
                     collect_signals,
