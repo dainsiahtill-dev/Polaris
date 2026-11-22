@@ -26,9 +26,9 @@ def test_duplicate_file_cards_keep_only_latest_preview(monkeypatch: pytest.Monke
     folded = fold_file_card_previews(
         [
             {"role": "assistant", "content": "step-1"},
-            _message("a.py", "o" * 600),
+            _message("a.py", "o" * 1200),
             {"role": "assistant", "content": "step-2"},
-            _message("a.py", "n" * 600),
+            _message("a.py", "n" * 1200),
             {"role": "assistant", "content": "step-3"},
             _message("b.py", "keep"),
             {"role": "assistant", "content": "step-4"},
@@ -40,7 +40,7 @@ def test_duplicate_file_cards_keep_only_latest_preview(monkeypatch: pytest.Monke
     tool_messages = [message for message in folded if message["role"] == "tool"]
     first, second, third, _fourth = (json.loads(message["content"])["file_card"] for message in tool_messages)
     assert first["content_preview"] == "" and first["fold_state"] == "FOLDED"
-    assert second["content_preview"] == "n" * 600 and second["fold_state"] == "ACTIVE"
+    assert second["content_preview"] == "n" * 1200 and second["fold_state"] == "ACTIVE"
     assert third["content_preview"] == "keep" and third["fold_state"] == "ACTIVE"
 
 

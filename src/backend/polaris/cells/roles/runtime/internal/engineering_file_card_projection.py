@@ -10,7 +10,7 @@ from typing import Any
 
 
 def _inactive_fold_activities() -> int:
-    return max(0, int(os.environ.get("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "10")))
+    return max(0, int(os.environ.get("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "24")))
 
 
 def _rehydration_grace_activities() -> int:
@@ -18,7 +18,7 @@ def _rehydration_grace_activities() -> int:
 
 
 def _fold_min_bytes() -> int:
-    return max(0, int(os.environ.get("KERNELONE_CONTEXTOS_FOLD_MIN_BYTES", "512")))
+    return max(0, int(os.environ.get("KERNELONE_CONTEXTOS_FOLD_MIN_BYTES", "1024")))
 
 
 def _card_payload(payload: object) -> tuple[dict[str, Any] | None, bool]:
@@ -134,12 +134,14 @@ def fold_file_card_previews(
     semantic_pins: Mapping[str, str] | None = None,
     semantic_summaries: Mapping[str, Mapping[str, Any]] | None = None,
     inactive_fold_activities: int | None = None,
+    force_fold_paths: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     """Fold duplicate/non-focused FileCards without changing durable observations."""
 
     fold_window = (
         _inactive_fold_activities() if inactive_fold_activities is None else max(0, int(inactive_fold_activities))
     )
+    forced_paths = {str(path) for path in (force_fold_paths or ()) if str(path).strip()}
 
     latest: dict[str, int] = {}
     for index, message in enumerate(messages):
@@ -245,6 +247,14 @@ def fold_file_card_previews(
                     card["content_bounds"] = {**card.get("content_bounds", {}), "truncated": True}
                     card["fold_state"] = "FOLDED"
                     card["fold_reason"] = "superseded_by_newer_card"
+                    card["last_fold_activity_seq"] = activity_indices[index]
+                elif path in forced_paths and not protected and not small_payload and not already_folded:
+                    _apply_fold_summary(card, semantic_summaries, path)
+                    card["content_preview"] = ""
+                    card["content_bounds"] = {**card.get("content_bounds", {}), "truncated": True}
+                    card["fold_state"] = "FOLDED"
+                    card["fold_reason"] = "stalled_repeated_read"
+                    card["pin_reason"] = "stalled_repeated_read"
                     card["last_fold_activity_seq"] = activity_indices[index]
                 elif (rehydrated and activity_age < _rehydration_grace_activities()) or (activity_age < fold_window):
                     card["fold_state"] = "ACTIVE"

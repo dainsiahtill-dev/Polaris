@@ -8,7 +8,7 @@ import time
 from polaris.cells.roles.runtime.public.contracts.engineering_run import RunLimits
 
 _MIN_FOLD_WINDOW = 6
-_DEFAULT_FOLD_WINDOW = 10
+_DEFAULT_FOLD_WINDOW = 24
 
 
 def _default_window() -> int:

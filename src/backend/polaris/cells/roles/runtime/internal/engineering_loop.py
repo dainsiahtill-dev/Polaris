@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import http.client
 import json
 import os
 import re
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -126,6 +127,61 @@ def _structured_repair_message(repairs: list[dict[str, Any]]) -> dict[str, Any]:
             "区分方法（能把它与其他解释区分开的检查）、预测（假设成立时应观察到的变化）、动作（读代码/查环境/最小修改）、"
             "复测（支持、反驳还是证据不足）。动作可以是读取或环境检查，不必每轮改生产代码；"
             "允许为同一假设修改多个文件，但所有修改必须服务于该假设。"
+        ),
+    }
+
+
+def _turn_had_action(events: Sequence[Mapping[str, Any]], turn_seq: int) -> bool:
+    """Whether one logical turn produced a durable write or a real command."""
+
+    for event in events:
+        if event.get("kind") != "tool_observed" or event["payload"].get("turn_seq") != turn_seq:
+            continue
+        tool = event["payload"].get("tool")
+        if event["payload"].get("ok") is not True:
+            continue
+        if tool in {"write_file", "edit_file", "execute_command"}:
+            return True
+    return False
+
+
+def _stall_streak(events: Sequence[Mapping[str, Any]], turn_seqs: Sequence[int]) -> int:
+    streak = 0
+    for turn_seq in reversed(list(turn_seqs)):
+        if _turn_had_action(events, turn_seq):
+            break
+        streak += 1
+    return streak
+
+
+def _repeated_read_paths(events: Sequence[Mapping[str, Any]], *, threshold: int = 3) -> list[str]:
+    """Files the model keeps re-reading instead of acting on."""
+
+    counts: dict[str, int] = {}
+    for event in events:
+        if event.get("kind") != "tool_observed" or event["payload"].get("tool") != "read_file":
+            continue
+        if event["payload"].get("ok") is not True:
+            continue
+        try:
+            body = json.loads(str(event["payload"].get("content") or "{}"))
+        except json.JSONDecodeError:
+            continue
+        card = body.get("file_card") if isinstance(body, dict) else None
+        if isinstance(card, dict) and isinstance(card.get("path"), str):
+            counts[card["path"]] = counts.get(card["path"], 0) + 1
+    return sorted(path for path, count in counts.items() if count >= threshold)
+
+
+def _stall_message(streak: int, paths: Sequence[str]) -> dict[str, Any]:
+    target = "、".join(str(path) for path in paths[:4]) if paths else "已读文件"
+    return {
+        "role": "system",
+        "content": (
+            f"停滞检测：连续 {streak} 轮只有读取，没有写入或验证。"
+            f"以下文件已被反复读取（{target}）。"
+            "请停止重读，给出唯一最小动作：一句可检验的下一步（修改/验证/环境检查），"
+            "并说明它如何推进目标；若证据已足够，直接执行。"
         ),
     }
 
@@ -369,6 +425,7 @@ def _bounded_request_messages(
     audit: dict[str, Any],
     semantic_runtime: Any = None,
     fold_window: int | None = None,
+    force_fold_paths: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     """Build the request messages inside the model's context window.
 
@@ -387,6 +444,7 @@ def _bounded_request_messages(
         semantic_pins=semantic_runtime.pin_reasons() if semantic_runtime is not None else None,
         semantic_summaries=semantic_runtime.fold_summaries() if semantic_runtime is not None else None,
         inactive_fold_activities=fold_window,
+        force_fold_paths=force_fold_paths,
     )
     from polaris.cells.roles.runtime.internal.engineering_memory_cards import build_context_memory_messages
 
@@ -727,8 +785,20 @@ async def run_engineering_loop(
     epoch_runtime = (
         EpochRuntime(epoch_pool or fallback_pool) if epoch_pool is not None or fallback_pool is not None else None
     )
+    cartographer_runtime = None
+    if os.environ.get("KERNELONE_CONTEXTOS_CARTOGRAPHER", "1").strip().lower() not in {"0", "false", "off"}:
+        from polaris.cells.roles.runtime.internal.engineering_cartographer import (
+            CartographerRuntime,
+            cartographer_pool_from_environment,
+        )
+
+        cartographer_pool = cartographer_pool_from_environment()
+        if cartographer_pool is not None:
+            cartographer_runtime = CartographerRuntime(cartographer_pool)
     semantic_reported: set[str] = set()
     epoch_reported: set[str] = set()
+    cartographer_reported: set[str] = set()
+    last_injection_fingerprint = ""
     tools = EngineeringTools(
         command.workspace,
         scope,
@@ -938,8 +1008,8 @@ async def run_engineering_loop(
                     store.append_event(
                         command.session_id,
                         kind="semantic_advice_completed",
-                        role=command.role,
-                        payload=advice,
+                        role="distiller",
+                        payload={**advice, "agent_role": "distiller"},
                     )
                     semantic_reported.add(advice_fingerprint)
                 advice_request, advice_refs, advice_fingerprint = facts_for_advice(
@@ -954,7 +1024,7 @@ async def run_engineering_loop(
                         command.session_id,
                         kind="epoch_card_completed",
                         role="devourer",
-                        payload=epoch_card,
+                        payload={**epoch_card, "agent_role": "devourer"},
                     )
                     epoch_reported.add(epoch_card["fingerprint"])
                 epoch_request, epoch_refs, epoch_fingerprint = facts_for_epoch(
@@ -962,6 +1032,39 @@ async def run_engineering_loop(
                 )
                 if epoch_refs.node_ids:
                     epoch_runtime.schedule(epoch_request, epoch_refs, fingerprint=epoch_fingerprint)
+            cartographer_card: dict[str, Any] | None = None
+            if cartographer_runtime is not None:
+                from polaris.cells.roles.runtime.internal.engineering_cartographer import (
+                    current_facts,
+                    facts_for_run_card,
+                    validate_run_card_narrative,
+                )
+
+                narrative = cartographer_runtime.poll()
+                if narrative:
+                    try:
+                        parsed = json.loads(narrative)
+                    except json.JSONDecodeError:
+                        parsed = None
+                    cartographer_events = store.load_events(command.session_id)
+                    facts = current_facts(run_now, cartographer_events)
+                    validated = validate_run_card_narrative(parsed, facts, allowed_refs=facts["evidence_refs"])
+                    if validated is not None:
+                        cartographer_card = {**validated, "agent_role": "cartographer"}
+                        key = f"{cartographer_runtime.fingerprint}:{json.dumps(validated, sort_keys=True, ensure_ascii=False)}"
+                        if key not in cartographer_reported:
+                            store.append_event(
+                                command.session_id,
+                                kind="cartographer_completed",
+                                role="cartographer",
+                                payload=cartographer_card,
+                            )
+                            cartographer_reported.add(key)
+                if turn_seq % 8 == 0:
+                    run_card_request, run_card_fingerprint = facts_for_run_card(
+                        run_now, store.load_events(command.session_id)
+                    )
+                    cartographer_runtime.schedule(run_card_request, fingerprint=run_card_fingerprint)
             first_verification_due = False
             if (
                 command.role == "director"
@@ -983,6 +1086,15 @@ async def run_engineering_loop(
                 current_tokens=TokenEstimator.estimate(json.dumps(messages, ensure_ascii=False)),
                 context_window_tokens=context_window_tokens,
             )
+            journal_events = store.load_events(command.session_id)
+            all_turns = [
+                event["seq"]
+                for event in journal_events
+                if event.get("kind") == "turn_started" and event["seq"] < turn_seq
+            ]
+            stall_streak = _stall_streak(journal_events, all_turns[-3:]) if all_turns else 0
+            repeated_reads = _repeated_read_paths(journal_events)
+            stalled = stall_streak >= 3
             request_messages = _bounded_request_messages(
                 messages,
                 store=store,
@@ -993,7 +1105,16 @@ async def run_engineering_loop(
                 audit=visual_projection,
                 semantic_runtime=semantic_runtime,
                 fold_window=fold_window,
+                force_fold_paths=repeated_reads if stalled else (),
             )
+            if stalled:
+                request_messages = [_stall_message(stall_streak, repeated_reads), *request_messages]
+                store.append_event(
+                    command.session_id,
+                    kind="stall_intervention",
+                    role=command.role,
+                    payload={"streak": stall_streak, "repeated_reads": repeated_reads, "turn_seq": turn_seq},
+                )
             structured_repairs = (
                 _active_structured_repairs(store.load_events(command.session_id))
                 if os.environ.get("KERNELONE_ENGINEERING_STRUCTURED_REPAIR", "1").strip().lower()
@@ -1008,6 +1129,30 @@ async def run_engineering_loop(
                     role=command.role,
                     payload={"repairs": structured_repairs},
                 )
+            if cartographer_card is not None:
+                card_message = {
+                    "role": "system",
+                    "content": (
+                        "ContextOS Cartographer 运行地图（叙述层，状态以宿主为准）：\n"
+                        + json.dumps(cartographer_card, ensure_ascii=False)[:2000]
+                    ),
+                }
+                request_messages = [card_message, *request_messages]
+            injected = [
+                message
+                for message in request_messages
+                if message.get("role") == "system"
+                and isinstance(message.get("content"), str)
+                and "ContextOS" in message["content"]
+            ]
+            if injected:
+                fingerprint = hashlib.sha256(
+                    "||".join(str(message["content"]) for message in injected).encode("utf-8")
+                ).hexdigest()
+                if fingerprint == last_injection_fingerprint:
+                    request_messages = [message for message in request_messages if message not in injected]
+                else:
+                    last_injection_fingerprint = fingerprint
             options: dict[str, Any] = {
                 "messages": request_messages,
                 "tools": tools.schemas(),

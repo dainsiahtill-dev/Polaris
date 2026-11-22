@@ -40,7 +40,7 @@ def test_inactive_card_folds_after_configured_activities(monkeypatch: pytest.Mon
     folded = fold_file_card_previews(
         [
             {"role": "assistant", "content": "step-1"},
-            _message("a.py", "a" * 600),
+            _message("a.py", "a" * 1200),
             {"role": "assistant", "content": "step-2"},
             _message("b.py", "b"),
             {"role": "assistant", "content": "step-3"},
@@ -62,7 +62,7 @@ def test_inactive_threshold_is_configurable(monkeypatch: pytest.MonkeyPatch) -> 
     folded = fold_file_card_previews(
         [
             {"role": "assistant", "content": "step-1"},
-            _message("a.py", "a" * 600),
+            _message("a.py", "a" * 1200),
             {"role": "assistant", "content": "step-2"},
             _message("b.py", "b"),
         ],
@@ -92,7 +92,7 @@ def test_small_duplicate_payload_is_not_folded() -> None:
 
 def test_large_duplicate_payload_can_fold(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "3")
-    large = "x" * 600
+    large = "x" * 1200
     folded = fold_file_card_previews(
         [
             {"role": "assistant", "content": "step-1"},
@@ -112,7 +112,7 @@ def test_large_duplicate_payload_can_fold(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_current_edit_pin_survives_inactivity() -> None:
-    large = "x" * 600
+    large = "x" * 1200
     folded = fold_file_card_previews(
         [
             {"role": "assistant", "content": "step-1"},
@@ -134,7 +134,7 @@ def test_current_edit_pin_survives_inactivity() -> None:
 
 
 def test_acceptance_pin_survives_inactivity() -> None:
-    large = "x" * 600
+    large = "x" * 1200
     folded = fold_file_card_previews(
         [
             {"role": "user", "content": "verify a.py"},
@@ -153,7 +153,7 @@ def test_acceptance_pin_survives_inactivity() -> None:
 
 
 def test_current_reasoning_pin_survives_ten_activities() -> None:
-    large = "x" * 600
+    large = "x" * 1200
     messages: list[dict[str, object]] = []
     for index in range(11):
         messages.append({"role": "assistant", "content": f"step-{index}"})
@@ -180,7 +180,7 @@ def test_rehydration_grace_blocks_immediate_refold() -> None:
 
 def test_nested_tool_envelope_is_folded_without_losing_wrapper(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "3")
-    large = "x" * 600
+    large = "x" * 1200
     folded = fold_file_card_previews(
         [
             {"role": "assistant", "content": "step-1"},
