@@ -366,7 +366,7 @@ def _model_context_window(workspace: Path, role: str) -> int:
 # the window-derived ceiling is only a fallback for a final turn that cannot fit
 # the tight budget. The durable journal keeps every observation either way.
 _WORKING_SET_TOKENS_ENV = "KERNELONE_ENGINEERING_WORKING_SET_TOKENS"
-_WORKING_SET_TOKENS_DEFAULT = 32000
+_WORKING_SET_TOKENS_DEFAULT = 256000
 _WINDOW_RESERVE_TOKENS = 16384 + 8192
 
 # Wrap-up gate: a weak model that passes verification and then keeps editing
@@ -839,6 +839,7 @@ async def run_engineering_loop(
     capability_last_used: dict[str, int] = {}
     capability_last_reminded: dict[str, int] = {}
     resident_stage: str | None = None
+    resident_profile_fingerprint = ""
     tools = EngineeringTools(
         command.workspace,
         scope,
@@ -1283,26 +1284,42 @@ async def run_engineering_loop(
             if resident_runtime is not None and resident_decision is not None:
                 from polaris.cells.roles.runtime.internal.engineering_resident_agi import (
                     _normalize_decision,
+                    collect_signals,
                     detect_stage,
                     facts_for_decision,
                 )
 
                 stage = detect_stage(journal_events, run_now)
-                if stage != resident_stage and turn_seq % 8 == 0:
-                    raw = resident_runtime.poll()
-                    if raw:
-                        refreshed = _normalize_decision(
-                            raw, facts_for_decision(command.workspace, journal_events, run_now)
+                signals = collect_signals(command.workspace)
+                # The first decision runs before the workspace has any project
+                # files, so its signals are empty. Re-ask with fresh signals once
+                # the stage, revision or repository signature actually changes.
+                fingerprint = hashlib.sha256(
+                    json.dumps(
+                        {
+                            "stage": stage,
+                            "revision": run_now.get("workspace_revision"),
+                            "signals": signals["signals"],
+                        },
+                        sort_keys=True,
+                        ensure_ascii=False,
+                    ).encode("utf-8")
+                ).hexdigest()
+                if fingerprint != resident_profile_fingerprint and turn_seq % 8 == 0:
+                    resident_profile_fingerprint = fingerprint
+                    resident_runtime.start(facts_for_decision(command.workspace, journal_events, run_now))
+                raw = resident_runtime.poll()
+                if raw:
+                    refreshed = _normalize_decision(raw, signals)
+                    if refreshed:
+                        resident_decision = refreshed
+                        resident_stage = stage
+                        store.append_event(
+                            command.session_id,
+                            kind="resident_agi_decision",
+                            role="resident_agi",
+                            payload={**refreshed, "reassessed": True},
                         )
-                        if refreshed:
-                            resident_decision = refreshed
-                            resident_stage = stage
-                            store.append_event(
-                                command.session_id,
-                                kind="resident_agi_decision",
-                                role="resident_agi",
-                                payload={**refreshed, "reassessed": True},
-                            )
                 resident_stage = stage or resident_stage
                 bound_capabilities = (resident_decision or {}).get("capabilities") or []
                 for event in journal_events[-40:]:

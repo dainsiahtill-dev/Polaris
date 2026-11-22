@@ -90,7 +90,7 @@ run_engineering_loop
 - `engineering_state_projection.py`：从同一 journal 派生有界工作状态（goal/candidate/
   最近检查/失败检查首错/已改文件/工具计数/loop 干预/最近意图/最近错误），每请求追加为
   单一 trailing user 消息（与 budget/continuation 同消息，budget marker 仍在最前）。
-- `_history_allowances`：`KERNELONE_ENGINEERING_WORKING_SET_TOKENS`（默认 32000）为
+- `_history_allowances`：`KERNELONE_ENGINEERING_WORKING_SET_TOKENS`（默认 256000）为
   工作集预算；窗口派生上限仅作 fallback；required visual 被裁掉时自动回退到窗口上限。
 - 测试：`test_engineering_low_context.py`（9）+ 验收/预算/视觉回归。
 

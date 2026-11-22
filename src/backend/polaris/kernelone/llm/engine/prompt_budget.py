@@ -763,8 +763,9 @@ def compress_native_tool_history(
             {
                 "role": "user",
                 "content": (
-                    f"【上下文已压缩】为适配模型窗口，省略了 {dropped} 条较早的工具轮次；"
-                    "这些轮次的完整记录仍在工程运行日志中。以下保留最近的关键轮次。"
+                    f"【上下文已压缩】为控制在有界工作集预算（约 {allowed_prompt_tokens} tokens）内，"
+                    f"省略了 {dropped} 条较早的工具轮次；"
+                    "这些轮次的完整记录仍在工程运行日志中，可按证据引用取回。以下保留最近的关键轮次。"
                 ),
             }
         )
@@ -909,7 +910,8 @@ def compress_chat_messages_to_budget(
             {
                 "role": "user",
                 "content": (
-                    f"【上下文已压缩】为适配模型窗口，省略了 {dropped} 条较早的对话消息；以下保留最近的关键消息。"
+                    f"【上下文已压缩】为控制在有界工作集预算（约 {allowed_prompt_tokens} tokens）内，"
+                    f"省略了 {dropped} 条较早的对话消息；以下保留最近的关键消息。"
                 ),
             }
         )

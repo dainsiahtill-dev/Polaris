@@ -223,16 +223,30 @@ class ResidentAGIRuntime:
         self.pool = pool
         self._job: asyncio.Task[str] | None = None
 
-    def start(self, request: dict[str, Any]) -> None:
-        if self._job is not None and not self._job.done():
-            return
+    @property
+    def idle(self) -> bool:
+        return self._job is None or self._job.done()
+
+    def start(self, request: dict[str, Any]) -> bool:
+        """Schedule one decision; a decision still in flight is never abandoned."""
+
+        if not self.idle:
+            return False
         self._job = asyncio.create_task(asyncio.to_thread(self.pool._post, request))
+        return True
 
     def poll(self) -> str | None:
+        """Return a finished decision once, then consume it.
+
+        Returning the same finished job every turn made the caller re-read a
+        stale first decision forever instead of asking again with fresh signals.
+        """
+
         if self._job is None or not self._job.done():
             return None
+        job, self._job = self._job, None
         try:
-            return self._job.result()
+            return job.result()
         except asyncio.CancelledError:
             return None
         except (OSError, ValueError, asyncio.TimeoutError):
