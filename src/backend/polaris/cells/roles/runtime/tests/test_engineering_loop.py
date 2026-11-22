@@ -741,6 +741,12 @@ async def test_qa_receives_the_acceptance_clause_matrix(
     assert "acceptance clause" in tail
     for clause in clauses:
         assert clause in tail
+    # The reviewer must also receive the host checks' real outputs, not just IDs.
+    assert "Host checks that already passed" in tail
+    saved_checks = store.load_run(command.session_id, workspace=isolated_workspace)["checks"]
+    for check in saved_checks:
+        if check.get("ok") is True:
+            assert str(check["call_id"]) in tail
     event = store.load_events(command.session_id, role="qa", kinds=("qa_report_requested",))[-1]
     assert list(event["payload"]["acceptance_clauses"]) == list(clauses)
 

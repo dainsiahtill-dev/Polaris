@@ -1633,16 +1633,36 @@ async def run_engineering_loop(
                         clause_matrix = "\n".join(
                             f"{index}. {clause}" for index, clause in enumerate(review_clauses, start=1)
                         )
+                        # Listing check IDs without their outputs left the reviewer
+                        # unable to certify clauses the host had already verified,
+                        # so it reported "not provided to me" for every clause.
+                        check_lines: list[str] = []
+                        for check in run["checks"]:
+                            if check.get("ok") is not True:
+                                continue
+                            raw = str(check.get("content") or "")
+                            command_text = raw[:200]
+                            try:
+                                card = json.loads(raw)
+                                command_text = str((card.get("command_card") or {}).get("command") or raw)[:200]
+                            except json.JSONDecodeError:
+                                pass
+                            check_lines.append(
+                                f"{check.get('call_id')} · {check.get('tool')} · exit {check.get('exit_code')} · "
+                                + command_text.replace("\n", " ")
+                            )
+                        host_checks = "\n".join(check_lines) or "(no passing host check)"
                         instruction = (
-                            f"Current QA source receipt ID: {source}. Current host check IDs: "
-                            + json.dumps([check["call_id"] for check in run["checks"] if check.get("ok") is True])
-                            + ". report_review clause_findings needs one entry for EVERY acceptance clause "
+                            f"Current QA source receipt ID: {source}. Host checks that already passed, with "
+                            "their real command and exit code:\n" + host_checks + "\n"
+                            "report_review clause_findings needs one entry for EVERY acceptance clause "
                             f"({len(review_clauses)}). Copy each clause text from this list verbatim so coverage "
                             "matches:\n" + clause_matrix + "\n"
-                            "In each passing finding copy a supporting call ID into evidence; "
-                            "put the explanation in feedback. Mark unverifiable clauses unknown, but every "
-                            "fail/unknown evidence must state what you actually observed (a file path and "
-                            "what is missing, or a check call ID) — “Review not started” is not a finding."
+                            "Cite one of the host check call IDs above as pass evidence when that check covers "
+                            "the clause; use your own read_file/browser_observe call IDs for anything you verified "
+                            "directly. Put the explanation in feedback. Mark unverifiable clauses unknown, but "
+                            "every fail/unknown evidence must state what you actually observed (a file path and "
+                            "what is missing, or a call ID) — “Review not started” is not a finding."
                         )
                     else:
                         instruction = (
