@@ -73,6 +73,7 @@ import {
 import { buildTelemetryFromStream, contextOSAccountingEvents, type ContextOSEvent } from './contextOSTelemetry';
 import { meaningfulContextOSEvents } from './contextOSEventVisibility';
 import { deriveTelemetryDecisions } from './contextOSData/_model';
+import { ContextRolesPanel } from './ContextRolesPanel';
 import { ContextViewerModal } from './ContextViewerModal';
 import { ContextStoreStatsPanel } from './ContextStoreStatsPanel';
 
@@ -2659,6 +2660,7 @@ export function EngineeringContextView({ engineering, workspace, onBackToMain }:
   return <div className="polaris-soft-scope soft-app-bg flex h-full min-h-0 flex-col text-slate-100" data-testid="engineering-contextos">
     <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3"><div><button type="button" onClick={onBackToMain} className="mr-4 rounded px-3 py-3 text-sm">返回工程运行</button><span className="text-sm font-semibold">ContextOS · Engineering v2</span></div><button type="button" onClick={() => void engineering.refresh()} disabled={engineering.loading || !engineering.sessionId} className="rounded-lg border border-white/10 px-3 py-3 text-sm disabled:opacity-40">刷新快照</button></header>
     <main className="min-h-0 flex-1 space-y-4 overflow-auto p-4">
+      <ContextRolesPanel events={engineering.projection.events} />
       <div className="soft-panel-subtle space-y-2 rounded-xl p-4"><p className="break-all font-mono text-xs text-slate-400">{engineering.sessionId || '尚未选择工程运行'}</p><p className="text-sm">{engineering.connected ? '实时连接已建立' : '实时连接已断开；当前显示最后快照'}</p><p data-testid="engineering-current-context" className="text-sm">当前请求快照：{current?.contextSnapshotRef ? '可读取' : '不可用'}</p><p className="text-xs text-slate-400">原生请求观测 {rows.length} 条{engineering.projection.historyWindowed ? '（最近窗口）' : ''}；实际物理发送次数未知。</p>{engineering.error && <p role="alert" className="text-sm text-red-200">{engineering.error}</p>}</div>
       {!rows.length && <p className="text-sm text-slate-400">尚无原生请求观测；上下文不可用。</p>}
       {rows.map((row) => <section key={row.event.seq} className="soft-panel-subtle space-y-3 rounded-xl p-4" data-testid={`engineering-context-${row.event.seq}`}>
