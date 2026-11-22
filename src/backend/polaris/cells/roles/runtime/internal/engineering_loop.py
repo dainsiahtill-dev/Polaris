@@ -906,9 +906,14 @@ async def run_engineering_loop(
         if resident_runtime is not None:
             from polaris.cells.roles.runtime.internal.engineering_resident_agi import _normalize_decision
 
+            signals = collect_signals(command.workspace)
             raw = resident_runtime.poll()
+            deadline = time.monotonic() + 75.0
+            while raw is None and time.monotonic() < deadline:
+                await asyncio.sleep(0.5)
+                raw = resident_runtime.poll()
             if raw:
-                resident_decision = _normalize_decision(raw, collect_signals(command.workspace))
+                resident_decision = _normalize_decision(raw, signals)
         if resident_decision is None and os.environ.get(
             "KERNELONE_RESIDENT_PROJECT_PROFILE", "1"
         ).strip().lower() not in {
