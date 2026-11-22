@@ -59,6 +59,44 @@ _REPO_RG_KEYS = frozenset({"pattern", "paths", "path", "max_results", "glob", "c
 _EXIT_MASKING_SUFFIX = re.compile(r"(?:;|\|\|)\s*(?:true|/bin/true|echo\b.*|printf\b.*|exit\s+0)\s*$")
 
 
+_PLACEHOLDER_EVIDENCE = {
+    "review not started",
+    "review not yet performed",
+    "placeholder",
+    "placeholder - review not yet performed",
+    "not reviewed",
+    "pending review",
+    "pending source review",
+    "todo",
+    "n/a",
+    "none",
+    "unknown",
+}
+
+
+def _is_placeholder_evidence(text: str) -> bool:
+    """A stock placeholder is not an observation.
+
+    Real runs show the small reviewer handing back ``Review not started.`` for
+    every clause after having read the source and run the checks, which ends the
+    run on a canned rejection instead of a finding.
+    """
+
+    stripped = text.strip()
+    lowered = stripped.lower().rstrip(".")
+    if lowered in _PLACEHOLDER_EVIDENCE:
+        return True
+    # A real receipt is evidence regardless of length.
+    if re.fullmatch(r"(?:call_|verif(?:y|ication)-|command:|filecard:|event-)[A-Za-z0-9_.:-]+", stripped):
+        return False
+    ideographs = sum(1 for char in stripped if ord(char) > 0x2E80)
+    letters = sum(1 for char in stripped if char.isascii() and char.isalpha())
+    if ideographs < 4 and letters < 8:
+        return True
+    # Short text that merely opens with a stock marker is still a placeholder.
+    return len(stripped.split()) <= 4 and any(lowered.startswith(item) for item in _PLACEHOLDER_EVIDENCE)
+
+
 def bounded_output(content: str, maximum: int) -> str:
     """Bound UTF-8 output and preserve explicit evidence that bytes were omitted."""
     encoded = content.encode("utf-8")
@@ -419,6 +457,28 @@ class EngineeringTools:
                         raise ValueError(
                             "report_review rejection requires per-clause evidence from the current "
                             "candidate; continue inspecting before ruling."
+                        )
+                    placeholder = [
+                        item.clause
+                        for item in clause_findings
+                        if _is_placeholder_evidence(str(item.evidence or ""))
+                    ]
+                    if placeholder:
+                        # "Review not started." is an unstarted review, not an
+                        # engineering finding. Without this floor the small model
+                        # can end the run on a canned rejection after doing real
+                        # observations.
+                        raise ValueError(
+                            "report_review rejection evidence must describe what was observed; "
+                            "stock placeholder text is not a finding. Redo the review for: "
+                            + json.dumps(placeholder, ensure_ascii=False)
+                        )
+                    canned = [item for item in findings if _is_placeholder_evidence(item)]
+                    if canned:
+                        raise ValueError(
+                            "report_review major_findings must describe a concrete defect; "
+                            "stock placeholder text is not a finding: "
+                            + json.dumps(canned, ensure_ascii=False)
                         )
                 self.review(
                     approved and not findings and all(item.status == "pass" for item in clause_findings),

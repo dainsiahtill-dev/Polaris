@@ -1640,7 +1640,9 @@ async def run_engineering_loop(
                             f"({len(review_clauses)}). Copy each clause text from this list verbatim so coverage "
                             "matches:\n" + clause_matrix + "\n"
                             "In each passing finding copy a supporting call ID into evidence; "
-                            "put the explanation in feedback. Mark unverifiable clauses unknown."
+                            "put the explanation in feedback. Mark unverifiable clauses unknown, but every "
+                            "fail/unknown evidence must state what you actually observed (a file path and "
+                            "what is missing, or a check call ID) — “Review not started” is not a finding."
                         )
                     else:
                         instruction = (
