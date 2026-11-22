@@ -2411,6 +2411,21 @@ class EngineeringRunService:
                 verification=result.verification,
                 checks=result.checks,
             )
+            try:
+                from polaris.cells.roles.runtime.internal.engineering_effect_report import build_effect_report
+
+                final_run = self.store.load_run(command.session_id, workspace=self.workspace)
+                report = build_effect_report(final_run, self.store.load_events(command.session_id))
+                report["role_status"] = result.status
+                report["role_verification"] = result.verification
+                report_root = self.workspace / ".polaris" / "runtime" / "contextos" / "effect-reports"
+                report_root.mkdir(parents=True, exist_ok=True)
+                (report_root / f"{command.session_id}.json").write_text(
+                    json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+                )
+            except (KeyError, OSError, ValueError):
+                # Diagnostics only; never change a terminal verdict.
+                pass
             self.store.append_event(
                 command.session_id,
                 kind="run_ended",
