@@ -886,24 +886,62 @@ async def run_engineering_loop(
         except (KeyError, OSError, ValueError):
             prior_messages = []
         profile_messages: list[dict[str, Any]] = []
-        if os.environ.get("KERNELONE_RESIDENT_PROJECT_PROFILE", "1").strip().lower() not in {
+        resident_decision: dict[str, Any] | None = None
+        resident_runtime = None
+        if os.environ.get("KERNELONE_RESIDENT_AGI", "1").strip().lower() not in {
+            "0",
+            "false",
+            "off",
+        }:
+            from polaris.cells.roles.runtime.internal.engineering_resident_agi import (
+                ResidentAGIRuntime,
+                collect_signals,
+                resident_agi_pool_from_environment,
+            )
+
+            resident_pool = resident_agi_pool_from_environment()
+            if resident_pool is not None:
+                resident_runtime = ResidentAGIRuntime(resident_pool)
+                resident_runtime.start(collect_signals(command.workspace))
+        if resident_runtime is not None:
+            from polaris.cells.roles.runtime.internal.engineering_resident_agi import _normalize_decision
+
+            raw = resident_runtime.poll()
+            if raw:
+                resident_decision = _normalize_decision(raw, collect_signals(command.workspace))
+        if resident_decision is None and os.environ.get(
+            "KERNELONE_RESIDENT_PROJECT_PROFILE", "1"
+        ).strip().lower() not in {
             "0",
             "false",
             "off",
         }:
             from polaris.cells.roles.runtime.internal.engineering_project_profile import (
                 detect_project_profile,
-                profile_fingerprint,
                 prompt_additions,
             )
 
             profile = detect_project_profile(command.workspace)
+            resident_decision = {
+                "schema_version": "resident_agi_decision.v1",
+                "project_type": profile["project_type"],
+                "capabilities": profile["capabilities"],
+                "mcp_hints": profile["mcp_hints"],
+                "guidance": profile["guidance"],
+                "reason": "规则回退（Resident AGI 不可用或未返回）",
+                "signals": profile["signals"],
+            }
             profile_messages = prompt_additions(profile)
+        if resident_decision is not None:
+            if not profile_messages:
+                from polaris.cells.roles.runtime.internal.engineering_project_profile import prompt_additions
+
+                profile_messages = prompt_additions(resident_decision)
             store.append_event(
                 command.session_id,
-                kind="project_profile_detected",
+                kind="resident_agi_decision",
                 role="resident_agi",
-                payload={**profile, "fingerprint": profile_fingerprint(profile)},
+                payload=resident_decision,
             )
         messages = [
             system_message,
