@@ -112,18 +112,21 @@ def test_context_memory_injection_surfaces_unresolved_failures_and_contracts() -
     assert "最近验证契约" in messages[0]["content"]
 
 
-def test_epoch_selection_waits_until_fifty_activities_behind() -> None:
-    events: list[dict[str, object]] = []
-    seq = 0
-    for activity in range(1, 62):
-        seq += 1
-        events.append({"seq": seq, "kind": "turn_started", "payload": {}})
-        seq += 1
-        events.append({"seq": seq, "kind": "message", "payload": {"content": f"step-{activity}"}})
-    request, refs, fingerprint = facts_for_epoch({"instruction": "build"}, events)
-    assert refs.node_ids == {"epoch-0001-0010"}
-    assert len(fingerprint) == 64
-    assert request["candidates"][0]["node_id"] == "epoch-0001-0010"
+def test_epoch_selection_waits_until_twenty_activities_behind() -> None:
+    """A 50-activity lag meant the first card could not appear before turn 60.
+
+    Every live run confirmed it: all 17 runs with a card produced their first one
+    at turn 61. At 20 the first epoch is usable around turn 30, with run left.
+    """
+
+    stale = facts_for_epoch({"instruction": "build"}, _activity_events(29))
+    assert stale[0] == {"candidates": []}
+    assert stale[1].node_ids == set()
+
+    fresh = facts_for_epoch({"instruction": "build"}, _activity_events(30))
+    assert fresh[1].node_ids == {"epoch-0001-0010"}
+    assert len(fresh[2]) == 64
+    assert fresh[0]["candidates"][0]["node_id"] == "epoch-0001-0010"
 
 
 def _activity_events(count: int) -> list[dict[str, object]]:
@@ -146,8 +149,8 @@ def _epoch_completed(epoch_id: str) -> dict[str, object]:
 
 
 def test_epoch_selection_advances_past_reported_epochs() -> None:
-    # 88 activities mirror the real journal: eligible epochs are 10, 20 and 30.
-    events = _activity_events(88)
+    # 40 activities leave exactly two eligible epochs: 10 and 20.
+    events = _activity_events(40)
     _request, refs, _fingerprint = facts_for_epoch({"instruction": "build"}, events)
     assert refs.node_ids == {"epoch-0001-0010"}
 
@@ -155,12 +158,8 @@ def test_epoch_selection_advances_past_reported_epochs() -> None:
     _request, refs, _fingerprint = facts_for_epoch({"instruction": "build"}, events)
     assert refs.node_ids == {"epoch-0011-0020"}
 
-    events.append(_epoch_completed("epoch-0011-0020"))
-    _request, refs, _fingerprint = facts_for_epoch({"instruction": "build"}, events)
-    assert refs.node_ids == {"epoch-0021-0030"}
-
     # Every eligible epoch is reported: selection is empty, not stuck on epoch 10.
-    events.append(_epoch_completed("epoch-0021-0030"))
+    events.append(_epoch_completed("epoch-0011-0020"))
     request, refs, fingerprint = facts_for_epoch({"instruction": "build"}, events)
     assert request == {"candidates": []}
     assert refs.node_ids == set()
@@ -168,7 +167,7 @@ def test_epoch_selection_advances_past_reported_epochs() -> None:
 
 
 def test_epoch_selection_ignores_reported_epoch_by_node_id() -> None:
-    events = _activity_events(88)
+    events = _activity_events(40)
     events.append(
         {
             "seq": 0,

@@ -109,6 +109,7 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
     from polaris.cells.roles.runtime.internal.engineering_tool_payload_projection import (
         distill_min_activities,
         distill_min_bytes,
+        distill_result_min_bytes,
     )
 
     candidates: list[dict[str, Any]] = []
@@ -130,6 +131,7 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
     instruction = str(run.get("instruction") or "")
     min_age = distill_min_activities()
     min_bytes = distill_min_bytes()
+    result_min_bytes = distill_result_min_bytes()
     for event in events:
         payload = event["payload"]
         age = current_activity - activity_at_seq.get(int(event["seq"]), current_activity)
@@ -147,7 +149,7 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
                 if isinstance(card, dict)
                 else ""
             )
-            if isinstance(reference, str) and reference and len(preview.encode("utf-8")) >= min_bytes:
+            if isinstance(reference, str) and reference and len(preview.encode("utf-8")) >= result_min_bytes:
                 node_ids.add(reference)
                 slice_ids.add("slice_output")
                 candidates.append(
@@ -169,7 +171,7 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
             continue
         path = str(card["path"])
         preview = str(card.get("content_preview") or "")
-        if len(preview.encode("utf-8")) < min_bytes or path in targets or path in instruction:
+        if len(preview.encode("utf-8")) < result_min_bytes or path in targets or path in instruction:
             continue
         reference = card.get("content_ref")
         if not isinstance(reference, str) or not reference:

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -11,8 +13,14 @@ from polaris.cells.roles.runtime.internal.engineering_cartographer import (
     CartographerRuntime,
     NarrativeRejectedError,
     current_facts,
+    deterministic_run_card,
     facts_for_run_card,
     validate_run_card_narrative,
+)
+from polaris.cells.roles.runtime.tests.engineering_support import (
+    ScriptedProvider,
+    isolated_workspace as isolated_workspace,
+    scripted_provider as scripted_provider,
 )
 
 
@@ -274,3 +282,101 @@ def test_draw_many_retries_once_when_the_model_answers_in_prose() -> None:
     results = asyncio.run(pool.draw_many([{"working_state": {"phase": "DIAGNOSE"}}]))
     assert calls["count"] == 2
     assert json.loads(results[0])["phase"] == "DIAGNOSE"
+
+
+def test_deterministic_run_card_is_always_available_and_fact_bound() -> None:
+    """The narrative is rejected 94% of the time, so the stage card cannot depend on it."""
+
+    events = [
+        {
+            "kind": "tool_started",
+            "seq": 1,
+            "payload": {"tool": "write_file", "ok": True, "arguments": {"file": "src/a.ts"}},
+        },
+        {
+            "kind": "tool_observed",
+            "seq": 2,
+            "payload": {"tool": "write_file", "ok": True, "call_id": "c1", "arguments": {"file": "src/a.ts"}},
+        },
+        {
+            "kind": "verification_completed",
+            "seq": 3,
+            "payload": {
+                "verification": "failed",
+                "checks": [{"content": "FAIL src/a.ts —— 断言失败：期望 1 实际 2", "ok": False}],
+            },
+        },
+    ]
+    card = deterministic_run_card(_run(), events, phase="")
+    assert card["schema_version"] == "run_card_deterministic.v1"
+    assert card["phase"] in {"DIAGNOSE", "EDIT", "RETEST"}
+    assert card["uncertain"] is False
+    assert any("src/a.ts" in item for item in card["completed"])
+    assert any("failed" in item for item in card["completed"])
+    assert card["blocker"] and card["blocker"]["signature"]
+    assert card["blocker"]["occurrences"] >= 1
+    assert card["next_actions"] and card["next_actions"][0]["action"]
+
+
+def test_deterministic_run_card_reports_no_blocker_without_a_failure() -> None:
+    events = [
+        {
+            "kind": "tool_started",
+            "seq": 1,
+            "payload": {"tool": "write_file", "ok": True, "arguments": {"file": "src/b.ts"}},
+        },
+        {
+            "kind": "tool_observed",
+            "seq": 2,
+            "payload": {"tool": "write_file", "ok": True, "call_id": "c2", "arguments": {"file": "src/b.ts"}},
+        },
+    ]
+    card = deterministic_run_card({"verification": "not_run", "workspace_revision": 1}, events, phase="EDIT")
+    assert card["phase"] == "EDIT"
+    assert card["blocker"] is None
+
+
+async def test_host_run_card_is_published_without_a_cartographer(
+    isolated_workspace: Path,
+    scripted_provider: ScriptedProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stage card must not depend on the cartographer's 5.6% acceptance rate."""
+
+    from polaris.cells.roles.runtime.internal.engineering_loop import run_engineering_loop
+    from polaris.cells.roles.runtime.internal.engineering_session import EngineeringSessionStore
+    from polaris.cells.roles.runtime.public.contracts.engineering_run import (
+        PermissionScope,
+        RoleRunCommand,
+        RunLimits,
+    )
+
+    (isolated_workspace / "a.py").write_text("x = 1\n", encoding="utf-8")
+    scope = PermissionScope(
+        (isolated_workspace,), (isolated_workspace,), frozenset({"read_file", "write_file"}), False
+    )
+    limits = RunLimits(time.time() + 30, 100_000, 16_000)
+    command = RoleRunCommand("run-card", "director", "Fix the addition.", isolated_workspace)
+    store = EngineeringSessionStore(isolated_workspace)
+    store.create_run(command, scope=scope, limits=limits, engine_version="engineering_v2", request_key=None)
+    scripted_provider.client("openai", isolated_workspace, monkeypatch)
+    scripted_provider.enqueue_json(
+        {"choices": [{"message": {"role": "assistant", "content": "Inspected the source."}, "finish_reason": "stop"}]}
+    )
+    result = await run_engineering_loop(
+        command,
+        scope=scope,
+        limits=limits,
+        cancel=asyncio.Event(),
+        store=store,
+        client=scripted_provider.client("openai", isolated_workspace, monkeypatch),
+    )
+    assert result.status == "completed", result.text
+    cards = [
+        event for event in store.load_events(command.session_id) if event["kind"] == "run_card_active"
+    ]
+    assert cards, "the host must publish a stage card even when the cartographer is absent"
+    payload = cards[-1]["payload"]
+    assert payload["source"] == "host"
+    assert payload["phase"] in {"DIAGNOSE", "EDIT", "RETEST"}
+    assert payload["card"]["completed"] or payload["card"]["next_actions"]

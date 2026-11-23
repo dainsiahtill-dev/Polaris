@@ -24,6 +24,87 @@ _FAILURE_MARK = re.compile(
 )
 
 
+_PHASE_NEXT_ACTIONS = {
+    "DIAGNOSE": ("读取相关源码与现有测试，定位实现与目标的差距", "得到可定位的差异清单"),
+    "EDIT": ("补齐缺失实现并跑通相关检查", "目标检查通过"),
+    "RETEST": ("用 verify_project 对当前候选重新执行声明的检查", "验证结论更新为通过或给出真实失败"),
+}
+
+
+def deterministic_run_card(
+    run: Mapping[str, Any],
+    events: Sequence[Mapping[str, Any]],
+    *,
+    phase: str,
+) -> dict[str, Any]:
+    """宿主自己的阶段卡：全部由持久事实推导，不调用远程模型。
+
+    真实 bench 上制图师的叙述 574 次里只有 32 次通过校验（5.6%）——38% 连合法
+    JSON 都不是，62% 与持久事实冲突。只在"小模型恰好产出合法且自洽的 JSON"时
+    才有卡，等于大部分轮次模型看不到任何阶段视图。这张卡永远可用；制图师通过
+    校验的叙述仍然覆盖它的 ``narrative`` 字段。
+    """
+
+    facts = current_facts(run, events)
+    normalized_phase = phase if phase in PHASES else facts["phase"]
+
+    # ``tool_started`` carries the arguments, ``tool_observed`` the verdict; the
+    # two have to be joined before a write can be reported as done.
+    succeeded = {
+        str(event["payload"].get("call_id"))
+        for event in events
+        if event["kind"] == "tool_observed" and event["payload"].get("ok") is True
+    }
+    written: list[str] = []
+    seen: set[str] = set()
+    for event in events:
+        payload = event["payload"]
+        if payload.get("tool") not in {"write_file", "edit_file"}:
+            continue
+        if str(payload.get("call_id")) not in succeeded:
+            continue
+        arguments = payload.get("arguments")
+        path = arguments.get("file") if isinstance(arguments, dict) else None
+        if isinstance(path, str) and path and path not in seen:
+            seen.add(path)
+            written.append(path)
+    completed = [f"已写入 {path}" for path in written[-5:]]
+    if facts["verification"] in {"passed", "failed"}:
+        completed.append(f"最近验证结论：{facts['verification']}")
+
+    occurrences: dict[str, int] = {}
+    for event in events:
+        if event["kind"] != "verification_completed":
+            continue
+        for check in event["payload"].get("checks") or []:
+            text = _text(check.get("content") if isinstance(check, dict) else None)
+            for candidate in facts["failure_signatures"]:
+                if candidate in text:
+                    occurrences[candidate] = occurrences.get(candidate, 0) + 1
+    signature = ""
+    signature_count = 0
+    for candidate in sorted(facts["failure_signatures"]):
+        if occurrences.get(candidate, 0) > signature_count:
+            signature = candidate
+            signature_count = occurrences[candidate]
+
+    action, expected = _PHASE_NEXT_ACTIONS.get(normalized_phase, _PHASE_NEXT_ACTIONS["DIAGNOSE"])
+    evidence = sorted(facts["evidence_refs"])[:8]
+    return {
+        "schema_version": "run_card_deterministic.v1",
+        "phase": normalized_phase,
+        "intent": f"当前阶段 {normalized_phase}（宿主由持久事实推导，非模型自述）",
+        "completed": completed,
+        "blocker": (
+            {"signature": signature, "occurrences": signature_count, "candidate_revisions": 0} if signature else None
+        ),
+        "next_actions": [{"action": action, "why": "按当前阶段由宿主推导", "expected": expected}],
+        "evidence_refs": evidence,
+        "uncertain": False,
+        "reason": "确定性阶段卡：字段直接来自工程日志。",
+    }
+
+
 class CartographerPool:
     """Small Kimi client for short, structured RunCard narratives."""
 

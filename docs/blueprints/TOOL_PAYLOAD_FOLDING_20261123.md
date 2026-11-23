@@ -58,6 +58,34 @@ activity_age >= fold_window(24) 且 payload >= 平面字节下限 且 无 pin
 `tool` 结果不变；折叠信封带 `fold_state` / `fold_reason` / `summary` /
 `recovery` / `last_fold_activity_seq`。
 
+## 三个认知插件的实测与定位（22 个有活动的真实 run）
+
+| 插件 | 实测 | 结论 |
+| --- | --- | --- |
+| 蒸馏器 | 571 次产出 / 714 次折叠，**195 次真的用上模型摘要 = 27%**；16/20 个 run 首次交付早于首次折叠 | 有效，覆盖率有限 |
+| 制图师 | 通过 **32** / 拒绝 **542** = **5.6%**（`narrative_disagrees_with_facts` 334、`unparsable_or_non_object` 110、`invalid` 96） | 当前形态主要做无用功 |
+| 吞噬兽 | **17 个有卡的 run，第一张卡全部出现在第 61 轮** | 结构上注定晚到，实际影响≈0 |
+
+**共同病根**：让小模型生产结构化内容，再由宿主严格校验。校验越严，浪费越大。
+
+### 修法
+
+- **制图师**：宿主确定性 RunCard（`deterministic_run_card`）。phase / completed / blocker / next_actions 全部由持久事实推导，
+  制图师通过校验的叙述只覆盖 `narrative` 字段。
+  **它只作为可观测事实发布（`run_card_active`），不注入 provider 请求**：作为第二条 system 消息加进去会让 native 编码器把它并入
+  角色身份，破坏"角色指令逐字节不变"这条不变量（实测 `budget_visibility` / `qa_working_state` / `visual_projection` 三条既有测试同时回归）。
+  模型的阶段感继续由既有的 stage gate、ContextOS 记忆卡与 Resident AGI 承担；5.6% 通过率不再让运行实况 UI 显示"尚未绘制"。
+- **吞噬兽**：提前量 50 → **20**（第一个 epoch 在第 30 轮可用，而不是第 61 轮），并修掉 `EpochRuntime.schedule`
+  每轮取消在途任务的毛病（与蒸馏器同一个 bug）。
+- **蒸馏器**：候选门槛按平面分离 —— 调用平面 `distill_min_bytes()`（512），结果平面 `distill_result_min_bytes()`（= 折叠门槛的一半 = 2048）。
+  不再摘要永远不会被折的小卡片。
+
+## 读文件未命中的恢复
+
+`read_file tools/serve.js` 在 TypeScript 项目里是真实未命中，但旧回复只说"不存在"，模型只能再猜一轮（实测：turn 1251 读 `.js` 失败，
+turn 1265 改读 `.ts` 才成功）。现在宿主给出相近候选：同主干不同后缀（`tools/serve.ts`）、编译对应路径（`dist/tools/serve.js`），
+都经过存在性校验；全仓同名兜底扫描有 4000 文件上限并跳过 `node_modules` / `.git` / `.polaris` 等目录。
+
 ## 蒸馏器的定位
 
 蒸馏器的门槛派生自折叠门槛（`distill_min_activities = fold_window - 14`，

@@ -77,6 +77,7 @@ def configured_fold_kept_preview_bytes() -> int:
 # derive from the fold knobs instead of being restated here.
 DISTILL_LEAD_ACTIVITIES = 14
 DISTILL_BYTE_FLOOR_DIVISOR = 2
+DISTILL_RESULT_BYTE_FLOOR_DIVISOR = 2
 
 
 def distill_min_activities() -> int:
@@ -84,7 +85,19 @@ def distill_min_activities() -> int:
 
 
 def distill_min_bytes() -> int:
+    """Floor for the call plane, which the fold folds from 1024 bytes."""
+
     return max(256, configured_fold_min_bytes() // DISTILL_BYTE_FLOOR_DIVISOR)
+
+
+def distill_result_min_bytes() -> int:
+    """Floor for the result plane, which the fold folds from a much higher bar.
+
+    Summarising a card the fold will never reach is pure waste, so the distiller
+    tracks the plane's own threshold instead of a universal minimum.
+    """
+
+    return max(1024, configured_fold_result_min_bytes() // DISTILL_RESULT_BYTE_FLOOR_DIVISOR)
 
 
 def _card_payload(payload: object) -> tuple[dict[str, Any] | None, bool]:

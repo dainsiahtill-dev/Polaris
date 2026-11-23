@@ -177,3 +177,26 @@ def test_command_may_write_is_conservative() -> None:
         "sed -i s/a/b/ f",
     ):
         assert command_may_write(writer) is True, writer
+
+
+def test_read_file_miss_names_the_closest_existing_paths(tmp_path: Path) -> None:
+    """A miss on the wrong extension must not be a dead end."""
+
+    (tmp_path / "tools").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tools" / "serve.ts").write_text("export const root = '.';\n", encoding="utf-8")
+    (tmp_path / "dist" / "tools").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "dist" / "tools" / "serve.js").write_text("export const root = '.';\n", encoding="utf-8")
+    tools = _writer_tools(tmp_path)
+    observation = asyncio.run(tools.execute("call_miss", "read_file", {"file": "tools/serve.js"}))
+    assert observation.ok is False
+    assert "tools/serve.js" in observation.content
+    assert "tools/serve.ts" in observation.content
+    assert "dist/tools/serve.js" in observation.content
+
+
+def test_read_file_miss_without_candidates_stays_short(tmp_path: Path) -> None:
+    tools = _writer_tools(tmp_path)
+    observation = asyncio.run(tools.execute("call_miss", "read_file", {"file": "nothing/here.ts"}))
+    assert observation.ok is False
+    assert "nothing/here.ts" in observation.content
+    assert "相近现有文件" not in observation.content

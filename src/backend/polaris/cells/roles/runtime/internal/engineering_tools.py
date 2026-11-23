@@ -789,15 +789,7 @@ class EngineeringTools:
                     )
                 target = self._path(self._text(args, "file"), write=False)
                 if not target.is_file():
-                    return self._observation(
-                        call_id,
-                        name,
-                        False,
-                        "文件不存在（尚未创建）："
-                        f"{target.relative_to(self.workspace)}。"
-                        "如需创建该文件，请用 write_file 写入完整内容。",
-                        None,
-                    )
+                    return self._observation(call_id, name, False, self._missing_path_message(target), None)
                 content = self.filesystem.workspace_read_text(str(target), encoding="utf-8")
                 if args.get("range_required") and not {"start_line", "end_line"}.issubset(args):
                     # Tolerant defaults for weak models: a partial range still
@@ -1045,6 +1037,95 @@ class EngineeringTools:
         if remaining <= 0:
             raise ValueError("engineering run deadline exceeded")
         return remaining
+
+    # A path miss must never scan a dependency tree, so the fallback listing is
+    # bounded and skips the directories that only ever contain third-party code.
+    _SCAN_EXCLUDED_DIRS = {
+        ".git",
+        "node_modules",
+        ".polaris",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+    }
+    _SCAN_FILE_LIMIT = 4000
+
+    def _workspace_files(self) -> list[Path]:
+        collected: list[Path] = []
+        stack = [self.workspace]
+        while stack and len(collected) < self._SCAN_FILE_LIMIT:
+            current = stack.pop()
+            try:
+                entries = list(current.iterdir())
+            except OSError:
+                continue
+            for entry in entries:
+                if entry.name in self._SCAN_EXCLUDED_DIRS:
+                    continue
+                if entry.is_dir():
+                    stack.append(entry)
+                elif entry.is_file():
+                    collected.append(entry)
+        return collected
+
+    def _closest_existing_paths(self, target: Path) -> list[str]:
+        """Rank the files a miss most likely meant, cheapest checks first.
+
+        ``read_file tools/serve.js`` on a TypeScript project is a real miss, but
+        a bare "not found" makes the model guess again. Naming the near misses
+        lets it recover in the same turn.
+        """
+
+        try:
+            relative = target.relative_to(self.workspace)
+        except ValueError:
+            return []
+        mine = relative.as_posix()
+        candidates: list[str] = []
+
+        def add(path: Path) -> None:
+            if not path.is_file():
+                return
+            try:
+                text = path.relative_to(self.workspace).as_posix()
+            except ValueError:
+                return
+            if text != mine and text not in candidates:
+                candidates.append(text)
+
+        stem = target.stem
+        parent = target.parent
+        if parent.is_dir():
+            for sibling in sorted(parent.glob(f"{stem}.*")):
+                if sibling.is_file():
+                    add(sibling)
+        parts = relative.parts
+        if parts and parts[0] == "dist":
+            # dist/tools/serve.js was meant as the compiled tools/serve.ts
+            add(self.workspace.joinpath(*parts[1:]))
+        else:
+            # tools/serve.ts compiled to dist/tools/serve.js
+            add(self.workspace / "dist" / relative)
+        if not candidates:
+            for path in self._workspace_files():
+                if path.stem == stem and path.is_file():
+                    add(path)
+                    if len(candidates) >= 3:
+                        break
+        return candidates[:3]
+
+    def _missing_path_message(self, target: Path) -> str:
+        base = f"文件不存在（尚未创建）：{target.relative_to(self.workspace)}。"
+        try:
+            candidates = self._closest_existing_paths(target)
+        except OSError:
+            candidates = []
+        if not candidates:
+            return base + "如需创建该文件，请用 write_file 写入完整内容。"
+        return f"{base}相近现有文件：{'、'.join(candidates)}。如需新建该路径，请用 write_file 写入完整内容。"
 
     def _observation(
         self,

@@ -861,6 +861,7 @@ async def run_engineering_loop(
                     "fatal": False,
                 },
             )
+    from polaris.cells.roles.runtime.internal.engineering_cartographer import deterministic_run_card
     from polaris.cells.roles.runtime.internal.engineering_epoch_kimi import kimi_epoch_pool_from_environment
     from polaris.cells.roles.runtime.internal.engineering_epoch_runtime import EpochRuntime, facts_for_epoch
 
@@ -883,6 +884,7 @@ async def run_engineering_loop(
     epoch_reported: set[str] = set()
     cartographer_reported: set[str] = set()
     last_injection_fingerprint = ""
+    last_run_card_key: tuple[str, str] | None = None
     capability_last_used: dict[str, int] = {}
     capability_last_reminded: dict[str, int] = {}
     resident_stage: str | None = None
@@ -1444,15 +1446,37 @@ async def run_engineering_loop(
                     role=command.role,
                     payload={"repairs": structured_repairs},
                 )
+            # 阶段卡只作为可观测事实发布，不注入请求。制图师的叙述 574 次里只有
+            # 32 次通过校验，所以这张确定性卡是运行实况UI的主要来源；但把它作为
+            # 第二条 system 消息加进去会让 native 编码器把它并入角色身份，破坏
+            # "角色指令逐字节不变"这条不变量（实测三条既有测试同时回归）。模型
+            # 的阶段感继续由既有的 stage gate / 记忆卡 / Resident AGI 承担。
+            run_card = deterministic_run_card(run_now, journal_events, phase="")
+            card_narrative = None
             if cartographer_card is not None:
-                card_message = {
-                    "role": "system",
-                    "content": (
-                        "ContextOS Cartographer 运行地图（叙述层，状态以宿主为准）：\n"
-                        + json.dumps(cartographer_card, ensure_ascii=False)[:2000]
-                    ),
+                card_narrative = {key: cartographer_card.get(key) for key in ("intent", "reason", "next_actions")}
+                run_card = {
+                    **run_card,
+                    "narrative": card_narrative,
+                    "narrative_evidence_refs": cartographer_card.get("evidence_refs") or [],
                 }
-                request_messages = [card_message, *request_messages]
+            card_key = (
+                str(run_card["phase"]),
+                json.dumps(card_narrative, sort_keys=True, ensure_ascii=False),
+            )
+            if card_key != last_run_card_key:
+                last_run_card_key = card_key
+                store.append_event(
+                    command.session_id,
+                    kind="run_card_active",
+                    role="director",
+                    payload={
+                        "phase": run_card["phase"],
+                        "source": "cartographer" if cartographer_card is not None else "host",
+                        "turn_seq": turn_seq,
+                        "card": run_card,
+                    },
+                )
             injected = [
                 message
                 for message in request_messages

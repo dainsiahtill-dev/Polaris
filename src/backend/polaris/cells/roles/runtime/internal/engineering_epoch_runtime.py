@@ -10,6 +10,13 @@ from typing import Any
 
 from polaris.cells.roles.runtime.internal.engineering_semantic_advice import CandidateRefs
 
+# How far behind the current activity a closed epoch must sit before it is worth
+# summarising. The first epoch closes at activity 10, so a 50-activity lag meant
+# the first EpochCard could not appear before turn 60 — measured on every live
+# run, all 17 runs with a card produced their first one at turn 61. At 20 the
+# first card lands around turn 30, where there is still run left to use it.
+EPOCH_MIN_AGE_ACTIVITIES = 20
+
 
 def _activity_events(events: Sequence[Mapping[str, Any]]) -> list[tuple[int, list[Mapping[str, Any]]]]:
     groups: list[tuple[int, list[Mapping[str, Any]]]] = []
@@ -84,7 +91,7 @@ def _epoch_facts(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
 def facts_for_epoch(
     run: Mapping[str, Any], events: Sequence[Mapping[str, Any]]
 ) -> tuple[dict[str, Any], CandidateRefs, str]:
-    """Select the oldest closed epoch at least fifty activities behind current."""
+    """Select the oldest closed epoch far enough behind current to be stable."""
 
     groups = _activity_events(events)
     current = groups[-1][0] if groups else 0
@@ -94,7 +101,7 @@ def facts_for_epoch(
         for activity, group in groups
         if activity >= 10
         and activity % 10 == 0
-        and activity <= current - 50
+        and activity <= current - EPOCH_MIN_AGE_ACTIVITIES
         and _epoch_id(activity - 9, activity) not in reported
     ]
     if not eligible:
@@ -140,10 +147,11 @@ class EpochRuntime:
         self._request: dict[str, Any] = {}
 
     def schedule(self, request: dict[str, Any], candidates: CandidateRefs, *, fingerprint: str) -> None:
-        if fingerprint == self._fingerprint and self._job is not None and not self._job.done():
-            return
         if self._job is not None and not self._job.done():
-            self._job.cancel()
+            # Never cancel an in-flight job. The loop re-selects every turn, so
+            # cancelling on a changed fingerprint guarantees a slow remote
+            # summary never completes. A superseded request waits instead.
+            return
         self._fingerprint = fingerprint
         self._request = request
         candidate = request["candidates"][0]

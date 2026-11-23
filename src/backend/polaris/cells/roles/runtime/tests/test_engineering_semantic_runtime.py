@@ -147,9 +147,9 @@ async def test_semantic_runtime_drops_rejected_summary_so_host_falls_back() -> N
 def test_facts_for_advice_bounds_candidates_and_failure() -> None:
     card = build_file_card(
         "a.py",
-        "x" * 600,
+        "x" * 4000,
         revision=1,
-        preview="x" * 600,
+        preview="x" * 4000,
         truncated=False,
         start_line=1,
         end_line=1,
