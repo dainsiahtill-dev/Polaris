@@ -682,3 +682,32 @@ def test_oversize_live_projection_preserves_authoritative_qa_outcome_facts(
         basis,
     )
     assert result["liveChecks"] == result["coldChecks"] == 20
+
+
+def test_tool_observation_keeps_browser_pixels_for_the_live_view() -> None:
+    """The console renders <img> from payload.images; stripping bytes broke them.
+
+    The transport used to remove data_base64, truncate any string over 4096 bytes
+    and then reduce anything over 60KB, so a real screenshot never arrived and the
+    UI showed the alt text instead.
+    """
+
+    import base64
+
+    from polaris.delivery.ws.engineering_events import compact_engineering_payload
+
+    raw_png = b"\xff\xd8\xff\xe0" + bytes(range(256)) * 350
+    shot = base64.b64encode(raw_png).decode("ascii")
+    payload = {
+        "tool": "browser_observe",
+        "ok": True,
+        "images": [{"data_base64": shot, "media_type": "image/jpeg", "sha256": "abc"}],
+    }
+    projected = compact_engineering_payload("tool_observed", payload)
+    assert projected["images"][0]["data_base64"] == shot
+    assert "truncated_fields" not in projected
+    assert "payload_omitted" not in projected
+
+    # Every other kind still travels without pixels; SQLite keeps the full fact.
+    other = compact_engineering_payload("run_updated", payload)
+    assert "data_base64" not in json.dumps(other, ensure_ascii=False)
