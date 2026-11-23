@@ -459,10 +459,12 @@ class _FoldPolicy:
         self.targets = _write_targets(messages)
         self.activity_indices = _activity_indices(messages)
         self.current_activity = self.activity_indices[-1] if self.activity_indices else 0
+        # 保护窗必须严格大于折叠年龄，否则两者在同一边界上同时翻转：卡片刚到
+        # 24 activity 就可折，而它的路径也恰好在同一刻离开焦点，循环立刻成立。
         self.focus_paths = _focus_paths(
             messages,
             self.activity_indices,
-            window=self.fold_window,
+            window=self.fold_window + 1,
             current_activity=self.current_activity,
         )
         self.reasoning_text = json.dumps(

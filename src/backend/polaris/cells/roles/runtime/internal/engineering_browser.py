@@ -223,6 +223,11 @@ try:
                  if settings.get('web_root') is not None else Path(settings['entry']).as_uri()))
             page.goto(entry_url, wait_until='load', timeout=4000)
             for action in settings['actions']:
+                if action['type'] == 'settle':
+                    # A wait-only step touches nothing on the page.
+                    if action['wait_ms']:
+                        page.wait_for_timeout(action['wait_ms'])
+                    continue
                 locator = page.locator(action['selector'])
                 if action['type'] == 'click':
                     locator.click()
@@ -389,6 +394,8 @@ def _action_value(value: object) -> str:
 
 
 _ACTION_TYPES = {"click", "keypress", "fill", "select_option"}
+# A wait is not a verb: these spellings all mean "let the page settle".
+_WAIT_ACTION_TYPES = {"wait_ms", "wait", "sleep", "delay", "pause", "settle"}
 # Dialect synonyms weak providers emit for the same physical action. Mapping them
 # is semantics-preserving; anything genuinely unsupported still fails closed.
 _ACTION_ALIASES = {
@@ -547,6 +554,20 @@ def _settings(
         if not isinstance(action, dict) or action.keys() - {"type", "selector", "key", "value", "wait_ms"}:
             raise ValueError("unsupported browser action fields")
         kind = action.get("type")
+        if isinstance(kind, str) and kind.strip().lower() in _WAIT_ACTION_TYPES:
+            # Weak providers emit a bare wait as an action: {"type":"wait_ms",
+            # "wait_ms":2500}. That is a settle step, not a bad verb — absorb it
+            # instead of burning a turn on a rejection the model keeps repeating
+            # (live run: the same mistake at turns 474 and 498).
+            wait_only = _integer_value(
+                action.get("wait_ms", action.get("value", 0)),
+                label="wait action wait_ms",
+                minimum=0,
+                maximum=10000,
+            )
+            notes.append(f"wait_action:{kind!r}->settle")
+            actions.append({"type": "settle", "selector": "", "wait_ms": wait_only})
+            continue
         if not isinstance(kind, str) or kind not in _ACTION_TYPES:
             aliased = _ACTION_ALIASES.get(kind.strip().lower()) if isinstance(kind, str) else None
             if aliased is None:

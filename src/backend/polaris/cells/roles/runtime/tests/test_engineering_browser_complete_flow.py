@@ -235,6 +235,31 @@ def test_production_settings_absorb_provider_dialect(form_workspace: Path) -> No
     assert any("action_type:'type'->'fill'" in note for note in actual["normalization"])
 
 
+def test_a_wait_only_action_is_absorbed_as_a_settle_step(form_workspace: Path) -> None:
+    """{"type":"wait_ms","wait_ms":2500} is a settle step, not a bad verb.
+
+    A live run sent the same shape at turns 474 and 498, was rejected both times
+    and burned the turn; the model kept re-sending it.
+    """
+
+    actual = _settings(
+        {
+            "entry": "public/index.html",
+            "viewport": {"width": 800, "height": 600},
+            "frame_times_ms": [0],
+            "actions": [
+                {"type": "click", "selector": "#btn-play"},
+                {"type": "wait_ms", "wait_ms": 2500},
+            ],
+        },
+        workspace=form_workspace,
+        scope=_scope(form_workspace),
+    )
+    assert [item["type"] for item in actual["actions"]] == ["click", "settle"]
+    assert actual["actions"][1]["wait_ms"] == 2500
+    assert any("wait_action:'wait_ms'->settle" in note for note in actual["normalization"])
+
+
 @pytest.mark.parametrize("protocol", ["openai", "anthropic"])
 async def test_real_producer_native_request_and_eight_step_dom_flow(
     form_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch, protocol: str
