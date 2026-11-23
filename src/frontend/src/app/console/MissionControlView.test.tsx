@@ -78,6 +78,37 @@ describe('MissionControlView', () => {
     expect(screen.getByRole('button', { name: '取消运行' })).toBeInTheDocument();
   });
 
+  it('shows the current RunCard with its phase, intent and next actions', () => {
+    const events = [
+      event(3, 'cartographer_completed', {
+        phase: 'EDIT',
+        intent: '补齐花园渲染层与帧循环',
+        reason: '验证失败落在 renderer',
+        completed: ['建立画布与固定步长循环'],
+        next_actions: [{ action: '补 renderer', why: '验证失败', expected: '渲染通过' }],
+        blocker: null,
+        uncertain: false,
+        evidence_refs: ['call-1'],
+      }, 1_700_000_000_000),
+    ];
+    const binding = makeBinding({ projection: { snapshot: snapshot(), events, error: null, snapshotRequiredSeq: null, historyWindowed: false } });
+    render(<MissionControlView workspace="/workspace/pelican" binding={binding} role="director" />);
+    const pane = within(screen.getByTestId('run-card-pane'));
+    expect(pane.getByText('当前 RunCard · 制图师')).toBeInTheDocument();
+    expect(pane.getByText('EDIT')).toBeInTheDocument();
+    expect(pane.getByText('补齐花园渲染层与帧循环')).toBeInTheDocument();
+    expect(pane.getByText('建立画布与固定步长循环')).toBeInTheDocument();
+    expect(pane.getByText('补 renderer')).toBeInTheDocument();
+  });
+
+  it('says the RunCard has not been drawn yet when the cartographer is silent', () => {
+    const binding = makeBinding();
+    render(<MissionControlView workspace="/workspace/pelican" binding={binding} role="director" />);
+    const pane = within(screen.getByTestId('run-card-pane'));
+    expect(pane.getByText('尚未绘制')).toBeInTheDocument();
+    expect(pane.getByText(/每 12 轮绘制一张 RunCard/)).toBeInTheDocument();
+  });
+
   it('shows the selected receipt in the command-receipt panel', () => {
     const events = [event(2, 'tool_observed', { tool: 'execute_command', ok: false, content: 'FAIL playback\nexit code 1' })];
     const binding = makeBinding({ projection: { snapshot: snapshot(), events, error: null, snapshotRequiredSeq: null, historyWindowed: false } });

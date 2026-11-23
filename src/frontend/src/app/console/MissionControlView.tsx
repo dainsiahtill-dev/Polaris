@@ -89,6 +89,14 @@ export function MissionControlView({ workspace, binding, role }: {
   const events = useMemo(() => timelineEvents(projection.events), [projection.events]);
   const agentTraces = useMemo(() => buildAgentTraces(events), [events]);
   const selectedEvent = events.find((event) => event.seq === selectedSeq) ?? null;
+  // 当前 RunCard = 制图师最近一次通过校验的叙述卡；它决定模型看到的阶段意图与下一步。
+  const runCard = useMemo(() => {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index];
+      if (event && event.kind === 'cartographer_completed') return event;
+    }
+    return null;
+  }, [events]);
   const failedEvent = useMemo(() => {
     for (let index = events.length - 1; index >= 0; index -= 1) {
       const event = events[index];
@@ -222,6 +230,68 @@ export function MissionControlView({ workspace, binding, role }: {
           )}
         </section>
       </div>
+      <section className="cx-card" data-testid="run-card-pane">
+        <div className="cx-card-head">
+          <h2 className="cx-card-title"><IconCompass className="h-4.5 w-4.5 text-[var(--cx-teal)]" />当前 RunCard · 制图师</h2>
+          {runCard ? (
+            <span className="cx-pill cx-pill--info">{String(runCard.payload.phase ?? 'unknown')}</span>
+          ) : <span className="cx-pill cx-pill--idle">尚未绘制</span>}
+        </div>
+        {runCard ? (
+          <div className="grid grid-cols-1 gap-3 p-4 lg:grid-cols-2">
+            <div className="space-y-2">
+              <p className="text-[0.68rem] font-semibold uppercase tracking-wide text-[var(--cx-ink-faint)]">阶段意图</p>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-[var(--cx-ink)]">
+                {String(runCard.payload.intent || '（制图师未给出意图）')}
+              </p>
+              {String(runCard.payload.reason || '') ? (
+                <p className="text-xs leading-relaxed text-[var(--cx-ink-dim)]">{String(runCard.payload.reason)}</p>
+              ) : null}
+              {runCard.payload.blocker && typeof runCard.payload.blocker === 'object' ? (
+                <p className="rounded-lg border border-[rgba(213,81,129,.32)] bg-[rgba(213,81,129,.06)] px-2.5 py-1.5 text-xs text-[var(--cx-ink)]">
+                  阻塞：{String((runCard.payload.blocker as Record<string, unknown>).signature || '')}
+                  （出现 {String((runCard.payload.blocker as Record<string, unknown>).occurrences ?? '?')} 次）
+                </p>
+              ) : null}
+              <p className="cx-mono text-[0.62rem] text-[var(--cx-ink-faint)]">
+                {runCard.payload.uncertain === true ? '不确定 · ' : ''}#{runCard.seq} · {formatClock(runCard.created_at)}
+              </p>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <p className="text-[0.68rem] font-semibold uppercase tracking-wide text-[var(--cx-ink-faint)]">本轮已完成</p>
+                {Array.isArray(runCard.payload.completed) && (runCard.payload.completed as unknown[]).length > 0 ? (
+                  <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs leading-relaxed text-[var(--cx-ink)]">
+                    {(runCard.payload.completed as unknown[]).slice(0, 8).map((item, index) => (
+                      <li key={index}>{String(item)}</li>
+                    ))}
+                  </ul>
+                ) : <p className="mt-1 text-xs text-[var(--cx-ink-faint)]">暂无</p>}
+              </div>
+              <div>
+                <p className="text-[0.68rem] font-semibold uppercase tracking-wide text-[var(--cx-ink-faint)]">下一步候选</p>
+                {Array.isArray(runCard.payload.next_actions) && (runCard.payload.next_actions as unknown[]).length > 0 ? (
+                  <ul className="mt-1 space-y-1">
+                    {(runCard.payload.next_actions as Record<string, unknown>[]).slice(0, 5).map((action, index) => (
+                      <li key={index} className="rounded-lg border border-[var(--cx-line)] px-2.5 py-1.5">
+                        <p className="text-xs font-medium text-[var(--cx-ink)]">{String(action.action || '')}</p>
+                        {String(action.why || '') ? <p className="text-[0.68rem] text-[var(--cx-ink-dim)]">{String(action.why)}</p> : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : <p className="mt-1 text-xs text-[var(--cx-ink-faint)]">暂无</p>}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center gap-2 p-8 text-center">
+            <IconCompass className="h-6 w-6 text-[var(--cx-ink-faint)]" />
+            <p className="text-sm text-[var(--cx-ink-dim)]">
+              制图师每 12 轮绘制一张 RunCard，并只在叙述与持久事实一致时发布。
+            </p>
+          </div>
+        )}
+      </section>
       <section className="cx-card" data-testid="agent-activity-pane">
         <div className="cx-card-head">
           <h2 className="cx-card-title"><IconClapper className="h-4.5 w-4.5 text-[var(--cx-teal)]" />智能体活动</h2>

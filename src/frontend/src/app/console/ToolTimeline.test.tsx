@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { ToolTimeline } from './ToolTimeline';
 import type { EngineeringEvent } from '@/services/api.types';
@@ -152,6 +152,29 @@ describe('ToolTimeline live ordering', () => {
       />,
     );
     expect(screen.getByTestId('browser-shot-8-0')).toHaveAttribute('src', `data:image/jpeg;base64,${shot}`);
+  });
+
+  it('boxes every tool call of one turn under that turn number', () => {
+    const turn = (seq: number, turnSeq: number): EngineeringEvent => ({
+      ...event(seq),
+      payload: { ...event(seq).payload, turn_seq: turnSeq },
+    });
+    render(
+      <ToolTimeline
+        events={[turn(1, 3), turn(2, 3), turn(3, 4)]}
+        selectedSeq={null}
+        onSelect={vi.fn()}
+        onOpenContext={vi.fn()}
+        emptyHint="empty"
+      />,
+    );
+    const third = screen.getByTestId('story-turn-3');
+    expect(third).toHaveTextContent('第 3 轮');
+    expect(third).toHaveTextContent('2 次工具调用');
+    expect(within(third).getAllByTestId(/^story-tool-/)).toHaveLength(2);
+    const fourth = screen.getByTestId('story-turn-4');
+    expect(fourth).toHaveTextContent('第 4 轮');
+    expect(within(fourth).getAllByTestId(/^story-tool-/)).toHaveLength(1);
   });
 
   it('shows the newest event first so users do not need to scroll to the bottom', () => {

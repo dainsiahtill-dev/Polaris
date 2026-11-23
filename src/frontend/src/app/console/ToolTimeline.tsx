@@ -97,6 +97,29 @@ function beatText(event: EngineeringEvent): string {
   }
 }
 
+/**
+ * One model turn is one provider request plus every tool call it dispatched.
+ * The timeline groups by `turn_seq` so a turn's parallel tool calls read as one
+ * unit instead of unrelated rows.
+ */
+type TurnGroup = { key: string; turn: number | null; events: EngineeringEvent[] };
+
+function groupByTurn(events: EngineeringEvent[]): TurnGroup[] {
+  const groups: TurnGroup[] = [];
+  for (const event of events) {
+    const turn = typeof event.payload.turn_seq === 'number' ? event.payload.turn_seq : null;
+    if (turn !== null) {
+      const last = groups[groups.length - 1];
+      if (last && last.turn === turn) {
+        last.events.push(event);
+        continue;
+      }
+    }
+    groups.push({ key: turn === null ? `seq-${event.seq}` : `turn-${turn}`, turn, events: [event] });
+  }
+  return groups;
+}
+
 function FoldBadge({ reason }: { reason: string }) {
   return (
     <span
@@ -143,7 +166,12 @@ function foldMeta(event: EngineeringEvent): { folded: boolean; reason: string } 
   return { folded: direct || nested, reason };
 }
 
-/** The live run story: narration first, tools as annotations, platform beats in between. */
+const TURN_STYLE = {
+  border: '1px solid var(--cx-line-strong)',
+  background: 'linear-gradient(180deg, rgba(31,122,140,.06), rgba(31,122,140,.015))',
+} as const;
+
+/** The live run story: turns boxed, narration first, tools as annotations, platform beats in between. */
 export function ToolTimeline({ events, selectedSeq, onSelect, onOpenContext, emptyHint }: {
   events: EngineeringEvent[];
   selectedSeq: number | null;
@@ -153,6 +181,183 @@ export function ToolTimeline({ events, selectedSeq, onSelect, onOpenContext, emp
 }): ReactElement {
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
   const story = useMemo(() => events.filter((event) => DISPLAY_KINDS.has(event.kind)).slice(-120).reverse(), [events]);
+  const groups = useMemo(() => groupByTurn(story), [story]);
+
+  const renderEvent = (event: EngineeringEvent): ReactElement => {
+    const kind = storyKindOf(event);
+    if (kind === 'narration') {
+      const author = textOf(event.payload.author_role);
+      if (author && author !== 'assistant') return <span key={event.seq} />;
+      const text = narrationText(event);
+      if (!text.trim()) return <span key={event.seq} />;
+      const isOpen = expanded[event.seq] === true;
+      const shown = isOpen ? text : text.length > 500 ? `${text.slice(0, 500)}…` : text;
+      return (
+        <article key={event.seq} data-testid={`story-narration-${event.seq}`} className="rounded-xl border border-[var(--cx-line)] bg-[#fbfaf6] px-3.5 py-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="flex items-center gap-1.5 text-xs font-semibold text-[var(--cx-teal-strong)]"><IconClapper className="h-3.5 w-3.5" />{event.role}</p>
+            <span className="cx-mono text-[0.64rem] text-[var(--cx-ink-faint)]">{formatClock(event.created_at)}</span>
+          </div>
+          <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-[var(--cx-ink)]">{shown}</p>
+          {text.length > 500 ? (
+            <button type="button" className="mt-1 text-xs text-[var(--cx-teal-strong)] hover:underline" onClick={() => setExpanded((p) => ({ ...p, [event.seq]: !isOpen }))}>{isOpen ? '收起' : '展开全部'}</button>
+          ) : null}
+        </article>
+      );
+    }
+    if (kind === 'epoch') {
+      return (
+        <article key={event.seq} data-testid={`story-epoch-${event.seq}`} className="rounded-xl border border-[rgba(213,81,129,.32)] bg-[rgba(213,81,129,.06)] px-3 py-2.5">
+          <div className="flex items-center gap-2">
+            <IconClapper className="h-4 w-4 text-[#d55181]" />
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-[var(--cx-ink)]">Devourer 吞噬兽 · {textOf(event.payload.id)}</p>
+              <p className="mt-0.5 line-clamp-3 text-[0.7rem] text-[var(--cx-ink-dim)]">{textOf(event.payload.summary)}</p>
+            </div>
+          </div>
+        </article>
+      );
+    }
+    if (kind === 'advisor') {
+      const summaries = Array.isArray(event.payload.summaries) ? event.payload.summaries : [];
+      // The host emits one entry per endpoint: {validation_result, result:{node_id,summary}}.
+      // Reading node_id/summary at the top level always rendered "（无摘要）".
+      const lines = summaries.flatMap((item) => {
+        const record = item as Record<string, unknown>;
+        if (record.validation_result && record.validation_result !== 'VALID') return [];
+        const result = (
+          record.result && typeof record.result === 'object' ? record.result : record
+        ) as Record<string, unknown>;
+        const node = textOf(result.node_id) || '节点';
+        const summary = textOf(result.summary).slice(0, 120) || '（无摘要）';
+        return [`${node} → ${summary}`];
+      });
+      return (
+        <article key={event.seq} data-testid={`story-advisor-${event.seq}`} className="rounded-xl border border-[rgba(31,122,140,.28)] bg-[rgba(31,122,140,.05)] px-3 py-2">
+          <div className="flex items-center gap-2">
+            <IconGauge className="h-4 w-4 text-[#1f7a8c]" />
+            <p className="text-xs font-semibold text-[var(--cx-ink)]">
+              蒸馏器 · 蒸馏内容{lines.length ? ` · ${lines.length} 个节点` : ''}
+            </p>
+          </div>
+          {lines.length === 0 ? (
+            <p className="mt-1 text-[0.7rem] text-[var(--cx-ink-dim)]">暂无蒸馏结果</p>
+          ) : (
+            <ul className="mt-1 space-y-0.5">
+              {lines.map((line, index) => (
+                <li key={index} className="text-[0.7rem] leading-relaxed text-[var(--cx-ink)]">{line}</li>
+              ))}
+            </ul>
+          )}
+        </article>
+      );
+    }
+    if (kind === 'fold') {
+      const fold = foldMeta(event);
+      const path = textOf(event.payload.path) || textOf(event.payload.projection_ref);
+      const summary = textOf(event.payload.summary);
+      const activityAge = typeof event.payload.activity_age === 'number' ? event.payload.activity_age : null;
+      return (
+        <article key={event.seq} data-testid={`story-fold-${event.seq}`} className="fold-event rounded-xl border px-3 py-2.5">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[rgba(98,80,214,0.14)] text-[#9085e9]">
+              <IconChevronRight className="h-4 w-4 rotate-90" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-[var(--cx-ink)]">智能折叠已触发</p>
+              <p className="truncate text-[0.7rem] text-[var(--cx-ink-dim)]">
+                {activityAge !== null ? `${activityAge} 轮前 · ` : ''}{path}
+              </p>
+              {summary ? <p className="mt-0.5 line-clamp-2 text-[0.7rem] text-[var(--cx-ink-dim)]">{summary}</p> : null}
+            </div>
+            <FoldBadge reason={fold.reason} />
+          </div>
+        </article>
+      );
+    }
+    if (kind === 'tool') {
+      const payload = event.payload;
+      const tool = textOf(payload.tool) || event.kind;
+      const ok = payload.ok !== false;
+      const fold = foldMeta(event);
+      const glyphKind = toolGlyph(tool);
+      const Glyph = GLYPHS[glyphKind];
+      const images = Array.isArray(payload.images) ? payload.images as Record<string, unknown>[] : [];
+      if (images.length > 0) {
+        return (
+          <article key={event.seq} data-testid={`story-tool-${event.seq}`} className="rounded-xl border border-white/[0.07] bg-black/20 p-2">
+            <button type="button" className="flex w-full items-center gap-2 text-left" onClick={() => onSelect(event)}>
+              <span className="cx-tl-glyph !h-7 !w-7"><Glyph className="h-3.5 w-3.5" /></span>
+              <span className="min-w-0 flex-1 truncate text-[0.8rem] text-[var(--cx-ink)]">
+                {toolLabel(tool)} · {toolSummary(event)}
+              </span>
+              {ok ? <IconCheck className="h-4 w-4 text-[var(--cx-teal-bright)]" /> : <span className="cx-pill cx-pill--bad">失败</span>}
+            </button>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {images.slice(0, 4).map((image, index) => {
+                const source = textOf(image.data_base64);
+                return (
+                  <img
+                    key={`${event.seq}-${index}`}
+                    src={`data:${textOf(image.media_type) || 'image/jpeg'};base64,${source}`}
+                    alt={`浏览器截图 ${index + 1}`}
+                    data-testid={`browser-shot-${event.seq}-${index}`}
+                    className="h-24 rounded-lg border border-white/10 object-cover"
+                  />
+                );
+              })}
+            </div>
+          </article>
+        );
+      }
+      return (
+        <button key={event.seq} type="button" data-testid={`story-tool-${event.seq}`} data-selected={selectedSeq === event.seq} className="cx-tl-row !py-2.5" onClick={() => onSelect(event)}>
+          <span className="cx-tl-time">{formatClock(event.created_at)}</span>
+          <span className="cx-tl-glyph !h-7 !w-7"><Glyph className="h-3.5 w-3.5" /></span>
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center justify-between gap-3">
+              <span className="truncate text-[0.82rem] font-medium text-[var(--cx-ink)]">{toolLabel(tool)} · {toolSummary(event)}</span>
+              {fold.folded ? <FoldBadge reason={fold.reason} /> : null}
+              {ok ? <IconCheck className="h-4 w-4 shrink-0 text-[var(--cx-teal-bright)]" /> : <span className="cx-pill cx-pill--bad">失败</span>}
+            </span>
+          </span>
+          <IconChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--cx-ink-faint)]" />
+        </button>
+      );
+    }
+    if (kind === 'llm_call') {
+      const payload = event.payload;
+      const audit = payload.audit && typeof payload.audit === 'object' ? payload.audit as Record<string, unknown> : {};
+      const tokens = typeof audit.final_request_token_estimate === 'number' ? `${audit.final_request_token_estimate.toLocaleString()} tok` : '';
+      const model = textOf(payload.model);
+      const ref = contextRefOf(event);
+      return (
+        <div key={event.seq} data-testid={`story-llm-${event.seq}`} className="flex items-center gap-2.5 rounded-lg border border-dashed border-[var(--cx-line-strong)] px-3 py-2">
+          <IconGauge className="h-4 w-4 shrink-0 text-[var(--cx-ink-faint)]" />
+          <p className="min-w-0 flex-1 truncate text-xs text-[var(--cx-ink-dim)]">模型请求{model ? ` · ${model}` : ''}{tokens ? ` · 约 ${tokens}` : ''}</p>
+          {ref ? (
+            <button type="button" className="shrink-0 font-mono text-[0.66rem] text-[#1f7a8c] hover:text-[#155e6d]" onClick={() => onOpenContext(ref, event.role)}>查看最终请求 · {ref.slice(0, 8)}…</button>
+          ) : <span className="shrink-0 text-[0.66rem] text-[var(--cx-ink-faint)]">快照不可用</span>}
+        </div>
+      );
+    }
+    const beatIcon = kind === 'stage_gate' ? <IconGauge className="h-4 w-4" />
+      : kind === 'loop_guard' ? <IconFlag className="h-4 w-4" />
+        : kind === 'visual_qa' ? <IconGlobe className="h-4 w-4" />
+          : kind === 'verification' ? (event.kind === 'verification_completed' && event.payload.verification === 'passed' ? <IconCheck className="h-4 w-4" /> : <IconShield className="h-4 w-4" />)
+            : <IconInfo className="h-4 w-4" />;
+    const beatTone = kind === 'loop_guard' ? 'text-[var(--cx-amber)]'
+      : kind === 'verification' && event.kind === 'verification_completed' && event.payload.verification !== 'passed' ? 'text-[var(--cx-red)]'
+        : 'text-[var(--cx-teal-strong)]';
+    return (
+      <div key={event.seq} data-testid={`story-beat-${event.seq}`} className="flex items-center gap-2.5 px-1 py-1">
+        <span className={beatTone}>{beatIcon}</span>
+        <p className="text-xs text-[var(--cx-ink-dim)]">{beatText(event)}</p>
+        <span className="cx-mono ml-auto shrink-0 text-[0.62rem] text-[var(--cx-ink-faint)]">{formatClock(event.created_at)}</span>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-2 p-3">
       <style>{`
@@ -181,179 +386,26 @@ export function ToolTimeline({ events, selectedSeq, onSelect, onOpenContext, emp
           .fold-badge, .fold-event { animation: none !important; }
         }
       `}</style>
-      {story.length === 0 ? <p className="px-1 py-8 text-center text-sm text-[var(--cx-ink-faint)]">{emptyHint}</p> : null}
-      {story.map((event) => {
-        const kind = storyKindOf(event);
-        if (kind === 'narration') {
-          const author = textOf(event.payload.author_role);
-          if (author && author !== 'assistant') return null;
-          const text = narrationText(event);
-          if (!text.trim()) return null;
-          const isOpen = expanded[event.seq] === true;
-          const shown = isOpen ? text : text.length > 500 ? `${text.slice(0, 500)}…` : text;
-          return (
-            <article key={event.seq} data-testid={`story-narration-${event.seq}`} className="rounded-xl border border-[var(--cx-line)] bg-[#fbfaf6] px-3.5 py-3">
-              <div className="flex items-center justify-between gap-2">
-                <p className="flex items-center gap-1.5 text-xs font-semibold text-[var(--cx-teal-strong)]"><IconClapper className="h-3.5 w-3.5" />{event.role}</p>
-                <span className="cx-mono text-[0.64rem] text-[var(--cx-ink-faint)]">{formatClock(event.created_at)}</span>
-              </div>
-              <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-[var(--cx-ink)]">{shown}</p>
-              {text.length > 500 ? (
-                <button type="button" className="mt-1 text-xs text-[var(--cx-teal-strong)] hover:underline" onClick={() => setExpanded((p) => ({ ...p, [event.seq]: !isOpen }))}>{isOpen ? '收起' : '展开全部'}</button>
-              ) : null}
-            </article>
-          );
-        }
-        if (kind === 'epoch') {
-          return (
-            <article key={event.seq} data-testid={`story-epoch-${event.seq}`} className="rounded-xl border border-[rgba(213,81,129,.32)] bg-[rgba(213,81,129,.06)] px-3 py-2.5">
-              <div className="flex items-center gap-2">
-                <IconClapper className="h-4 w-4 text-[#d55181]" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-semibold text-[var(--cx-ink)]">Devourer 吞噬兽 · {textOf(event.payload.id)}</p>
-                  <p className="mt-0.5 line-clamp-3 text-[0.7rem] text-[var(--cx-ink-dim)]">{textOf(event.payload.summary)}</p>
-                </div>
-              </div>
-            </article>
-          );
-        }
-        if (kind === 'advisor') {
-          const summaries = Array.isArray(event.payload.summaries) ? event.payload.summaries : [];
-          // The host emits one entry per endpoint: {validation_result, result:{node_id,summary}}.
-          // Reading node_id/summary at the top level always rendered "（无摘要）".
-          const lines = summaries.flatMap((item) => {
-            const record = item as Record<string, unknown>;
-            if (record.validation_result && record.validation_result !== 'VALID') return [];
-            const result = (
-              record.result && typeof record.result === 'object' ? record.result : record
-            ) as Record<string, unknown>;
-            const node = textOf(result.node_id) || '节点';
-            const summary = textOf(result.summary).slice(0, 120) || '（无摘要）';
-            return [`${node} → ${summary}`];
-          });
-          return (
-            <article key={event.seq} data-testid={`story-advisor-${event.seq}`} className="rounded-xl border border-[rgba(31,122,140,.28)] bg-[rgba(31,122,140,.05)] px-3 py-2">
-              <div className="flex items-center gap-2">
-                <IconGauge className="h-4 w-4 text-[#1f7a8c]" />
-                <p className="text-xs font-semibold text-[var(--cx-ink)]">
-                  蒸馏器 · 蒸馏内容{lines.length ? ` · ${lines.length} 个节点` : ''}
-                </p>
-              </div>
-              {lines.length === 0 ? (
-                <p className="mt-1 text-[0.7rem] text-[var(--cx-ink-dim)]">暂无蒸馏结果</p>
-              ) : (
-                <ul className="mt-1 space-y-0.5">
-                  {lines.map((line, index) => (
-                    <li key={index} className="text-[0.7rem] leading-relaxed text-[var(--cx-ink)]">{line}</li>
-                  ))}
-                </ul>
-              )}
-            </article>
-          );
-        }
-        if (kind === 'fold') {
-          const fold = foldMeta(event);
-          const path = textOf(event.payload.path) || textOf(event.payload.projection_ref);
-          const summary = textOf(event.payload.summary);
-          const activityAge = typeof event.payload.activity_age === 'number' ? event.payload.activity_age : null;
-          return (
-            <article key={event.seq} data-testid={`story-fold-${event.seq}`} className="fold-event rounded-xl border px-3 py-2.5">
-              <div className="flex items-center gap-2.5">
-                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[rgba(98,80,214,0.14)] text-[#9085e9]">
-                  <IconChevronRight className="h-4 w-4 rotate-90" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-semibold text-[var(--cx-ink)]">智能折叠已触发</p>
-                  <p className="truncate text-[0.7rem] text-[var(--cx-ink-dim)]">
-                    {activityAge !== null ? `${activityAge} 轮前 · ` : ''}{path}
-                  </p>
-                  {summary ? <p className="mt-0.5 line-clamp-2 text-[0.7rem] text-[var(--cx-ink-dim)]">{summary}</p> : null}
-                </div>
-                <FoldBadge reason={fold.reason} />
-              </div>
-            </article>
-          );
-        }
-        if (kind === 'tool') {
-          const payload = event.payload;
-          const tool = textOf(payload.tool) || event.kind;
-          const ok = payload.ok !== false;
-          const fold = foldMeta(event);
-          const glyphKind = toolGlyph(tool);
-          const Glyph = GLYPHS[glyphKind];
-          const images = Array.isArray(payload.images) ? payload.images as Record<string, unknown>[] : [];
-          if (images.length > 0) {
-            return (
-              <article key={event.seq} data-testid={`story-tool-${event.seq}`} className="rounded-xl border border-white/[0.07] bg-black/20 p-2">
-                <button type="button" className="flex w-full items-center gap-2 text-left" onClick={() => onSelect(event)}>
-                  <span className="cx-tl-glyph !h-7 !w-7"><Glyph className="h-3.5 w-3.5" /></span>
-                  <span className="min-w-0 flex-1 truncate text-[0.8rem] text-[var(--cx-ink)]">
-                    {toolLabel(tool)} · {toolSummary(event)}
-                  </span>
-                  {ok ? <IconCheck className="h-4 w-4 text-[var(--cx-teal-bright)]" /> : <span className="cx-pill cx-pill--bad">失败</span>}
-                </button>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {images.slice(0, 4).map((image, index) => {
-                    const source = textOf(image.data_base64);
-                    return (
-                      <img
-                        key={`${event.seq}-${index}`}
-                        src={`data:${textOf(image.media_type) || 'image/jpeg'};base64,${source}`}
-                        alt={`浏览器截图 ${index + 1}`}
-                        data-testid={`browser-shot-${event.seq}-${index}`}
-                        className="h-24 rounded-lg border border-white/10 object-cover"
-                      />
-                    );
-                  })}
-                </div>
-              </article>
-            );
-          }
-          return (
-            <button key={event.seq} type="button" data-testid={`story-tool-${event.seq}`} data-selected={selectedSeq === event.seq} className="cx-tl-row !py-2.5" onClick={() => onSelect(event)}>
-              <span className="cx-tl-time">{formatClock(event.created_at)}</span>
-              <span className="cx-tl-glyph !h-7 !w-7"><Glyph className="h-3.5 w-3.5" /></span>
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center justify-between gap-3">
-                  <span className="truncate text-[0.82rem] font-medium text-[var(--cx-ink)]">{toolLabel(tool)} · {toolSummary(event)}</span>
-                  {fold.folded ? <FoldBadge reason={fold.reason} /> : null}
-                  {ok ? <IconCheck className="h-4 w-4 shrink-0 text-[var(--cx-teal-bright)]" /> : <span className="cx-pill cx-pill--bad">失败</span>}
-                </span>
-              </span>
-              <IconChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--cx-ink-faint)]" />
-            </button>
-          );
-        }
-        if (kind === 'llm_call') {
-          const payload = event.payload;
-          const audit = payload.audit && typeof payload.audit === 'object' ? payload.audit as Record<string, unknown> : {};
-          const tokens = typeof audit.final_request_token_estimate === 'number' ? `${audit.final_request_token_estimate.toLocaleString()} tok` : '';
-          const model = textOf(payload.model);
-          const ref = contextRefOf(event);
-          return (
-            <div key={event.seq} data-testid={`story-llm-${event.seq}`} className="flex items-center gap-2.5 rounded-lg border border-dashed border-[var(--cx-line-strong)] px-3 py-2">
-              <IconGauge className="h-4 w-4 shrink-0 text-[var(--cx-ink-faint)]" />
-              <p className="min-w-0 flex-1 truncate text-xs text-[var(--cx-ink-dim)]">模型请求{model ? ` · ${model}` : ''}{tokens ? ` · 约 ${tokens}` : ''}</p>
-              {ref ? (
-                <button type="button" className="shrink-0 font-mono text-[0.66rem] text-[#1f7a8c] hover:text-[#155e6d]" onClick={() => onOpenContext(ref, event.role)}>查看最终请求 · {ref.slice(0, 8)}…</button>
-              ) : <span className="shrink-0 text-[0.66rem] text-[var(--cx-ink-faint)]">快照不可用</span>}
-            </div>
-          );
-        }
-        const beatIcon = kind === 'stage_gate' ? <IconGauge className="h-4 w-4" />
-          : kind === 'loop_guard' ? <IconFlag className="h-4 w-4" />
-            : kind === 'visual_qa' ? <IconGlobe className="h-4 w-4" />
-              : kind === 'verification' ? (event.kind === 'verification_completed' && event.payload.verification === 'passed' ? <IconCheck className="h-4 w-4" /> : <IconShield className="h-4 w-4" />)
-                : <IconInfo className="h-4 w-4" />;
-        const beatTone = kind === 'loop_guard' ? 'text-[var(--cx-amber)]'
-          : kind === 'verification' && event.kind === 'verification_completed' && event.payload.verification !== 'passed' ? 'text-[var(--cx-red)]'
-            : 'text-[var(--cx-teal-strong)]';
+      {groups.length === 0 ? <p className="px-1 py-8 text-center text-sm text-[var(--cx-ink-faint)]">{emptyHint}</p> : null}
+      {groups.map((group) => {
+        const tools = group.events.filter((event) => storyKindOf(event) === 'tool').length;
         return (
-          <div key={event.seq} data-testid={`story-beat-${event.seq}`} className="flex items-center gap-2.5 px-1 py-1">
-            <span className={beatTone}>{beatIcon}</span>
-            <p className="text-xs text-[var(--cx-ink-dim)]">{beatText(event)}</p>
-            <span className="cx-mono ml-auto shrink-0 text-[0.62rem] text-[var(--cx-ink-faint)]">{formatClock(event.created_at)}</span>
-          </div>
+          <section
+            key={group.key}
+            data-testid={group.turn === null ? `story-turn-seq-${group.events[0]?.seq ?? 0}` : `story-turn-${group.turn}`}
+            className="space-y-2 rounded-xl p-2"
+            style={TURN_STYLE}
+          >
+            <header className="flex items-center gap-2 px-1.5 pt-0.5">
+              <span className="cx-mono rounded-md border border-[var(--cx-line-strong)] bg-[#fbfaf6] px-1.5 py-0.5 text-[0.66rem] font-semibold text-[var(--cx-teal-strong)]">
+                {group.turn === null ? '平台事件' : `第 ${group.turn} 轮`}
+              </span>
+              <span className="text-[0.62rem] text-[var(--cx-ink-faint)]">
+                {group.events.length} 条{group.turn === null ? '' : ` · ${tools} 次工具调用`}
+              </span>
+            </header>
+            {group.events.map((event) => renderEvent(event))}
+          </section>
         );
       })}
     </div>
