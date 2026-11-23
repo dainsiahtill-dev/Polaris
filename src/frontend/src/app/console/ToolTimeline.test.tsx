@@ -177,6 +177,34 @@ describe('ToolTimeline live ordering', () => {
     expect(within(fourth).getAllByTestId(/^story-tool-/)).toHaveLength(1);
   });
 
+  it('keeps one box per turn when the request marker interleaves its tools', () => {
+    const at = (seq: number, turnSeq: number, kind: string = 'tool_observed'): EngineeringEvent => ({
+      ...event(seq),
+      kind,
+      payload: { ...event(seq).payload, turn_seq: turnSeq },
+    });
+    render(
+      <ToolTimeline
+        events={[
+          at(1, 7, 'llm_request_observed'),
+          at(2, 7),
+          at(3, 7, 'llm_request_observed'),
+          at(4, 7),
+          at(5, 8),
+        ]}
+        selectedSeq={null}
+        onSelect={vi.fn()}
+        onOpenContext={vi.fn()}
+        emptyHint="empty"
+      />,
+    );
+    // llm_request_observed carries the same turn_seq and splits the turn in two;
+    // splitting produced two `turn-7` boxes and duplicate React keys.
+    expect(screen.getAllByTestId('story-turn-7')).toHaveLength(1);
+    expect(within(screen.getByTestId('story-turn-7')).getAllByTestId(/^story-/).length).toBeGreaterThan(0);
+    expect(screen.getAllByTestId('story-turn-8')).toHaveLength(1);
+  });
+
   it('shows the newest event first so users do not need to scroll to the bottom', () => {
     render(
       <ToolTimeline

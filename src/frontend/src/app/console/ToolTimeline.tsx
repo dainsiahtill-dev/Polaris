@@ -105,17 +105,24 @@ function beatText(event: EngineeringEvent): string {
 type TurnGroup = { key: string; turn: number | null; events: EngineeringEvent[] };
 
 function groupByTurn(events: EngineeringEvent[]): TurnGroup[] {
+  // 一轮的事件不一定连续：llm_request_observed 带着同一个 turn_seq，夹在工具
+  // 观察之间。按出现位置分段会让同一个 turn 生成两个盒子（React key 冲突），
+  // 所以同一轮一律合并，盒子位置取它最新的一次出现。
   const groups: TurnGroup[] = [];
+  const byTurn = new Map<number, TurnGroup>();
   for (const event of events) {
     const turn = typeof event.payload.turn_seq === 'number' ? event.payload.turn_seq : null;
-    if (turn !== null) {
-      const last = groups[groups.length - 1];
-      if (last && last.turn === turn) {
-        last.events.push(event);
-        continue;
-      }
+    if (turn === null) {
+      groups.push({ key: `seq-${event.seq}`, turn: null, events: [event] });
+      continue;
     }
-    groups.push({ key: turn === null ? `seq-${event.seq}` : `turn-${turn}`, turn, events: [event] });
+    let group = byTurn.get(turn);
+    if (group === undefined) {
+      group = { key: `turn-${turn}`, turn, events: [] };
+      byTurn.set(turn, group);
+      groups.push(group);
+    }
+    group.events.push(event);
   }
   return groups;
 }
