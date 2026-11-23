@@ -11,11 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from polaris.cells.roles.runtime.internal.engineering_semantic_advice import (
-    CandidateRefs,
-    parse_semantic_advice,
-    validate_node_summary,
-)
+from polaris.cells.roles.runtime.internal.engineering_semantic_advice import validate_node_summary
 
 
 def _json_content(value: str) -> str:
@@ -64,67 +60,6 @@ def advisor_configs_from_workspace(workspace: Path) -> list[RemoteAdvisorConfig]
     except (KeyError, TypeError, ValueError, json.JSONDecodeError):
         return []
 
-
-_ADVICE_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["assessments", "need_evidence"],
-    "properties": {
-        "assessments": {
-            "type": "array",
-            "maxItems": 8,
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": [
-                    "node_id",
-                    "relation",
-                    "suggested_view",
-                    "keep_slice_ids",
-                    "evidence_refs",
-                    "uncertain",
-                    "reason",
-                ],
-                "properties": {
-                    "node_id": {"type": "string"},
-                    "relation": {
-                        "type": "string",
-                        "enum": ["EDIT_RELATED", "FAILURE_CANDIDATE", "REQUIREMENT_CANDIDATE", "BACKGROUND", "UNKNOWN"],
-                    },
-                    "suggested_view": {
-                        "type": "string",
-                        "enum": ["KEEP_CURRENT", "FULL", "SLICE", "CARD", "REFERENCE", "ABSTAIN"],
-                    },
-                    "keep_slice_ids": {"type": "array", "maxItems": 8, "items": {"type": "string"}},
-                    "evidence_refs": {"type": "array", "maxItems": 12, "items": {"type": "string"}},
-                    "uncertain": {"type": "boolean"},
-                    "reason": {"type": "string", "maxLength": 160},
-                },
-                "allOf": [
-                    {
-                        "if": {"properties": {"suggested_view": {"const": "SLICE"}}, "required": ["suggested_view"]},
-                        "then": {"properties": {"keep_slice_ids": {"minItems": 1}}},
-                        "else": {"properties": {"keep_slice_ids": {"maxItems": 0}}},
-                    }
-                ],
-            },
-        },
-        "need_evidence": {
-            "type": "array",
-            "maxItems": 4,
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["node_id", "requested_slice_ids", "reason"],
-                "properties": {
-                    "node_id": {"type": "string"},
-                    "requested_slice_ids": {"type": "array", "maxItems": 4, "items": {"type": "string"}},
-                    "reason": {"type": "string", "maxLength": 160},
-                },
-            },
-        },
-    },
-}
 
 _SUMMARY_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -293,53 +228,3 @@ class RemoteSemanticAdvisor:
                 )
         raise ValueError(f"node summary failed validation after one corrective retry: {last_error}")
 
-    async def advise(self, request: dict[str, Any], candidates: CandidateRefs) -> dict[str, Any]:
-        example = {
-            "assessments": [
-                {
-                    "node_id": request["candidates"][0]["node_id"] if request.get("candidates") else "node-1",
-                    "relation": "FAILURE_CANDIDATE",
-                    "suggested_view": "SLICE",
-                    "keep_slice_ids": ["slice_output"],
-                    "evidence_refs": sorted(candidates.evidence_refs)[:1],
-                    "uncertain": True,
-                    "reason": "该节点与最近失败引用相关，保留关键片段即可。",
-                }
-            ],
-            "need_evidence": [],
-        }
-        system = (
-            "You are a read-only ContextOS semantic advisor. Return only JSON with keys assessments,need_evidence. "
-            "Each assessment has node_id,relation,suggested_view,keep_slice_ids,evidence_refs,uncertain,reason. "
-            "relation must be one of EDIT_RELATED,FAILURE_CANDIDATE,REQUIREMENT_CANDIDATE,BACKGROUND,UNKNOWN. "
-            "suggested_view must be KEEP_CURRENT,FULL,SLICE,CARD,REFERENCE,ABSTAIN. "
-            "Use only supplied references. SLICE requires keep_slice_ids; every other view requires an empty "
-            "keep_slice_ids. Do not claim completion or test success. "
-            "Keep reason within 160 characters and output no commentary. Example: "
-            + json.dumps(example, ensure_ascii=False)
-        )
-        messages: list[dict[str, str]] = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": json.dumps(request, ensure_ascii=False)},
-        ]
-        last_error: ValueError | None = None
-        for _ in range(2):
-            content = await asyncio.to_thread(self._post, messages, _ADVICE_SCHEMA)
-            try:
-                return parse_semantic_advice(_json_content(content), candidates)
-            except ValueError as error:
-                last_error = error
-                messages.extend(
-                    [
-                        {"role": "assistant", "content": content},
-                        {
-                            "role": "user",
-                            "content": (
-                                "The previous response failed host validation: "
-                                + str(error)
-                                + ". Return corrected JSON with exactly assessments and need_evidence."
-                            ),
-                        },
-                    ]
-                )
-        raise ValueError(f"semantic advice failed validation after one corrective retry: {last_error}")

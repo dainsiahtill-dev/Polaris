@@ -34,7 +34,6 @@ def test_duplicate_file_cards_keep_only_latest_preview(monkeypatch: pytest.Monke
             {"role": "assistant", "content": "step-4"},
             _message("c.py", "keep"),
         ],
-        semantic_pins={"a.py": "semantic_card"},
         semantic_summaries={"a.py": {"summary": "旧文件摘要"}},
     )
     tool_messages = [message for message in folded if message["role"] == "tool"]

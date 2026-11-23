@@ -1,4 +1,4 @@
-"""Asynchronous semantic advisor lifecycle inside the engineering request loop."""
+"""Asynchronous distiller lifecycle inside the engineering request loop."""
 
 from __future__ import annotations
 
@@ -12,7 +12,12 @@ from polaris.cells.roles.runtime.internal.engineering_semantic_advisor_pool impo
 
 
 class SemanticRuntime:
-    """Coalesce background advice jobs; never block the next provider request."""
+    """Coalesce background summary jobs; never block the next provider request.
+
+    The model's only job is to compress: it produces the summaries the host uses
+    when it folds a card. Deciding *what* to fold stays with the host's activity,
+    byte and duplicate rules plus its deterministic focus pins.
+    """
 
     def __init__(self, pool: RemoteAdvisorPool, mode: str) -> None:
         self.pool = pool
@@ -20,7 +25,6 @@ class SemanticRuntime:
         self._fingerprint = ""
         self._job: asyncio.Task[list[dict[str, Any]]] | None = None
         self.result: dict[str, Any] | None = None
-        self._pins: dict[str, str] = {}
         self._summaries: dict[str, dict[str, Any]] = {}
 
     def schedule(
@@ -52,20 +56,13 @@ class SemanticRuntime:
             for candidate in request.get("candidates", [])
         ]
         summaries = await self.pool.summarize_many(summary_requests) if summary_requests else []
-        # The assessment is what makes folding model-driven: its suggested_view
-        # becomes a host pin. Returning an empty assessment list here reduced the
-        # whole assist mode to rule-based folding with an unused model call.
-        advice = await self.pool.advise_many([request], candidates) if candidates.node_ids else []
-        if not advice:
-            return [
-                {
-                    "endpoint_index": 0,
-                    "validation_result": "VALID",
-                    "result": {"assessments": [], "need_evidence": []},
-                    "summaries": summaries,
-                }
-            ]
-        return [{**endpoint, "summaries": summaries} for endpoint in advice]
+        return [
+            {
+                "endpoint_index": 0,
+                "validation_result": "VALID",
+                "summaries": summaries,
+            }
+        ]
 
     def poll(self) -> dict[str, Any] | None:
         job = self._job
@@ -75,25 +72,8 @@ class SemanticRuntime:
         try:
             self.result = job.result()[0]
             self.result["fingerprint"] = self._fingerprint
-            self._record_pins()
         except asyncio.CancelledError:
             return None
-        return self.result
-
-    def _record_pins(self) -> None:
-        if self.mode != "assist" or not self.result or self.result.get("validation_result") != "VALID":
-            return
-        for assessment in self.result["result"].get("assessments", []):
-            view = assessment.get("suggested_view")
-            node = assessment.get("node_id")
-            if not isinstance(node, str):
-                continue
-            if view in {"FULL", "SLICE"}:
-                self._pins[node] = "semantic_relevance"
-            elif view == "CARD":
-                self._pins[node] = "semantic_card"
-            elif view == "REFERENCE":
-                self._pins[node] = "semantic_reference"
         for summary in self.result.get("summaries", []):
             if summary.get("validation_result") != "VALID":
                 continue
@@ -101,16 +81,14 @@ class SemanticRuntime:
             node = result.get("node_id")
             if isinstance(node, str):
                 self._summaries[node] = result
-
-    def pin_reasons(self) -> dict[str, str]:
-        return dict(self._pins)
+        return self.result
 
     def fold_summaries(self) -> dict[str, dict[str, Any]]:
         return dict(self._summaries)
 
 
 def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple[dict[str, Any], CandidateRefs, str]:
-    """Build a bounded advisor input from current FileCards and the latest failure."""
+    """Build a bounded distiller input from current FileCards and the latest failure."""
 
     import hashlib
     import json

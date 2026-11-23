@@ -48,7 +48,6 @@ def test_inactive_card_folds_after_configured_activities(monkeypatch: pytest.Mon
             {"role": "assistant", "content": "step-4"},
             _message("d.py", "d"),
         ],
-        semantic_pins={"a.py": "semantic_card"},
         semantic_summaries={"a.py": {"summary": "旧文件摘要"}},
     )
     first = next(message for message in folded if message["role"] == "tool")
@@ -66,7 +65,6 @@ def test_inactive_threshold_is_configurable(monkeypatch: pytest.MonkeyPatch) -> 
             {"role": "assistant", "content": "step-2"},
             _message("b.py", "b"),
         ],
-        semantic_pins={"a.py": "semantic_card"},
         semantic_summaries={"a.py": {"summary": "旧文件摘要"}},
     )
     first = next(message for message in folded if message["role"] == "tool")
@@ -104,7 +102,6 @@ def test_large_duplicate_payload_can_fold(monkeypatch: pytest.MonkeyPatch) -> No
             {"role": "assistant", "content": "step-4"},
             _message("a.py", large),
         ],
-        semantic_pins={"a.py": "semantic_card"},
         semantic_summaries={"a.py": {"summary": "旧文件摘要"}},
     )
     first = next(message for message in folded if message["role"] == "tool")
@@ -192,7 +189,6 @@ def test_nested_tool_envelope_is_folded_without_losing_wrapper(monkeypatch: pyte
             {"role": "assistant", "content": "step-4"},
             _envelope("a.py", large),
         ],
-        semantic_pins={"a.py": "semantic_card"},
         semantic_summaries={"a.py": {"summary": "旧文件摘要"}},
     )
     first = next(message for message in folded if message["role"] == "tool")

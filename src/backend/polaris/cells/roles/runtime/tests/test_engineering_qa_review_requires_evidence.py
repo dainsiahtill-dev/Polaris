@@ -159,7 +159,7 @@ def test_numbered_clause_references_cover_the_matrix(tmp_path) -> None:
 
 def test_out_of_range_clause_reference_establishes_no_coverage(tmp_path) -> None:
     clauses = ("条款一：支持刹车", "条款二：月相只改亮度")
-    tools, reviewer = _tools(tmp_path, clauses)
+    tools, _reviewer = _tools(tmp_path, clauses)
     result = asyncio.run(
         tools.execute(
             "qa-1",

@@ -3,143 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 
-from polaris.cells.roles.runtime.internal.engineering_file_card_projection import fold_file_card_previews
 from polaris.cells.roles.runtime.internal.engineering_file_cards import build_file_card
 from polaris.cells.roles.runtime.internal.engineering_semantic_advice import CandidateRefs
 from polaris.cells.roles.runtime.internal.engineering_semantic_runtime import SemanticRuntime, facts_for_advice
 
 
-class _FakePool:
-    async def advise_many(
-        self, requests: list[dict[str, object]], candidates: CandidateRefs
-    ) -> list[dict[str, object]]:
-        return [
-            {
-                "endpoint_index": 0,
-                "validation_result": "VALID",
-                "result": {
-                    "schema_version": "semantic-advice.v1",
-                    "assessments": [
-                        {
-                            "node_id": "a.py",
-                            "relation": "FAILURE_CANDIDATE",
-                            "suggested_view": "SLICE",
-                            "keep_slice_ids": ["slice_alpha"],
-                            "evidence_refs": ["failure_1"],
-                            "uncertain": True,
-                            "reason": "当前失败可能相关。",
-                        }
-                    ],
-                    "need_evidence": [],
-                },
-            }
-        ]
-
-
-async def test_semantic_runtime_assist_pins_only_relevant_cards() -> None:
-    runtime = SemanticRuntime(_FakePool(), "assist")
-    runtime.schedule({}, CandidateRefs(node_ids=set(), slice_ids=set(), evidence_refs=set()), fingerprint="one")
-    await asyncio.sleep(0)
-    result = runtime.poll()
-    assert result is not None and result["validation_result"] == "VALID"
-    assert runtime.pin_reasons() == {}
-    card = build_file_card(
-        "a.py", "x", revision=1, preview="x", truncated=False, start_line=1, end_line=1, snapshot_ref="filecard:a"
-    )
-    older = {"role": "tool", "content": json.dumps({"file_card": card})}
-    newer = build_file_card(
-        "a.py", "y", revision=2, preview="y", truncated=False, start_line=1, end_line=1, snapshot_ref="filecard:b"
-    )
-    latest = {"role": "tool", "content": json.dumps({"file_card": newer})}
-    folded = fold_file_card_previews([older, latest], semantic_pins=runtime.pin_reasons())
-    assert json.loads(folded[0]["content"])["file_card"]["content_preview"] == "x"
-    assert json.loads(folded[1]["content"])["file_card"]["content_preview"] == "y"
-
-
-class _AssessPool:
-    def __init__(self) -> None:
-        self.advised = 0
-
-    async def summarize_many(self, requests: list[dict[str, object]]) -> list[dict[str, object]]:
-        return []
-
-    async def advise_many(
-        self, requests: list[dict[str, object]], candidates: CandidateRefs
-    ) -> list[dict[str, object]]:
-        self.advised += 1
-        return [
-            {
-                "endpoint_index": 0,
-                "validation_result": "VALID",
-                "result": {
-                    "assessments": [
-                        {
-                            "node_id": "a.py",
-                            "relation": "EDIT_RELATED",
-                            "suggested_view": "FULL",
-                            "keep_slice_ids": [],
-                            "evidence_refs": ["filecard:a"],
-                            "uncertain": False,
-                            "reason": "与当前编辑直接相关。",
-                        }
-                    ],
-                    "need_evidence": [],
-                },
-            }
-        ]
-
-
-async def test_assist_uses_the_model_assessment_to_pin_cards() -> None:
-    """assist mode must be model-driven: the assessment becomes a host pin."""
-
-    pool = _AssessPool()
-    runtime = SemanticRuntime(pool, "assist")
-    refs = CandidateRefs(node_ids={"a.py"}, slice_ids=set(), evidence_refs={"filecard:a"})
-    runtime.schedule({"candidates": [{"node_id": "a.py"}]}, refs, fingerprint="assess")
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
-    result = runtime.poll()
-    assert result is not None
-    assert pool.advised == 1
-    assert runtime.pin_reasons() == {"a.py": "semantic_relevance"}
-    card = build_file_card(
-        "a.py",
-        "x" * 1200,
-        revision=1,
-        preview="x" * 1200,
-        truncated=False,
-        start_line=1,
-        end_line=1,
-        snapshot_ref="filecard:a",
-    )
-    older = {"role": "tool", "content": json.dumps({"file_card": card})}
-    folded = fold_file_card_previews([older], semantic_pins=runtime.pin_reasons())
-    assert json.loads(folded[0]["content"])["file_card"]["fold_state"] == "ACTIVE"
-
-
 class _SummaryPool:
-    async def advise_many(self, requests, candidates):
-        return [
-            {
-                "endpoint_index": 0,
-                "validation_result": "VALID",
-                "result": {
-                    "assessments": [
-                        {
-                            "node_id": "a.py",
-                            "relation": "BACKGROUND",
-                            "suggested_view": "CARD",
-                            "keep_slice_ids": [],
-                            "evidence_refs": [],
-                            "uncertain": False,
-                            "reason": "旧节点可折叠。",
-                        }
-                    ],
-                    "need_evidence": [],
-                },
-            }
-        ]
-
     async def summarize_many(self, requests):
         return [
             {
@@ -190,16 +59,6 @@ class _RejectingPool:
             }
         ]
 
-    async def advise_many(
-        self, requests: list[dict[str, object]], candidates: CandidateRefs
-    ) -> list[dict[str, object]]:
-        return [
-            {
-                "endpoint_index": 0,
-                "validation_result": "VALID",
-                "result": {"assessments": [], "need_evidence": []},
-            }
-        ]
 
 
 async def test_semantic_runtime_drops_rejected_summary_so_host_falls_back() -> None:

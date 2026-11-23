@@ -6,7 +6,6 @@ import asyncio
 import time
 from typing import Any
 
-from polaris.cells.roles.runtime.internal.engineering_semantic_advice import CandidateRefs
 from polaris.cells.roles.runtime.internal.engineering_semantic_advisor import (
     RemoteAdvisorConfig,
     RemoteSemanticAdvisor,
@@ -47,27 +46,3 @@ class RemoteAdvisorPool:
 
         return await asyncio.gather(*(run(index, request) for index, request in enumerate(requests)))
 
-    async def advise_many(self, requests: list[dict[str, Any]], candidates: CandidateRefs) -> list[dict[str, Any]]:
-        async def run(index: int, request: dict[str, Any]) -> dict[str, Any]:
-            advisor = self._advisors[index % len(self._advisors)]
-            started = time.perf_counter()
-            async with self._locks[index % len(self._locks)]:
-                try:
-                    result = await advisor.advise(request, candidates)
-                    return {
-                        "endpoint_index": index % len(self._advisors),
-                        "validation_result": "VALID",
-                        "result": result,
-                        "wall_seconds": time.perf_counter() - started,
-                        "usage": advisor.last_usage,
-                        "timings": advisor.last_timings,
-                        "normalization": advisor.last_normalization,
-                    }
-                except (ValueError, OSError, asyncio.TimeoutError) as error:
-                    return {
-                        "endpoint_index": index % len(self._advisors),
-                        "validation_result": "REJECTED",
-                        "error": f"{type(error).__name__}: {error}",
-                    }
-
-        return await asyncio.gather(*(run(index, request) for index, request in enumerate(requests)))

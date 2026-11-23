@@ -266,7 +266,6 @@ def folded_card_projections(messages: Sequence[Mapping[str, Any]]) -> list[dict[
 def fold_file_card_previews(
     messages: Sequence[Mapping[str, Any]],
     *,
-    semantic_pins: Mapping[str, str] | None = None,
     semantic_summaries: Mapping[str, Mapping[str, Any]] | None = None,
     inactive_fold_activities: int | None = None,
     force_fold_paths: Sequence[str] = (),
@@ -316,14 +315,11 @@ def fold_file_card_previews(
             command_card = card_payload.get("command_card") if card_payload is not None else None
             if isinstance(command_card, dict):
                 reference = command_card.get("content_ref")
-                advisor_view = (semantic_pins or {}).get(str(reference)) if reference else None
                 activity_age = current_activity - activity_indices[index]
                 if reference and str(reference) in reasoning_text:
                     command_card["pin_reason"] = "current_reasoning"
                 elif command_card.get("exit_code") != 0 and activity_age < fold_window:
                     command_card["pin_reason"] = "unresolved_failure"
-                elif advisor_view == "semantic_relevance":
-                    command_card["pin_reason"] = advisor_view
                 already_folded = command_card.get("fold_state") == "FOLDED"
                 large_payload = (
                     len(str(command_card.get("stdout_preview") or "").encode("utf-8"))
@@ -359,7 +355,6 @@ def fold_file_card_previews(
             card = card_payload.get("file_card") if card_payload is not None else None
             if isinstance(card, dict) and isinstance(card.get("path"), str):
                 path = card["path"]
-                advisor_view = (semantic_pins or {}).get(path)
                 pin_reason = (
                     "current_edit"
                     if path in targets
@@ -367,7 +362,7 @@ def fold_file_card_previews(
                     if path in reasoning_text
                     else "acceptance_clause"
                     if path in instruction_text
-                    else advisor_view
+                    else ""
                 )
                 if pin_reason:
                     card["pin_reason"] = pin_reason
@@ -376,12 +371,7 @@ def fold_file_card_previews(
                 rehydrated = card.get("recovered_from") is not None
                 duplicate = latest[path] != index
                 small_payload = len(str(card.get("content_preview") or "").encode("utf-8")) < _fold_min_bytes()
-                protected = pin_reason in {
-                    "current_edit",
-                    "current_reasoning",
-                    "acceptance_clause",
-                    "semantic_relevance",
-                }
+                protected = pin_reason in {"current_edit", "current_reasoning", "acceptance_clause"}
                 if already_folded:
                     card["fold_state"] = "FOLDED"
                 elif small_payload:

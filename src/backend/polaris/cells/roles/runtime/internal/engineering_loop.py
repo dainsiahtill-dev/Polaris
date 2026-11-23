@@ -469,7 +469,6 @@ def _bounded_request_messages(
 
     messages = fold_file_card_previews(
         messages,
-        semantic_pins=semantic_runtime.pin_reasons() if semantic_runtime is not None else None,
         semantic_summaries=semantic_runtime.fold_summaries() if semantic_runtime is not None else None,
         inactive_fold_activities=fold_window,
         force_fold_paths=force_fold_paths,
