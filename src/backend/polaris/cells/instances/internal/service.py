@@ -83,6 +83,18 @@ INSTANCE_WATCHDOG_INTERVAL_ENV = "KERNELONE_INSTANCE_WATCHDOG_INTERVAL_SECONDS"
 DEFAULT_WATCHDOG_INTERVAL_SECONDS = 2.0
 PROCESS_TERMINATE_TIMEOUT_SECONDS = 5.0
 PORT_RELEASE_TIMEOUT_SECONDS = 8.0
+# Chromium's restricted-port list. A frontend allocated on one of these serves a
+# blank page in Chrome/Electron (`net::ERR_UNSAFE_PORT`), which reads as a broken
+# instance instead of a blocked port. Auto-allocation must skip them.
+BROWSER_UNSAFE_PORTS = frozenset(
+    {
+        1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79, 87, 95,
+        101, 102, 103, 104, 109, 110, 111, 113, 115, 117, 119, 123, 135, 137, 139, 143, 161,
+        179, 389, 427, 465, 512, 513, 514, 515, 526, 530, 531, 532, 540, 548, 554, 556, 563,
+        587, 601, 636, 691, 993, 995, 1719, 1720, 1723, 2049, 3659, 4045, 4662, 5060, 5061,
+        6000, 6566, 6697, 10080,
+    }
+)
 # Cold isolated backends may spend ~80s loading local embedding/index state
 # after a large source-tree refactor.  The old 75s budget killed a healthy
 # process immediately after ``Application startup complete``.  Keep the
@@ -277,7 +289,12 @@ def is_port_free(port: int, host: str | None = None) -> bool:
 
 
 def allocate_port(start: int, *, excluded_ports: set[int] | None = None) -> int:
-    excluded = excluded_ports or set()
+    excluded = set(excluded_ports or set())
+    # Chromium (and therefore Electron/Chrome) refuses to connect to a fixed list
+    # of restricted ports. A launcher-allocated frontend on one of them serves
+    # an empty page, which looks like a broken instance rather than a blocked
+    # port (live case: bench frontend 6697 -> net::ERR_UNSAFE_PORT).
+    excluded |= BROWSER_UNSAFE_PORTS
     port = max(1024, int(start))
     while port < 65535:
         if port not in excluded and is_port_free(port):
