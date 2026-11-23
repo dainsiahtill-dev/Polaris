@@ -7,6 +7,13 @@ from polaris.cells.roles.runtime.internal.engineering_command_cards import build
 from polaris.cells.roles.runtime.internal.engineering_tool_payload_projection import fold_tool_payload_previews
 
 
+@pytest.fixture(autouse=True)
+def _result_plane_size_floor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise the fold mechanism at test sizes, not the production floor."""
+
+    monkeypatch.setenv("KERNELONE_CONTEXTOS_FOLD_RESULT_MIN_BYTES", "512")
+
+
 def _command_message(exit_code: int = 0) -> dict[str, object]:
     card = build_command_card("make test", "x" * 1200, "", exit_code, "command:abc")
     return {"role": "tool", "content": json.dumps({"command_card": card})}

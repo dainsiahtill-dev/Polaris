@@ -160,6 +160,7 @@ def test_read_and_write_planes_keep_separate_summaries(monkeypatch: pytest.Monke
     from polaris.cells.roles.runtime.internal.engineering_file_cards import build_file_card
 
     monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "24")
+    monkeypatch.setenv("KERNELONE_CONTEXTOS_FOLD_RESULT_MIN_BYTES", "1024")
     preview = "p" * 3000
     card = build_file_card(
         "src/a.ts",
@@ -214,43 +215,29 @@ def test_folded_call_is_reported_as_a_projection(monkeypatch: pytest.MonkeyPatch
     assert call["fold_reason_code"] == "INACTIVE_PAYLOAD"
 
 
-def test_working_set_budget_folds_oldest_first_until_the_set_fits(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The budget tier is the pressure valve when the age window is not enough."""
-
-    from polaris.kernelone.llm.engine.token_estimator import TokenEstimator
+def test_payload_inside_the_focus_window_never_folds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The focus window is the only rule: there is no budget pressure valve."""
 
     monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "24")
     messages: list[dict[str, object]] = []
     for index in range(6):
         messages.append(_write(f"call_{index}", f"src/f{index}.ts"))
         messages.append(_result(f"call_{index}", "ok"))
-    # Keep the writes out of the current-edit pin window so only budget applies.
-    messages.extend(_pad(12))
-    folded = fold_tool_payload_previews(messages, working_set_tokens=3000)
+    # A large history with no budget must not fold anything that is still inside
+    # the window; only age decides.
+    messages.extend(_pad(23))
+    folded = fold_tool_payload_previews(messages)
     states = ["fold_state" in _arguments(folded[index * 2]) for index in range(6)]
-    # Oldest first, until the remaining set fits the budget.
-    assert states == [True, True, True, True, False, False]
-    assert [_arguments(folded[index * 2])["fold_reason"] for index in range(4)] == ["working_set_pressure"] * 4
-    remaining = sum(TokenEstimator.estimate(json.dumps(message, ensure_ascii=False)) for message in folded)
-    assert remaining <= 3000 + TokenEstimator.estimate("x" * 4000)
+    # current activity is 28; writes 0..4 are at least 24 activities old, write 5
+    # is 23 and stays intact.
+    assert states == [True, True, True, True, True, False]
+    assert all(_arguments(folded[index * 2])["fold_reason"] == "outside_current_focus" for index in range(5))
 
 
-def test_working_set_budget_can_be_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "24")
-    messages: list[dict[str, object]] = []
-    for index in range(6):
-        messages.append(_write(f"call_{index}", f"src/f{index}.ts"))
-        messages.append(_result(f"call_{index}", "ok"))
-    folded = fold_tool_payload_previews(messages, working_set_tokens=0)
-    assert all("fold_state" not in _arguments(folded[index * 2]) for index in range(6))
-
-
-def test_age_tier_folds_even_with_an_unlimited_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_age_tier_folds_outside_the_focus_window(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "24")
     messages = [_write("call_1", "src/a.ts"), _result("call_1", "ok"), *_pad(25)]
-    folded = fold_tool_payload_previews(messages, working_set_tokens=0)
+    folded = fold_tool_payload_previews(messages)
     assert _arguments(folded[0])["fold_reason"] == "outside_current_focus"
 
 

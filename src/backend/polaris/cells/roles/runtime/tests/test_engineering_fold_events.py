@@ -35,6 +35,13 @@ class _Advisor:
         return {"file:a.py": {"summary": "旧文件摘要"}}
 
 
+@pytest.fixture(autouse=True)
+def _result_plane_size_floor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise the fold mechanism at test sizes, not the production floor."""
+
+    monkeypatch.setenv("KERNELONE_CONTEXTOS_FOLD_RESULT_MIN_BYTES", "512")
+
+
 def _message(preview: str) -> dict[str, object]:
     card = build_file_card(
         "a.py",

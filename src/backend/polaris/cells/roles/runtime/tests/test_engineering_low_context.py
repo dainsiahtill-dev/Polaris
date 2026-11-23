@@ -220,24 +220,13 @@ def test_bounded_request_messages_folds_old_write_calls(tmp_path: Path) -> None:
         if message.get("tool_calls")
     ]
     folded_count = sum(1 for item in projected if item.get("fold_state") == "FOLDED")
+    # Only age decides now: everything outside the 24-activity focus window and
+    # above the call-plane floor folds, the current edit stays intact.
     assert folded_count > 10
-    # The most recent write is still inside the fold window and stays intact.
     assert projected[-1].get("fold_state") != "FOLDED"
-    # The retained set is brought back to the working-set target, not merely
-    # trimmed by the age window.
-    retained = TokenEstimator.estimate(json.dumps(bounded, ensure_ascii=False))
-    assert retained <= 32_768 + TokenEstimator.estimate("x" * 6000)
-
-
-def test_working_set_target_shrinks_with_a_small_window() -> None:
-    from polaris.cells.roles.runtime.internal.engineering_tool_payload_projection import (
-        working_set_target_tokens,
+    assert all(
+        item.get("fold_reason") == "outside_current_focus" for item in projected if item.get("fold_state") == "FOLDED"
     )
-
-    # A large window keeps the configured operating point.
-    assert working_set_target_tokens(1_000_000) == 32_768
-    # A small window must tighten the target with it, or the request cannot fit.
-    assert working_set_target_tokens(40_000) == 20_000
 
 
 def test_bounded_request_messages_caps_long_history(tmp_path: Path) -> None:

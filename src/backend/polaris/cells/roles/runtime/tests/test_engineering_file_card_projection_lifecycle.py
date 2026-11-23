@@ -7,6 +7,13 @@ from polaris.cells.roles.runtime.internal.engineering_file_cards import build_fi
 from polaris.cells.roles.runtime.internal.engineering_tool_payload_projection import fold_tool_payload_previews
 
 
+@pytest.fixture(autouse=True)
+def _result_plane_size_floor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise the fold mechanism at test sizes, not the production floor."""
+
+    monkeypatch.setenv("KERNELONE_CONTEXTOS_FOLD_RESULT_MIN_BYTES", "512")
+
+
 def _message(path: str, preview: str, **extra: object) -> dict[str, object]:
     card = build_file_card(
         path,
@@ -52,7 +59,7 @@ def test_inactive_card_folds_after_configured_activities(monkeypatch: pytest.Mon
     )
     first = next(message for message in folded if message["role"] == "tool")
     first = json.loads(first["content"])["file_card"]
-    assert first["fold_state"] == "FOLDED" and first["content_preview"] == ""
+    assert first["fold_state"] == "FOLDED" and first["content_preview"] == "a" * 512
     assert first["last_fold_activity_seq"] == 0
 
 
@@ -195,4 +202,4 @@ def test_nested_tool_envelope_is_folded_without_losing_wrapper(monkeypatch: pyte
     envelope = json.loads(first["content"])
     card = json.loads(envelope["content"])["file_card"]
     assert envelope["call_id"] == "call-1"
-    assert card["fold_state"] == "FOLDED" and card["content_preview"] == ""
+    assert card["fold_state"] == "FOLDED" and card["content_preview"] == "x" * 512

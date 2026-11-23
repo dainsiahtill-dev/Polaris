@@ -35,7 +35,7 @@ from polaris.cells.roles.runtime.internal.engineering_semantic_advice import (
 # A long shell script is deliberately excluded — its text exists only here.
 FOLDABLE_CALL_TOOLS = frozenset({"write_file", "edit_file"})
 
-_PROTECTED_PIN_REASONS = frozenset({"current_edit", "current_reasoning", "acceptance_clause"})
+_PROTECTED_PIN_REASONS = frozenset({"current_edit", "current_focus", "current_reasoning", "acceptance_clause"})
 
 _DUPLICATE_REASONS = frozenset({"superseded_by_newer_card", "superseded_by_newer_payload"})
 
@@ -49,13 +49,26 @@ def _rehydration_grace_activities() -> int:
 
 
 def configured_fold_min_bytes() -> int:
+    """Minimum payload size for the call plane (a write/edit body)."""
+
     return max(0, int(os.environ.get("KERNELONE_CONTEXTOS_FOLD_MIN_BYTES", "1024")))
 
 
-def configured_fold_grace_activities() -> int:
-    """How much recent context the budget tier may never fold."""
+def configured_fold_result_min_bytes() -> int:
+    """Minimum payload size for the result plane (a read result or command log).
 
-    return max(0, int(os.environ.get("KERNELONE_CONTEXTOS_FOLD_GRACE_ACTIVITIES", "2")))
+    Folding a read result costs the model a full re-read, while folding a write
+    body costs nothing because the workspace file already holds it. The result
+    plane therefore demands a much larger payload before it is worth replacing.
+    """
+
+    return max(0, int(os.environ.get("KERNELONE_CONTEXTOS_FOLD_RESULT_MIN_BYTES", "4096")))
+
+
+def configured_fold_kept_preview_bytes() -> int:
+    """How much of a folded read preview survives, so a glance needs no re-read."""
+
+    return max(0, int(os.environ.get("KERNELONE_CONTEXTOS_FOLD_KEPT_PREVIEW_BYTES", "512")))
 
 
 # The distiller has to run *ahead* of the fold it feeds: a summary that lands
@@ -72,24 +85,6 @@ def distill_min_activities() -> int:
 
 def distill_min_bytes() -> int:
     return max(256, configured_fold_min_bytes() // DISTILL_BYTE_FLOOR_DIVISOR)
-
-
-# A target is only useful below the window it must fit; half the window is the
-# ceiling, so a small model window tightens the target with it.
-_WORKING_SET_WINDOW_FRACTION = 0.5
-
-
-def working_set_target_tokens(window: int | None = None) -> int:
-    """Target size for the retained working set; the budget tier folds to it."""
-
-    configured = max(2048, int(os.environ.get("KERNELONE_CONTEXTOS_FOLD_WORKING_SET_TOKENS", "32768")))
-    if window is None or window <= 0:
-        return configured
-    return max(2048, min(configured, int(window * _WORKING_SET_WINDOW_FRACTION)))
-
-
-# Reason code for a fold driven by the working-set budget rather than by age.
-REASON_PRESSURE = "working_set_pressure"
 
 
 def _card_payload(payload: object) -> tuple[dict[str, Any] | None, bool]:
@@ -217,6 +212,7 @@ def _fold_file_card(
     summaries: Mapping[str, Mapping[str, Any]] | None,
     reason: str,
     original: str,
+    keep_bytes: int = 0,
 ) -> bool:
     """Fold only when an informative summary actually buys room.
 
@@ -240,7 +236,10 @@ def _fold_file_card(
     before = _card_bytes(card)
     if not _apply_fold_summary(card, summaries, file_node_id(path), original=original):
         return False
-    card["content_preview"] = ""
+    # Keep a bounded head of the preview. A folded card that carries no content
+    # at all forces a re-read for the smallest question; this way a glance is
+    # answered from context and only a real edit pays the read.
+    card["content_preview"] = original[:keep_bytes] if keep_bytes > 0 else ""
     card["content_bounds"] = {**card.get("content_bounds", {}), "truncated": True}
     card["fold_state"] = "FOLDED"
     card["fold_reason"] = reason
@@ -277,6 +276,38 @@ def _write_targets(messages: Sequence[Mapping[str, Any]]) -> set[str]:
             if isinstance(path, str) and path:
                 targets.add(path)
     return targets
+
+
+def _focus_paths(
+    messages: Sequence[Mapping[str, Any]],
+    activity_indices: Sequence[int],
+    *,
+    window: int,
+    current_activity: int,
+) -> set[str]:
+    """Workspace paths read or written anywhere inside the focus window.
+
+    A path the model keeps coming back to is a working-set item: folding its
+    result only buys a re-read a few activities later, so the read plane refuses
+    to fold it while it stays in focus. The window is measured in activities, the
+    same unit the fold age uses.
+    """
+
+    if window <= 0:
+        return set()
+    paths: set[str] = set()
+    for index, message in enumerate(messages):
+        if current_activity - activity_indices[index] >= window:
+            continue
+        for call in message.get("tool_calls") or []:
+            function = call.get("function") if isinstance(call, dict) else None
+            if not isinstance(function, dict):
+                continue
+            arguments = _parse_arguments(function.get("arguments"))
+            path = (arguments or {}).get("file") or (arguments or {}).get("path")
+            if isinstance(path, str) and path:
+                paths.add(path)
+    return paths
 
 
 def _call_identity(tool: str, arguments: Mapping[str, Any] | None) -> str:
@@ -343,11 +374,14 @@ def _pin_reason(
     targets: set[str],
     reasoning_text: str,
     instruction_text: str,
+    focus_paths: set[str] | None = None,
 ) -> str:
     if not identity:
         return ""
     if identity in targets:
         return "current_edit"
+    if focus_paths and identity in focus_paths:
+        return "current_focus"
     if identity in reasoning_text:
         return "current_reasoning"
     if identity in instruction_text:
@@ -397,23 +431,27 @@ class _FoldPolicy:
         semantic_summaries: Mapping[str, Mapping[str, Any]] | None,
         inactive_fold_activities: int | None,
         force_fold_paths: Sequence[str],
-        working_set_tokens: int | None,
-        message_cost: Callable[[Mapping[str, Any]], int] | None = None,
     ) -> None:
         self.fold_window = (
             configured_inactive_fold_activities()
             if inactive_fold_activities is None
             else max(0, int(inactive_fold_activities))
         )
-        self.grace = configured_fold_grace_activities()
         self.min_bytes = configured_fold_min_bytes()
+        self.result_min_bytes = configured_fold_result_min_bytes()
+        self.kept_preview_bytes = configured_fold_kept_preview_bytes()
         self.forced_paths = {str(path) for path in (force_fold_paths or ()) if str(path).strip()}
         self.summaries = semantic_summaries
-        self.budget_tokens = (
-            working_set_target_tokens() if working_set_tokens is None else max(0, int(working_set_tokens))
-        )
         self.latest = _latest_identities(messages)
         self.targets = _write_targets(messages)
+        self.activity_indices = _activity_indices(messages)
+        self.current_activity = self.activity_indices[-1] if self.activity_indices else 0
+        self.focus_paths = _focus_paths(
+            messages,
+            self.activity_indices,
+            window=self.fold_window,
+            current_activity=self.current_activity,
+        )
         self.reasoning_text = json.dumps(
             [message for message in messages[-8:] if message.get("role") == "assistant"], ensure_ascii=False
         )
@@ -425,44 +463,43 @@ class _FoldPolicy:
             ],
             ensure_ascii=False,
         )
-        self.activity_indices = _activity_indices(messages)
-        self.current_activity = self.activity_indices[-1] if self.activity_indices else 0
-        self.message_cost = message_cost
 
     def age_of(self, activity_index: int) -> int:
         return self.current_activity - activity_index
 
-    def pin_reason(self, identity: str) -> str:
+    def pin_reason(self, identity: str, *, focus: bool = False) -> str:
         return _pin_reason(
             identity,
             targets=self.targets,
             reasoning_text=self.reasoning_text,
             instruction_text=self.instruction_text,
+            focus_paths=self.focus_paths if focus else None,
         )
 
     def reason_for(self, *, duplicate: bool, forced: bool, age: int, duplicate_reason: str) -> str | None:
-        """Pick the semantic reason, or the pressure reason under a tight budget."""
+        """Pick the semantic reason; a payload inside the focus window never folds.
 
-        if duplicate and age >= self.fold_window:
-            return duplicate_reason
+        ``forced`` is the host's explicit override (a stall intervention) and so
+        bypasses the age window; the focus pin still applies, because folding a
+        path the model keeps returning to is exactly what must not happen.
+        """
+
         if forced:
             return "stalled_repeated_write"
-        if age >= self.fold_window:
-            return "outside_current_focus"
-        if age >= self.grace:
-            return REASON_PRESSURE
-        return None
+        if age < self.fold_window:
+            return None
+        if duplicate:
+            return duplicate_reason
+        return "outside_current_focus"
 
 
 class _FoldAction:
-    """One planned fold: how much it saves, why, and how to apply it."""
+    """One planned fold: why it folds, and how to apply it."""
 
-    __slots__ = ("_apply", "age", "reason", "shrink_tokens")
+    __slots__ = ("_apply", "age", "reason")
 
-    def __init__(self, *, age: int, shrink_tokens: int, reason: str, apply: Callable[[], int]) -> None:
+    def __init__(self, *, age: int, reason: str, apply: Callable[[], int]) -> None:
         self.age = age
-        # The budget tier accounts in tokens, so the estimate must be tokens too.
-        self.shrink_tokens = shrink_tokens
         self.reason = reason
         self._apply = apply
 
@@ -476,24 +513,20 @@ def fold_tool_payload_previews(
     semantic_summaries: Mapping[str, Mapping[str, Any]] | None = None,
     inactive_fold_activities: int | None = None,
     force_fold_paths: Sequence[str] = (),
-    working_set_tokens: int | None = None,
-    message_cost: Callable[[Mapping[str, Any]], int] | None = None,
 ) -> list[dict[str, Any]]:
-    """Fold inactive result cards and content tool calls under one policy.
+    """Fold inactive result cards and content tool calls.
 
-    Two tiers, hardest protection first:
+    One rule: a payload folds only once it is outside the focus window (default
+    24 activities) and at least its plane's minimum size. There is deliberately
+    no working-set budget tier. Folding because "the set is too large right now"
+    was a pressure valve that folded payloads the model was still using, which
+    forced re-reads and stall interventions; a payload that is genuinely stale
+    is exactly what the focus window already identifies.
 
-    - **Age tier** — a payload older than the fold window (default 24 activities)
-      and at least the minimum size (default 1024 bytes) folds with a semantic
-      reason. This is the deterministic rule that needs no budget.
-    - **Budget tier** — if the projected working set still exceeds the fold
-      budget (default 32k tokens), fold further candidates oldest-and-largest
-      first, down to a short grace window, until the set fits.
-
-    Both tiers refuse to fold the current edit, the current reasoning, an
+    A fold refuses the current edit, the current focus, the current reasoning, an
     acceptance clause, an unresolved failure, or a freshly rehydrated card, and
-    both require the projected message to be strictly smaller with an
-    informative explanation in place of the payload.
+    requires the projected message to be strictly smaller with an informative
+    explanation in place of the payload.
     """
 
     policy = _FoldPolicy(
@@ -501,8 +534,6 @@ def fold_tool_payload_previews(
         semantic_summaries=semantic_summaries,
         inactive_fold_activities=inactive_fold_activities,
         force_fold_paths=force_fold_paths,
-        working_set_tokens=working_set_tokens,
-        message_cost=message_cost,
     )
     projected = [copy.deepcopy(dict(message)) for message in messages]
     actions: list[_FoldAction] = []
@@ -513,49 +544,8 @@ def fold_tool_payload_previews(
             actions.extend(_plan_message_cards(message, index=index, policy=policy))
 
     for action in actions:
-        if action.reason != REASON_PRESSURE and action.age >= policy.fold_window:
-            action.apply()
-    if policy.budget_tokens > 0:
-        _fold_for_working_set(projected, actions, policy)
+        action.apply()
     return projected
-
-
-def _fold_for_working_set(
-    projected: Sequence[Mapping[str, Any]],
-    actions: Sequence[_FoldAction],
-    policy: _FoldPolicy,
-) -> None:
-    """Spend the oldest, largest remaining payloads until the set fits."""
-
-    remaining = _projected_tokens(projected, policy.message_cost)
-    if remaining <= policy.budget_tokens:
-        return
-    candidates = sorted(
-        (action for action in actions if action.reason == REASON_PRESSURE and action.age >= policy.grace),
-        key=lambda action: (-action.age, -action.shrink_tokens),
-    )
-    for action in candidates:
-        if remaining <= policy.budget_tokens:
-            break
-        applied = action.apply()
-        if applied <= 0:
-            continue
-        remaining -= action.shrink_tokens
-
-
-def _estimate_tokens(text: str) -> int:
-    from polaris.kernelone.llm.engine.token_estimator import TokenEstimator
-
-    return TokenEstimator.estimate(text)
-
-
-def _projected_tokens(
-    messages: Sequence[Mapping[str, Any]],
-    message_cost: Callable[[Mapping[str, Any]], int] | None = None,
-) -> int:
-    if message_cost is not None:
-        return sum(max(0, int(message_cost(message))) for message in messages)
-    return sum(_estimate_tokens(json.dumps(message, ensure_ascii=False)) for message in messages)
 
 
 def _plan_message_calls(
@@ -628,7 +618,6 @@ def _plan_message_calls(
         actions.append(
             _FoldAction(
                 age=age,
-                shrink_tokens=max(1, _estimate_tokens(raw) - _estimate_tokens(projected_arguments)),
                 reason=reason,
                 apply=apply,
             )
@@ -734,7 +723,7 @@ def _plan_command_card(
         return []
     payload_text = str(command_card.get("stdout_preview") or "") + "\n" + str(command_card.get("stderr_preview") or "")
     reason: str | None = None
-    if not command_card.get("pin_reason") and _byte_size(payload_text) >= policy.min_bytes:
+    if not command_card.get("pin_reason") and _byte_size(payload_text) >= policy.result_min_bytes:
         reason = policy.reason_for(duplicate=False, forced=False, age=age, duplicate_reason="superseded_by_newer_card")
         if reason is not None and not _choose_fold_summary(
             command_card, policy.summaries, str(reference), original=payload_text
@@ -760,7 +749,7 @@ def _plan_command_card(
         _commit_card(message, payload, card_payload, nested)
         return before
 
-    return [_FoldAction(age=age, shrink_tokens=max(1, _estimate_tokens(payload_text)), reason=reason, apply=apply)]
+    return [_FoldAction(age=age, reason=reason, apply=apply)]
 
 
 def _plan_file_card(
@@ -774,7 +763,10 @@ def _plan_file_card(
     index: int,
     policy: _FoldPolicy,
 ) -> list[_FoldAction]:
-    pin_reason = policy.pin_reason(path)
+    # The read plane is working-set aware: a path the model has read or written
+    # inside the focus window is protected, because folding its result only buys
+    # a re-read a few activities later.
+    pin_reason = policy.pin_reason(path, focus=True)
     if pin_reason:
         card["pin_reason"] = pin_reason
     activity_index = policy.activity_indices[index]
@@ -786,7 +778,7 @@ def _plan_file_card(
     protected = pin_reason in _PROTECTED_PIN_REASONS
     duplicate = policy.latest.get(path) != (index, -1)
     reason: str | None = None
-    if _byte_size(preview) >= policy.min_bytes:
+    if _byte_size(preview) >= policy.result_min_bytes:
         reason = policy.reason_for(
             duplicate=duplicate,
             forced=path in policy.forced_paths,
@@ -805,7 +797,14 @@ def _plan_file_card(
         return []
 
     def apply() -> int:
-        if not _fold_file_card(card, path, summaries=policy.summaries, reason=reason, original=preview):
+        if not _fold_file_card(
+            card,
+            path,
+            summaries=policy.summaries,
+            reason=reason,
+            original=preview,
+            keep_bytes=policy.kept_preview_bytes,
+        ):
             card["fold_state"] = "ACTIVE"
             card["fold_reason"] = None
             _commit_card(message, payload, card_payload, nested)
@@ -814,7 +813,7 @@ def _plan_file_card(
         _commit_card(message, payload, card_payload, nested)
         return _byte_size(preview)
 
-    return [_FoldAction(age=age, shrink_tokens=max(1, _estimate_tokens(preview)), reason=reason, apply=apply)]
+    return [_FoldAction(age=age, reason=reason, apply=apply)]
 
 
 def folded_payload_projections(messages: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
