@@ -60,7 +60,6 @@ class _RejectingPool:
         ]
 
 
-
 async def test_semantic_runtime_drops_rejected_summary_so_host_falls_back() -> None:
     runtime = SemanticRuntime(_RejectingPool(), "assist")
     refs = CandidateRefs(node_ids={"a.py"}, slice_ids={"slice_file"}, evidence_refs={"filecard:a"})
@@ -122,6 +121,53 @@ def test_facts_for_advice_bounds_candidates_and_failure() -> None:
     assert "command:abc" in refs.evidence_refs
     assert len(fingerprint) == 64
     assert request["activity"] == "assertion failed"
+
+
+def test_facts_for_advice_summarizes_written_bodies_for_folding() -> None:
+    """A folded write call should be able to carry a real summary, not only a
+    deterministic structural note."""
+
+    events = [
+        {
+            "kind": "tool_started",
+            "seq": 1,
+            "payload": {
+                "tool": "write_file",
+                "call_id": "call_w1",
+                "arguments": {"file": "src/garden.ts", "content": "export const step = 1;\n" * 60},
+            },
+        },
+        {
+            "kind": "tool_observed",
+            "seq": 2,
+            "payload": {"tool": "write_file", "call_id": "call_w1", "ok": True, "content": "Wrote 1020 bytes."},
+        },
+    ]
+    events.extend({"kind": "turn_started", "seq": index + 3, "payload": {}} for index in range(14))
+    request, refs, _fingerprint = facts_for_advice({"instruction": "fix the garden"}, events)
+    assert "src/garden.ts" in refs.node_ids
+    written = [item for item in request["candidates"] if item["kind"] == "write_call"]
+    assert len(written) == 1 and written[0]["node_id"] == "src/garden.ts"
+    assert written[0]["content"].startswith("export const step = 1;")
+
+
+def test_facts_for_advice_skips_a_write_that_is_still_the_current_target() -> None:
+    events = [
+        {
+            "kind": "tool_started",
+            "seq": 1,
+            "payload": {
+                "tool": "write_file",
+                "call_id": "call_w1",
+                "arguments": {"file": "src/hot.ts", "content": "x" * 900},
+            },
+        },
+        {"kind": "tool_observed", "seq": 2, "payload": {"tool": "write_file", "call_id": "call_w1", "ok": True}},
+    ]
+    events.extend({"kind": "turn_started", "seq": index + 3, "payload": {}} for index in range(9))
+    # The write is inside the last twelve events, so it is still the edit target.
+    _request, refs, _fingerprint = facts_for_advice({"instruction": "fix"}, events)
+    assert "src/hot.ts" not in refs.node_ids
 
 
 def test_facts_for_advice_does_not_trigger_before_ten_activities() -> None:

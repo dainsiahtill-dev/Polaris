@@ -87,6 +87,11 @@ class SemanticRuntime:
         return dict(self._summaries)
 
 
+# Bounded so one plane cannot crowd out the others; four left the command and
+# file cards competing for a single slot on busy turns.
+_MAX_DISTILLER_CANDIDATES = 6
+
+
 def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple[dict[str, Any], CandidateRefs, str]:
     """Build a bounded distiller input from current FileCards and the latest failure."""
 
@@ -178,6 +183,52 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
                 "coverage": card.get("coverage") or {"observed_line_ranges": [[1, max(1, card.get("line_count", 1))]]},
             }
         )
+    # The model's own write_file bodies are the other large payload plane. Give
+    # the distiller the same chance to explain them, so folding a write call can
+    # use a real summary instead of only the deterministic structural note.
+    call_ok: dict[str, bool] = {}
+    for event in events:
+        payload = event["payload"]
+        if payload.get("tool") in {"write_file", "edit_file"} and payload.get("call_id"):
+            call_ok[str(payload["call_id"])] = payload.get("ok") is True
+    latest_write: dict[str, int] = {}
+    for event in events:
+        payload = event["payload"]
+        if payload.get("tool") == "write_file" and payload.get("ok") is not False:
+            arguments = payload.get("arguments")
+            if isinstance(arguments, dict) and isinstance(arguments.get("file"), str):
+                latest_write[arguments["file"]] = int(event["seq"])
+    for event in events:
+        payload = event["payload"]
+        if payload.get("tool") != "write_file" or call_ok.get(str(payload.get("call_id"))) is not True:
+            continue
+        arguments = payload.get("arguments")
+        if not isinstance(arguments, dict):
+            continue
+        written_path = arguments.get("file")
+        body = arguments.get("content")
+        if not isinstance(written_path, str) or not written_path or not isinstance(body, str):
+            continue
+        if len(body.encode("utf-8")) < 512:
+            continue
+        age = current_activity - activity_at_seq.get(int(event["seq"]), current_activity)
+        if age < 10 or written_path in targets or written_path in instruction:
+            continue
+        path = written_path
+        node_ids.add(path)
+        slice_ids.add("slice_file")
+        candidates.append(
+            {
+                "node_id": path,
+                "snapshot_id": "writecall:" + hashlib.sha256(body.encode("utf-8")).hexdigest(),
+                "slice_ids": ["slice_file"],
+                "content": body,
+                "activity_age": age,
+                "kind": "write_call",
+                "duplicate": latest_write.get(path) != int(event["seq"]),
+                "coverage": {"observed_line_ranges": [[1, max(1, len(body.splitlines()))]]},
+            }
+        )
     failure_refs = ["goal"]
     last_error = ""
     for event in reversed(events):
@@ -201,14 +252,18 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
         if isinstance(reference, str) and reference:
             evidence_refs.add(reference)
     activity_text = last_error or str(run.get("verification") or "not_run")
-    request = {"task": run.get("instruction") or "", "activity": activity_text, "candidates": candidates[-4:]}
+    request = {
+        "task": run.get("instruction") or "",
+        "activity": activity_text,
+        "candidates": candidates[-_MAX_DISTILLER_CANDIDATES:],
+    }
     refs = CandidateRefs(node_ids=node_ids, slice_ids=slice_ids, evidence_refs=evidence_refs)
     fingerprint = hashlib.sha256(
         json.dumps(
             {
                 "revision": run.get("workspace_revision"),
                 "activity": activity_text,
-                "candidates": [item["snapshot_id"] for item in candidates[-4:]],
+                "candidates": [item["snapshot_id"] for item in candidates[-_MAX_DISTILLER_CANDIDATES:]],
                 "evidence_refs": sorted(evidence_refs),
             },
             sort_keys=True,

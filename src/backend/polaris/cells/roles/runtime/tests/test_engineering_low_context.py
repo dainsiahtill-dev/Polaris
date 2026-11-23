@@ -132,6 +132,12 @@ def test_working_state_message_is_one_trailing_json_message() -> None:
 
 
 class _FakeStore:
+    def __init__(self) -> None:
+        self.projections: list[dict[str, Any]] = []
+
+    def append_event(self, *_args: Any, **kwargs: Any) -> None:
+        self.projections.append(kwargs.get("payload") or {})
+
     def load_events(self, *_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
         return []
 
@@ -166,6 +172,72 @@ def _long_history(turns: int, payload: str) -> list[dict[str, Any]]:
         )
         messages.append({"role": "tool", "tool_call_id": f"c{index}", "content": payload})
     return messages
+
+
+def _write_history(turns: int, size: int) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": "You are Director."},
+        {"role": "user", "content": "Build the thing."},
+    ]
+    for index in range(turns):
+        messages.append(
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": f"w{index}",
+                        "type": "function",
+                        "function": {
+                            "name": "write_file",
+                            "arguments": json.dumps({"file": f"src/f{index}.ts", "content": "x" * size}),
+                        },
+                    }
+                ],
+            }
+        )
+        messages.append({"role": "tool", "tool_call_id": f"w{index}", "content": f"Wrote {size} bytes."})
+    return messages
+
+
+def test_bounded_request_messages_folds_old_write_calls(tmp_path: Path) -> None:
+    """The model's own document bodies must not accumulate without bound."""
+
+    messages = _write_history(60, 6000)
+    command = RoleRunCommand("low-context", "director", "Build the thing.", tmp_path)
+    bounded = _bounded_request_messages(
+        messages,
+        store=cast(Any, _FakeStore()),
+        command=command,
+        role="director",
+        context_window_tokens=1_000_000,
+        visual_binding=None,
+        audit={},
+    )
+    projected = [
+        json.loads(message["tool_calls"][0]["function"]["arguments"])
+        for message in bounded
+        if message.get("tool_calls")
+    ]
+    folded_count = sum(1 for item in projected if item.get("fold_state") == "FOLDED")
+    assert folded_count > 10
+    # The most recent write is still inside the fold window and stays intact.
+    assert projected[-1].get("fold_state") != "FOLDED"
+    # The retained set is brought back to the working-set target, not merely
+    # trimmed by the age window.
+    retained = TokenEstimator.estimate(json.dumps(bounded, ensure_ascii=False))
+    assert retained <= 32_768 + TokenEstimator.estimate("x" * 6000)
+
+
+def test_working_set_target_shrinks_with_a_small_window() -> None:
+    from polaris.cells.roles.runtime.internal.engineering_tool_payload_projection import (
+        working_set_target_tokens,
+    )
+
+    # A large window keeps the configured operating point.
+    assert working_set_target_tokens(1_000_000) == 32_768
+    # A small window must tighten the target with it, or the request cannot fit.
+    assert working_set_target_tokens(40_000) == 20_000
 
 
 def test_bounded_request_messages_caps_long_history(tmp_path: Path) -> None:

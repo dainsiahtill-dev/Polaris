@@ -466,6 +466,7 @@ def _bounded_request_messages(
     from polaris.cells.roles.runtime.internal.engineering_tool_payload_projection import (
         fold_tool_payload_previews,
         folded_payload_projections,
+        working_set_target_tokens,
     )
     from polaris.kernelone.llm.engine.token_estimator import TokenEstimator
 
@@ -494,11 +495,18 @@ def _bounded_request_messages(
             text = f"{text}{json.dumps(message['tool_calls'], ensure_ascii=False)}"
         return TokenEstimator.estimate(text) + extra + 8
 
+    window = int(context_window_tokens or 0)
+    # One working-set target drives text folding and visual selection together.
+    # Without it the mechanics exist but never engage: at a 1M window the
+    # window-derived allowances are ~925k, so neither folding, visual omission
+    # nor whole-turn compression ever fires.
+    working_set = working_set_target_tokens(window)
     messages = fold_tool_payload_previews(
         messages,
         semantic_summaries=semantic_runtime.fold_summaries() if semantic_runtime is not None else None,
         inactive_fold_activities=fold_window,
         force_fold_paths=force_fold_paths,
+        working_set_tokens=working_set,
         message_cost=_visual_aligned_cost,
     )
     from polaris.cells.roles.runtime.internal.engineering_memory_cards import build_context_memory_messages
@@ -534,15 +542,33 @@ def _bounded_request_messages(
     )
 
     def build(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return build_visual_messages(
+        projected = build_visual_messages(
             history,
             events=events,
             role=role,
             binding_provider=visual_binding,
             audit=audit,
         )
+        # Apply the same working-set target to pixels. Mandatory captures (the
+        # current candidate, a pending reinspection, an explicit pin) are only
+        # demoted when they cannot fit the model window at all; historical
+        # captures the model already saw are optional and are admitted back
+        # newest-first only while the set fits. Removed pixels stay inspectable
+        # with browser_observe(revisit_call_ids=[...]).
+        hard_allowance = _history_allowances(window)[-1] if window > 0 else 0
+        if hard_allowance <= 0:
+            return projected
+        from polaris.kernelone.llm.engine.visual_working_set import select_visual_working_set
 
-    window = int(context_window_tokens or 0)
+        selected, selection = select_visual_working_set(
+            projected,
+            audit.get("image_sets", []),
+            hard_allowance=hard_allowance,
+            optional_allowance=working_set,
+        )
+        audit["visual_selection"] = selection
+        return selected
+
     built: list[dict[str, Any]] | None = None
     try:
         built = build(messages)

@@ -53,10 +53,18 @@ def _fold_grace_activities() -> int:
     return max(0, int(os.environ.get("KERNELONE_CONTEXTOS_FOLD_GRACE_ACTIVITIES", "2")))
 
 
-def _fold_working_set_tokens() -> int:
+# A target is only useful below the window it must fit; half the window is the
+# ceiling, so a small model window tightens the target with it.
+_WORKING_SET_WINDOW_FRACTION = 0.5
+
+
+def working_set_target_tokens(window: int | None = None) -> int:
     """Target size for the retained working set; the budget tier folds to it."""
 
-    return max(2048, int(os.environ.get("KERNELONE_CONTEXTOS_FOLD_WORKING_SET_TOKENS", "32768")))
+    configured = max(2048, int(os.environ.get("KERNELONE_CONTEXTOS_FOLD_WORKING_SET_TOKENS", "32768")))
+    if window is None or window <= 0:
+        return configured
+    return max(2048, min(configured, int(window * _WORKING_SET_WINDOW_FRACTION)))
 
 
 # Reason code for a fold driven by the working-set budget rather than by age.
@@ -404,7 +412,7 @@ class _FoldPolicy:
         self.forced_paths = {str(path) for path in (force_fold_paths or ()) if str(path).strip()}
         self.summaries = semantic_summaries
         self.budget_tokens = (
-            _fold_working_set_tokens() if working_set_tokens is None else max(0, int(working_set_tokens))
+            working_set_target_tokens() if working_set_tokens is None else max(0, int(working_set_tokens))
         )
         self.latest = _latest_identities(messages)
         self.targets = _write_targets(messages)
