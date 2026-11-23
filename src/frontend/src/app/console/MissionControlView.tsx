@@ -203,6 +203,8 @@ export function MissionControlView({ workspace, binding, role }: {
           <div className="min-h-0 flex-1 overflow-y-auto cx-scroll">
             <ToolTimeline
               events={events}
+              runId={run.session_id}
+              workspace={workspace}
               selectedSeq={selectedEvent?.seq ?? null}
               onSelect={(event) => setSelectedSeq(event.seq)}
               onOpenContext={openContext}

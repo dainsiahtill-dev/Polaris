@@ -3,6 +3,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { ToolTimeline } from './ToolTimeline';
 import type { EngineeringEvent } from '@/services/api.types';
 
+// 实时流只带图像元数据；像素由观察端点按需取回。
+vi.mock('@/services/engineeringRunService', () => ({
+  getEngineeringObservationImage: vi.fn(),
+}));
+
 function event(seq: number): EngineeringEvent {
   return {
     session_id: 'run',
@@ -128,8 +133,10 @@ describe('ToolTimeline live ordering', () => {
     expect(screen.getByTestId('story-epoch-7')).toHaveTextContent('Devourer 吞噬兽 · epoch-0001-0010');
   });
 
-  it('renders browser screenshots for browser_observe observations', () => {
-    const shot = Buffer.from('fake-jpeg').toString('base64');
+  it('fetches the frame bytes from the run API instead of a placeholder', async () => {
+    // 事件流只带元数据（sha256/media_type），像素由观察端点按需取回。
+    const { getEngineeringObservationImage } = await import('@/services/engineeringRunService');
+    vi.mocked(getEngineeringObservationImage).mockResolvedValue({ ok: true, data: 'blob:mock-frame' });
     const observed: EngineeringEvent = {
       session_id: 'run',
       workspace: '/ws',
@@ -139,19 +146,23 @@ describe('ToolTimeline live ordering', () => {
       payload: {
         tool: 'browser_observe',
         ok: true,
-        images: [{ data_base64: shot, media_type: 'image/jpeg', sha256: 'abc' }],
+        call_id: 'cap-8',
+        images: [{ media_type: 'image/jpeg', sha256: 'abc' }],
       },
     };
     render(
       <ToolTimeline
         events={[observed]}
+        runId="run"
+        workspace="/ws"
         selectedSeq={null}
         onSelect={vi.fn()}
         onOpenContext={vi.fn()}
         emptyHint="empty"
       />,
     );
-    expect(screen.getByTestId('browser-shot-8-0')).toHaveAttribute('src', `data:image/jpeg;base64,${shot}`);
+    expect(await screen.findByAltText('浏览器截图 1')).toHaveAttribute('src', 'blob:mock-frame');
+    expect(getEngineeringObservationImage).toHaveBeenCalledWith('run', 'cap-8', 0, '/ws');
   });
 
   it('boxes every tool call of one turn under that turn number', () => {

@@ -466,33 +466,13 @@ def _bounded_request_messages(
     from polaris.cells.roles.runtime.internal.engineering_tool_payload_projection import (
         fold_tool_payload_previews,
         folded_payload_projections,
+        message_payload_tokens,
     )
-    from polaris.kernelone.llm.engine.token_estimator import TokenEstimator
-
-    # Align folding and compression accounting with admission accounting. Both
-    # default estimators score message content as plain text, so base64 image
-    # bytes embedded in browser_observation JSON are counted as text and no
-    # budget can ever fit a visual history (run 6e61f355 died this way). This
-    # cost strips data_base64 payloads for the text side and prices the stripped
-    # bytes separately, matching the conservative serialization proxy.
-    _data_base64_pattern = re.compile(r'("data_base64"\s*:\s*")[^"]*(")')
 
     def _visual_aligned_cost(message: Mapping[str, Any]) -> int:
-        content = message.get("content")
-        extra = 0
-        if isinstance(content, str):
-            stripped, count = _data_base64_pattern.subn(r"\1\2", content)
-            if count:
-                removed = sum(len(match.group(0)) for match in _data_base64_pattern.finditer(content))
-                extra = TokenEstimator.estimate("x" * min(removed, 4_000_000))
-            text = stripped
-        elif content is None:
-            text = ""
-        else:
-            text = json.dumps(content, ensure_ascii=False)
-        if message.get("tool_calls"):
-            text = f"{text}{json.dumps(message['tool_calls'], ensure_ascii=False)}"
-        return TokenEstimator.estimate(text) + extra + 8
+        # Shared with the retention check: base64 image bytes are priced as
+        # binary, never as text (run 6e61f355 died counting them as text).
+        return message_payload_tokens(message)
 
     window = int(context_window_tokens or 0)
     messages = fold_tool_payload_previews(
@@ -1312,9 +1292,15 @@ async def run_engineering_loop(
                 first_verification_due = time.time() >= created_at + budget * first_verification_fraction
             visual_projection: dict[str, Any] = {}
             from polaris.cells.roles.runtime.internal.engineering_context_budget import context_fold_window
-            from polaris.kernelone.llm.engine.token_estimator import TokenEstimator
+            from polaris.cells.roles.runtime.internal.engineering_tool_payload_projection import (
+                message_text_tokens,
+            )
 
-            history_tokens = TokenEstimator.estimate(json.dumps(messages, ensure_ascii=False))
+            # 保留判据只看文本：截图是几千个 vision token，不是它的 base64 拼写
+            # 那样几十万。按字节计价会让任何有浏览器证据的 run 越过 256k 预留，
+            # 把折叠窗口从 24 腰斩到 12 —— 这正是"折叠→重读→再折叠"循环的成因。
+            # 整轮丢弃另有 aligned 成本（含图像）来把关。
+            history_tokens = sum(message_text_tokens(message) for message in messages)
             fold_window: int | None = context_fold_window(
                 limits=limits,
                 created_at=float(run_now["created_at"]),

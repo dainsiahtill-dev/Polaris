@@ -467,3 +467,26 @@ def test_shadow_separates_reconciled_effect_and_pending_observation() -> None:
     pack = shadow_decision_pack({}, events, max_tokens=5000)["pack"]
     assert pack["pending_tool_started_seqs"] == []
     assert pack["reconciliation_seqs"] == [9]
+
+
+def test_embedded_image_bytes_are_priced_as_binary_not_text() -> None:
+    """A browser capture must not make a healthy history look oversized.
+
+    The retention allowance compares the history against 256k; counting base64
+    as text pushed any run with screenshots past it and collapsed the fold window
+    from 24 activities to 12, which defeated the focus window.
+    """
+
+    import json as _json
+
+    from polaris.cells.roles.runtime.internal.engineering_tool_payload_projection import (
+        message_text_tokens,
+    )
+
+    plain = message_text_tokens({"role": "tool", "content": "x" * 300_000})
+    image = message_text_tokens(
+        {"role": "tool", "content": _json.dumps({"images": [{"data_base64": "A" * 300_000}]})}
+    )
+    # 截图字节被整块排除，而不是按文本单价折算。
+    assert image < 2_000
+    assert plain > 70_000

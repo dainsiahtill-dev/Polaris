@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import hashlib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from polaris.bootstrap.config import Settings
 from polaris.bootstrap.engineering_runtime import (
     engineering_error_status,
@@ -16,6 +19,7 @@ from polaris.bootstrap.engineering_runtime import (
     observe_engineering_run,
     start_engineering_run,
 )
+from polaris.cells.roles.runtime.internal.engineering_session import EngineeringSessionStore
 from polaris.cells.roles.runtime.public.engineering_service import EngineeringRunService
 from polaris.delivery.http.dependencies import require_auth
 from polaris.kernelone.concurrency import get_concurrency_manager
@@ -114,6 +118,57 @@ async def get_current_run(request: Request) -> JSONResponse:
         return await _read_response(request, read)
     except (KeyError, OSError, ValueError, RuntimeError) as error:
         raise _error(error) from error
+
+
+def observation_image(store: EngineeringSessionStore, session_id: str, call_id: str, index: int) -> tuple[bytes, str]:
+    """Read one stored frame and verify it against the recorded digest."""
+
+    if index < 0:
+        raise ValueError("image index must be nonnegative")
+    for event in store.load_events(session_id):
+        payload = event["payload"]
+        if payload.get("tool") != "browser_observe" or payload.get("call_id") != call_id:
+            continue
+        if payload.get("ok") is not True:
+            raise ValueError("observation did not succeed")
+        images = payload.get("images")
+        if not isinstance(images, list) or index >= len(images):
+            raise ValueError("image index out of range")
+        image = images[index]
+        if not isinstance(image, dict):
+            raise ValueError("image entry is malformed")
+        try:
+            raw = base64.b64decode(str(image.get("data_base64") or ""), validate=True)
+        except (binascii.Error, ValueError) as error:
+            raise ValueError("stored image bytes are not valid base64") from error
+        if hashlib.sha256(raw).hexdigest() != image.get("sha256"):
+            raise ValueError("stored image bytes failed integrity verification")
+        return raw, str(image.get("media_type") or "image/jpeg")
+    raise KeyError(f"no such browser observation: {call_id}")
+
+
+@router.get("/runs/{session_id}/observations/{call_id}/images/{index}")
+async def get_observation_image(
+    session_id: str, call_id: str, index: int, request: Request
+) -> Response:
+    """Serve one captured frame's bytes.
+
+    The live event stream deliberately carries image metadata only, so the
+    transport stays bounded and SQLite stays the single source of truth. The
+    console fetches the frame here instead of receiving an unusable placeholder.
+    """
+
+    def read() -> tuple[bytes, str]:
+        service, _settings, _workspace = _bound(request)
+        return observation_image(service.store, session_id, call_id, index)
+
+    try:
+        raw, media_type = await asyncio.get_running_loop().run_in_executor(
+            get_concurrency_manager().get_io_pool(), read
+        )
+    except (KeyError, OSError, ValueError, RuntimeError) as error:
+        raise _error(error) from error
+    return Response(content=raw, media_type=media_type)
 
 
 @router.get("/runs/{session_id}")

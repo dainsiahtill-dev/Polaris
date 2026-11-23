@@ -1,5 +1,6 @@
-import { useMemo, useState, type ReactElement } from 'react';
+import { useEffect, useMemo, useState, type ReactElement } from 'react';
 import type { EngineeringEvent } from '@/services/api.types';
+import { getEngineeringObservationImage } from '@/services/engineeringRunService';
 import { contextRefOf, formatClock, toolGlyph, toolLabel } from './format';
 import {
   IconCheck, IconChevronRight, IconClapper, IconFile, IconFlag, IconFolder, IconGauge,
@@ -178,13 +179,70 @@ const TURN_STYLE = {
   background: 'linear-gradient(180deg, rgba(31,122,140,.06), rgba(31,122,140,.015))',
 } as const;
 
+/** One captured frame, fetched on demand from the run's observation endpoint. */
+function CaptureImage({ runId, workspace, callId, index }: {
+  runId: string | null;
+  workspace?: string;
+  callId: string;
+  index: number;
+}): ReactElement {
+  const scope = workspace ?? '';
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!runId || !callId) {
+      setFailed(true);
+      return;
+    }
+    let live = true;
+    let objectUrl: string | null = null;
+    setUrl(null);
+    setFailed(false);
+    void getEngineeringObservationImage(runId, callId, index, scope).then((result) => {
+      if (!live) return;
+      if (result.ok) {
+        objectUrl = result.data ?? null;
+        setUrl(result.data ?? null);
+      } else {
+        setFailed(true);
+      }
+    });
+    return () => {
+      live = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [runId, scope, callId, index]);
+
+  if (url) {
+    return (
+      <img
+        src={url}
+        alt={`浏览器截图 ${index + 1}`}
+        data-testid={`browser-shot-${index}`}
+        className="h-24 rounded-lg border border-white/10 object-cover"
+      />
+    );
+  }
+  return (
+    <div
+      data-testid={`browser-shot-${index}`}
+      className="flex h-24 w-32 items-center justify-center rounded-lg border border-dashed border-white/10 px-2 text-center text-[0.62rem] text-[var(--cx-ink-faint)]"
+    >
+      {failed ? '截图不可用' : '读取截图…'}
+    </div>
+  );
+}
+
 /** The live run story: turns boxed, narration first, tools as annotations, platform beats in between. */
-export function ToolTimeline({ events, selectedSeq, onSelect, onOpenContext, emptyHint }: {
+export function ToolTimeline({ events, selectedSeq, onSelect, onOpenContext, emptyHint, runId, workspace }: {
   events: EngineeringEvent[];
   selectedSeq: number | null;
   onSelect: (event: EngineeringEvent) => void;
   onOpenContext: (ref: string, role: string) => void;
   emptyHint: string;
+  runId?: string | null;
+  workspace?: string;
 }): ReactElement {
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
   const story = useMemo(() => events.filter((event) => DISPLAY_KINDS.has(event.kind)).slice(-120).reverse(), [events]);
@@ -301,18 +359,15 @@ export function ToolTimeline({ events, selectedSeq, onSelect, onOpenContext, emp
               {ok ? <IconCheck className="h-4 w-4 text-[var(--cx-teal-bright)]" /> : <span className="cx-pill cx-pill--bad">失败</span>}
             </button>
             <div className="mt-2 flex flex-wrap gap-2">
-              {images.slice(0, 4).map((image, index) => {
-                const source = textOf(image.data_base64);
-                return (
-                  <img
-                    key={`${event.seq}-${index}`}
-                    src={`data:${textOf(image.media_type) || 'image/jpeg'};base64,${source}`}
-                    alt={`浏览器截图 ${index + 1}`}
-                    data-testid={`browser-shot-${event.seq}-${index}`}
-                    className="h-24 rounded-lg border border-white/10 object-cover"
-                  />
-                );
-              })}
+              {images.slice(0, 4).map((image, index) => (
+                <CaptureImage
+                  key={`${event.seq}-${index}`}
+                  runId={runId ?? null}
+                  workspace={workspace}
+                  callId={textOf(payload.call_id) || textOf(event.payload.call_id)}
+                  index={index}
+                />
+              ))}
             </div>
           </article>
         );

@@ -80,6 +80,31 @@ activity_age >= fold_window(24) 且 payload >= 平面字节下限 且 无 pin
 - **蒸馏器**：候选门槛按平面分离 —— 调用平面 `distill_min_bytes()`（512），结果平面 `distill_result_min_bytes()`（= 折叠门槛的一半 = 2048）。
   不再摘要永远不会被折的小卡片。
 
+## 图像字节的计价（真实 run 审计抓到的缺陷）
+
+`_retention_fold_window` 用 `TokenEstimator.estimate(json.dumps(messages))` 判断历史是否超过 256k 预留。
+截图的 base64 被当成纯文本：一张 1280×900 JPEG ≈ 8.6 万字符 ≈ 2 万 token，几张就越过预留，
+折叠窗口从 24 被腰斩到 **12**（再到 6），焦点窗直接失效 —— 这正是"折叠→重读→再折叠"循环的成因。
+
+更糟的是：旧的正则只匹配 JSON 字符串里的 `"data_base64"`，而真实结构是 `content[i].source.data`，
+**从来没命中过**（实测同一条消息两种算法都得到 111,243，一字不差）。
+
+- `_blank_image_bytes()` 同时处理两种拼写；
+- `message_text_tokens()`：保留判据只看文本，图像字节整块排除；
+- `message_payload_tokens()`：窗口/压缩用，仍把图像当二进制计价（保守）。
+
+## 截图不是"两轮后丢弃"，而是"跨版本即失效"
+
+截图只在它观测的那个候选版本内有效。宿主已有版本判据（`input_binding.workspace_revision`）：
+当前 run 实测 26 次带绑定的请求里，**75 张截图被判 `stale_candidate` 丢弃，17 张 `current_candidate` 保留**。
+"超过两轮就丢"既不够（跨版本要立刻丢），又过头（同版本留多久都行）。**保持版本判据。**
+
+## 截图像素不走实时流
+
+`runtime.v2` 事件只带图像元数据（sha256 / media_type），像素由
+`GET /v2/engineering/runs/{session}/observations/{call}/images/{index}` 按需取回并校验 sha256。
+旧前端把元数据当图来画，永远显示 alt 文案。传输有界，SQLite 仍是唯一事实源。
+
 ## 读文件未命中的恢复
 
 `read_file tools/serve.js` 在 TypeScript 项目里是真实未命中，但旧回复只说"不存在"，模型只能再猜一轮（实测：turn 1251 读 `.js` 失败，

@@ -684,30 +684,88 @@ def test_oversize_live_projection_preserves_authoritative_qa_outcome_facts(
     assert result["liveChecks"] == result["coldChecks"] == 20
 
 
-def test_tool_observation_keeps_browser_pixels_for_the_live_view() -> None:
-    """The console renders <img> from payload.images; stripping bytes broke them.
+def test_public_projection_carries_image_metadata_without_pixel_bytes() -> None:
+    """The stream stays bounded; the console fetches the frame from the run API.
 
-    The transport used to remove data_base64, truncate any string over 4096 bytes
-    and then reduce anything over 60KB, so a real screenshot never arrived and the
-    UI showed the alt text instead.
+    The bytes must not ride in the event: the transport would either drop them or
+    hand the UI a truncated capture. The frame itself is served by
+    GET /v2/engineering/runs/{session}/observations/{call}/images/{index}.
     """
 
     import base64
 
     from polaris.delivery.ws.engineering_events import compact_engineering_payload
 
-    raw_png = b"\xff\xd8\xff\xe0" + bytes(range(256)) * 350
-    shot = base64.b64encode(raw_png).decode("ascii")
+    shot = base64.b64encode(b"\xff\xd8\xff\xe0" + bytes(range(256)) * 350).decode("ascii")
     payload = {
         "tool": "browser_observe",
         "ok": True,
         "images": [{"data_base64": shot, "media_type": "image/jpeg", "sha256": "abc"}],
     }
     projected = compact_engineering_payload("tool_observed", payload)
-    assert projected["images"][0]["data_base64"] == shot
-    assert "truncated_fields" not in projected
-    assert "payload_omitted" not in projected
+    assert projected["images"][0]["sha256"] == "abc"
+    assert "data_base64" not in json.dumps(projected, ensure_ascii=False)
 
-    # Every other kind still travels without pixels; SQLite keeps the full fact.
-    other = compact_engineering_payload("run_updated", payload)
-    assert "data_base64" not in json.dumps(other, ensure_ascii=False)
+
+def test_observation_image_serves_the_stored_frame_and_verifies_it(tmp_path: Path) -> None:
+    """The console cannot render a frame the stream never carries.
+
+    The event payload keeps only metadata, so the frame has to come from here; a
+    tampered or truncated capture must be refused rather than painted.
+    """
+
+    import base64
+    import hashlib
+
+    from polaris.cells.roles.runtime.internal.engineering_session import EngineeringSessionStore
+    from polaris.cells.roles.runtime.public.contracts.engineering_run import (
+        PermissionScope,
+        RoleRunCommand,
+        RunLimits,
+    )
+    from polaris.delivery.http.routers.engineering_runs import observation_image
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    store = EngineeringSessionStore(workspace)
+    command = RoleRunCommand("img-run", "director", "Inspect the page.", workspace)
+    store.create_run(
+        command,
+        scope=PermissionScope((workspace,), (workspace,), frozenset({"browser_observe"}), False),
+        limits=RunLimits(None, 10_000, 2_000),
+        engine_version="engineering_v2",
+        request_key=None,
+    )
+    raw = b"\xff\xd8\xff\xe0" + bytes(range(256))
+    store.append_event(
+        command.session_id,
+        kind="tool_observed",
+        role="director",
+        payload={
+            "tool": "browser_observe",
+            "call_id": "cap-1",
+            "ok": True,
+            "images": [{"data_base64": base64.b64encode(raw).decode("ascii"), "media_type": "image/jpeg", "sha256": hashlib.sha256(raw).hexdigest()}],
+        },
+    )
+    served, media_type = observation_image(store, command.session_id, "cap-1", 0)
+    assert served == raw
+    assert media_type == "image/jpeg"
+
+    store.append_event(
+        command.session_id,
+        kind="tool_observed",
+        role="director",
+        payload={
+            "tool": "browser_observe",
+            "call_id": "cap-2",
+            "ok": True,
+            "images": [{"data_base64": base64.b64encode(b"other").decode("ascii"), "media_type": "image/jpeg", "sha256": hashlib.sha256(raw).hexdigest()}],
+        },
+    )
+    with pytest.raises(ValueError, match="integrity"):
+        observation_image(store, command.session_id, "cap-2", 0)
+    with pytest.raises(ValueError, match="out of range"):
+        observation_image(store, command.session_id, "cap-1", 3)
+    with pytest.raises(KeyError):
+        observation_image(store, command.session_id, "missing", 0)

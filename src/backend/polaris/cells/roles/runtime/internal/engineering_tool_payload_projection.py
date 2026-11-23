@@ -21,6 +21,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -98,6 +99,101 @@ def distill_result_min_bytes() -> int:
     """
 
     return max(1024, configured_fold_result_min_bytes() // DISTILL_RESULT_BYTE_FLOOR_DIVISOR)
+
+
+_DATA_BASE64_PATTERN = re.compile(r'("data_base64"\s*:\s*")[^"]*(")')
+
+
+def _blank_image_bytes(value: Any) -> tuple[Any, int]:
+    """Blank the bytes a message carries, in either wire spelling.
+
+    Two shapes reach us: the observation JSON string carries
+    ``"data_base64": "..."``, while the projected attachment carries structured
+    blocks (``content[i].source.data``). A regex over the serialised string only
+    ever matched the first, so structured captures were priced as plain text and
+    every accounting built on it was wrong. Returns the copy plus the number of
+    bytes removed.
+    """
+
+    if isinstance(value, dict):
+        removed = 0
+        copy: dict[str, Any] = {}
+        for key, item in value.items():
+            if key == "data" and isinstance(item, str) and len(item) > 256:
+                removed += len(item)
+                copy[key] = ""
+                continue
+            child, child_removed = _blank_image_bytes(item)
+            copy[key] = child
+            removed += child_removed
+        return copy, removed
+    if isinstance(value, list):
+        removed = 0
+        items: list[Any] = []
+        for item in value:
+            child, child_removed = _blank_image_bytes(item)
+            items.append(child)
+            removed += child_removed
+        return items, removed
+    if isinstance(value, str):
+        matches = list(_DATA_BASE64_PATTERN.finditer(value))
+        if not matches:
+            return value, 0
+        removed = sum(len(match.group(0)) - len(match.group(1)) - len(match.group(2)) for match in matches)
+        return _DATA_BASE64_PATTERN.sub(r"\1\2", value), removed
+    return value, 0
+
+
+def message_payload_tokens(message: Mapping[str, Any]) -> int:
+    """Token cost of one message, pricing embedded image bytes as binary.
+
+    The naive ``json.dumps`` estimate counts base64 as text, so a single browser
+    capture makes a healthy history look far larger than it is. That number feeds
+    the retention allowance: once it crosses 256k the fold window collapses from
+    24 activities to 12 (then 6), which defeats the focus window and reproduces
+    the read-fold-reread loop. Both the fold budget and the retention check must
+    therefore use this cost, not the plain text estimate.
+    """
+
+    from polaris.kernelone.llm.engine.token_estimator import TokenEstimator
+
+    content, removed = _blank_image_bytes(message.get("content"))
+    if isinstance(content, str):
+        text = content
+    elif content is None:
+        text = ""
+    else:
+        text = json.dumps(content, ensure_ascii=False)
+    if message.get("tool_calls"):
+        text = f"{text}{json.dumps(message['tool_calls'], ensure_ascii=False)}"
+    extra = TokenEstimator.estimate("x" * min(removed, 4_000_000))
+    return TokenEstimator.estimate(text) + extra + 8
+
+
+def message_text_tokens(message: Mapping[str, Any]) -> int:
+    """Text-only cost: embedded image bytes are excluded, not repriced.
+
+    The retention check asks "is this history too big to keep whole turns", and
+    the answer must not be dominated by screenshots — a capture is a few thousand
+    vision tokens, not the hundreds of thousands its base64 spelling suggests.
+    Pricing the bytes as binary still counted them at text rates, so any run with
+    a handful of captures tripped the 256k allowance and the fold window
+    collapsed from 24 activities to 12, which is exactly what produced the
+    read-fold-reread loop.
+    """
+
+    from polaris.kernelone.llm.engine.token_estimator import TokenEstimator
+
+    content, _removed = _blank_image_bytes(message.get("content"))
+    if isinstance(content, str):
+        text = content
+    elif content is None:
+        text = ""
+    else:
+        text = json.dumps(content, ensure_ascii=False)
+    if message.get("tool_calls"):
+        text = f"{text}{json.dumps(message['tool_calls'], ensure_ascii=False)}"
+    return TokenEstimator.estimate(text) + 8
 
 
 def _card_payload(payload: object) -> tuple[dict[str, Any] | None, bool]:

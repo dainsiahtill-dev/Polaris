@@ -17,28 +17,17 @@ from polaris.infrastructure.messaging.nats.nats_types import (
 from polaris.kernelone.storage import resolve_storage_roots
 
 
-# 截图字节只服务实时 UI 的浏览器证据视图：旧逻辑把它剥掉、把超过 4096 字节的
-# 字符串截断、再把超过 60KB 的载荷整体降级，三者叠加让截图永远到不了前端
-# （表现为 <img> 的 alt 文案"浏览器截图 1"）。完整事实始终留在 SQLite。
-_IMAGE_KEY = "data_base64"
-_DEFAULT_PAYLOAD_BUDGET = 60_000
-_IMAGE_PAYLOAD_BUDGET = 1_500_000
-_MAX_IMAGE_CHARS = 1_400_000
-
-
 def compact_engineering_payload(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """Keep original full facts in SQLite; send explicit, bounded previews."""
+    """Keep original full facts in SQLite; send explicit, bounded previews.
 
-    # 只有真实工具观察携带浏览器证据；其余 kind 仍然不带像素。
-    keep_pixels = kind == "tool_observed"
+    Pixel bytes deliberately stay out of the stream: the console fetches a frame
+    from the run's observation endpoint, so the transport stays bounded and the
+    journal stays the single source of truth.
+    """
 
     def without_pixels(value: Any) -> Any:
         if isinstance(value, dict):
-            return {
-                key: without_pixels(item)
-                for key, item in value.items()
-                if keep_pixels or key != _IMAGE_KEY
-            }
+            return {key: without_pixels(item) for key, item in value.items() if key != "data_base64"}
         if isinstance(value, (list, tuple)):
             return [without_pixels(item) for item in value]
         return value
@@ -115,9 +104,6 @@ def compact_engineering_payload(kind: str, payload: dict[str, Any]) -> dict[str,
 
     def bounded(value: Any, path: str, depth: int = 0) -> Any:
         if isinstance(value, str) and len(value.encode("utf-8")) > 4096:
-            if path.rsplit(".", 1)[-1] == _IMAGE_KEY:
-                # 截图不是文本预览，截断它只会得到一张破图。
-                return value[:_MAX_IMAGE_CHARS]
             truncated.append(path)
             return value.encode("utf-8")[:4096].decode("utf-8", errors="ignore")
         if isinstance(value, dict):
@@ -171,22 +157,11 @@ def compact_engineering_payload(kind: str, payload: dict[str, Any]) -> dict[str,
             previews.append(preview)
         return previews
 
-    def has_image_bytes(value: Any) -> bool:
-        if isinstance(value, dict):
-            return any(
-                (key == _IMAGE_KEY and isinstance(item, str) and bool(item)) or has_image_bytes(item)
-                for key, item in value.items()
-            )
-        if isinstance(value, list):
-            return any(has_image_bytes(item) for item in value)
-        return False
-
     if has_checks:
         projected["checks"] = check_previews(4096)
     if truncated:
         projected["truncated_fields"] = truncated[:80]
-    budget = _IMAGE_PAYLOAD_BUDGET if has_image_bytes(projected) else _DEFAULT_PAYLOAD_BUDGET
-    if len(json.dumps(projected, ensure_ascii=False).encode("utf-8")) > budget:
+    if len(json.dumps(projected, ensure_ascii=False).encode("utf-8")) > 60_000:
         projected = {
             key: projected[key]
             for key in (
@@ -224,7 +199,7 @@ def compact_engineering_payload(kind: str, payload: dict[str, Any]) -> dict[str,
                 projected["checks"] = check_previews(maximum, essential_only=True)
             if truncated:
                 projected["truncated_fields"] = truncated[:80]
-            if len(json.dumps(projected, ensure_ascii=False).encode("utf-8")) <= budget:
+            if len(json.dumps(projected, ensure_ascii=False).encode("utf-8")) <= 60_000:
                 return projected
         # No partial verdict/check list: the existing same-run HTTP snapshot
         # owns the complete required shape when it cannot fit this transport.

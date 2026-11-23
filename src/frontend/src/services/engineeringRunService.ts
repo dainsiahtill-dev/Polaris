@@ -1,4 +1,6 @@
 /** One-shot engineering commands/queries; realtime belongs to the shared transport. */
+import { apiFetch } from '@/api';
+import { formatErrorMessage } from './apiClient';
 import { apiGet, apiPost } from './apiClient';
 import type { ApiResult, EngineeringRole, EngineeringRunSnapshot, EngineeringStartOptions } from './api.types';
 import { normalizeRuntimeWorkspacePath } from '@/app/hooks/_runtimeEventFilter';
@@ -42,4 +44,29 @@ export async function discussEngineeringRole(role: EngineeringRole, message: str
   const data = result.data as Record<string, unknown>;
   const metadata = data.metadata && typeof data.metadata === 'object' && !Array.isArray(data.metadata) ? data.metadata as Record<string, unknown> : undefined;
   return { ok: true, data: { response: data.response as string, metadata } };
+}
+
+/**
+ * 取一张浏览器截图的真实字节。
+ *
+ * 实时事件流只带图像元数据（sha256/media_type），不带像素：传输要有界，SQLite
+ * 才是唯一事实源。旧前端把元数据当成图来画，于是永远显示 alt 文案。
+ */
+export async function getEngineeringObservationImage(
+  runId: string,
+  callId: string,
+  index: number,
+  workspace: string,
+): Promise<ApiResult<string>> {
+  try {
+    const response = await apiFetch(
+      `/v2/engineering/runs/${encodeURIComponent(runId)}/observations/${encodeURIComponent(callId)}/images/${index}`
+        + `?workspace=${encodeURIComponent(workspace)}`,
+    );
+    if (!response.ok) return { ok: false, error: `截图不可用（${response.status}）` };
+    const blob = await response.blob();
+    return { ok: true, data: URL.createObjectURL(blob) };
+  } catch (error) {
+    return { ok: false, error: formatErrorMessage(error, '截图读取失败') };
+  }
 }
