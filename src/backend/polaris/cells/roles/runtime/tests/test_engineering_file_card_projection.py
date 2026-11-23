@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 
 import pytest
-from polaris.cells.roles.runtime.internal.engineering_file_card_projection import fold_file_card_previews
 from polaris.cells.roles.runtime.internal.engineering_file_cards import build_file_card
+from polaris.cells.roles.runtime.internal.engineering_tool_payload_projection import fold_tool_payload_previews
 
 
 def _message(path: str, preview: str) -> dict[str, object]:
@@ -23,7 +23,7 @@ def _message(path: str, preview: str) -> dict[str, object]:
 
 def test_duplicate_file_cards_keep_only_latest_preview(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "3")
-    folded = fold_file_card_previews(
+    folded = fold_tool_payload_previews(
         [
             {"role": "assistant", "content": "step-1"},
             _message("a.py", "o" * 1200),
@@ -59,7 +59,7 @@ def test_current_edit_pin_keeps_preview_and_reason() -> None:
         },
         _message("a.py", "new"),
     ]
-    folded = fold_file_card_previews(messages)
+    folded = fold_tool_payload_previews(messages)
     first = json.loads(folded[0]["content"])["file_card"]
     assert first["pin_reason"] == "current_edit"
     assert first["content_preview"] == "source" and first["fold_state"] == "ACTIVE"

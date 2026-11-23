@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 
 import pytest
-from polaris.cells.roles.runtime.internal.engineering_file_card_projection import fold_file_card_previews
 from polaris.cells.roles.runtime.internal.engineering_file_cards import build_file_card
+from polaris.cells.roles.runtime.internal.engineering_tool_payload_projection import fold_tool_payload_previews
 
 
 def _message(path: str, preview: str, **extra: object) -> dict[str, object]:
@@ -31,13 +31,13 @@ def _envelope(path: str, preview: str) -> dict[str, object]:
 
 
 def test_first_three_activities_keep_continuity() -> None:
-    folded = fold_file_card_previews([_message("a.py", "a"), _message("b.py", "b"), _message("c.py", "c")])
+    folded = fold_tool_payload_previews([_message("a.py", "a"), _message("b.py", "b"), _message("c.py", "c")])
     assert all(json.loads(message["content"])["file_card"]["fold_state"] == "ACTIVE" for message in folded)
 
 
 def test_inactive_card_folds_after_configured_activities(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "3")
-    folded = fold_file_card_previews(
+    folded = fold_tool_payload_previews(
         [
             {"role": "assistant", "content": "step-1"},
             _message("a.py", "a" * 1200),
@@ -58,7 +58,7 @@ def test_inactive_card_folds_after_configured_activities(monkeypatch: pytest.Mon
 
 def test_inactive_threshold_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "1")
-    folded = fold_file_card_previews(
+    folded = fold_tool_payload_previews(
         [
             {"role": "assistant", "content": "step-1"},
             _message("a.py", "a" * 1200),
@@ -72,7 +72,7 @@ def test_inactive_threshold_is_configurable(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_small_duplicate_payload_is_not_folded() -> None:
-    folded = fold_file_card_previews(
+    folded = fold_tool_payload_previews(
         [
             {"role": "assistant", "content": "step-1"},
             _message("a.py", "a"),
@@ -91,7 +91,7 @@ def test_small_duplicate_payload_is_not_folded() -> None:
 def test_large_duplicate_payload_can_fold(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "3")
     large = "x" * 1200
-    folded = fold_file_card_previews(
+    folded = fold_tool_payload_previews(
         [
             {"role": "assistant", "content": "step-1"},
             _message("a.py", large),
@@ -110,7 +110,7 @@ def test_large_duplicate_payload_can_fold(monkeypatch: pytest.MonkeyPatch) -> No
 
 def test_current_edit_pin_survives_inactivity() -> None:
     large = "x" * 1200
-    folded = fold_file_card_previews(
+    folded = fold_tool_payload_previews(
         [
             {"role": "assistant", "content": "step-1"},
             _message("a.py", large),
@@ -132,7 +132,7 @@ def test_current_edit_pin_survives_inactivity() -> None:
 
 def test_acceptance_pin_survives_inactivity() -> None:
     large = "x" * 1200
-    folded = fold_file_card_previews(
+    folded = fold_tool_payload_previews(
         [
             {"role": "user", "content": "verify a.py"},
             {"role": "assistant", "content": "step-1"},
@@ -156,7 +156,7 @@ def test_current_reasoning_pin_survives_ten_activities() -> None:
         messages.append({"role": "assistant", "content": f"step-{index}"})
         messages.append(_message("a.py" if index == 0 else "b.py", large))
     messages.append({"role": "assistant", "content": "继续修复 a.py 的交互。"})
-    folded = fold_file_card_previews(messages)
+    folded = fold_tool_payload_previews(messages)
     first = next(message for message in folded if message["role"] == "tool")
     card = json.loads(first["content"])["file_card"]
     assert card["fold_state"] == "ACTIVE" and card["pin_reason"] == "current_reasoning"
@@ -164,21 +164,21 @@ def test_current_reasoning_pin_survives_ten_activities() -> None:
 
 def test_folded_card_does_not_fold_again() -> None:
     folded_once = _message("a.py", "", fold_state="FOLDED", last_fold_activity_seq=1)
-    folded_twice = fold_file_card_previews([folded_once, _message("b.py", "b")])
+    folded_twice = fold_tool_payload_previews([folded_once, _message("b.py", "b")])
     card = json.loads(folded_twice[0]["content"])["file_card"]
     assert card["last_fold_activity_seq"] == 1 and card["content_preview"] == ""
 
 
 def test_rehydration_grace_blocks_immediate_refold() -> None:
     recovered = _message("a.py", "source", recovered_from="filecard:old", last_rehydrated_activity_seq=1)
-    folded = fold_file_card_previews([recovered, _message("b.py", "b"), _message("c.py", "c")])
+    folded = fold_tool_payload_previews([recovered, _message("b.py", "b"), _message("c.py", "c")])
     assert json.loads(folded[0]["content"])["file_card"]["fold_state"] == "ACTIVE"
 
 
 def test_nested_tool_envelope_is_folded_without_losing_wrapper(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "3")
     large = "x" * 1200
-    folded = fold_file_card_previews(
+    folded = fold_tool_payload_previews(
         [
             {"role": "assistant", "content": "step-1"},
             _envelope("a.py", large),

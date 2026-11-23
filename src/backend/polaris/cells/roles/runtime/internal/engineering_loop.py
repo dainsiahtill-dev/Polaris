@@ -463,16 +463,43 @@ def _bounded_request_messages(
     bounded before the request is built, by dropping whole older turns. The
     durable journal keeps every observation, so nothing is lost.
     """
-    from polaris.cells.roles.runtime.internal.engineering_file_card_projection import (
-        fold_file_card_previews,
-        folded_card_projections,
+    from polaris.cells.roles.runtime.internal.engineering_tool_payload_projection import (
+        fold_tool_payload_previews,
+        folded_payload_projections,
     )
+    from polaris.kernelone.llm.engine.token_estimator import TokenEstimator
 
-    messages = fold_file_card_previews(
+    # Align folding and compression accounting with admission accounting. Both
+    # default estimators score message content as plain text, so base64 image
+    # bytes embedded in browser_observation JSON are counted as text and no
+    # budget can ever fit a visual history (run 6e61f355 died this way). This
+    # cost strips data_base64 payloads for the text side and prices the stripped
+    # bytes separately, matching the conservative serialization proxy.
+    _data_base64_pattern = re.compile(r'("data_base64"\s*:\s*")[^"]*(")')
+
+    def _visual_aligned_cost(message: Mapping[str, Any]) -> int:
+        content = message.get("content")
+        extra = 0
+        if isinstance(content, str):
+            stripped, count = _data_base64_pattern.subn(r"\1\2", content)
+            if count:
+                removed = sum(len(match.group(0)) for match in _data_base64_pattern.finditer(content))
+                extra = TokenEstimator.estimate("x" * min(removed, 4_000_000))
+            text = stripped
+        elif content is None:
+            text = ""
+        else:
+            text = json.dumps(content, ensure_ascii=False)
+        if message.get("tool_calls"):
+            text = f"{text}{json.dumps(message['tool_calls'], ensure_ascii=False)}"
+        return TokenEstimator.estimate(text) + extra + 8
+
+    messages = fold_tool_payload_previews(
         messages,
         semantic_summaries=semantic_runtime.fold_summaries() if semantic_runtime is not None else None,
         inactive_fold_activities=fold_window,
         force_fold_paths=force_fold_paths,
+        message_cost=_visual_aligned_cost,
     )
     from polaris.cells.roles.runtime.internal.engineering_memory_cards import build_context_memory_messages
 
@@ -488,7 +515,7 @@ def _bounded_request_messages(
         for event in store.load_events(command.session_id, kinds=("context_projection_folded",), role=role)
         if event["payload"].get("projection_ref")
     }
-    for projection in folded_card_projections(messages):
+    for projection in folded_payload_projections(messages):
         reference = str(projection["projection_ref"])
         if reference in prior_fold_refs:
             continue
@@ -536,32 +563,6 @@ def _bounded_request_messages(
     if built is not None and cost is not None and cost["admission_proxy_tokens"] <= allowances[0]:
         return built
     from polaris.kernelone.llm.engine.prompt_budget import compress_native_tool_history
-    from polaris.kernelone.llm.engine.token_estimator import TokenEstimator
-
-    # Align compression accounting with admission accounting. The default
-    # compressor scores message content as plain text, so base64 image bytes
-    # embedded in browser_observation JSON are counted as text and no budget
-    # can ever fit a visual history (run 6e61f355 died this way). This cost
-    # strips data_base64 payloads for the text side and prices the stripped
-    # bytes separately, matching the conservative serialization proxy.
-    _data_base64_pattern = re.compile(r'("data_base64"\s*:\s*")[^"]*(")')
-
-    def _visual_aligned_cost(message: Mapping[str, Any]) -> int:
-        content = message.get("content")
-        extra = 0
-        if isinstance(content, str):
-            stripped, count = _data_base64_pattern.subn(r"\1\2", content)
-            if count:
-                removed = sum(len(match.group(0)) for match in _data_base64_pattern.finditer(content))
-                extra = TokenEstimator.estimate("x" * min(removed, 4_000_000))
-            text = stripped
-        elif content is None:
-            text = ""
-        else:
-            text = json.dumps(content, ensure_ascii=False)
-        if message.get("tool_calls"):
-            text = f"{text}{json.dumps(message['tool_calls'], ensure_ascii=False)}"
-        return TokenEstimator.estimate(text) + extra + 8
 
     # The compression works on the raw history. The visual projection moves
     # the image bytes out of the tool content into attachment blocks, so

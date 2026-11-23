@@ -4,7 +4,7 @@ import json
 
 import pytest
 from polaris.cells.roles.runtime.internal.engineering_command_cards import build_command_card
-from polaris.cells.roles.runtime.internal.engineering_file_card_projection import fold_file_card_previews
+from polaris.cells.roles.runtime.internal.engineering_tool_payload_projection import fold_tool_payload_previews
 
 
 def _command_message(exit_code: int = 0) -> dict[str, object]:
@@ -14,7 +14,7 @@ def _command_message(exit_code: int = 0) -> dict[str, object]:
 
 def test_command_card_folds_only_after_inactive_window(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "3")
-    folded = fold_file_card_previews(
+    folded = fold_tool_payload_previews(
         [
             {"role": "assistant", "content": "step-1"},
             _command_message(),
@@ -35,7 +35,7 @@ def test_command_card_folds_only_after_inactive_window(monkeypatch: pytest.Monke
 
 
 def test_failed_command_preview_is_pinned() -> None:
-    folded = fold_file_card_previews(
+    folded = fold_tool_payload_previews(
         [_command_message(exit_code=1), _command_message(), _command_message(), _command_message()]
     )
     first = json.loads(folded[0]["content"])["command_card"]
@@ -49,7 +49,7 @@ def test_old_failed_command_folds_without_current_dependency(monkeypatch: pytest
     for index in range(11):
         messages.append({"role": "assistant", "content": f"step-{index}"})
         messages.append(_command_message(exit_code=1 if index == 0 else 0))
-    folded = fold_file_card_previews(
+    folded = fold_tool_payload_previews(
         messages,
         semantic_summaries={"command:abc": {"summary": "该命令较早执行，输出已超出当前关注窗口，可按证据引用取回。"}},
     )
@@ -78,7 +78,7 @@ def test_fold_refused_when_projection_would_grow(monkeypatch: pytest.MonkeyPatch
     for index in range(4):
         messages.append({"role": "assistant", "content": f"step-{index}"})
         messages.append({"role": "tool", "content": json.dumps({"file_card": dict(card)})})
-    folded = fold_file_card_previews(messages)
+    folded = fold_tool_payload_previews(messages)
     cards = [json.loads(message["content"])["file_card"] for message in folded if message["role"] == "tool"]
     assert cards[0]["fold_state"] == "ACTIVE"
     assert cards[0]["content_preview"] == "x" * 1200
@@ -92,7 +92,7 @@ def test_fold_uses_structural_summary_when_the_distiller_is_silent(monkeypatch: 
     for index in range(4):
         messages.append({"role": "assistant", "content": f"step-{index}"})
         messages.append(_command_message())
-    folded = fold_file_card_previews(messages)
+    folded = fold_tool_payload_previews(messages)
     card = json.loads(next(message for message in folded if message["role"] == "tool")["content"])["command_card"]
     assert card["fold_state"] == "FOLDED" and card["stdout_preview"] == ""
     assert "make test" in card["summary"] and card["summary_kind"] == "structural"
@@ -111,7 +111,7 @@ def test_uninformative_summaries_fall_back_to_structural(monkeypatch: pytest.Mon
         messages.append({"role": "assistant", "content": f"step-{index}"})
         messages.append(_command_message())
     for uninformative in ("completed", "completed successfully", "xxxxxxxxxxxxxxxxxxxx"):
-        folded = fold_file_card_previews(
+        folded = fold_tool_payload_previews(
             messages,
             semantic_summaries={"command:abc": {"summary": uninformative}},
         )
@@ -131,7 +131,7 @@ def test_real_distiller_summary_wins_over_structural(monkeypatch: pytest.MonkeyP
     for index in range(4):
         messages.append({"role": "assistant", "content": f"step-{index}"})
         messages.append(_command_message())
-    folded = fold_file_card_previews(
+    folded = fold_tool_payload_previews(
         messages,
         semantic_summaries={
             "command:abc": {"summary": "该命令执行了测试套件，末尾输出了汇总行，原始输出可按引用取回。"}
@@ -149,7 +149,7 @@ def test_failed_command_current_reasoning_is_protected() -> None:
         messages.append({"role": "assistant", "content": f"step-{index}"})
         messages.append(_command_message(exit_code=1 if index == 0 else 0))
     messages.append({"role": "assistant", "content": "继续分析 command:abc 的失败原因"})
-    folded = fold_file_card_previews(messages)
+    folded = fold_tool_payload_previews(messages)
     first = next(message for message in folded if message["role"] == "tool")
     card = json.loads(first["content"])["command_card"]
     assert card["fold_state"] == "ACTIVE" and card["pin_reason"] == "current_reasoning"
