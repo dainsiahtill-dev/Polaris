@@ -276,13 +276,15 @@ interface DistillTarget {
   summary: string;
 }
 
-/** Each entry is {validation_result, result:{node_id,summary}}: the summary sits
- * one level down, not at the top of the entry.
+/** Summaries live at the top level of the event; older runs nested them under
+ * result when the advisor also carried assessments. Each entry is
+ * {validation_result, result:{node_id,summary}}.
  */
 function distillTargets(payload: Record<string, unknown>): DistillTarget[] {
-  const result = payload.result;
-  if (!result || typeof result !== 'object' || Array.isArray(result)) return [];
-  const summaries = (result as Record<string, unknown>).summaries;
+  const container = (
+    Array.isArray(payload.summaries) ? payload : payload.result
+  ) as Record<string, unknown> | undefined;
+  const summaries = container?.summaries;
   if (!Array.isArray(summaries)) return [];
   const targets: DistillTarget[] = [];
   for (const item of summaries) {
