@@ -29,6 +29,16 @@ DimensionStatus = Literal["passed", "failed", "unknown", "not_required"]
 
 _CLAUSE_STRIP = re.compile(r"^\s*(?:[-*•+]|\d+[.、)])\s*")
 _TABLE_SEPARATOR = re.compile(r"^\|[\s\-|:]+\|$")
+# Checklist scaffolding ("[ ] ...", "[x] ...", "☐ ...") is a requirement body,
+# not a marker of its own; drop the box so the clause reads as plain text.
+_CHECKBOX_MARKER = re.compile(r"^(?:\[[ xX✓✗☑☒]\]|☐|☑|✓|✗)\s*")
+# A short line ending in a colon introduces the list or table that follows it
+# ("先固定这些实验判定：", "交付时请逐项核验："). It states no requirement.
+_LEAD_IN = re.compile(r"^.{0,48}[:：]$")
+# Enumeration markers a reviewer naturally writes: "1", "C1", "条款1", "Clause 3".
+_CLAUSE_ENUM = re.compile(r"^\s*(?:(?:clause|条款|第)\s*)?[A-Za-z]{0,4}\s*\.?\s*(\d{1,3})\b", re.IGNORECASE)
+_CLAUSE_RANGE = re.compile(r"^\s*(\d{1,3})\s*[-–~]\s*(\d{1,3})\s*$")
+_CLAUSE_LIST = re.compile(r"^\s*\d{1,3}(?:\s*[,，、]\s*\d{1,3})*\s*$")
 # The frozen catalog's real requirement clauses run 8..25 (p50 17, max 25 across
 # all 120 projects). A 14-clause cap silently truncated 85 of them, making the
 # fidelity dimension permanently unknown; 32 covers the catalog with headroom.
@@ -74,9 +84,12 @@ def _goal_clause_candidates(instruction: str) -> list[str]:
     for index, raw in enumerate(lines):
         stripped = raw.strip()
         line = _CLAUSE_STRIP.sub("", stripped).strip()
+        line = _CHECKBOX_MARKER.sub("", line).strip()
         if not line:
             continue
         if line.startswith("#") or _TABLE_SEPARATOR.match(line):
+            continue
+        if _LEAD_IN.match(line):
             continue
         if stripped.startswith("|"):
             # A Markdown table header is layout, not an independent acceptance
@@ -148,8 +161,62 @@ class FidelityVerdict:
     failures: tuple[str, ...]
 
 
+def _clause_reference(clause: str, goal_clauses: Sequence[str]) -> list[str]:
+    """Resolve one reported label to goal clauses.
+
+    Accepts the verbatim text, a unique excerpt, a 1-based number, a numeric
+    range or list (``1-5``, ``1,2,3``), or an enumeration marker such as ``C1``,
+    ``条款1`` and ``Clause 3``. Anything ambiguous resolves to nothing: coverage
+    must never be guessed.
+    """
+
+    total = len(goal_clauses)
+    text = clause.strip()
+    if not text:
+        return []
+    if text in goal_clauses:
+        return [text]
+    candidates = [item for item in goal_clauses if item in text or text in item]
+    if len(candidates) == 1:
+        return candidates
+    indices: list[int] = []
+    ranged = _CLAUSE_RANGE.match(text)
+    if ranged:
+        start, end = int(ranged.group(1)), int(ranged.group(2))
+        indices.extend(range(min(start, end), max(start, end) + 1))
+    elif _CLAUSE_LIST.match(text):
+        indices.extend(int(value) for value in re.findall(r"\d{1,3}", text))
+    else:
+        enumerated = _CLAUSE_ENUM.match(text)
+        if enumerated:
+            indices.append(int(enumerated.group(1)))
+    resolved: list[str] = []
+    for index in indices:
+        if 1 <= index <= total and goal_clauses[index - 1] not in resolved:
+            resolved.append(goal_clauses[index - 1])
+    return resolved
+
+
+@dataclass(frozen=True)
+class ClauseMatchResult:
+    """Clause rulings plus how the reviewer's labels were resolved."""
+
+    matched: dict[str, set[str]]
+    mode: str  # "reference" when at least one label resolved, else "none"
+
+
+def match_clause_findings(goal_clauses: Sequence[str], findings: Sequence[ClauseFinding]) -> ClauseMatchResult:
+    """Map reviewer findings onto goal clauses without inventing coverage."""
+
+    matched: dict[str, set[str]] = {}
+    for finding in findings:
+        for clause in _clause_reference(finding.clause, goal_clauses):
+            matched.setdefault(clause, set()).add(finding.status)
+    return ClauseMatchResult(matched, "reference" if matched else "none")
+
+
 def _matched_clauses(goal_clauses: Sequence[str], findings: Sequence[ClauseFinding]) -> dict[str, set[str]]:
-    """Accept the verbatim text, a unique excerpt, or the clause's 1-based number.
+    """Accept the verbatim text, a unique excerpt, a number, or an enumeration marker.
 
     Echoing ten long requirement paragraphs verbatim is an unreasonable contract
     for a small reviewer: live runs showed it covering a single clause and being
@@ -157,20 +224,7 @@ def _matched_clauses(goal_clauses: Sequence[str], findings: Sequence[ClauseFindi
     turning coverage into a copy test.
     """
 
-    matched: dict[str, set[str]] = {}
-    total = len(goal_clauses)
-    for finding in findings:
-        clause = finding.clause
-        if clause not in goal_clauses:
-            candidates = [item for item in goal_clauses if item in clause or clause in item]
-            if len(candidates) == 1:
-                clause = candidates[0]
-            elif clause.strip().isdigit() and 1 <= int(clause.strip()) <= total:
-                clause = goal_clauses[int(clause.strip()) - 1]
-            else:
-                continue
-        matched.setdefault(clause, set()).add(finding.status)
-    return matched
+    return match_clause_findings(goal_clauses, findings).matched
 
 
 def clause_coverage_gap(goal_clauses: Sequence[str], findings: list[ClauseFinding]) -> list[str]:

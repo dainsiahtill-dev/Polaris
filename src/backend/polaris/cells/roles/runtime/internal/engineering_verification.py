@@ -98,6 +98,81 @@ def read_only_write_targets(content: str) -> list[str]:
     return targets[:3]
 
 
+# Commands that create or change files. Interpreters are deliberately absent: a
+# slipped write still advances the candidate revision and clears the passing
+# verification, so an over-permissive answer costs a re-verification, never a
+# silently stale pass.
+_WRITE_COMMANDS = frozenset(
+    {
+        "rm",
+        "mv",
+        "cp",
+        "mkdir",
+        "rmdir",
+        "touch",
+        "ln",
+        "chmod",
+        "chown",
+        "chgrp",
+        "sed",
+        "patch",
+        "dd",
+        "truncate",
+        "install",
+        "rsync",
+        "scp",
+        "unzip",
+        "zip",
+        "tar",
+        "git",
+        "npm",
+        "yarn",
+        "pnpm",
+        "bun",
+        "pip",
+        "pip3",
+        "uv",
+        "cargo",
+        "rustc",
+        "tsc",
+        "make",
+        "cmake",
+        "ninja",
+        "go",
+        "mvn",
+        "gradle",
+        "dotnet",
+        "tee",
+        "curl",
+        "wget",
+        "code",
+        "vim",
+        "nano",
+    }
+)
+
+
+def command_may_write(command: str) -> bool:
+    """Conservative shape test: could this shell command change workspace outputs?
+
+    The wrap-up gate uses it to stop intercepting read-only probes (``ls``, ``cat``,
+    ``rg``) once a candidate has already passed verification. A redirect or an
+    unknown command counts as a write, so the gate stays fail-closed.
+    """
+
+    if not command:
+        return False
+    if ">" in command:
+        return True
+    for segment in re.split(r"[|;&\n]+", command):
+        for token in segment.strip().split():
+            if token.startswith("-"):
+                continue
+            if Path(token).name in _WRITE_COMMANDS:
+                return True
+    return False
+
+
 def verification_observation(call_id: str, payload: dict[str, Any], max_output_bytes: int) -> ToolObservation:
     """Project a durable Verifier completion, never a model's claimed verdict."""
     status = payload.get("verification", "unknown")

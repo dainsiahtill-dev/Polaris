@@ -13,6 +13,7 @@ import binascii
 import hashlib
 import json
 import os
+import re
 import subprocess
 import zlib
 from collections.abc import Awaitable, Callable
@@ -344,6 +345,7 @@ try:
         'viewport': settings['viewport'],
         'frame_times_ms': settings['frame_times_ms'],
         'actions': settings['actions'],
+        'normalization': settings.get('normalization') or [],
         'browser_version': browser_version,
         'network_allowed': False,
         'console': console,
@@ -386,19 +388,63 @@ def _action_value(value: object) -> str:
     return value
 
 
-def _integer(value: object, *, label: str, minimum: int, maximum: int) -> int:
-    if type(value) is not int or not minimum <= value <= maximum:
-        raise ValueError(f"{label} must be an integer in [{minimum}, {maximum}]")
-    return value
+_ACTION_TYPES = {"click", "keypress", "fill", "select_option"}
+# Dialect synonyms weak providers emit for the same physical action. Mapping them
+# is semantics-preserving; anything genuinely unsupported still fails closed.
+_ACTION_ALIASES = {
+    "tap": "click",
+    "click_element": "click",
+    "mouse_click": "click",
+    "type": "fill",
+    "input": "fill",
+    "enter_text": "fill",
+    "set_value": "fill",
+    "write": "fill",
+    "fill_in": "fill",
+    "key": "keypress",
+    "press": "keypress",
+    "keydown": "keypress",
+    "key_up": "keypress",
+    "hotkey": "keypress",
+    "select": "select_option",
+    "select_option_by_value": "select_option",
+    "choose_option": "select_option",
+}
 
 
-def _viewport_integer(value: object, *, label: str, minimum: int, maximum: int) -> int:
-    if type(value) is not int:
+def _coerced_integer(value: object, *, label: str) -> int:
+    """Accept an integral value in any JSON numeric spelling."""
+
+    if isinstance(value, bool):
+        raise ValueError(f"{label} must be an integer")
+    if type(value) is int:
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and re.fullmatch(r"-?\d+", value.strip()):
+        return int(value.strip())
+    raise ValueError(f"{label} must be an integer")
+
+
+def _integer_value(value: object, *, label: str, minimum: int, maximum: int) -> int:
+    """Coerce the spelling, then range-check strictly.
+
+    Observing at a different instant than requested would change what the capture
+    means, so an out-of-range frame offset or wait is refused, not silently moved.
+    """
+
+    coerced = _coerced_integer(value, label=label)
+    if not minimum <= coerced <= maximum:
         raise ValueError(f"{label} must be an integer in [{minimum}, {maximum}]")
-    # Viewport size is a rendering hint, not a semantic requirement. Compatible
-    # providers sometimes exceed the advertised bound; clamp instead of burning
-    # a turn. Frame times and action waits remain strict below.
-    return min(max(value, minimum), maximum)
+    return coerced
+
+
+def _clamped_integer(value: object, *, label: str, minimum: int, maximum: int) -> tuple[int, bool]:
+    """Coerce and clamp a rendering hint, reporting whether it was adjusted."""
+
+    coerced = _coerced_integer(value, label=label)
+    clamped = min(max(coerced, minimum), maximum)
+    return clamped, clamped != coerced
 
 
 def _settings(
@@ -468,17 +514,19 @@ def _settings(
 
         guard_source = get_guarded_snapshot_runtime_source()
 
+    notes: list[str] = []
     viewport = arguments.get("viewport", {"width": 1000, "height": 750})
     if not isinstance(viewport, dict) or viewport.keys() != {"width", "height"}:
         raise ValueError("viewport must contain only width and height")
-    viewport = {
-        "width": _viewport_integer(viewport["width"], label="viewport.width", minimum=320, maximum=1600),
-        "height": _viewport_integer(viewport["height"], label="viewport.height", minimum=240, maximum=1200),
-    }
+    width, width_adjusted = _clamped_integer(viewport["width"], label="viewport.width", minimum=320, maximum=1600)
+    height, height_adjusted = _clamped_integer(viewport["height"], label="viewport.height", minimum=240, maximum=1200)
+    if width_adjusted or height_adjusted:
+        notes.append("viewport=clamped_to_host_bounds")
+    viewport = {"width": width, "height": height}
     frames = arguments.get("frame_times_ms", [0, 400])
     if not isinstance(frames, list) or not 1 <= len(frames) <= 4:
         raise ValueError("frame_times_ms must contain between 1 and 4 frame offsets")
-    frames = [_integer(value, label="frame offset", minimum=0, maximum=10000) for value in frames]
+    frames = [_integer_value(value, label="frame offset", minimum=0, maximum=10000) for value in frames]
     if frames != sorted(frames):
         raise ValueError("frame_times_ms must be ordered absolute offsets after the actions")
     supplied_queries = arguments.get("dom_queries", [])
@@ -486,28 +534,39 @@ def _settings(
         raise ValueError("dom_queries must contain at most 16 selector objects")
     dom_queries = []
     for query in supplied_queries:
-        if not isinstance(query, dict) or query.keys() != {"selector"}:
+        if not isinstance(query, dict) or "selector" not in query:
             raise ValueError("each dom_query must contain only selector")
+        if query.keys() != {"selector"}:
+            notes.append("dom_query_extra_fields=ignored")
         dom_queries.append({"selector": _text(query["selector"], label="dom query selector", maximum=512)})
     supplied_actions = arguments.get("actions", [])
     if not isinstance(supplied_actions, list):
         raise ValueError("actions must be a list")
-    actions = []
+    actions: list[dict[str, Any]] = []
     for action in supplied_actions:
         if not isinstance(action, dict) or action.keys() - {"type", "selector", "key", "value", "wait_ms"}:
             raise ValueError("unsupported browser action fields")
         kind = action.get("type")
-        if kind not in {"click", "keypress", "fill", "select_option"}:
-            raise ValueError("browser action type must be click, keypress, fill or select_option")
-        normalized = {
+        if not isinstance(kind, str) or kind not in _ACTION_TYPES:
+            aliased = _ACTION_ALIASES.get(kind.strip().lower()) if isinstance(kind, str) else None
+            if aliased is None:
+                raise ValueError(
+                    f"browser action type must be click, keypress, fill or select_option (unrecognized {kind!r})"
+                )
+            notes.append(f"action_type:{kind!r}->{aliased!r}")
+            kind = aliased
+        wait_ms = _integer_value(action.get("wait_ms", 0), label="action wait_ms", minimum=0, maximum=10000)
+        normalized: dict[str, Any] = {
             "type": kind,
             "selector": _text(action.get("selector"), label="action selector", maximum=512),
-            "wait_ms": _integer(action.get("wait_ms", 0), label="action wait_ms", minimum=0, maximum=10000),
+            "wait_ms": wait_ms,
         }
         if kind == "keypress":
-            if "value" in action:
-                raise ValueError("keypress actions do not accept value")
-            normalized["key"] = _text(action.get("key"), label="action key", maximum=64)
+            if "value" in action and "key" not in action:
+                notes.append("keypress_value->key")
+                normalized["key"] = _text(action.get("value"), label="action key", maximum=64)
+            else:
+                normalized["key"] = _text(action.get("key"), label="action key", maximum=64)
         elif kind in {"fill", "select_option"}:
             if "key" in action:
                 raise ValueError("fill/select_option actions do not accept key")
@@ -571,6 +630,7 @@ def _settings(
         "frame_times_ms": frames,
         "dom_queries": dom_queries,
         "actions": actions,
+        "normalization": notes,
         "executable": str(executable),
         "python_executable": str(python),
         "python_paths": paths,

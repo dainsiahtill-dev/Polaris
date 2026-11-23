@@ -21,6 +21,7 @@ from polaris.cells.roles.runtime.internal.engineering_execution_policy import re
 from polaris.cells.roles.runtime.internal.engineering_roles import register_consult_tool, role_instruction, role_scope
 from polaris.cells.roles.runtime.internal.engineering_session import EngineeringSessionStore
 from polaris.cells.roles.runtime.internal.engineering_tools import EngineeringTools, bounded_output
+from polaris.cells.roles.runtime.internal.engineering_verification import command_may_write
 from polaris.cells.roles.runtime.internal.engineering_visual import build_visual_messages, require_current_visual_input
 from polaris.cells.roles.runtime.public.contracts.engineering_run import (
     PermissionScope,
@@ -1690,8 +1691,9 @@ async def run_engineering_loop(
                             + host_checks
                             + "\n"
                             "report_review clause_findings needs one entry for EVERY acceptance clause "
-                            f"({len(review_clauses)}). Reference each clause by its number below (or copy its text "
-                            "verbatim) so coverage matches:\n" + clause_matrix + "\n"
+                            f"({len(review_clauses)}). Set clause to that clause's number below (1-based); a range or "
+                            "list such as 1-5 or 1,2,3 is accepted. Do not invent your own labels — coverage is "
+                            "checked against these numbers:\n" + clause_matrix + "\n"
                             "Cite one of the host check call IDs above as pass evidence when that check covers "
                             "the clause; use your own read_file/browser_observe call IDs for anything you verified "
                             "directly. Put the explanation in feedback. Mark unverifiable clauses unknown, but "
@@ -2093,7 +2095,13 @@ async def run_engineering_loop(
                                 and wrap_up_gate_enabled
                                 and post_pass_write_cycles >= wrap_up_cycle_allowance
                                 and command.role == "director"
-                                and canonical in {"write_file", "edit_file", "execute_command"}
+                                and (
+                                    canonical in {"write_file", "edit_file"}
+                                    or (
+                                        canonical == "execute_command"
+                                        and command_may_write(str(normalized.get("command") or ""))
+                                    )
+                                )
                             ):
                                 # Wrap-up gate: the current candidate already
                                 # passed verification. An explicit source write
@@ -2219,11 +2227,10 @@ async def run_engineering_loop(
                             writes_since_verification = 0
                         advances_revision = (observation.tool in {"write_file", "edit_file"} and observation.ok) or (
                             observation.tool == "execute_command"
-                            and bool(
-                                tools.scope.write_roots
-                                or tools.scope.network_allowed
-                                or tools.scope.command_cache == "read_write"
-                            )
+                            # A read-only probe changes nothing, so it must not
+                            # invalidate a passing verification nor disarm the
+                            # wrap-up gate; only a command that may write does.
+                            and command_may_write(str(normalized.get("command") or ""))
                             and (observation.exit_code is not None or observation.interrupted or observation.timed_out)
                         )
                         if advances_revision:

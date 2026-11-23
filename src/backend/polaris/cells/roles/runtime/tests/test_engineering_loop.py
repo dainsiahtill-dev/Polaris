@@ -1196,8 +1196,8 @@ async def test_wrap_up_gate_blocks_post_pass_shell(
         _native(("w1", "edit_file", {"file": "a.py", "search": "x = 1", "replace": "x = 2"}))
     )
     scripted_provider.enqueue_json(_native(("v2", "verify_project", {"commands": ["python3 -m py_compile a.py"]})))
-    scripted_provider.enqueue_json(_native(("s1", "execute_command", {"command": "echo rebuilt"})))
-    scripted_provider.enqueue_json(_native(("s2", "execute_command", {"command": "echo rebuilt again"})))
+    scripted_provider.enqueue_json(_native(("s1", "execute_command", {"command": "echo rebuilt > out.txt"})))
+    scripted_provider.enqueue_json(_native(("s2", "execute_command", {"command": "echo rebuilt again >> out.txt"})))
     from polaris.cells.roles.runtime.public.contracts.engineering_run import ToolObservation
 
     async def fake_verify(commands: tuple[str, ...], turn_seq: int, call_id: str) -> ToolObservation:
@@ -1220,6 +1220,56 @@ async def test_wrap_up_gate_blocks_post_pass_shell(
     assert [event["payload"]["call_id"] for event in blocked] == ["s1", "s2"]
     # The allowed edit cycle applied; the blocked shell commands never ran.
     assert (isolated_workspace / "a.py").read_text(encoding="utf-8") == "x = 2\n"
+    assert not (isolated_workspace / "out.txt").exists()
+
+
+async def test_wrap_up_gate_allows_read_only_shell_and_stays_armed(
+    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A read-only probe must not be intercepted, nor invalidate the pass that
+    the gate is protecting (real runs burned 34 turns on `ls`/`cat` blocks)."""
+    monkeypatch.setenv("KERNELONE_ENGINEERING_STAGE_GATE_WRITES", "0")
+    monkeypatch.setenv("KERNELONE_ENGINEERING_WRAP_UP_CYCLES", "1")
+    loop, store, _tools, command, scope, limits = _setup(
+        isolated_workspace, enabled=_ALL_TOOLS | frozenset({"verify_project"})
+    )
+    (isolated_workspace / "a.py").write_text("x = 1\n", encoding="utf-8")
+    scripted_provider.enqueue_json(_native(("v1", "verify_project", {"commands": ["python3 -m py_compile a.py"]})))
+    scripted_provider.enqueue_json(
+        _native(("w1", "edit_file", {"file": "a.py", "search": "x = 1", "replace": "x = 2"}))
+    )
+    scripted_provider.enqueue_json(_native(("v2", "verify_project", {"commands": ["python3 -m py_compile a.py"]})))
+    scripted_provider.enqueue_json(_native(("r1", "execute_command", {"command": "ls -la"})))
+    scripted_provider.enqueue_json(
+        _native(("w2", "edit_file", {"file": "a.py", "search": "x = 2", "replace": "x = 3"}))
+    )
+    scripted_provider.enqueue_json(_native(text="Done."))
+    from polaris.cells.roles.runtime.public.contracts.engineering_run import ToolObservation
+
+    async def fake_verify(commands: tuple[str, ...], turn_seq: int, call_id: str) -> ToolObservation:
+        return ToolObservation(
+            call_id=call_id, tool="verify_project", ok=True, content="checks ran", exit_code=0, interrupted=False
+        )
+
+    result = await loop(
+        command,
+        scope=scope,
+        limits=limits,
+        cancel=asyncio.Event(),
+        store=store,
+        client=scripted_provider.client("openai", isolated_workspace, monkeypatch),
+        verify=fake_verify,
+    )
+    assert result.status == "completed", result.text
+    events = store.load_events(command.session_id)
+    blocked = [event["payload"]["call_id"] for event in events if event["kind"] == "wrap_up_enforced"]
+    assert blocked == ["w2"]
+    observations = {
+        event["payload"]["call_id"]: event["payload"] for event in events if event["kind"] == "tool_observed"
+    }
+    assert observations["r1"]["ok"] is True
+    # The read-only probe did not invalidate the pass, so the later write was still gated.
+    assert "Wrap-up gate" in observations["w2"]["content"]
 
 
 def test_native_calls_accept_other_provider_envelopes() -> None:

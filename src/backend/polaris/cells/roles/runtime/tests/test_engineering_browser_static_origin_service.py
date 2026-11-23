@@ -230,11 +230,17 @@ async def test_static_origin_registry_json_native_service_and_cold_original_pixe
 
 
 def test_viewport_dimensions_are_clamped_without_relaxing_other_timing_fields() -> None:
-    from polaris.cells.roles.runtime.internal.engineering_browser import _integer, _viewport_integer
+    from polaris.cells.roles.runtime.internal.engineering_browser import _clamped_integer, _integer_value
 
-    assert _viewport_integer(2000, label="viewport.width", minimum=320, maximum=1600) == 1600
-    assert _viewport_integer(100, label="viewport.height", minimum=240, maximum=1200) == 240
+    assert _clamped_integer(2000, label="viewport.width", minimum=320, maximum=1600) == (1600, True)
+    assert _clamped_integer(100, label="viewport.height", minimum=240, maximum=1200) == (240, True)
+    # Provider dialect: an integral float or numeric string is the same bound.
+    assert _clamped_integer("900", label="viewport.height", minimum=240, maximum=1200) == (900, False)
+    assert _clamped_integer(900.0, label="viewport.width", minimum=320, maximum=1600) == (900, False)
     with pytest.raises(ValueError, match="must be an integer"):
-        _viewport_integer("900", label="viewport.height", minimum=240, maximum=1200)
+        _clamped_integer("900px", label="viewport.height", minimum=240, maximum=1200)
+    # Timing fields stay strict: an out-of-range or non-integral offset is refused.
     with pytest.raises(ValueError, match="must be an integer"):
-        _integer(20000, label="frame offset", minimum=0, maximum=10000)
+        _integer_value(20000, label="frame offset", minimum=0, maximum=10000)
+    with pytest.raises(ValueError, match="must be an integer"):
+        _integer_value(20.5, label="frame offset", minimum=0, maximum=10000)

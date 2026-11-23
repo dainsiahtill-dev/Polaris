@@ -20,7 +20,8 @@ from typing import Any
 
 from polaris.cells.roles.runtime.internal.engineering_acceptance import (
     ClauseFinding,
-    clause_coverage_gap,
+    ClauseMatchResult,
+    match_clause_findings,
     normalize_clause_findings,
 )
 from polaris.cells.roles.runtime.internal.engineering_execution_policy import (
@@ -57,6 +58,12 @@ COMMAND_TIMEOUT_MINIMUM = 1
 COMMAND_TIMEOUT_MAXIMUM = 120
 _REPO_RG_KEYS = frozenset({"pattern", "paths", "path", "max_results", "glob", "context_lines", "case_sensitive"})
 _EXIT_MASKING_SUFFIX = re.compile(r"(?:;|\|\|)\s*(?:true|/bin/true|echo\b.*|printf\b.*|exit\s+0)\s*$")
+# A decomposed goal is ruled on through its clause matrix, so a partial matrix
+# is sent back. Real runs showed the small reviewer being rejected 86% of the
+# time and looping until the QA budget ran out; two corrective attempts are
+# enough to teach the numbered form, and a later partial matrix is then graded
+# honestly as unknown instead of burning the whole frame.
+_MAX_COVERAGE_REJECTS = 2
 
 
 _PLACEHOLDER_EVIDENCE = {
@@ -168,6 +175,7 @@ class EngineeringTools:
         # requirement for multi-clause goals instead of an optional argument a
         # weak model can silently omit.
         self.review_clauses = tuple(review_clauses)
+        self._coverage_rejections = 0
         self.scope = replace(
             scope,
             toolchain_bin_dirs=resolve_toolchain_bin_dirs(
@@ -307,8 +315,10 @@ class EngineeringTools:
                 if isinstance(clause_property, dict):
                     clause_property["description"] = (
                         "Required for this multi-clause goal: one entry per acceptance clause "
-                        f"({len(self.review_clauses)} clauses). Copy each clause text verbatim from the numbered "
-                        "acceptance-clause list in the current QA instruction. Each entry needs clause, status "
+                        f"({len(self.review_clauses)} clauses), in the same order as the numbered "
+                        "acceptance-clause list in the current QA instruction. Set clause to that clause's "
+                        "1-based number (a range or list such as 1-5 or 1,2,3 covers several at once); copying "
+                        "the clause text verbatim also works. Each entry needs clause, status "
                         "pass|fail|unknown, and evidence. For pass, use the exact call ID of a current check or "
                         "earlier successful QA observation."
                     )
@@ -431,18 +441,29 @@ class EngineeringTools:
                     # rejection instead of rejecting the call and burning a QA turn
                     # on a retry (measured 17 such retries in real runs).
                     approved = False
-                if len(self.review_clauses) >= 2:
+                match = match_clause_findings(self.review_clauses, clause_findings)
+                gap = (
+                    [clause for clause in self.review_clauses if clause not in match.matched]
+                    if len(self.review_clauses) >= 2
+                    else []
+                )
+                if gap and self._coverage_rejections < _MAX_COVERAGE_REJECTS:
                     # Dispatch-boundary gate: a decomposed goal cannot be ruled
                     # on by a partial matrix. The same coverage helper grades the
                     # acceptance ledger, so the corrective message and the final
-                    # verdict cannot drift apart.
-                    gap = clause_coverage_gap(self.review_clauses, clause_findings)
-                    if gap:
-                        raise ValueError(
-                            "report_review clause_findings must cover every acceptance clause. "
-                            f"Missing {len(gap)} of {len(self.review_clauses)} clauses: "
-                            + json.dumps(gap, ensure_ascii=False)
-                        )
+                    # verdict cannot drift apart. Bounded, so a reviewer that
+                    # cannot enumerate the clauses is graded rather than looped.
+                    self._coverage_rejections += 1
+                    remaining = _MAX_COVERAGE_REJECTS - self._coverage_rejections + 1
+                    raise ValueError(
+                        "report_review clause_findings must cover every acceptance clause. "
+                        f"Missing {len(gap)} of {len(self.review_clauses)} clauses: "
+                        + json.dumps(gap, ensure_ascii=False)
+                        + f". Set clause to each clause's 1-based number from the list ({remaining} attempt(s) left); "
+                        "after that a best-effort matrix is accepted and the missing clauses stay unknown."
+                    )
+                if gap:
+                    match = ClauseMatchResult(match.matched, "partial")
                 if not approved and self.review_clauses:
                     # A rejection without a reviewed clause matrix is an
                     # unstarted review, not an engineering finding. Send the QA
@@ -459,9 +480,7 @@ class EngineeringTools:
                             "candidate; continue inspecting before ruling."
                         )
                     placeholder = [
-                        item.clause
-                        for item in clause_findings
-                        if _is_placeholder_evidence(str(item.evidence or ""))
+                        item.clause for item in clause_findings if _is_placeholder_evidence(str(item.evidence or ""))
                     ]
                     if placeholder:
                         # "Review not started." is an unstarted review, not an
@@ -477,8 +496,7 @@ class EngineeringTools:
                     if canned:
                         raise ValueError(
                             "report_review major_findings must describe a concrete defect; "
-                            "stock placeholder text is not a finding: "
-                            + json.dumps(canned, ensure_ascii=False)
+                            "stock placeholder text is not a finding: " + json.dumps(canned, ensure_ascii=False)
                         )
                 self.review(
                     approved and not findings and all(item.status == "pass" for item in clause_findings),
@@ -496,6 +514,7 @@ class EngineeringTools:
                             "approved": approved,
                             "feedback": feedback,
                             "major_findings": findings,
+                            "clause_match": match.mode,
                             "clause_findings": [
                                 {"clause": item.clause, "status": item.status, "evidence": item.evidence}
                                 for item in clause_findings
@@ -692,6 +711,7 @@ class EngineeringTools:
                             )
                 return self._observation(call_id, name, True, "\n".join(entries))
             if name == "read_file":
+                args = self._alias_path(args)
                 self._keys(args, {"file", "content_ref", "max_bytes", "start_line", "end_line", "range_required"})
                 from polaris.cells.roles.runtime.internal.engineering_file_cards import build_file_card
 
@@ -817,6 +837,7 @@ class EngineeringTools:
                     ),
                 )
             if name == "write_file":
+                args = self._alias_path(args)
                 self._keys(args, {"file", "content"})
                 raw_file = args.get("file")
                 if not isinstance(raw_file, str) or not raw_file.strip():
@@ -825,7 +846,10 @@ class EngineeringTools:
                     )
                 file_argument = self._text(args, "file")
                 target = self._path(file_argument, write=True)
-                if "content" not in args and target.is_file():
+                body_omitted = "content" not in args or args.get("content") is None
+                if args.get("content") is None:
+                    args = {**args, "content": ""}
+                if body_omitted and target.is_file():
                     raise ValueError(
                         f"write_file requires a content field with the complete file body for {file_argument}; "
                         "do not send only file. Provide full content in every write_file call."
@@ -837,7 +861,7 @@ class EngineeringTools:
                 receipt = self.filesystem.workspace_write_text_atomic(
                     str(target), self._text(args, "content", default="", allow_empty=True), encoding="utf-8"
                 )
-                if "content" not in args:
+                if body_omitted:
                     return self._observation(
                         call_id,
                         name,
@@ -852,6 +876,7 @@ class EngineeringTools:
                     f"Wrote {receipt.bytes_written} UTF-8 bytes to {target.relative_to(self.workspace)}.",
                 )
             if name == "edit_file":
+                args = self._alias_path(args)
                 self._keys(args, {"file", "search", "replace", "regex", "replace_all"})
                 if args.get("regex", False) is not False or args.get("replace_all", False) is not False:
                     raise ValueError("edit_file supports one unique exact replacement only")
@@ -871,6 +896,8 @@ class EngineeringTools:
                 content = self.filesystem.workspace_read_text(str(target), encoding="utf-8")
                 count = content.count(old)
                 if count != 1:
+                    if count == 0:
+                        raise ValueError(self._edit_search_hint(content, old))
                     raise ValueError(f"edit_file requires one exact search occurrence; observed {count}")
                 self.filesystem.workspace_write_text_atomic(str(target), content.replace(old, new, 1), encoding="utf-8")
                 return self._observation(
@@ -1031,6 +1058,42 @@ class EngineeringTools:
         unknown = arguments.keys() - allowed
         if unknown:
             raise ValueError(f"unsupported engineering tool arguments: {', '.join(sorted(unknown))}")
+
+    @staticmethod
+    def _alias_path(arguments: dict[str, Any]) -> dict[str, Any]:
+        """Fold common path-key synonyms onto the canonical ``file`` key.
+
+        Weak providers routinely name the target ``path``/``file_path``. The
+        synonym only selects a destination; it cannot widen authority, so the
+        subsequent path check still applies to the canonical value.
+        """
+
+        if "file" in arguments:
+            return arguments
+        for key in ("path", "file_path", "filepath", "filename"):
+            if key in arguments:
+                return {**arguments, "file": arguments[key]}
+        return arguments
+
+    @staticmethod
+    def _edit_search_hint(content: str, old: str) -> str:
+        """Nearest current lines for a zero-hit edit, so the model can requote."""
+
+        message = "edit_file requires one exact search occurrence; observed 0"
+        wanted = [token for token in re.split(r"\s+", old) if len(token) >= 2]
+        scored: list[tuple[int, str]] = []
+        for number, line in enumerate(content.splitlines(), start=1):
+            score = sum(1 for token in wanted if token in line)
+            if score:
+                scored.append((score, f"{number}: {line[:200]}"))
+        best = sorted(scored, key=lambda item: -item[0])[:3]
+        if not best:
+            return message
+        return (
+            message
+            + ". The file does not contain that text; closest current lines:\n"
+            + "\n".join(line for _score, line in best)
+        )
 
     @staticmethod
     def _text(arguments: dict[str, Any], name: str, default: str | None = None, *, allow_empty: bool = False) -> str:

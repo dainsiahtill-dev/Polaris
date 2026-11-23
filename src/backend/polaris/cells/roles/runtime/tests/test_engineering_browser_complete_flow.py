@@ -207,6 +207,34 @@ def test_production_settings_preserve_exact_action_values(form_workspace: Path, 
     assert actual["actions"][0]["value"] == value
 
 
+def test_production_settings_absorb_provider_dialect(form_workspace: Path) -> None:
+    """Weak providers send `type`/`press`, integral floats and numeric strings.
+
+    Real runs rejected these shapes before dispatch and burned a browser turn
+    each time; the host now folds them and records what it changed.
+    """
+    actual = _settings(
+        {
+            "entry": "public/index.html",
+            "viewport": {"width": 900.0, "height": 1400},
+            "frame_times_ms": [0, "500"],
+            "actions": [
+                {"type": "type", "selector": "#name", "value": "星河", "wait_ms": 12.0},
+                {"type": "press", "selector": "#prepare", "value": "Enter"},
+            ],
+        },
+        workspace=form_workspace,
+        scope=_scope(form_workspace),
+    )
+    assert actual["viewport"] == {"width": 900, "height": 1200}
+    assert actual["frame_times_ms"] == [0, 500]
+    assert [item["type"] for item in actual["actions"]] == ["fill", "keypress"]
+    assert actual["actions"][0]["wait_ms"] == 12
+    assert actual["actions"][1]["key"] == "Enter"
+    assert actual["normalization"]
+    assert any("action_type:'type'->'fill'" in note for note in actual["normalization"])
+
+
 @pytest.mark.parametrize("protocol", ["openai", "anthropic"])
 async def test_real_producer_native_request_and_eight_step_dom_flow(
     form_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch, protocol: str
