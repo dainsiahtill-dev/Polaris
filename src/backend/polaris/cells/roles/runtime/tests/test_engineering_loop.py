@@ -743,6 +743,9 @@ async def test_qa_receives_the_acceptance_clause_matrix(
         assert clause in tail
     # The reviewer must also receive the host checks' real outputs, not just IDs.
     assert "Host checks that already passed" in tail
+    # ...and its own frame observations, which the reduced report request drops.
+    assert "Your own observations from this frame" in tail
+    assert "qa-read" in tail
     saved_checks = store.load_run(command.session_id, workspace=isolated_workspace)["checks"]
     for check in saved_checks:
         if check.get("ok") is True:

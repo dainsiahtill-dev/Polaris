@@ -1626,6 +1626,38 @@ async def run_engineering_loop(
                             if ((schema.get("function") or {}).get("name") or schema.get("name")) == "report_review"
                         ]
                         options["tool_choice"] = {"type": "function", "function": {"name": "report_review"}}
+                        # The report request is reduced to system messages on
+                        # purpose, so without this digest the reviewer cannot cite
+                        # the observations it just made and reports "I hold no
+                        # read_file/browser_observe call in this session".
+                        evidence_lines: list[str] = []
+                        for event in working_events:
+                            payload = event["payload"]
+                            if event["seq"] <= frame_seq or event["role"] != "qa":
+                                continue
+                            if payload.get("tool") not in {
+                                "read_file",
+                                "browser_observe",
+                                "execute_command",
+                                "repo_rg",
+                                "repo_tree",
+                            }:
+                                continue
+                            label = str(payload.get("content") or "")[:160]
+                            try:
+                                outer = json.loads(str(payload.get("content") or ""))
+                                inner = outer.get("content") if isinstance(outer, dict) else None
+                                parsed = json.loads(inner) if isinstance(inner, str) else inner
+                                if isinstance(parsed, dict):
+                                    card = parsed.get("file_card") or parsed.get("command_card") or {}
+                                    label = str(card.get("path") or card.get("command") or label)[:160]
+                            except json.JSONDecodeError:
+                                pass
+                            evidence_lines.append(
+                                f"{payload.get('call_id')} · {payload.get('tool')} · ok={payload.get('ok')} · "
+                                + label.replace("\n", " ")
+                            )
+                        qa_evidence = "\n".join(evidence_lines[-20:]) or "(no observation in this frame)"
                         # The clause matrix must travel with the ask. Without the
                         # verbatim clauses the reviewer cannot cover them and the
                         # dispatch boundary rejects every report, which burns the
@@ -1653,8 +1685,11 @@ async def run_engineering_loop(
                             )
                         host_checks = "\n".join(check_lines) or "(no passing host check)"
                         instruction = (
-                            f"Current QA source receipt ID: {source}. Host checks that already passed, with "
-                            "their real command and exit code:\n" + host_checks + "\n"
+                            f"Current QA source receipt ID: {source}. Your own observations from this frame "
+                            "(cite these call IDs as evidence):\n" + qa_evidence + "\n"
+                            "Host checks that already passed, with their real command and exit code:\n"
+                            + host_checks
+                            + "\n"
                             "report_review clause_findings needs one entry for EVERY acceptance clause "
                             f"({len(review_clauses)}). Reference each clause by its number below (or copy its text "
                             "verbatim) so coverage matches:\n" + clause_matrix + "\n"
