@@ -131,3 +131,49 @@ def test_substantive_unknown_evidence_is_accepted(tmp_path) -> None:
     )
     assert result.ok
     assert reviewer.calls and reviewer.calls[0][0] is False
+
+
+def test_numbered_clause_references_cover_the_matrix(tmp_path) -> None:
+    """A small reviewer must be able to reference clauses by number."""
+
+    clauses = ("条款一：支持刹车", "条款二：月相只改亮度")
+    tools, reviewer = _tools(tmp_path, clauses)
+    result = asyncio.run(
+        tools.execute(
+            "qa-1",
+            "report_review",
+            {
+                "approved": False,
+                "feedback": "缺少亮度对照",
+                "major_findings": ["缺少亮度对照"],
+                "clause_findings": [
+                    {"clause": "1", "status": "unknown", "evidence": "已读 src/core/brake.ts：接口存在但无距离断言。"},
+                    {"clause": "2", "status": "fail", "evidence": "已跑 npm test：无月相亮度对照用例；dist 构建通过。"},
+                ],
+            },
+        )
+    )
+    assert result.ok
+    assert reviewer.calls and reviewer.calls[0][0] is False
+
+
+def test_out_of_range_clause_reference_establishes_no_coverage(tmp_path) -> None:
+    clauses = ("条款一：支持刹车", "条款二：月相只改亮度")
+    tools, reviewer = _tools(tmp_path, clauses)
+    result = asyncio.run(
+        tools.execute(
+            "qa-1",
+            "report_review",
+            {
+                "approved": False,
+                "feedback": "未审查",
+                "major_findings": ["未审查"],
+                "clause_findings": [
+                    {"clause": "9", "status": "unknown", "evidence": "已读 src/core/brake.ts：未见对应实现。"},
+                    {"clause": "2", "status": "unknown", "evidence": "已读 src/core/moon.ts：未见亮度对照。"},
+                ],
+            },
+        )
+    )
+    assert not result.ok
+    assert "cover every acceptance clause" in result.content

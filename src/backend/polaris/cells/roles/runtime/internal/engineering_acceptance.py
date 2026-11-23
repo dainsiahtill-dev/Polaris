@@ -149,14 +149,26 @@ class FidelityVerdict:
 
 
 def _matched_clauses(goal_clauses: Sequence[str], findings: Sequence[ClauseFinding]) -> dict[str, set[str]]:
+    """Accept the verbatim text, a unique excerpt, or the clause's 1-based number.
+
+    Echoing ten long requirement paragraphs verbatim is an unreasonable contract
+    for a small reviewer: live runs showed it covering a single clause and being
+    rejected over and over. A stable index keeps the matrix checkable without
+    turning coverage into a copy test.
+    """
+
     matched: dict[str, set[str]] = {}
+    total = len(goal_clauses)
     for finding in findings:
         clause = finding.clause
         if clause not in goal_clauses:
             candidates = [item for item in goal_clauses if item in clause or clause in item]
-            if len(candidates) != 1:
+            if len(candidates) == 1:
+                clause = candidates[0]
+            elif clause.strip().isdigit() and 1 <= int(clause.strip()) <= total:
+                clause = goal_clauses[int(clause.strip()) - 1]
+            else:
                 continue
-            clause = candidates[0]
         matched.setdefault(clause, set()).add(finding.status)
     return matched
 
