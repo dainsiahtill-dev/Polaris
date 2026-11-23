@@ -219,11 +219,17 @@ export function ToolTimeline({ events, selectedSeq, onSelect, onOpenContext, emp
         }
         if (kind === 'advisor') {
           const summaries = Array.isArray(event.payload.summaries) ? event.payload.summaries : [];
-          const lines = summaries.map((item) => {
+          // The host emits one entry per endpoint: {validation_result, result:{node_id,summary}}.
+          // Reading node_id/summary at the top level always rendered "（无摘要）".
+          const lines = summaries.flatMap((item) => {
             const record = item as Record<string, unknown>;
-            const node = textOf(record.node_id) || '节点';
-            const summary = textOf(record.summary) || '（无摘要）';
-            return `${node} → ${summary}`;
+            if (record.validation_result && record.validation_result !== 'VALID') return [];
+            const result = (
+              record.result && typeof record.result === 'object' ? record.result : record
+            ) as Record<string, unknown>;
+            const node = textOf(result.node_id) || '节点';
+            const summary = textOf(result.summary).slice(0, 120) || '（无摘要）';
+            return [`${node} → ${summary}`];
           });
           return (
             <article key={event.seq} data-testid={`story-advisor-${event.seq}`} className="rounded-xl border border-[rgba(31,122,140,.28)] bg-[rgba(31,122,140,.05)] px-3 py-2">

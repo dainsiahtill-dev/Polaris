@@ -271,14 +271,32 @@ export const LIVE_RELEVANT_KINDS = new Set([
 ]);
 
 /** Distiller summaries carry the FileCard/CommandCard path as their node_id. */
-function distillTargets(payload: Record<string, unknown>): string[] {
+interface DistillTarget {
+  node_id: string;
+  summary: string;
+}
+
+/** Each entry is {validation_result, result:{node_id,summary}}: the summary sits
+ * one level down, not at the top of the entry.
+ */
+function distillTargets(payload: Record<string, unknown>): DistillTarget[] {
   const result = payload.result;
   if (!result || typeof result !== 'object' || Array.isArray(result)) return [];
   const summaries = (result as Record<string, unknown>).summaries;
   if (!Array.isArray(summaries)) return [];
-  return summaries
-    .map((item) => (item && typeof item === 'object' ? (item as Record<string, unknown>).node_id : null))
-    .filter((value): value is string => typeof value === 'string' && value.length > 0);
+  const targets: DistillTarget[] = [];
+  for (const item of summaries) {
+    if (!item || typeof item !== 'object') continue;
+    const record = item as Record<string, unknown>;
+    if (record.validation_result && record.validation_result !== 'VALID') continue;
+    const inner = (
+      record.result && typeof record.result === 'object' ? record.result : record
+    ) as Record<string, unknown>;
+    const nodeId = typeof inner.node_id === 'string' ? inner.node_id : '';
+    if (!nodeId) continue;
+    targets.push({ node_id: nodeId, summary: typeof inner.summary === 'string' ? inner.summary : '' });
+  }
+  return targets;
 }
 
 export function buildLiveContextGraph(events: EngineeringEvent[], limit = 90): LiveContextGraph {
@@ -490,7 +508,10 @@ export function buildLiveContextGraph(events: EngineeringEvent[], limit = 90): L
         seq,
         kind: 'distill',
         title: `蒸馏 ${targets.length || ''}`.trim(),
-        summary: targets.slice(0, 3).join('、') || text(payload.validation_result, 60) || '节点摘要',
+        summary: targets
+          .slice(0, 3)
+          .map((target) => target.summary || target.node_id)
+          .join('、') || text(payload.validation_result, 60) || '节点摘要',
         role: event.role,
         foldState: 'FOLDED',
         foldReason: '蒸馏摘要替代原始卡片进入投影',
@@ -504,7 +525,7 @@ export function buildLiveContextGraph(events: EngineeringEvent[], limit = 90): L
         createdAt: event.created_at ?? 0,
       });
       for (const target of targets) {
-        const cardId = cardPaths.get(target) ?? cardRefs.get(target);
+        const cardId = cardPaths.get(target.node_id) ?? cardRefs.get(target.node_id);
         if (cardId) addEdge(id, cardId, '蒸馏', true);
       }
       continue;

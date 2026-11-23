@@ -79,7 +79,19 @@ describe('ToolTimeline live ordering', () => {
       kind: 'semantic_advice_completed',
       payload: {
         validation_result: 'VALID',
-        summaries: [{ node_id: 'core.js', summary: '状态机与循环入口' }],
+        // Real host shape: the node summary sits inside result, one per endpoint.
+        summaries: [
+          {
+            endpoint_index: 0,
+            validation_result: 'VALID',
+            result: { node_id: 'core.js', summary: '状态机与循环入口' },
+          },
+          {
+            endpoint_index: 1,
+            validation_result: 'REJECTED',
+            error: 'ValueError: summary must describe the payload',
+          },
+        ],
       },
     };
     render(
@@ -91,7 +103,7 @@ describe('ToolTimeline live ordering', () => {
         emptyHint="empty"
       />,
     );
-    expect(screen.getByTestId('story-advisor-6')).toHaveTextContent('蒸馏器 · 蒸馏内容');
+    expect(screen.getByTestId('story-advisor-6')).toHaveTextContent('蒸馏器 · 蒸馏内容 · 1 个节点');
     expect(screen.getByTestId('story-advisor-6')).toHaveTextContent('core.js → 状态机与循环入口');
   });
 
