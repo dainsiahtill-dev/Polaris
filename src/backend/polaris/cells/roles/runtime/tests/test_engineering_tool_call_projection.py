@@ -146,11 +146,61 @@ def test_distiller_summary_wins_over_the_structural_fallback(monkeypatch: pytest
     monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "24")
     messages = [_write("call_1", "src/a.ts"), _result("call_1", "ok"), *_pad(25)]
     folded = fold_tool_payload_previews(
-        messages, semantic_summaries={"src/a.ts": {"summary": "该文件实现萤火虫的固定步长推进。"}}
+        messages, semantic_summaries={"write:src/a.ts": {"summary": "该文件实现萤火虫的固定步长推进。"}}
     )
     arguments = _arguments(folded[0])
     assert arguments["summary"] == "该文件实现萤火虫的固定步长推进。"
     assert arguments["summary_kind"] == "model_inference"
+
+
+def test_read_and_write_planes_keep_separate_summaries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A path that is both read and written must not let one summary stand in for
+    the other payload."""
+
+    from polaris.cells.roles.runtime.internal.engineering_file_cards import build_file_card
+
+    monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "24")
+    preview = "p" * 3000
+    card = build_file_card(
+        "src/a.ts",
+        preview,
+        revision=1,
+        preview=preview,
+        truncated=False,
+        start_line=1,
+        end_line=1,
+        snapshot_ref="filecard:a",
+    )
+    messages = [
+        _write("call_1", "src/a.ts"),
+        _result("call_1", "ok"),
+        _result("call_2", json.dumps({"file_card": card}, ensure_ascii=False)),
+        *_pad(25),
+    ]
+    folded = fold_tool_payload_previews(
+        messages,
+        semantic_summaries={
+            "write:src/a.ts": {"summary": "写入正文：萤火虫固定步长推进。"},
+            "file:src/a.ts": {"summary": "读取预览：花园状态类型定义。"},
+        },
+    )
+    assert _arguments(folded[0])["summary"] == "写入正文：萤火虫固定步长推进。"
+    folded_card = json.loads(str(folded[2]["content"]))["file_card"]
+    assert folded_card["summary"] == "读取预览：花园状态类型定义。"
+    assert folded_card["fold_state"] == "FOLDED"
+
+
+def test_fold_gate_applies_the_same_informativeness_rule_as_the_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stock status the distiller boundary rejects must not pass the fold gate."""
+
+    monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "24")
+    messages = [_write("call_1", "src/a.ts"), _result("call_1", "ok"), *_pad(25)]
+    folded = fold_tool_payload_previews(messages, semantic_summaries={"write:src/a.ts": {"summary": "passed"}})
+    arguments = _arguments(folded[0])
+    assert arguments["summary_kind"] == "structural"
+    assert "写入 src/a.ts" in arguments["summary"]
 
 
 def test_folded_call_is_reported_as_a_projection(monkeypatch: pytest.MonkeyPatch) -> None:

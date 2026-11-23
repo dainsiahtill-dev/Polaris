@@ -617,11 +617,17 @@ class AIExecutor:
     ) -> AIResponse:
         """带弹性策略的执行"""
 
+        # One logical invoke owns one capture port: a resilience retry must
+        # accumulate its attempt counter under the same capture_id instead of
+        # reporting every retry as a fresh first attempt.
+        capture_holder: dict[str, PhysicalProviderDispatchRuntimePort] = {}
+
         async def _do_invoke() -> AIResponse:
             return await self._execute_invoke(
                 request,
                 trace_id,
                 physical_dispatch_port=physical_dispatch_port,
+                capture_holder=capture_holder,
             )
 
         resilience = self._build_request_resilience(request)
@@ -707,6 +713,7 @@ class AIExecutor:
         trace_id: str,
         *,
         physical_dispatch_port: PhysicalProviderDispatchRuntimePort | None = None,
+        capture_holder: dict[str, PhysicalProviderDispatchRuntimePort] | None = None,
     ) -> AIResponse:
         """执行实际的 LLM 调用"""
         if not isinstance(request.context, dict):
@@ -1013,24 +1020,31 @@ class AIExecutor:
         if physical_dispatch_port is None:
             from .native_request_capture import NativeRequestCapturePort
 
-            physical_dispatch_port = NativeRequestCapturePort(
-                request=request,
-                model_spec=model_spec,
-                trace_id=trace_id,
-                messages=snapshot_messages or [],
-                provider_request=self._build_context_snapshot_provider_request(
+            reused = capture_holder.get("port") if capture_holder is not None else None
+            physical_dispatch_port = (
+                reused
+                if reused is not None
+                else NativeRequestCapturePort(
                     request=request,
-                    messages=snapshot_messages,
-                    invoke_cfg=invoke_cfg,
                     model_spec=model_spec,
-                    prompt_input=prompt_input,
-                ),
-                prepared_surface={key: invoke_cfg.get(key) for key in ("tools", "tool_choice", "response_format")},
-                persist=self._store_context_messages_sync,
-                workspace=self.workspace,
-                native_request_observer=self.native_request_observer,
-                context_reference_owner=self.context_reference_owner,
+                    trace_id=trace_id,
+                    messages=snapshot_messages or [],
+                    provider_request=self._build_context_snapshot_provider_request(
+                        request=request,
+                        messages=snapshot_messages,
+                        invoke_cfg=invoke_cfg,
+                        model_spec=model_spec,
+                        prompt_input=prompt_input,
+                    ),
+                    prepared_surface={key: invoke_cfg.get(key) for key in ("tools", "tool_choice", "response_format")},
+                    persist=self._store_context_messages_sync,
+                    workspace=self.workspace,
+                    native_request_observer=self.native_request_observer,
+                    context_reference_owner=self.context_reference_owner,
+                )
             )
+            if capture_holder is not None and reused is None:
+                capture_holder["port"] = physical_dispatch_port
 
         # Propagate worker_id from caller (request.context) or environment
         # (KERNELONE_WORKER_ID, set by Director's WorkerPool at spawn time) so

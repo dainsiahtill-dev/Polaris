@@ -51,10 +51,14 @@ def resolve_engineering_profile(settings: Settings, workspace: Path, profile_id:
     profile = settings.server.engineering_permission_profiles.get(profile_id)
     if profile is None:
         raise PermissionError(f"engineering permission profile is unavailable: {profile_id}")
-    if profile.browser is None:
-        # The persisted settings pipeline can drop the nested server section.
-        # When the host explicitly advertises browser_observe, recover a usable
-        # Chromium instead of silently losing browser verification.
+    advertised_browser = "browser_observe" in {ToolSpecRegistry.get_canonical(name) for name in profile.enabled_tools}
+    browser = profile.browser
+    if browser is None and advertised_browser:
+        # The persisted settings pipeline can drop the nested server section, so a
+        # host that explicitly advertised browser_observe must still resolve a
+        # usable Chromium. Autodetection is gated on that explicit advertisement:
+        # recovering a browser for a host that never asked for one would silently
+        # re-grant a tool the host cleared, so an empty tool set stays empty.
         import os
         import shutil
         import sys
@@ -67,40 +71,17 @@ def resolve_engineering_profile(settings: Settings, workspace: Path, profile_id:
         }:
             from polaris.bootstrap.config import EngineeringBrowserObservationConfig
 
-            profile.browser = EngineeringBrowserObservationConfig(
+            # Resolve the browser without widening the host's filesystem grant.
+            # The helper interpreter locates its own packages through
+            # python_paths; silently adding /opt, /usr/lib, /usr/share and
+            # site-packages to read_roots would make the resolved scope differ
+            # from the configured one and would persist into cold recovery.
+            browser = EngineeringBrowserObservationConfig(
                 executable=executable,
                 python_executable=sys.executable,
                 python_paths=(str(Path(__import__("site").getsitepackages()[0])),),
                 require_visual_review=False,
                 observation_mode="images",
-            )
-            profile.enabled_tools = frozenset(set(profile.enabled_tools) | {"browser_observe"})
-            import site as _site
-
-            executable_path = Path(executable).expanduser().resolve()
-            site_packages = tuple(
-                str(Path(path).expanduser().resolve())
-                for path in (_site.getsitepackages() + [_site.getusersitepackages()])
-                if Path(path).expanduser().exists()
-            )
-            extra_roots = tuple(
-                dict.fromkeys(
-                    tuple(profile.read_roots)
-                    + (str(executable_path.parent), "/usr/lib", "/usr/share", "/opt")
-                    + site_packages
-                    + tuple(
-                        str(path)
-                        for path in (
-                            Path.home() / ".cache" / "ms-playwright",
-                            Path.home() / ".cache" / "playwright",
-                        )
-                        if path.exists()
-                    )
-                )
-            )
-            profile.read_roots = tuple(
-                str(Path(root).expanduser().resolve()) if Path(root).expanduser().exists() else str(root)
-                for root in extra_roots
             )
     supported = {
         "read_file",
@@ -129,13 +110,13 @@ def resolve_engineering_profile(settings: Settings, workspace: Path, profile_id:
         tools,
         profile.network_allowed,
         browser=BrowserObservationConfig(
-            profile.browser.executable,
-            profile.browser.python_executable,
-            profile.browser.python_paths,
-            profile.browser.require_visual_review,
-            observation_mode=profile.browser.observation_mode,
+            browser.executable,
+            browser.python_executable,
+            browser.python_paths,
+            browser.require_visual_review,
+            observation_mode=browser.observation_mode,
         )
-        if profile.browser is not None
+        if browser is not None
         else None,
         toolchain_bin_dirs=bins,
         toolchain_env=tuple(sorted(profile.toolchain_env.items())),

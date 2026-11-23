@@ -521,8 +521,9 @@ async def test_writing_after_verified_candidate_requires_actual_fresh_check(
     assert (
         len(history) == 2 and history[0]["payload"]["workspace_revision"] < history[1]["payload"]["workspace_revision"]
     )
-    assert "stdout:\n1\n" in history[0]["payload"]["checks"][0]["content"]
-    assert "stdout:\n2\n" in row["checks"][0]["content"]
+    # Command output travels as a bounded CommandCard since 01ce27fb6.
+    assert json.loads(history[0]["payload"]["checks"][0]["content"])["command_card"]["stdout_preview"] == "1\n"
+    assert json.loads(row["checks"][0]["content"])["command_card"]["stdout_preview"] == "2\n"
     assert all(event["payload"]["input_binding"]["requested_by"] is not None for event in history)
 
 

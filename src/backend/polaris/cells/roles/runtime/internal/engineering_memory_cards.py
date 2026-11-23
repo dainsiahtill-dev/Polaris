@@ -426,7 +426,7 @@ def build_prior_run_memory(
     lines = [f"- {card.get('title')}: {card.get('summary')}" for card in failures[:5]]
     verdict = str(prior_run.get("verification") or "unknown")
     content = (
-        f"上一轮工程（{prior_run.get('session_id', '')[:12]}）验证结论 {verdict}，"
+        f"上一轮工程验证结论 {verdict}，"
         "以下未解决失败已被携带，避免重复探索；可用 read_command_result/read_file 按证据取回原始输出：\n"
         + "\n".join(lines)
     )

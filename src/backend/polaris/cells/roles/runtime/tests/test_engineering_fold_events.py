@@ -32,7 +32,7 @@ class _Store:
 
 class _Advisor:
     def fold_summaries(self) -> dict[str, dict[str, str]]:
-        return {"a.py": {"summary": "旧文件摘要"}}
+        return {"file:a.py": {"summary": "旧文件摘要"}}
 
 
 def _message(preview: str) -> dict[str, object]:

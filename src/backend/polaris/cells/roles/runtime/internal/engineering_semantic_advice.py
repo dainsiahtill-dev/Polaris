@@ -75,16 +75,19 @@ _STOCK_SUMMARY_MARKERS = frozenset(
 _MIN_INFORMATIVE_SUMMARY_CHARS = 4
 
 
-def _summary_is_informative(summary: str, content: object) -> bool:
+def summary_is_informative(text: object, original: object) -> bool:
     """Require a summary that explains the payload, never a status word or excerpt.
 
     Folding replaces the payload with this text in the next request, so a bare
     status (``completed``) or a verbatim fragment of the input destroys evidence
-    without buying understanding. Rejecting here keeps the non-explanation out
-    of the distiller store so the host structural fallback is used instead.
+    without buying understanding. This is the single rule shared by the distiller
+    boundary and the fold gate: the fold gate is what actually substitutes the
+    text, so a second, looser copy would admit exactly what the boundary rejects.
     """
 
-    stripped = summary.strip()
+    if not isinstance(text, str):
+        return False
+    stripped = text.strip()
     if len(stripped) < _MIN_INFORMATIVE_SUMMARY_CHARS:
         return False
     lowered = stripped.lower().rstrip(".")
@@ -93,12 +96,24 @@ def _summary_is_informative(summary: str, content: object) -> bool:
     # "completed successfully" is still a status, not an explanation.
     if len(stripped.split()) <= 3 and any(lowered.startswith(marker) for marker in _STOCK_SUMMARY_MARKERS):
         return False
-    if isinstance(content, str) and content.strip():
+    if isinstance(original, str) and original.strip():
         normalized = re.sub(r"\s+", " ", stripped).lower()
-        original = re.sub(r"\s+", " ", content).lower()
-        if normalized in original:
+        source = re.sub(r"\s+", " ", original).lower()
+        if normalized in source:
             return False
     return True
+
+
+# Node keys are plane-qualified. A read preview and a write body of the same path
+# are different payloads: sharing one key lets whichever the distiller happened to
+# summarise last silently stand in for the other at fold time. A command card is
+# already keyed by its own content_ref, which is unique by construction.
+def file_node_id(path: str) -> str:
+    return f"file:{path}"
+
+
+def write_node_id(path: str) -> str:
+    return f"write:{path}"
 
 
 def validate_node_summary(payload: object, request: Mapping[str, Any]) -> dict[str, Any]:
@@ -112,7 +127,7 @@ def validate_node_summary(payload: object, request: Mapping[str, Any]) -> dict[s
         if root[key] != request.get(key):
             raise ValueError(f"node summary {key} does not match the requested snapshot")
     summary = _text(root["summary"], "summary", maximum=1024)
-    if not _summary_is_informative(summary, request.get("content")):
+    if not summary_is_informative(summary, request.get("content")):
         raise ValueError("summary must describe the payload, not a status word or a verbatim excerpt")
     max_tokens = request.get("max_summary_tokens", 192)
     if type(max_tokens) is not int or max_tokens < 1 or _tokens(summary) > max_tokens:

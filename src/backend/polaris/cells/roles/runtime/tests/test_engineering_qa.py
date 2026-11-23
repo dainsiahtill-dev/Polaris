@@ -157,6 +157,13 @@ async def test_negative_qa_returns_same_director_and_revalidates_without_restart
                 {
                     "approved": False,
                     "feedback": "Actual source value1 violates original goal value2 despite command passing.",
+                    "clause_findings": [
+                        {
+                            "clause": "1",
+                            "status": "fail",
+                            "evidence": "read_file value.txt returned 1 but the goal requires value2",
+                        }
+                    ],
                 },
             )
         )
@@ -488,7 +495,17 @@ async def test_negative_qa_noncompleted_correction_preserves_current_checks_and_
             (
                 "reject",
                 "report_review",
-                {"approved": False, "feedback": "Current behavior still misses original requirements."},
+                {
+                    "approved": False,
+                    "feedback": "Current behavior still misses original requirements.",
+                    "clause_findings": [
+                        {
+                            "clause": "1",
+                            "status": "fail",
+                            "evidence": "read_file value.txt still does not satisfy the required behavior",
+                        }
+                    ],
+                },
             )
         ),
     ):
@@ -542,6 +559,13 @@ async def test_negative_qa_noncompleted_correction_preserves_current_checks_and_
                     "approved": False,
                     "feedback": "Required behavior absent.",
                     "major_findings": ["Unresolved current semantic requirement."],
+                    "clause_findings": [
+                        {
+                            "clause": "1",
+                            "status": "fail",
+                            "evidence": "read_file value.txt still does not satisfy the required behavior",
+                        }
+                    ],
                 },
             ),
             ("approve", {"approved": True, "feedback": "Accept despite unresolved finding."}),
@@ -554,6 +578,13 @@ async def test_negative_qa_noncompleted_correction_preserves_current_checks_and_
                     "approved": False,
                     "feedback": "Required behavior absent.",
                     "major_findings": ["Unresolved current semantic requirement."],
+                    "clause_findings": [
+                        {
+                            "clause": "1",
+                            "status": "fail",
+                            "evidence": "read_file value.txt still does not satisfy the required behavior",
+                        }
+                    ],
                 },
             ),
         ),
@@ -658,6 +689,13 @@ async def test_conflicting_qa_batch_requires_actual_director_repair_and_a_fresh_
                     "approved": False,
                     "feedback": "Actual value1 violates original goal value2.",
                     "major_findings": ["Wrong current implementation."],
+                    "clause_findings": [
+                        {
+                            "clause": "1",
+                            "status": "fail",
+                            "evidence": "read_file value.txt returned 1 but the goal requires value2",
+                        }
+                    ],
                 },
             ),
             ("overrule", "report_review", {"approved": True, "feedback": "Accept current value1 anyway."}),
@@ -706,6 +744,13 @@ async def test_cold_durable_qa_batch_uses_same_decision_without_replaying_observ
             "approved": False,
             "feedback": "Current required behavior remains absent.",
             "major_findings": ["Current major semantic requirement missing."],
+            "clause_findings": [
+                {
+                    "clause": "1",
+                    "status": "fail",
+                    "evidence": "read_file value.txt still does not satisfy the required behavior",
+                }
+            ],
         },
     )
     major = (

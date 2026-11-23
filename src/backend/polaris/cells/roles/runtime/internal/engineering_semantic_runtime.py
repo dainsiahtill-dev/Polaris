@@ -36,10 +36,13 @@ class SemanticRuntime:
     ) -> None:
         if self.mode in {"disabled", "shadow"} and self.result is not None:
             return
-        if fingerprint == self._fingerprint and self._job is not None and not self._job.done():
-            return
         if self._job is not None and not self._job.done():
-            self._job.cancel()
+            # Never cancel an in-flight job. The loop re-schedules on every turn,
+            # so cancelling on a changed fingerprint guarantees a slow remote
+            # summary never completes and the fold always falls back to the
+            # deterministic envelope. A superseded request waits instead: the
+            # next turn schedules it again once the job lands.
+            return
         self._fingerprint = fingerprint
         self._job = asyncio.create_task(self._evaluate(request, candidates))
 
@@ -99,6 +102,14 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
     import json
 
     from polaris.cells.roles.runtime.internal.engineering_file_cards import card_from_observation
+    from polaris.cells.roles.runtime.internal.engineering_semantic_advice import (
+        file_node_id,
+        write_node_id,
+    )
+    from polaris.cells.roles.runtime.internal.engineering_tool_payload_projection import (
+        distill_min_activities,
+        distill_min_bytes,
+    )
 
     candidates: list[dict[str, Any]] = []
     node_ids: set[str] = set()
@@ -110,12 +121,6 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
             activity += 1
         activity_at_seq[int(event["seq"])] = activity
     current_activity = activity
-    latest_paths: dict[str, int] = {}
-    for event in events:
-        if event["payload"].get("tool") == "read_file":
-            card = card_from_observation(str(event["payload"].get("content") or ""))
-            if card is not None and isinstance(card.get("path"), str):
-                latest_paths[card["path"]] = int(event["seq"])
     targets = {
         str(event["payload"].get("arguments", {}).get("file"))
         for event in events[-12:]
@@ -123,10 +128,12 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
         and event["payload"].get("arguments", {}).get("file")
     }
     instruction = str(run.get("instruction") or "")
+    min_age = distill_min_activities()
+    min_bytes = distill_min_bytes()
     for event in events:
         payload = event["payload"]
         age = current_activity - activity_at_seq.get(int(event["seq"]), current_activity)
-        if age < 10:
+        if age < min_age:
             continue
         if payload.get("tool") == "execute_command" and payload.get("ok") is True:
             try:
@@ -140,7 +147,7 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
                 if isinstance(card, dict)
                 else ""
             )
-            if isinstance(reference, str) and reference and len(preview.encode("utf-8")) >= 512:
+            if isinstance(reference, str) and reference and len(preview.encode("utf-8")) >= min_bytes:
                 node_ids.add(reference)
                 slice_ids.add("slice_output")
                 candidates.append(
@@ -162,12 +169,12 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
             continue
         path = str(card["path"])
         preview = str(card.get("content_preview") or "")
-        if len(preview.encode("utf-8")) < 512 or path in targets or path in instruction:
+        if len(preview.encode("utf-8")) < min_bytes or path in targets or path in instruction:
             continue
         reference = card.get("content_ref")
         if not isinstance(reference, str) or not reference:
             continue
-        node_ids.add(path)
+        node_ids.add(file_node_id(path))
         symbols = card.get("symbols") or []
         slices = [f"slice_{symbol}" for symbol in symbols] or ["slice_file"]
         slice_ids.update(slices)
@@ -178,7 +185,6 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
                 "slice_ids": slices,
                 "content": preview or card.get("summary") or "",
                 "activity_age": age,
-                "duplicate": latest_paths.get(path) != int(event["seq"]),
                 "kind": "file_card",
                 "coverage": card.get("coverage") or {"observed_line_ranges": [[1, max(1, card.get("line_count", 1))]]},
             }
@@ -191,13 +197,6 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
         payload = event["payload"]
         if payload.get("tool") in {"write_file", "edit_file"} and payload.get("call_id"):
             call_ok[str(payload["call_id"])] = payload.get("ok") is True
-    latest_write: dict[str, int] = {}
-    for event in events:
-        payload = event["payload"]
-        if payload.get("tool") == "write_file" and payload.get("ok") is not False:
-            arguments = payload.get("arguments")
-            if isinstance(arguments, dict) and isinstance(arguments.get("file"), str):
-                latest_write[arguments["file"]] = int(event["seq"])
     for event in events:
         payload = event["payload"]
         if payload.get("tool") != "write_file" or call_ok.get(str(payload.get("call_id"))) is not True:
@@ -209,23 +208,22 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
         body = arguments.get("content")
         if not isinstance(written_path, str) or not written_path or not isinstance(body, str):
             continue
-        if len(body.encode("utf-8")) < 512:
+        if len(body.encode("utf-8")) < min_bytes:
             continue
         age = current_activity - activity_at_seq.get(int(event["seq"]), current_activity)
-        if age < 10 or written_path in targets or written_path in instruction:
+        if age < min_age or written_path in targets or written_path in instruction:
             continue
         path = written_path
-        node_ids.add(path)
+        node_ids.add(write_node_id(path))
         slice_ids.add("slice_file")
         candidates.append(
             {
-                "node_id": path,
+                "node_id": write_node_id(path),
                 "snapshot_id": "writecall:" + hashlib.sha256(body.encode("utf-8")).hexdigest(),
                 "slice_ids": ["slice_file"],
                 "content": body,
                 "activity_age": age,
                 "kind": "write_call",
-                "duplicate": latest_write.get(path) != int(event["seq"]),
                 "coverage": {"observed_line_ranges": [[1, max(1, len(body.splitlines()))]]},
             }
         )
@@ -251,11 +249,21 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
         reference = card.get("content_ref") if isinstance(card, dict) else None
         if isinstance(reference, str) and reference:
             evidence_refs.add(reference)
+    # Spend the bounded slots where the fold will actually happen. The fold tier
+    # takes the oldest, largest payloads first, so a newest-first selection
+    # spends every slot on payloads the fold has not reached yet.
+    selected = sorted(
+        candidates,
+        key=lambda item: (
+            -int(item.get("activity_age") or 0),
+            -len(str(item.get("content") or "").encode("utf-8")),
+        ),
+    )[:_MAX_DISTILLER_CANDIDATES]
     activity_text = last_error or str(run.get("verification") or "not_run")
     request = {
         "task": run.get("instruction") or "",
         "activity": activity_text,
-        "candidates": candidates[-_MAX_DISTILLER_CANDIDATES:],
+        "candidates": selected,
     }
     refs = CandidateRefs(node_ids=node_ids, slice_ids=slice_ids, evidence_refs=evidence_refs)
     fingerprint = hashlib.sha256(
@@ -263,7 +271,7 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
             {
                 "revision": run.get("workspace_revision"),
                 "activity": activity_text,
-                "candidates": [item["snapshot_id"] for item in candidates[-_MAX_DISTILLER_CANDIDATES:]],
+                "candidates": [item["snapshot_id"] for item in selected],
                 "evidence_refs": sorted(evidence_refs),
             },
             sort_keys=True,

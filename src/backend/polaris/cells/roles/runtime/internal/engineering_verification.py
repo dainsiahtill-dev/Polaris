@@ -152,6 +152,37 @@ _WRITE_COMMANDS = frozenset(
 )
 
 
+def _blank_quoted_spans(command: str) -> str:
+    """Drop the contents of shell-quoted spans, keeping operators.
+
+    ``>`` is only a redirect outside quotes. A command that embeds HTML, JSON or
+    a comparison inside an argument (``python3 -c '... <svg> ...'``,
+    ``python3 -c 'print(1 > 0)'``) is not writing anything, and treating it as a
+    redirect would advance the candidate revision for a read-only probe. An
+    unterminated quote is returned as-is so the caller stays fail-closed.
+    """
+
+    out: list[str] = []
+    quote: str | None = None
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if quote == "'":
+            if char == "'":
+                quote = None
+        elif quote == '"':
+            if char == "\\":
+                index += 1
+            elif char == '"':
+                quote = None
+        elif char in "'\"":
+            quote = char
+        else:
+            out.append(char)
+        index += 1
+    return command if quote is not None else "".join(out)
+
+
 def command_may_write(command: str) -> bool:
     """Conservative shape test: could this shell command change workspace outputs?
 
@@ -162,7 +193,7 @@ def command_may_write(command: str) -> bool:
 
     if not command:
         return False
-    if ">" in command:
+    if ">" in _blank_quoted_spans(command):
         return True
     for segment in re.split(r"[|;&\n]+", command):
         for token in segment.strip().split():

@@ -124,7 +124,8 @@ async def test_collaborative_qa_runs_independent_checks_without_changing_verifie
     observed = {event["payload"]["call_id"]: event["payload"] for event in events if event["kind"] == "tool_observed"}
     assert observed["qa-independent"]["ok"] is True, observed["qa-independent"]
     assert observed["qa-independent"]["exit_code"] == 0
-    assert "stdout:\n16\n" in observed["qa-independent"]["content"]
+    # Command output travels as a bounded CommandCard since 01ce27fb6.
+    assert json.loads(observed["qa-independent"]["content"])["command_card"]["stdout_preview"] == "16\n"
     assert observed["qa-write-attempt"]["ok"] is False
     assert observed["qa-write-attempt"]["exit_code"] != 0
     assert "Read-only file system" in observed["qa-write-attempt"]["content"]

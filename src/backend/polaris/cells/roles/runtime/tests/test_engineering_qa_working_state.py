@@ -112,7 +112,13 @@ async def test_native_qa_facts_refresh_once_without_history_or_pixel_changes(
     assert len(bodies) == 2
     facts = [_facts(body) for body in bodies]
     assert [value["qa_frame"]["successful_source_read_count"] for value in facts] == [0, 1]
-    assert facts[1]["last_probe"]["exact_arguments_sha256"] == hashlib.sha256(b'{"file":"source.txt"}').hexdigest()
+    # The dispatch records the *normalized* effective arguments (commit
+    # a4ae74e49 made dispatch and observation share one canonical tool call), so
+    # read_file carries the injected max_bytes/range_required defaults.
+    assert (
+        facts[1]["last_probe"]["exact_arguments_sha256"]
+        == hashlib.sha256(b'{"file":"source.txt","max_bytes":200000,"range_required":false}').hexdigest()
+    )
     actual_read = store.load_events(command.session_id, kinds=("tool_observed",), role="qa")[0]["payload"]
     assert (
         facts[1]["last_probe"]["result_content_sha256"]
@@ -154,7 +160,41 @@ async def test_native_qa_facts_refresh_once_without_history_or_pixel_changes(
         return [message for message in messages if "same run's earlier turns" not in str(message.get("content") or "")]
 
     assert _without_continuation_note(prepared[0]["payload"]["request"]["options"]["messages"])[:-1] == original
-    assert _without_continuation_note(prepared[1]["payload"]["request"]["options"]["messages"])[:-1] == durable[:-1]
+
+    # The fold projection annotates cards in the request (pin_reason/fold_state,
+    # plus the replacement envelope once a card folds); the durable journal keeps
+    # the raw observation. Compare the evidence with those derived annotations
+    # removed, recursively, so a nested card inside an observation still matches.
+    _derived_card_keys = {
+        "fold_state",
+        "fold_reason",
+        "pin_reason",
+        "summary_kind",
+        "source_summary",
+        "summary_evidence_refs",
+        "summary_uncertain",
+        "summary_reason",
+        "last_fold_activity_seq",
+    }
+
+    def _strip_derived(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: _strip_derived(item) for key, item in value.items() if key not in _derived_card_keys}
+        if isinstance(value, list):
+            return [_strip_derived(item) for item in value]
+        if isinstance(value, str) and value.strip().startswith("{"):
+            try:
+                return json.dumps(_strip_derived(json.loads(value)), ensure_ascii=False, sort_keys=True)
+            except json.JSONDecodeError:
+                return value
+        return value
+
+    def _evidence(messages: list[dict[str, Any]]) -> str:
+        return json.dumps(_strip_derived(messages), ensure_ascii=False, sort_keys=True)
+
+    assert _evidence(
+        _without_continuation_note(prepared[1]["payload"]["request"]["options"]["messages"])[:-1]
+    ) == _evidence(durable[:-1])
     for body, event in zip(bodies, prepared, strict=True):
         canonical = event["payload"]["request"]["options"]["messages"]
         if protocol == "anthropic":
@@ -209,7 +249,10 @@ async def test_same_sqlite_cold_reopen_retains_frame_and_refreshes_native_facts(
     assert facts["qa_frame"]["successful_source_read_count"] == 1
     assert facts["original_deadline_epoch_seconds"] == limits.deadline
     assert facts["approximate_remaining_seconds"] == pytest.approx(550)
-    assert facts["last_probe"]["exact_arguments_sha256"] == hashlib.sha256(b'{"file":"source.txt"}').hexdigest()
+    assert (
+        facts["last_probe"]["exact_arguments_sha256"]
+        == hashlib.sha256(b'{"file":"source.txt","max_bytes":200000,"range_required":false}').hexdigest()
+    )
     assert reopened.load_message_history(command.session_id, role="qa")[: len(history)] == history
     assert len(reopened.load_events(command.session_id, kinds=("role_started",), role="qa")) == 1
     assert all(MARKER not in json.dumps(m) for m in reopened.load_message_history(command.session_id))

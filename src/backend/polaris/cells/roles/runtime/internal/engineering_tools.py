@@ -355,6 +355,16 @@ class EngineeringTools:
                 operands.setdefault(canonical, []).append(value)
             if any(any(value != values[0] for value in values[1:]) for values in operands.values()):
                 raise ValueError("conflicting engineering tool argument aliases")
+        # The schema normalizer coerces a bare string into a one-element list,
+        # which would turn ``commands="true"`` into a real check and let a
+        # malformed request overwrite a completed verification. Refuse the
+        # non-list shape here, before coercion, so the raw request stays invalid.
+        if (
+            name == "verify_project"
+            and "commands" in arguments
+            and not isinstance(arguments.get("commands"), (list, tuple))
+        ):
+            raise ValueError("verify_project commands must be a list of shell commands")
         normalized = dict(normalize_tool_arguments_from_snapshot(snapshot, arguments))
         timeout = normalized.get("timeout")
         if name == "execute_command" and type(timeout) is int:
@@ -616,7 +626,10 @@ class EngineeringTools:
                             card = payload.get("command_card")
                             if isinstance(card, dict):
                                 card["artifact_error"] = f"{type(error).__name__}: {error}"
-                                content = json.dumps(payload, ensure_ascii=False)
+                                content = (
+                                    json.dumps(payload, ensure_ascii=False)
+                                    + f"\nArtifact capture failed: {type(error).__name__}: {error}"
+                                )
                             else:
                                 content = (
                                     observation.content + f"\nArtifact capture failed: {type(error).__name__}: {error}"

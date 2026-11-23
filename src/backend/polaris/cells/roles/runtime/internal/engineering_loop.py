@@ -1157,6 +1157,10 @@ async def run_engineering_loop(
     # (preparation) before another verify_project may run, instead of letting a
     # weak model re-issue the same doomed check forever.
     preparation_pending = False
+    # The exact check commands that armed the gate. Only an identical re-run is
+    # blocked: a genuinely new read-only check must still be able to execute,
+    # otherwise the gate would hide the preparation step it asks for.
+    preparation_pending_commands: tuple[str, ...] = ()
     first_verification_fraction = float(
         os.environ.get(_FIRST_VERIFICATION_FRACTION_ENV, str(_FIRST_VERIFICATION_FRACTION_DEFAULT)) or 0
     )
@@ -2033,12 +2037,24 @@ async def run_engineering_loop(
                     canonical, normalized = tools.normalize(call.name, call.arguments)
                 except ValueError:
                     canonical, normalized = call.name, call.arguments
+                # Normalization resolves schema aliases and then drops the alias
+                # keys (browser_observe maps path/file/filename onto `entry`). When
+                # the tool name is unchanged, keep the model's own keys alongside
+                # the canonical ones so the recorded dispatch still answers to what
+                # was actually sent; a renamed call (cat -> read_file) keeps the
+                # canonical-only record so dispatch and observation still pair.
+                recorded_arguments = normalized
+                if canonical == call.name and isinstance(call.arguments, dict):
+                    recorded_arguments = {
+                        **normalized,
+                        **{key: value for key, value in call.arguments.items() if key not in normalized},
+                    }
                 store.record_tool_dispatch(
                     command.session_id,
                     turn_seq=turn_seq,
                     call_id=call.id,
                     tool=canonical,
-                    arguments=normalized,
+                    arguments=recorded_arguments,
                     role=command.role,
                 )
                 from polaris.cells.roles.runtime.internal.engineering_artifacts import (
@@ -2094,7 +2110,13 @@ async def run_engineering_loop(
                             # blocked (observed 23 execute_command interceptions
                             # across real L1 runs).
                             gate_blocked_tools = ("write_file", "edit_file", "repo_tree", "repo_rg")
-                            if preparation_pending and command.role == "director" and canonical == "verify_project":
+                            if (
+                                preparation_pending
+                                and command.role == "director"
+                                and canonical == "verify_project"
+                                and tuple(str(item) for item in (normalized.get("commands") or ()))
+                                == preparation_pending_commands
+                            ):
                                 # Preparation gate: the same writing check fails
                                 # deterministically under read-only verification.
                                 observation = ToolObservation(
@@ -2257,7 +2279,20 @@ async def run_engineering_loop(
                             # A read-only probe changes nothing, so it must not
                             # invalidate a passing verification nor disarm the
                             # wrap-up gate; only a command that may write does.
-                            and command_may_write(str(normalized.get("command") or ""))
+                            # Two exceptions must still invalidate: a killed or
+                            # timed-out command whose effect is unknown, and a
+                            # command run where the sandbox cannot physically
+                            # guarantee read-only (network reachable, or a
+                            # read-write command cache). A non-empty write root
+                            # alone is not such a guarantee — the command text is
+                            # what says whether it writes.
+                            and (
+                                command_may_write(str(normalized.get("command") or ""))
+                                or observation.timed_out
+                                or observation.interrupted
+                                or tools.scope.network_allowed
+                                or tools.scope.command_cache == "read_write"
+                            )
                             and (observation.exit_code is not None or observation.interrupted or observation.timed_out)
                         )
                         if advances_revision:
@@ -2325,9 +2360,11 @@ async def run_engineering_loop(
 
                     if is_read_only_failure(str(observation.content or "")):
                         preparation_pending = True
+                        preparation_pending_commands = tuple(str(item) for item in (normalized.get("commands") or ()))
                 if advances_revision and observation.tool == "execute_command":
                     # An actual writing preparation step clears the EROFS gate.
                     preparation_pending = False
+                    preparation_pending_commands = ()
                 message = {
                     "role": "tool",
                     "tool_call_id": call.id,

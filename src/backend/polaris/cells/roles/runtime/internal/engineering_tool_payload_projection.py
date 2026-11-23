@@ -10,7 +10,7 @@ Two planes carry model-visible payloads and both grow without bound:
 Folding replaces a payload with an explanation plus a recovery path. It never
 touches the native envelope: the assistant ``tool_calls`` id/name and the
 matching ``tool`` result stay paired, so the provider protocol stays valid. A
-fold happens only when the payload is at least ``_fold_min_bytes()``, the
+fold happens only when the payload is at least the fold byte floor, the
 activity is outside the fold window, the payload is not the current edit, the
 current reasoning or an acceptance clause, and the projected message is
 strictly smaller than the original.
@@ -21,9 +21,14 @@ from __future__ import annotations
 import copy
 import json
 import os
-import re
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
+
+from polaris.cells.roles.runtime.internal.engineering_semantic_advice import (
+    file_node_id,
+    summary_is_informative,
+    write_node_id,
+)
 
 # Tools whose arguments embed a durable workspace body. Only these are folded:
 # the body is recoverable with read_file, so a fold loses no unique evidence.
@@ -35,7 +40,7 @@ _PROTECTED_PIN_REASONS = frozenset({"current_edit", "current_reasoning", "accept
 _DUPLICATE_REASONS = frozenset({"superseded_by_newer_card", "superseded_by_newer_payload"})
 
 
-def _inactive_fold_activities() -> int:
+def configured_inactive_fold_activities() -> int:
     return max(0, int(os.environ.get("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "24")))
 
 
@@ -43,14 +48,30 @@ def _rehydration_grace_activities() -> int:
     return max(0, int(os.environ.get("KERNELONE_CONTEXTOS_REHYDRATION_GRACE_ACTIVITIES", "2")))
 
 
-def _fold_min_bytes() -> int:
+def configured_fold_min_bytes() -> int:
     return max(0, int(os.environ.get("KERNELONE_CONTEXTOS_FOLD_MIN_BYTES", "1024")))
 
 
-def _fold_grace_activities() -> int:
+def configured_fold_grace_activities() -> int:
     """How much recent context the budget tier may never fold."""
 
     return max(0, int(os.environ.get("KERNELONE_CONTEXTOS_FOLD_GRACE_ACTIVITIES", "2")))
+
+
+# The distiller has to run *ahead* of the fold it feeds: a summary that lands
+# after the payload was already replaced is wasted work, and a summary of a
+# payload the fold never touches is equally wasted. Both thresholds therefore
+# derive from the fold knobs instead of being restated here.
+DISTILL_LEAD_ACTIVITIES = 14
+DISTILL_BYTE_FLOOR_DIVISOR = 2
+
+
+def distill_min_activities() -> int:
+    return max(1, configured_inactive_fold_activities() - DISTILL_LEAD_ACTIVITIES)
+
+
+def distill_min_bytes() -> int:
+    return max(256, configured_fold_min_bytes() // DISTILL_BYTE_FLOOR_DIVISOR)
 
 
 # A target is only useful below the window it must fit; half the window is the
@@ -109,33 +130,6 @@ def _byte_size(text: str) -> int:
     return len(text.encode("utf-8"))
 
 
-_STOCK_SUMMARY_MARKERS = {"completed", "done", "ok", "success", "failed", "command failed"}
-
-
-def _summary_is_informative(text: object, original: str) -> bool:
-    """A fold must replace payload with an explanation, never with a fragment.
-
-    Distiller output and card summaries can degenerate into a stock status
-    (``completed``) or a verbatim excerpt of the payload. Folding on either
-    destroys evidence without buying any understanding, so it is refused.
-    """
-
-    if not isinstance(text, str):
-        return False
-    stripped = text.strip()
-    if len(stripped) < 4:
-        return False
-    lowered = stripped.lower().rstrip(".")
-    if lowered in _STOCK_SUMMARY_MARKERS:
-        return False
-    # "completed successfully" is still a status, not an explanation.
-    if len(stripped.split()) <= 3 and any(lowered.startswith(marker) for marker in _STOCK_SUMMARY_MARKERS):
-        return False
-    normalized = re.sub(r"\s+", " ", stripped).lower()
-    original_normalized = re.sub(r"\s+", " ", original).lower()
-    return not (original_normalized and normalized in original_normalized)
-
-
 def _structural_summary(card: dict[str, Any], original: str) -> str | None:
     """Deterministic fallback so folding never depends on the distiller alone.
 
@@ -175,7 +169,7 @@ def _choose_fold_summary(
         candidates.append((summary.get("summary"), "model_inference"))
     candidates.append((card.get("summary"), "card_default"))
     for text, kind in candidates:
-        if _summary_is_informative(text, original):
+        if summary_is_informative(text, original):
             return str(text), kind
     structural = _structural_summary(card, original)
     if structural is not None:
@@ -244,7 +238,7 @@ def _fold_file_card(
     snapshot = {key: copy.deepcopy(card.get(key)) for key in keys}
     had_source_summary = "source_summary" in card
     before = _card_bytes(card)
-    if not _apply_fold_summary(card, summaries, path, original=original):
+    if not _apply_fold_summary(card, summaries, file_node_id(path), original=original):
         return False
     card["content_preview"] = ""
     card["content_bounds"] = {**card.get("content_bounds", {}), "truncated": True}
@@ -328,12 +322,14 @@ def _choose_call_summary(
     tool: str,
     arguments: Mapping[str, Any],
     summaries: Mapping[str, Mapping[str, Any]] | None,
-    identity: str,
+    node_key: str,
     *,
     original: str,
 ) -> tuple[str, str] | None:
-    summary = (summaries or {}).get(identity)
-    if isinstance(summary, dict) and _summary_is_informative(summary.get("summary"), original):
+    # Only the write plane has distiller coverage; an edit call keeps its
+    # deterministic envelope rather than borrowing some other payload's summary.
+    summary = (summaries or {}).get(node_key) if node_key else None
+    if isinstance(summary, dict) and summary_is_informative(summary.get("summary"), original):
         return str(summary["summary"]), "model_inference"
     structural = _call_structural_summary(tool, arguments, len(original))
     if structural is not None:
@@ -405,10 +401,12 @@ class _FoldPolicy:
         message_cost: Callable[[Mapping[str, Any]], int] | None = None,
     ) -> None:
         self.fold_window = (
-            _inactive_fold_activities() if inactive_fold_activities is None else max(0, int(inactive_fold_activities))
+            configured_inactive_fold_activities()
+            if inactive_fold_activities is None
+            else max(0, int(inactive_fold_activities))
         )
-        self.grace = _fold_grace_activities()
-        self.min_bytes = _fold_min_bytes()
+        self.grace = configured_fold_grace_activities()
+        self.min_bytes = configured_fold_min_bytes()
         self.forced_paths = {str(path) for path in (force_fold_paths or ()) if str(path).strip()}
         self.summaries = semantic_summaries
         self.budget_tokens = (
@@ -596,7 +594,8 @@ def _plan_message_calls(
         )
         if reason is None:
             continue
-        chosen = _choose_call_summary(tool, arguments, policy.summaries, identity, original=raw)
+        node_key = write_node_id(identity) if tool == "write_file" else ""
+        chosen = _choose_call_summary(tool, arguments, policy.summaries, node_key, original=raw)
         if chosen is None:
             continue
         summary, kind = chosen
