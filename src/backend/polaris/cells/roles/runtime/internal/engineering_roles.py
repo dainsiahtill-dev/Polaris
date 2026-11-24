@@ -100,17 +100,16 @@ _PROMPTS = {
 
 
 def qa_review_reserve_seconds(*, deadline: float, created_at: float, observed_at: float) -> float:
-    """Time kept back so a forced verdict can still be recorded.
+    """Limit the shared QA reserve to a quarter of this run, capped at ten minutes.
 
-    This is a terminal buffer, not a working window. It used to be a quarter of
-    the run (capped at ten minutes), which fired the moment a late reviewer
-    started: on L1-01 the reviewer was forced to a verdict with 468s left while
-    its own feedback said it had only just begun reading the source. The Director
-    now yields a guaranteed share (see ``_QA_MIN_FRACTION_ENV``), so this buffer
-    only has to cover recording the decision.
+    This is the buffer that lets a forced verdict be recorded. It is deliberately
+    not the reviewer's working window: the reviewer's share comes from the
+    Director yielding (``_QA_MIN_FRACTION_ENV`` in engineering_loop). Shrinking
+    this further does not buy the reviewer more time — the wall clock is the wall
+    clock — it only risks the run ending without a recorded decision.
     """
     start = created_at if created_at > 0 else observed_at
-    return min(120.0, max(0.0, deadline - start) * 0.05)
+    return min(600.0, max(0.0, deadline - start) * 0.25)
 
 
 def role_instruction(

@@ -497,20 +497,3 @@ def test_report_review_fail_finding_with_approved_true_is_treated_as_rejected(tm
     assert observation.ok is True
     assert json.loads(observation.content)["approved"] is False
 
-
-def test_qa_reserve_is_a_terminal_buffer_not_a_working_window() -> None:
-    """审查需要足够时间读源码，reserve 只该给收尾留缓冲。
-
-    实测 L1-01：reserve 曾取 run 预算的 25%（封顶 600s），审查刚要读源码就被强制
-    交卷。Director 现已按份额让位，reserve 只需覆盖记录裁决。
-    """
-
-    from polaris.cells.roles.runtime.internal.engineering_roles import qa_review_reserve_seconds
-
-    budget = 5400.0
-    reserve = qa_review_reserve_seconds(
-        deadline=budget, created_at=0.0, observed_at=budget - 900
-    )
-    assert reserve <= 120.0
-    # 短 run 也不会被比例放大。
-    assert qa_review_reserve_seconds(deadline=100.0, created_at=0.0, observed_at=50.0) <= 20.0
