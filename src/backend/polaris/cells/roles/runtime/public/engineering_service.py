@@ -1886,6 +1886,25 @@ class EngineeringRunService:
                 verdict, feedback = await self._review_qa(
                     command, scope=scope, limits=limits, cancel=cancel, verifier=verifier
                 )
+                if verdict == "unknown" and not cancel.is_set():
+                    # 非裁决（全 unknown 的"探索轮"）不是终局：宿主点名问题，再问一次。
+                    # 实测 83 run 审计里 22 个已验证 run 就是被这一下判成 interrupted，
+                    # 其中 12 个 function=passed。
+                    verdict, feedback = await self._review_qa(
+                        command,
+                        scope=scope,
+                        limits=limits,
+                        cancel=cancel,
+                        verifier=verifier,
+                        extra_guidance=(
+                            "Your previous report did not rule on the clauses: every entry was unknown, "
+                            "which is a progress report, not a verdict. This is a fresh frame, so read the "
+                            "relevant source first, then rule on each clause with observed evidence "
+                            "(pass/fail/unknown stating what you actually saw). A matrix with no pass and "
+                            "no fail is rejected."
+                        ),
+                        reuse_durable=False,
+                    )
                 if verdict == "approved":
                     return result
                 if verdict != "rejected" or cancel.is_set():
@@ -2040,6 +2059,8 @@ class EngineeringRunService:
         limits: RunLimits,
         cancel: asyncio.Event,
         verifier: Any,
+        extra_guidance: str = "",
+        reuse_durable: bool = True,
     ) -> tuple[str, str]:
         """Consume only current-frame observed QA reports, independently bound by the host."""
         from polaris.cells.roles.runtime.internal.engineering_acceptance import (
@@ -2074,6 +2095,7 @@ class EngineeringRunService:
             "Then submit report_review with a justified decision: approved, feedback, major_findings when rejecting, and clause_findings. "
             "clause_findings is REQUIRED: exactly one entry per acceptance clause listed above, each with status pass|fail|unknown and evidence. "
             "A report is rejected if any clause is missing, and a fail entry requires approved=false. Do not treat Director text as evidence."
+            + (("\n\n" + extra_guidance) if extra_guidance.strip() else "")
         )
         if web_entry is not None:
             instruction = (
@@ -2082,7 +2104,8 @@ class EngineeringRunService:
                 "page's actual runtime behavior, not only its source, decides acceptance.\n\n"
             ) + instruction
         pending = self._pending_review(command.session_id)
-        reusable = pending is not None and pending["payload"].get("input_binding") == binding
+        # 重问时必须开一个新帧：否则复用上一次的持久报告，只会拿到同一个 unknown。
+        reusable = reuse_durable and pending is not None and pending["payload"].get("input_binding") == binding
         review_start_seq = (
             pending["seq"]
             if pending is not None and reusable

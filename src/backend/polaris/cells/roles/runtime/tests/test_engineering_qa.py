@@ -864,3 +864,58 @@ async def test_duplicate_native_report_ids_reject_the_entire_undecodable_batch(
         event for event in events if event["kind"] == "tool_started" and event["payload"]["tool"] == "report_review"
     ]
     assert any(event["kind"] == "role_error" and "duplicate call id" in event["payload"]["error"] for event in events)
+
+
+async def test_a_non_decision_report_is_asked_again_instead_of_ending_the_run(
+    isolated_workspace: Path,
+    scripted_provider: ScriptedProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """实测 83 run 审计：QA 交一份全 unknown 的"探索轮"，旧行为直接把整轮判成
+    interrupted（22 个已验证 run 如此，其中 12 个 function=passed）。
+    宿主现在点名问题再问一次。
+    """
+
+    from polaris.cells.roles.runtime.internal.engineering_acceptance import extract_goal_clauses
+
+    (isolated_workspace / "value.txt").write_text("2", encoding="utf-8")
+    service = _service(isolated_workspace, scripted_provider, monkeypatch)
+    instruction = "The artifact must contain value2. Independently review real implementation."
+    clause = extract_goal_clauses(instruction)[0]
+    scripted_provider.enqueue_json(_text("Director done; not acceptance evidence."))
+    scripted_provider.enqueue_json(_calls(("read", "read_file", {"file": "value.txt"})))
+    scripted_provider.enqueue_json(
+        _calls(
+            (
+                "probe",
+                "report_review",
+                {
+                    "approved": True,
+                    "feedback": "Beginning QA review; no verdict yet.",
+                    # 证据写得像具体观察（绕过工具层的占位词表），但整份没有一条
+                    # pass/fail —— 工具层接受，由宿主导回。
+                    "clause_findings": [
+                        {"clause": clause, "status": "unknown", "evidence": "已读 src/value.ts：只见接口，未见 value2 断言。"}
+                    ],
+                },
+            )
+        )
+    )
+    # 重问帧从冷启动开始（新帧没有上一帧的读），必须先读再裁。
+    scripted_provider.enqueue_json(_calls(("read2", "read_file", {"file": "value.txt"})))
+    scripted_provider.enqueue_json(
+        _calls(
+            (
+                "review",
+                "report_review",
+                {"approved": True, "feedback": "Read current value2 and the required check passed."},
+            )
+        )
+    )
+    row, _limits = await _run(service)
+    assert row["status"] == "completed" and row["verification"] == "passed", row
+    assert row["qa_verdict"] == "approved" and row["project_outcome"] == "accepted", row
+    events = service.store.load_events("qa-task")
+    assert sum(1 for event in events if event["kind"] == "qa_review_started") == 2
+    second = [event for event in events if event["kind"] == "qa_review_started"][1]
+    assert second["seq"] > 0
