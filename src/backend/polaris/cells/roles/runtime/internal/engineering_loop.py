@@ -134,15 +134,20 @@ def _structured_repair_message(repairs: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _turn_had_action(events: Sequence[Mapping[str, Any]], turn_seq: int) -> bool:
-    """Whether one logical turn produced a durable write or a real command."""
+    """Whether one logical turn did any real work.
+
+    Reading the source and rendering the page *is* work. Counting only writes
+    made the guard fire on legitimate exploration: measured across 68 real runs
+    it intervened 406 times, including on turns that ended in repo_tree + repo_rg
+    and on turns where the model had simply spent two turns thinking before it
+    edited. A turn is idle only when it produced no successful tool call at all;
+    re-reading the same file is a separate, already detected loop.
+    """
 
     for event in events:
         if event.get("kind") != "tool_observed" or event["payload"].get("turn_seq") != turn_seq:
             continue
-        tool = event["payload"].get("tool")
-        if event["payload"].get("ok") is not True:
-            continue
-        if tool in {"write_file", "edit_file", "execute_command"}:
+        if event["payload"].get("ok") is True:
             return True
     return False
 
@@ -180,7 +185,7 @@ def _stall_message(streak: int, paths: Sequence[str]) -> dict[str, Any]:
     return {
         "role": "system",
         "content": (
-            f"停滞检测：连续 {streak} 轮只有读取，没有写入或验证。"
+            f"停滞检测：连续 {streak} 轮没有产生任何工具观察。"
             f"以下文件已被反复读取（{target}）。"
             "请停止重读，给出唯一最小动作：一句可检验的下一步（修改/验证/环境检查），"
             "并说明它如何推进目标；若证据已足够，直接执行。"
