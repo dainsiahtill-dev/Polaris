@@ -125,6 +125,7 @@ class CartographerPool:
         self.model = model
         self.timeout_seconds = timeout_seconds
         self._lock = asyncio.Lock()
+        self._last_error = ""
 
     def _post(self, messages: list[dict[str, str]]) -> str:
         system = (
@@ -169,6 +170,10 @@ class CartographerPool:
             raise ValueError("Cartographer returned no text")
         return text
 
+    @property
+    def last_error(self) -> str:
+        return self._last_error
+
     async def draw_many(self, requests: list[dict[str, Any]]) -> list[str]:
         results: list[str] = []
         for request in requests:
@@ -178,7 +183,9 @@ class CartographerPool:
                 for _ in range(2):
                     try:
                         text = await asyncio.to_thread(self._post, messages)
-                    except (OSError, ValueError, asyncio.TimeoutError):
+                    except (OSError, ValueError, asyncio.TimeoutError) as error:
+                        # 保留最后一次真实原因（超时 / 空响应 / HTTP），交给宿主记录。
+                        self._last_error = f"{type(error).__name__}: {error}"[:200]
                         text = ""
                     if _has_json_object(text):
                         break
@@ -538,6 +545,7 @@ class CartographerRuntime:
         self._fingerprint = ""
         self._request: dict[str, Any] = {}
         self._rejections: set[str] = set()
+        self._last_error = ""
 
     def schedule(self, request: dict[str, Any], *, fingerprint: str) -> bool:
         # Never abandon an in-flight draw: the model may take longer than one
@@ -564,7 +572,16 @@ class CartographerRuntime:
             results = self._job.result()
         except asyncio.CancelledError:
             return None
+        except Exception as error:  # noqa: BLE001 - 记录真实失败原因，别让审计猜
+            # 旧版只把 None 交给校验层，拒绝详情永远是一句 "NoneType"，
+            # 无法区分超时 / 空响应 / HTTP 5xx。
+            self._last_error = f"{type(error).__name__}: {error}"[:200]
+            return None
         return results[0] if results else None
+
+    @property
+    def last_error(self) -> str:
+        return self._last_error or self.pool.last_error
 
     @property
     def fingerprint(self) -> str:

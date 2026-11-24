@@ -1300,6 +1300,9 @@ async def run_engineering_loop(
                                 payload={
                                     "reason": exc.code,
                                     "detail": detail,
+                                    # 远程那一跳的真实原因（超时/空响应/HTTP），
+                                    # 否则拒绝详情永远只是一句 NoneType。
+                                    "transport_error": cartographer_runtime.last_error,
                                     "observed_phase": observed_phase,
                                     "returned_phase": returned_phase,
                                     "fingerprint": cartographer_runtime.fingerprint,
