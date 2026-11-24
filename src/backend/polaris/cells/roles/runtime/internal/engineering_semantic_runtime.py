@@ -58,7 +58,13 @@ class SemanticRuntime:
             }
             for candidate in request.get("candidates", [])
         ]
-        summaries = await self.pool.summarize_many(summary_requests) if summary_requests else []
+        if summary_requests:
+            from polaris.cells.roles.runtime.internal.engineering_plugin_slot import claim_plugin_slot
+
+            async with claim_plugin_slot():
+                summaries = await self.pool.summarize_many(summary_requests)
+        else:
+            summaries = []
         return [
             {
                 "endpoint_index": 0,

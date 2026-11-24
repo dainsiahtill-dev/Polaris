@@ -75,7 +75,7 @@ _STOCK_SUMMARY_MARKERS = frozenset(
 _MIN_INFORMATIVE_SUMMARY_CHARS = 4
 
 
-def summary_is_informative(text: object, original: object) -> bool:
+def summary_is_informative(text: object, original: object = "") -> bool:
     """Require a summary that explains the payload, never a status word or excerpt.
 
     Folding replaces the payload with this text in the next request, so a bare

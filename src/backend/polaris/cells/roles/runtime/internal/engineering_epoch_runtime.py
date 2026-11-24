@@ -163,7 +163,14 @@ class EpochRuntime:
             "allowed_evidence_refs": sorted(candidates.evidence_refs),
             "max_summary_tokens": 640,
         }
-        self._job = asyncio.create_task(self.pool.summarize_many([summary_request]))
+        from polaris.cells.roles.runtime.internal.engineering_plugin_slot import claim_plugin_slot
+
+        async def _draw() -> list[dict[str, Any]]:
+            async with claim_plugin_slot():
+                drawn = await self.pool.summarize_many([summary_request])
+                return [dict(item) for item in drawn]
+
+        self._job = asyncio.create_task(_draw())
 
     def poll(self) -> dict[str, Any] | None:
         if self._job is None or not self._job.done():

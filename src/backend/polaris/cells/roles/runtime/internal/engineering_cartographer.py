@@ -493,6 +493,18 @@ def validate_run_card_narrative(
             "reason_too_long",
             f"reason has {len(reason)} characters, limit is 160",
         )
+    # 与蒸馏器/节点摘要共用同一道"这不是裁决"闸：小模型常用一句占位话
+    # 交差，而叙述卡是低通过率的那道门（实测 5.6%），不能只有长度限制。
+    from polaris.cells.roles.runtime.internal.engineering_semantic_advice import (
+        summary_is_informative,
+    )
+
+    # 空 reason 是允许的（纯阶段切换卡），但填了字就必须是一句观察。
+    if reason.strip() and not summary_is_informative(reason):
+        raise NarrativeRejectedError(
+            "reason_is_placeholder",
+            f"reason must state what was observed, got {reason[:80]!r}",
+        )
     return {
         "schema_version": SCHEMA_VERSION,
         "phase": phase,
@@ -525,7 +537,13 @@ class CartographerRuntime:
             return
         self._fingerprint = fingerprint
         self._request = request
-        self._job = asyncio.create_task(self.pool.draw_many([request]))
+        from polaris.cells.roles.runtime.internal.engineering_plugin_slot import claim_plugin_slot
+
+        async def _draw() -> list[str]:
+            async with claim_plugin_slot():
+                return await self.pool.draw_many([request])
+
+        self._job = asyncio.create_task(_draw())
 
     def poll(self) -> str | None:
         if self._job is None or not self._job.done():

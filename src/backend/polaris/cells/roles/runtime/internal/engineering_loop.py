@@ -861,13 +861,22 @@ async def run_engineering_loop(
     from polaris.cells.roles.runtime.internal.engineering_epoch_kimi import kimi_epoch_pool_from_environment
     from polaris.cells.roles.runtime.internal.engineering_epoch_runtime import EpochRuntime, facts_for_epoch
 
-    epoch_pool = kimi_epoch_pool_from_environment()
-    fallback_pool = semantic_runtime.pool if semantic_runtime is not None else None
+    # 插件默认关闭：它们只在宿主显式打开时才占出口容量。退回蒸馏器池同样要显式打开，
+    # 否则一个插件就能把另一个插件挤掉（实测 11.2% 的叙述卡通过率就是这么来的）。
+    epoch_on = os.environ.get("KERNELONE_CONTEXTOS_EPOCH", "0").strip().lower() not in {"0", "false", "off"}
+    epoch_pool = kimi_epoch_pool_from_environment() if epoch_on else None
+    fallback_pool = (
+        semantic_runtime.pool
+        if epoch_on
+        and semantic_runtime is not None
+        and os.environ.get("KERNELONE_CONTEXTOS_EPOCH_FALLBACK", "0").strip().lower() not in {"0", "false", "off"}
+        else None
+    )
     epoch_runtime = (
         EpochRuntime(epoch_pool or fallback_pool) if epoch_pool is not None or fallback_pool is not None else None
     )
     cartographer_runtime = None
-    if os.environ.get("KERNELONE_CONTEXTOS_CARTOGRAPHER", "1").strip().lower() not in {"0", "false", "off"}:
+    if os.environ.get("KERNELONE_CONTEXTOS_CARTOGRAPHER", "0").strip().lower() not in {"0", "false", "off"}:
         from polaris.cells.roles.runtime.internal.engineering_cartographer import (
             CartographerRuntime,
             cartographer_pool_from_environment,
@@ -881,6 +890,23 @@ async def run_engineering_loop(
     cartographer_reported: set[str] = set()
     last_injection_fingerprint = ""
     last_run_card_key: tuple[str, str] | None = None
+
+    def _plugin_job_in_flight() -> bool:
+        """同一时刻只允许一个认知插件在途。
+
+        三个插件各有自己的 provider client，但抢的是同一份出口容量与同一段时间
+        预算。并发出击的实测结果是互相挤掉对方的轮次（制图师叙述卡通过率 5.6%，
+        且 62% 的拒绝是"与持久事实冲突"）。排队后，来不及产出卡片的插件这一轮
+        直接被跳过，下一轮再来。
+        """
+
+        for runtime in (semantic_runtime, epoch_runtime, cartographer_runtime):
+            if runtime is None:
+                continue
+            job = getattr(runtime, "_job", None)
+            if job is not None and not job.done():
+                return True
+        return False
     capability_last_used: dict[str, int] = {}
     capability_last_reminded: dict[str, int] = {}
     resident_stage: str | None = None
@@ -1232,7 +1258,7 @@ async def run_engineering_loop(
                 advice_request, advice_refs, advice_fingerprint = facts_for_advice(
                     run_now, store.load_events(command.session_id)
                 )
-                if advice_refs.node_ids:
+                if advice_refs.node_ids and not _plugin_job_in_flight():
                     semantic_runtime.schedule(advice_request, advice_refs, fingerprint=advice_fingerprint)
             if epoch_runtime is not None:
                 epoch_card = epoch_runtime.poll()
@@ -1247,7 +1273,7 @@ async def run_engineering_loop(
                 epoch_request, epoch_refs, epoch_fingerprint = facts_for_epoch(
                     run_now, store.load_events(command.session_id)
                 )
-                if epoch_refs.node_ids:
+                if epoch_refs.node_ids and not _plugin_job_in_flight():
                     epoch_runtime.schedule(epoch_request, epoch_refs, fingerprint=epoch_fingerprint)
             cartographer_card: dict[str, Any] | None = None
             if cartographer_runtime is None and turn_seq == 1:
@@ -1324,7 +1350,8 @@ async def run_engineering_loop(
                     run_card_request, run_card_fingerprint = facts_for_run_card(
                         run_now, store.load_events(command.session_id)
                     )
-                    cartographer_runtime.schedule(run_card_request, fingerprint=run_card_fingerprint)
+                    if not _plugin_job_in_flight():
+                        cartographer_runtime.schedule(run_card_request, fingerprint=run_card_fingerprint)
                     store.append_event(
                         command.session_id,
                         kind="cartographer_scheduled",
@@ -1530,6 +1557,25 @@ async def run_engineering_loop(
                     request_messages = [message for message in request_messages if message not in injected]
                 else:
                     last_injection_fingerprint = fingerprint
+                    # 效益可审计：记下这一刻模型被告知了什么，之后对比它真正做了什么。
+                    try:
+                        plugin_card = json.loads(str(injected[0]["content"]))
+                    except (IndexError, TypeError, json.JSONDecodeError):
+                        plugin_card = {}
+                    store.append_event(
+                        command.session_id,
+                        kind="plugin_card_injected",
+                        role=command.role,
+                        payload={
+                            "turn_seq": turn_seq,
+                            "phase": plugin_card.get("phase"),
+                            "source": plugin_card.get("source", "host"),
+                            "next_actions": [
+                                str(item.get("action"))[:120]
+                                for item in (plugin_card.get("next_actions") or [])
+                            ],
+                        },
+                    )
             options: dict[str, Any] = {
                 "messages": request_messages,
                 "tools": tools.schemas(),
