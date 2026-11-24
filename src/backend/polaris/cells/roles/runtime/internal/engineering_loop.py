@@ -1784,7 +1784,9 @@ async def run_engineering_loop(
                             "the clause; use your own read_file/browser_observe call IDs for anything you verified "
                             "directly. Put the explanation in feedback. Mark unverifiable clauses unknown, but "
                             "every fail/unknown evidence must state what you actually observed (a file path and "
-                            "what is missing, or a call ID) — “Review not started” is not a finding."
+                            "what is missing, or a call ID) — “Review not started” is not a finding. "
+                            "This is the ruling, not a progress report: a matrix whose every clause is unknown "
+                            "is rejected and sent back, so rule on the clauses or finish the checks first."
                         )
                     else:
                         instruction = (
