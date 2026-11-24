@@ -57,6 +57,10 @@ if TYPE_CHECKING:
     from polaris.cells.roles.kernel.internal.context_gateway import ContextRequest
     from polaris.cells.roles.profile.public.service import RoleProfile
 
+from polaris.kernelone.llm.toolkit.parsers.textual_tool_recovery import (
+    strip_unparsed_text_tool_markers,
+)
+
 from ._helpers import (
     _enforce_factory_semantic_zero_transport,
     _FactorySemanticDispatchNotEnabledError,
@@ -544,6 +548,10 @@ class _InvokerCallMixin:
             "text_tool_parser_attempted": False,
             "text_tool_decoded_calls_count": 0,
         }
+        # Markup the decoders could not turn into a call must not survive as
+        # assistant prose: it leaks into review feedback and then into clause
+        # matching. Applied after recovery so parsed calls keep their text.
+        response_text = strip_unparsed_text_tool_markers(response_text)
         if not native_tool_calls:
             recovery = _recover_text_tool_calls_from_response_text(
                 response_text=response_text,

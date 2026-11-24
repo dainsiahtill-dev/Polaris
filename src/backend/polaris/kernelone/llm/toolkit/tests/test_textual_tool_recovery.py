@@ -256,3 +256,30 @@ class TestQwen3CoderEqualsStyle:
         assert "Done." in cleaned
         assert "<function=" not in cleaned
         assert "makeBricks" not in cleaned
+
+
+class TestStripUnparsedMarkers:
+    """Markup the decoders could not parse must not survive as model prose."""
+
+    def test_drops_truncated_and_unknown_dialect_blocks(self) -> None:
+        from polaris.kernelone.llm.toolkit.parsers.textual_tool_recovery import (
+            strip_unparsed_text_tool_markers,
+        )
+
+        leaked = (
+            "Working state now shows revision 117 with verification not run. Re-anchoring."
+            "]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"execute_command\">"
+        )
+        cleaned = strip_unparsed_text_tool_markers(leaked)
+        assert "Re-anchoring." in cleaned
+        assert "verification not run" in cleaned
+        assert "tool_call" not in cleaned
+        assert "invoke" not in cleaned
+
+    def test_keeps_ordinary_prose_untouched(self) -> None:
+        from polaris.kernelone.llm.toolkit.parsers.textual_tool_recovery import (
+            strip_unparsed_text_tool_markers,
+        )
+
+        prose = "All 46 assertion groups pass; the moon renders correctly."
+        assert strip_unparsed_text_tool_markers(prose) == prose

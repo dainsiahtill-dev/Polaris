@@ -601,8 +601,42 @@ def strip_textual_tool_call_markers(
     return token.strip()
 
 
+# XML-dialect call blocks some servers emit instead of native tool_calls. When a
+# block is truncated or uses a dialect the parsers do not know, the raw markup
+# survives into assistant content and from there into a review report or the next
+# request. Observed verbatim in a live QA verdict: `<tool_call>` and
+# `<invoke name="execute_command">`.
+_XML_TOOL_BLOCK_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"<function_calls?\b[^>]*>.*?</function_calls?>", re.DOTALL | re.IGNORECASE),
+    re.compile(r"<tool_call\b[^>]*>.*?</tool_call\s*>", re.DOTALL | re.IGNORECASE),
+    re.compile(r"<invoke\b[^>]*>.*?</invoke\s*>", re.DOTALL | re.IGNORECASE),
+    re.compile(r"<parameter\b[^>]*>.*?</parameter\s*>", re.DOTALL | re.IGNORECASE),
+    # Unclosed leftovers: keep the surrounding prose, drop the markup tail.
+    re.compile(r"<tool_call\b[^>]*>.*", re.DOTALL | re.IGNORECASE),
+    re.compile(r"<invoke\b[^>]*>.*", re.DOTALL | re.IGNORECASE),
+    re.compile(r"<function\s*=\s*[A-Za-z_][A-Za-z0-9_]*\s*>.*", re.DOTALL | re.IGNORECASE),
+)
+
+
+def strip_unparsed_text_tool_markers(text: str) -> str:
+    """Drop tool-call markup that the decoders could not turn into a call.
+
+    A truncated or unknown-dialect block must not survive as model prose: it
+    leaks into review feedback and then into clause matching. Only the marker
+    syntax is removed; any sentence around it is preserved.
+    """
+
+    if "<" not in text:
+        return text
+    cleaned = text
+    for pattern in _XML_TOOL_BLOCK_PATTERNS:
+        cleaned = pattern.sub("", cleaned)
+    return cleaned
+
+
 __all__ = [
     "has_textual_tool_calls",
     "recover_textual_tool_calls",
     "strip_textual_tool_call_markers",
+    "strip_unparsed_text_tool_markers",
 ]
