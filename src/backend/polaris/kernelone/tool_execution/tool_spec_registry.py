@@ -1358,7 +1358,8 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
         ],
         "response_format_hint": "Full file content with truncation flag",
         "budget_hint": "For files >500 lines, prefer repo_read_slice. For files >2000 lines, explicit budget upgrade required.",
-        "required_any": [("file",), ("content_ref",)],
+        # 一组 = "至少有一个"（AND-of-OR），不是"两个都要"。
+        "required_any": [("file", "content_ref")],
         "required_doc": "args.file required. Prefer repo_read_slice/around for files >100 lines.",
     },
     # --- 9 active tools with handlers but missing from contracts.py ---
