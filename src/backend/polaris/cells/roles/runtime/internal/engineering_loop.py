@@ -404,6 +404,14 @@ _FIRST_VERIFICATION_FRACTION_DEFAULT = 0.4
 _QA_TURN_LIMIT_ENV = "KERNELONE_ENGINEERING_QA_MAX_TURNS"
 _QA_TURN_LIMIT_DEFAULT = 50
 _QA_TURN_GRACE = 5
+# The Director has no hard stop of its own, so a slow run hands the reviewer
+# whatever is left. Measured on L1-01: the Director took 49.5 of 90 minutes, the
+# reviewer then spent 32 of its 40 minutes and was still mid-review ("I'll start
+# by reading the actual source files") when the 600s reserve forced a verdict —
+# the run ended interrupted with project_outcome unknown even though verification
+# had passed. The reviewer gets a guaranteed share and the Director yields.
+_QA_MIN_FRACTION_ENV = "KERNELONE_ENGINEERING_QA_MIN_FRACTION"
+_QA_MIN_FRACTION_DEFAULT = 0.45
 
 
 def _retention_fold_window(
@@ -1141,6 +1149,16 @@ async def run_engineering_loop(
     )
     qa_turn_limit = int(os.environ.get(_QA_TURN_LIMIT_ENV, str(_QA_TURN_LIMIT_DEFAULT)) or 0)
     qa_turns = 0
+    qa_min_fraction = min(
+        0.8,
+        max(0.0, float(os.environ.get(_QA_MIN_FRACTION_ENV, str(_QA_MIN_FRACTION_DEFAULT)) or 0)),
+    )
+    # 到点必须把候选交给独立审查，否则审查会被压到没有时间读源码。
+    if limits.deadline is not None and qa_min_fraction > 0:
+        _created_at = float(store.load_run(command.session_id, workspace=command.workspace)["created_at"])
+        director_deadline = float(limits.deadline) - (float(limits.deadline) - _created_at) * qa_min_fraction
+    else:
+        director_deadline = None
     # The host selected the run's shell policy (bash_pipefail_v1). Ordinary
     # execute_command must honour it too: under the POSIX default a piped command
     # such as `npm run build 2>&1 | tail` masks the real exit status, so a failed
@@ -1166,6 +1184,32 @@ async def run_engineering_loop(
                         "the candidate keeps its current verdict (unknown).",
                     )
             run_now = store.load_run(command.session_id, workspace=command.workspace)
+            # 只有在候选已经通过验证之后才让位：那之前强行收尾只会把未验证的
+            # 候选交给审查，而首次验证本身有独立预算点。
+            if (
+                command.role == "director"
+                and director_deadline is not None
+                and candidate_verification_passed
+                and time.time() >= director_deadline
+            ):
+                # 到点让位：独立审查需要足读源码与截图的时间，否则它会交出一份
+                # "证据不足"的裁决，整轮停在 unknown（实测 L1-01：审查刚要读源码
+                # 就被 reserve 强制收尾）。
+                store.append_event(
+                    command.session_id,
+                    kind="qa_share_enforced",
+                    role="director",
+                    payload={
+                        "turn_seq": turn_seq,
+                        "qa_min_fraction": qa_min_fraction,
+                        "verification": run_now.get("verification"),
+                    },
+                )
+                return finish(
+                    "completed",
+                    f"Director reached the host's QA share boundary ({qa_min_fraction:.0%} of the run "
+                    "budget reserved for independent review). Handing the current candidate to QA.",
+                )
             if semantic_runtime is not None:
                 advice = semantic_runtime.poll()
                 advice_fingerprint = str(advice.get("fingerprint") or "") if advice is not None else ""

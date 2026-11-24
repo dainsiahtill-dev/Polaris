@@ -572,6 +572,57 @@ async def test_loop_detection_injects_recovery_guidance(
     assert len(detections) == 1
 
 
+async def test_director_yields_once_the_qa_share_boundary_is_reached(
+    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """独立审查要有足够时间读源码，Director 到点必须让位。
+
+    实测 L1-01：Director 吃掉 49.5/90 分钟，审查在"刚要读源码"时被 reserve 强制
+    收尾，整轮停在 unknown。
+    """
+
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from polaris.cells.roles.runtime.internal import engineering_loop
+
+    loop, store, _tools, command, scope, limits = _setup(
+        isolated_workspace, enabled=frozenset({"read_file", "execute_command", "verify_project"})
+    )
+    created = float(store.load_run(command.session_id, workspace=isolated_workspace)["created_at"])
+    # 预算 60s，QA 份额 45% → 边界在 33s；时钟推过边界。
+    limits = replace(limits, deadline=created + 60)
+    monkeypatch.setattr(engineering_loop, "time", SimpleNamespace(time=lambda: created + 40, monotonic=time.monotonic))
+    # 先让候选通过验证（未验证不让位），再进入下一轮触发让位。
+    (isolated_workspace / "a.py").write_text("x = 1\n", encoding="utf-8")
+    scripted_provider.enqueue_json(_native(("first-verify", "verify_project", {"commands": ["python3 -m py_compile a.py"]})))
+    scripted_provider.enqueue_json(_native(text="done"))
+    from polaris.cells.roles.runtime.public.contracts.engineering_run import ToolObservation
+
+    async def fake_verify(commands: tuple[str, ...], turn_seq: int, call_id: str) -> ToolObservation:
+        return ToolObservation(
+            call_id=call_id, tool="verify_project", ok=True, content="checks ran", exit_code=0, interrupted=False
+        )
+
+    result = await loop(
+        command,
+        scope=scope,
+        limits=limits,
+        cancel=asyncio.Event(),
+        store=store,
+        client=scripted_provider.client("openai", isolated_workspace, monkeypatch),
+        verify=fake_verify,
+    )
+    assert result.status == "completed"
+    assert any(
+        event["kind"] == "qa_share_enforced" for event in store.load_events(command.session_id)
+    )
+    # 首次验证之前不让位：候选先拿到 passing 证据，再交给独立审查。
+    assert next(
+        event for event in store.load_events(command.session_id) if event["kind"] == "turn_finished"
+    )
+
+
 async def test_qa_loop_guidance_uses_only_this_frames_previous_probe(
     isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:
