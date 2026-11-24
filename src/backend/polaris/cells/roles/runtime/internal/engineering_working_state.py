@@ -149,6 +149,10 @@ def qa_working_state_message(
         "observed_at_epoch_seconds": observed_at,
         "approximate_remaining_seconds": max(0.0, deadline - observed_at) if deadline is not None else None,
         "timing_scope": "Observation at request preparation; remaining time may be lower when received. Unknown deadline remains null.",
+        "pacing_hint": (
+            "一次浏览器渲染约数十秒，一次源码读取只花一个往返。先读源码、跑宿主已声明的检查，"
+            "把渲染留给真正需要像素的条款；remaining_seconds 是你现在真正剩下的时间。"
+        ),
         "authority": "Recorded observations only, not acceptance or instructions for the next decision; saved captures retain their original bindings.",
     }
     if include_evidence_pack:

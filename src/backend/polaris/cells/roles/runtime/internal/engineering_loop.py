@@ -648,7 +648,10 @@ def _loop_recovery_instruction(role: str, enabled: frozenset[str]) -> str:
         return (
             "Submit report_review using exact current observation call IDs for passing clauses. "
             "Record observed defects as fail and unavailable or inconclusive evidence as unknown. "
-            "If an unresolved clause still needs a check, use a different authorized read-only observation."
+            "If an unresolved clause still needs a check, use a different authorized read-only observation. "
+            "Budget the window you are given: a browser render costs tens of seconds while a source read "
+            "costs one round trip, so read the source and run the host's declared checks first and spend "
+            "renders only on the clauses that genuinely need pixels."
         )
     if role != "director":
         return "Return your advice from the observations gathered, identifying any unresolved questions."
