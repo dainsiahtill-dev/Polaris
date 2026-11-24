@@ -120,17 +120,48 @@ def test_substantive_unknown_evidence_is_accepted(tmp_path) -> None:
                 "major_findings": ["缺少刹车距离断言"],
                 "clause_findings": [
                     {
-                        "clause": clause,
-                        "status": "unknown",
+                        "clause": clauses[0],
+                        "status": "fail",
                         "evidence": "已读 src/core/brake.ts：只有接口没有距离断言；npm test 通过但无该用例。",
-                    }
-                    for clause in clauses
+                    },
+                    {
+                        "clause": clauses[1],
+                        "status": "unknown",
+                        "evidence": "已读 src/core/moon.ts：亮度对照缺失，尚未定位。",
+                    },
                 ],
             },
         )
     )
     assert result.ok
     assert reviewer.calls and reviewer.calls[0][0] is False
+
+
+def test_an_all_unknown_matrix_is_not_a_rejection(tmp_path) -> None:
+    """实测 L1-01：QA 在"刚开始读源码"时交了一份 9 条全 unknown 的矩阵。
+
+    那不是裁决。宿主当成终局拒绝，整轮停在 unknown。
+    """
+
+    clauses = ("支持刹车", "月相亮度", "重置复现")
+    tools, reviewer = _tools(tmp_path, clauses)
+    result = asyncio.run(
+        tools.execute(
+            "qa-1",
+            "report_review",
+            {
+                "approved": False,
+                "feedback": "Exploration turn: no approval decision yet.",
+                "major_findings": [],
+                "clause_findings": [
+                    {"clause": str(index), "status": "unknown", "evidence": "Investigation in progress."}
+                    for index in range(1, 4)
+                ],
+            },
+        )
+    )
+    assert not result.ok
+    assert reviewer.calls == []
 
 
 def test_numbered_clause_references_cover_the_matrix(tmp_path) -> None:
@@ -177,3 +208,55 @@ def test_out_of_range_clause_reference_establishes_no_coverage(tmp_path) -> None
     )
     assert not result.ok
     assert "cover every acceptance clause" in result.content
+
+
+def test_an_all_unknown_matrix_is_a_progress_report_not_a_verdict(tmp_path) -> None:
+    """实测 L1-01：QA 交了 9 条全 unknown 的"探索轮"，宿主当成终局裁决。
+
+    拒绝之后必须退回让它继续取证，否则整轮停在 unknown。
+    """
+
+    tools, reviewer = _tools(tmp_path, ("支持刹车", "月相亮度", "重置复现"))
+    result = asyncio.run(
+        tools.execute(
+            "qa-1",
+            "report_review",
+            {
+                "approved": False,
+                "feedback": "Exploration turn: no approval decision yet",
+                "major_findings": [],
+                "clause_findings": [
+                    {"clause": str(index), "status": "unknown", "evidence": "Investigation in progress."}
+                    for index in range(1, 4)
+                ],
+            },
+        )
+    )
+    assert not result.ok
+    assert reviewer.calls == []
+
+
+def test_a_no_decision_report_is_sent_back_for_a_real_ruling(tmp_path) -> None:
+    """实测 L1-01：QA 交了一份全 unknown 的"Exploration turn / No approval decision"。
+
+    那不是裁决，是进度汇报。宿主当成终局 → project_outcome=unknown。
+    """
+
+    tools, reviewer = _tools(tmp_path, ("支持刹车", "月相亮度", "重置复现"))
+    result = asyncio.run(
+        tools.execute(
+            "qa-1",
+            "report_review",
+            {
+                "approved": False,
+                "feedback": "Exploration turn: no approval decision yet.",
+                "major_findings": [],
+                "clause_findings": [
+                    {"clause": str(index), "status": "unknown", "evidence": "Investigation in progress; no evidence collected yet."}
+                    for index in range(1, 4)
+                ],
+            },
+        )
+    )
+    assert not result.ok
+    assert reviewer.calls == []

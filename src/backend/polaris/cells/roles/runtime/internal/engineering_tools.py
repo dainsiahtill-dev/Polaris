@@ -80,6 +80,21 @@ _PLACEHOLDER_EVIDENCE = {
     "unknown",
 }
 
+# 明确声明"还没查完"的措辞。实测 L1-01 的 QA 在刚要读源码时提交了这样一份
+# "Exploration turn … No approval decision yet"，宿主当成终局裁决 → 整轮 unknown。
+# 这类文字必须退回继续取证，不能作为裁决。
+_NON_DECISION_MARKERS = (
+    "no approval decision",
+    "no decision yet",
+    "not yet ruled",
+    "investigation in progress",
+    "no evidence collected",
+    "exploration turn",
+    "starting qa review",
+    "interim: ",
+    "pending evidence",
+)
+
 
 def _is_placeholder_evidence(text: str) -> bool:
     """A stock placeholder is not an observation.
@@ -92,6 +107,8 @@ def _is_placeholder_evidence(text: str) -> bool:
     stripped = text.strip()
     lowered = stripped.lower().rstrip(".")
     if lowered in _PLACEHOLDER_EVIDENCE:
+        return True
+    if any(marker in lowered for marker in _NON_DECISION_MARKERS):
         return True
     # A real receipt is evidence regardless of length.
     if re.fullmatch(r"(?:call_|verif(?:y|ication)-|command:|filecard:|event-)[A-Za-z0-9_.:-]+", stripped):
