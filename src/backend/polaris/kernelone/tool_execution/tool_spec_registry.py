@@ -1358,7 +1358,7 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
         ],
         "response_format_hint": "Full file content with truncation flag",
         "budget_hint": "For files >500 lines, prefer repo_read_slice. For files >2000 lines, explicit budget upgrade required.",
-        "required_any": [("file", "content_ref")],
+        "required_any": [("file",), ("content_ref",)],
         "required_doc": "args.file required. Prefer repo_read_slice/around for files >100 lines.",
     },
     # --- 9 active tools with handlers but missing from contracts.py ---
@@ -1831,6 +1831,15 @@ def _build_tool_spec_from_dict(tool_name: str, spec_dict: dict[str, Any]) -> Too
     }
     if required:
         parameters["required"] = required
+    # "at least one of these groups"（read_file: file XOR content_ref）必须落在
+    # parameters 里 —— registry.get() 只从 arguments 重建 parameters，解析层
+    # 只认 parameters，所以只写 required_any 会被丢掉。
+    required_any = spec_dict.get("required_any")
+    if isinstance(required_any, list) and required_any and "anyOf" not in parameters:
+        parameters["anyOf"] = [
+            {"required": list(group)} if isinstance(group, (list, tuple)) else {"required": [group]}
+            for group in required_any
+        ]
     parameter_any_of = spec_dict.get("parameter_any_of")
     if isinstance(parameter_any_of, list) and parameter_any_of:
         parameters["anyOf"] = deepcopy(parameter_any_of)
