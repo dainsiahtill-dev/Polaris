@@ -1557,25 +1557,54 @@ async def run_engineering_loop(
                     request_messages = [message for message in request_messages if message not in injected]
                 else:
                     last_injection_fingerprint = fingerprint
-                    # 效益可审计：记下这一刻模型被告知了什么，之后对比它真正做了什么。
-                    try:
-                        plugin_card = json.loads(str(injected[0]["content"]))
-                    except (IndexError, TypeError, json.JSONDecodeError):
-                        plugin_card = {}
+                    # 效益可审计：记下这一刻模型被告知了什么，之后由审计对比它真正
+                    # 做了什么。注入的是记忆卡文本（失败聚类/验证契约/设计决策/
+                    # Epoch），不是 JSON —— 上一版按 JSON 解析，15 条全记成
+                    # phase=null/next_actions=[]，等于没测。
+                    content = "\n".join(str(message["content"]) for message in injected)
+                    kinds = [
+                        label
+                        for label, marker in (
+                            ("failure_cluster", "未解决失败聚类"),
+                            ("verification_contract", "最近验证契约"),
+                            ("decision_journal", "已确定的设计决策"),
+                            ("epoch_card", "Epoch 记忆"),
+                        )
+                        if marker in content
+                    ]
+                    titles = [
+                        str(line)[2:][:120]
+                        for line in content.splitlines()
+                        if line.startswith("- ")
+                    ]
                     store.append_event(
                         command.session_id,
-                        kind="plugin_card_injected",
+                        kind="memory_card_injected",
                         role=command.role,
                         payload={
                             "turn_seq": turn_seq,
-                            "phase": plugin_card.get("phase"),
-                            "source": plugin_card.get("source", "host"),
-                            "next_actions": [
-                                str(item.get("action"))[:120]
-                                for item in (plugin_card.get("next_actions") or [])
-                            ],
+                            "kinds": kinds,
+                            "titles": titles[:8],
+                            "chars": len(content),
+                            "digest": hashlib.sha256(content.encode("utf-8")).hexdigest()[:16],
                         },
                     )
+                    # 阶段卡的 next_actions 才是"建议"，单独记，便于比对模型下一步。
+                    if run_card.get("next_actions"):
+                        store.append_event(
+                            command.session_id,
+                            kind="plugin_card_injected",
+                            role=command.role,
+                            payload={
+                                "turn_seq": turn_seq,
+                                "phase": run_card.get("phase"),
+                                "source": str((run_card.get("narrative") or {}).get("reason") or "host")[:60],
+                                "next_actions": [
+                                    str(item.get("action"))[:120]
+                                    for item in (run_card.get("next_actions") or [])
+                                ],
+                            },
+                        )
             options: dict[str, Any] = {
                 "messages": request_messages,
                 "tools": tools.schemas(),

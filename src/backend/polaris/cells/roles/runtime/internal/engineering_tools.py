@@ -80,19 +80,41 @@ _PLACEHOLDER_EVIDENCE = {
     "unknown",
 }
 
-# 明确声明"还没查完"的措辞。实测 L1-01 的 QA 在刚要读源码时提交了这样一份
-# "Exploration turn … No approval decision yet"，宿主当成终局裁决 → 整轮 unknown。
+# 明确声明"还没查完"的措辞。下表来自 83 个真实 run 里被宿主接受、却让整轮停在
+# unknown 的 QA 报告原文（全量审计 2026-11-25），不是凭感觉列的。
 # 这类文字必须退回继续取证，不能作为裁决。
 _NON_DECISION_MARKERS = (
     "no approval decision",
     "no decision yet",
+    "no verdict yet",
     "not yet ruled",
+    "not yet read",
     "investigation in progress",
+    "review in progress",
     "no evidence collected",
+    "no verification performed yet",
     "exploration turn",
     "starting qa review",
+    "starting review",
+    "beginning qa review",
+    "beginning review",
+    "initial probe",
+    "initial placeholder",
+    "interim placeholder",
+    "interim ruling",
     "interim: ",
+    "provisional qa pass",
+    "probing available",
+    "re-establishing workspace",
+    "i have not yet",
+    "need to read",
+    "will read",
     "pending evidence",
+    "pending browser verification",
+    "pending source and browser verification",
+    "pending verification",
+    "pending review of",
+    "source reads pending",
 )
 
 
@@ -108,11 +130,12 @@ def _is_placeholder_evidence(text: str) -> bool:
     lowered = stripped.lower().rstrip(".")
     if lowered in _PLACEHOLDER_EVIDENCE:
         return True
-    if any(marker in lowered for marker in _NON_DECISION_MARKERS):
-        return True
-    # A real receipt is evidence regardless of length.
+    # 裸回执（整个字符串就是一个 call/verification 引用）永远是证据，先判它，
+    # 否则"已读 src/app.ts：pending 未清空（call_xxx）"会被下面的措辞表误伤。
     if re.fullmatch(r"(?:call_|verif(?:y|ication)-|command:|filecard:|event-)[A-Za-z0-9_.:-]+", stripped):
         return False
+    if any(marker in lowered for marker in _NON_DECISION_MARKERS):
+        return True
     ideographs = sum(1 for char in stripped if ord(char) > 0x2E80)
     letters = sum(1 for char in stripped if char.isascii() and char.isalpha())
     if ideographs < 4 and letters < 8:

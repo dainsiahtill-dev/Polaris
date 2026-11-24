@@ -124,13 +124,62 @@ def test_unavailable_clause_remains_unknown_through_report_and_fidelity() -> Non
         goal_clauses=["Review rendering"], findings=normalize_clause_findings(raw), qa_verdict="approved"
     )
     assert (result.status, result.covered, result.missing) == ("unknown", 0, ("Review rendering",))
-    for approved in (True, False):
-        report = {
-            "call_id": "review",
-            "content": json.dumps({"approved": approved, "feedback": "Cannot assess", "clause_findings": raw}),
-        }
-        verdict, _, _ = interpret_review_reports([report])
-        assert verdict == "unknown"
+    # 全 unknown 的"批准"不是裁决，是进度汇报 —— 宿主导回（工具层也已拦一道）。
+    only_unknown = {
+        "call_id": "review",
+        "content": json.dumps({"approved": True, "feedback": "Approved", "clause_findings": raw}),
+    }
+    assert interpret_review_reports([only_unknown])[0] == "unknown"
+    rejected_report = {
+        "call_id": "review",
+        "content": json.dumps({"approved": False, "feedback": "Cannot assess", "clause_findings": raw}),
+    }
+    assert interpret_review_reports([rejected_report])[0] == "unknown"
+
+
+def test_an_approval_with_partial_coverage_is_still_a_ruling() -> None:
+    """9 条具体 pass + 1 条 unknown 的显式批准是裁决。
+
+    实测 83 run 审计：22 个已验证 run 因此停在 interrupted，其中 12 个
+    function=passed、9 条具体 pass 被一起作废。覆盖不足由 assess_fidelity 记成
+    unknown，但整份批准不能丢。
+    """
+
+    findings = [
+        {"clause": f"条款{i}", "status": "pass", "evidence": "call_abc123：已读 src/a.ts 并跑通"}
+        for i in range(9)
+    ] + [{"clause": "免责声明", "status": "unknown", "evidence": "call_abc123：页面未见该声明"}]
+    report = {
+        "call_id": "review",
+        "content": json.dumps({"approved": True, "feedback": "Approved", "clause_findings": findings}),
+    }
+    verdict, _feedback, _index = interpret_review_reports([report])
+    assert verdict == "approved"
+    fidelity = assess_fidelity(
+        goal_clauses=[f"条款{i}" for i in range(9)] + ["免责声明"],
+        findings=normalize_clause_findings(findings),
+        qa_verdict=verdict,
+    )
+    assert fidelity.status == "unknown"
+    assert fidelity.missing == ("免责声明",)
+
+
+def test_an_approval_carrying_major_findings_still_routes_to_repair() -> None:
+    """一边批准一边列 major findings 是否决：把缺陷交给同一 Director 去修，
+    比把整轮停在 unknown 更有用。"""
+
+    report = {
+        "call_id": "review",
+        "content": json.dumps(
+            {
+                "approved": True,
+                "feedback": "Approved with caveats",
+                "major_findings": ["重置后 pending 状态未清空"],
+                "clause_findings": [],
+            }
+        ),
+    }
+    assert interpret_review_reports([report])[0] == "rejected"
 
 
 def test_dimensions_summary_marks_not_required() -> None:

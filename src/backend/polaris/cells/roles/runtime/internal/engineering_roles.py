@@ -497,11 +497,23 @@ def interpret_review_reports(
             findings = normalize_clause_findings(report.get("clause_findings"))
             if any(item.status == "fail" for item in findings):
                 report["approved"] = False
-            elif any(item.status == "unknown" for item in findings):
+            elif any(item.status == "unknown" for item in findings) and not report["approved"]:
+                # 显式批准就是裁决：条款里的 unknown 不否决它，改由 assess_fidelity
+                # 记成"部分覆盖"，不把 9 条具体 pass 一起作废（实测 83 run 审计：
+                # 22 个已验证 run 因此停在 interrupted，其中 12 个 function=passed）。
+                # 只有"没批准"的报告里的 unknown 才是未决。
+                inconclusive.add(index)
+            if report["approved"] and findings and not any(
+                item.status in {"pass", "fail"} for item in findings
+            ):
+                # 全是 unknown 的"批准"不是裁决，是进度汇报（实测 L1-01 的 QA 在
+                # 刚要读源码时交的就是这种）。工具层已拦一道，这里再做宿主导回。
                 inconclusive.add(index)
             valid.append((index, report))
         except (ValueError, TypeError):
             malformed = True
+    # major_findings 非空仍然是否决：把缺陷路由给同一 Director 去修，比整轮
+    # 停在 unknown 更有用（实测 22 个已验证 run 就是被 unknown 卡住的）。
     rejected = [
         (index, report)
         for index, report in valid

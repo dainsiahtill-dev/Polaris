@@ -44,6 +44,30 @@ def _events() -> list[dict[str, object]]:
     ]
 
 
+def test_next_actions_carry_run_specific_facts_not_the_phase_template() -> None:
+    """实测：三条确定性卡的 next_actions 逐字相同（阶段模板），零信息量，
+    模型没有任何可照做的具体动作。有持久事实时必须给出 run 专属的一步。
+    """
+
+    card = deterministic_run_card(_run(), _events(), phase="")
+    action = str(card["next_actions"][0]["action"])
+    assert action != "读取相关源码与现有测试，定位实现与目标的差距"
+    assert "刹车无效" in action
+
+
+def test_next_actions_tell_the_model_to_verify_an_unverified_candidate() -> None:
+    run = {"verification": "not_run", "workspace_revision": 3, "status": "running"}
+    events = [
+        {
+            "kind": "tool_observed",
+            "payload": {"tool": "write_file", "call_id": "call_1", "ok": True, "arguments": {"file": "src/a.ts"}},
+        },
+        {"kind": "tool_started", "payload": {"tool": "write_file", "call_id": "call_1", "arguments": {"file": "src/a.ts"}}},
+    ]
+    card = deterministic_run_card(run, events, phase="")
+    assert "verify_project" in str(card["next_actions"][0]["action"])
+
+
 def test_facts_read_phase_and_failure_signature() -> None:
     facts = current_facts(_run(), _events())
     assert facts["phase"] == "EDIT"

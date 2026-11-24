@@ -89,6 +89,17 @@ def deterministic_run_card(
             signature_count = occurrences[candidate]
 
     action, expected = _PHASE_NEXT_ACTIONS.get(normalized_phase, _PHASE_NEXT_ACTIONS["DIAGNOSE"])
+    # 阶段模板对每一条卡都一样（实测三条卡逐字相同），等于零信息量，模型没有任何
+    # 可照做的具体动作。有持久事实时改成 run 专属的一步。
+    if facts["verification"] == "failed" and signature:
+        action = f"先修最近一次失败：{signature[:80]}"
+        expected = "该失败签名不再出现"
+    elif facts["verification"] == "passed":
+        action = "保持当前候选不再改源码，收尾并交独立 QA 复核"
+        expected = "候选通过独立 QA"
+    elif facts["verification"] == "not_run" and written:
+        action = "用 verify_project 跑任务声明的检查（当前候选还没验证过）"
+        expected = "得到 passed 或真实失败"
     evidence = sorted(facts["evidence_refs"])[:8]
     return {
         "schema_version": "run_card_deterministic.v1",

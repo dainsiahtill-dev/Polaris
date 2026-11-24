@@ -260,3 +260,50 @@ def test_a_no_decision_report_is_sent_back_for_a_real_ruling(tmp_path) -> None:
     )
     assert not result.ok
     assert reviewer.calls == []
+
+
+def test_pending_browser_verification_is_a_placeholder(tmp_path) -> None:
+    """实测 4a157380 L1-01：新批次仍交了一份全 unknown、证据写"Pending browser
+    verification of the delivered page." 的报告，被当成终局 → 整轮 interrupted。
+    """
+
+    tools, reviewer = _tools(tmp_path, ("支持刹车", "月相亮度"))
+    result = asyncio.run(
+        tools.execute(
+            "qa-1",
+            "report_review",
+            {
+                "approved": False,
+                "feedback": "Beginning QA review of the candidate.",
+                "major_findings": [],
+                "clause_findings": [
+                    {"clause": "1", "status": "unknown", "evidence": "Pending browser verification of the delivered page."},
+                    {"clause": "2", "status": "unknown", "evidence": "Pending source and browser verification of controls."},
+                ],
+            },
+        )
+    )
+    assert not result.ok
+    assert reviewer.calls == []
+
+
+def test_a_bare_receipt_is_evidence_even_with_pending_wording(tmp_path) -> None:
+    """回执优先于措辞表：真实引用里出现 "pending" 不该被误判成占位。"""
+
+    tools, reviewer = _tools(tmp_path, ("支持刹车",))
+    result = asyncio.run(
+        tools.execute(
+            "qa-1",
+            "report_review",
+            {
+                "approved": False,
+                "feedback": "重置后 pending 状态未清空",
+                "major_findings": ["重置后 pending 状态未清空"],
+                "clause_findings": [
+                    {"clause": "支持刹车", "status": "fail", "evidence": "verify-1"},
+                ],
+            },
+        )
+    )
+    assert result.ok
+    assert reviewer.calls and reviewer.calls[0][0] is False
