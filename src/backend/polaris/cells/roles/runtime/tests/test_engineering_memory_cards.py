@@ -219,3 +219,30 @@ async def test_epoch_runtime_returns_validated_epoch_card() -> None:
     card = runtime.poll()
     assert card is not None and card["kind"] == "epoch_card"
     assert card["summary"] == "完成基础模块，验证仍有失败。"
+
+
+def test_epoch_cards_reach_the_injected_memory() -> None:
+    """实测 2026-11-25：吞噬兽出了 11 张卡却从未进入请求 ——
+    build_memory_cards 里没有 epoch 构建器，过滤 epoch_card 那段是死代码。"""
+
+    events = [
+        {
+            "seq": 1,
+            "kind": "epoch_card_completed",
+            "payload": {
+                "id": "epoch-0001-0010",
+                "summary": "已改 src/garden.ts 与 src/render.ts；npm test 31 项通过；重置复现未验证",
+                "evidence_refs": ["call_abc"],
+                "error": None,
+            },
+        },
+        {
+            "seq": 2,
+            "kind": "epoch_card_completed",
+            "payload": {"id": "epoch-0002-0020", "summary": "", "error": "empty"},
+        },
+    ]
+    cards = [card for card in build_memory_cards({"instruction": "做花园"}, events) if card.get("kind") == "epoch_card"]
+    assert len(cards) == 1 and cards[0]["id"] == "epoch-0001-0010"
+    messages = build_context_memory_messages({"instruction": "做花园"}, events, limit_chars=20_000)
+    assert any("已改 src/garden.ts" in str(message.get("content")) for message in messages)

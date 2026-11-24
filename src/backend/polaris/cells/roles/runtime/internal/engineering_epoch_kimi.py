@@ -76,7 +76,11 @@ class KimiEpochPool:
             "summary_kind=model_inference. Preserve unresolved failures, UNKNOWN, key decisions, changed files, verification history "
             "and current dependencies. Do not claim acceptance or invent evidence. observed_line_ranges must exactly match the request. "
             "Keep summary within 1000 characters and reason within 160 characters; the summary replaces the epoch detail, so "
-            "describe it rather than quoting it."
+            "describe it rather than quoting it. "
+            "Do NOT restate the user goal or the requirement text — the model already has them. "
+            "Summarize what THIS epoch actually did: which files changed, which checks ran and their real verdicts, "
+            "what is still unresolved, and what the next epoch must not repeat. "
+            "实测旧摘要通篇复述目标（'本次epoch…处理冻结需求：用TypeScript实现…'），对模型零价值。"
         )
         body = {
             "model": self.model,

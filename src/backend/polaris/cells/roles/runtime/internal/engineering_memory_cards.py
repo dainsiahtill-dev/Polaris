@@ -68,6 +68,38 @@ def _failure_signatures(text: str) -> list[str]:
     return signatures
 
 
+def build_epoch_cards(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """吞噬兽的 epoch 摘要。
+
+    实测 2026-11-25：吞噬兽完成 11 张卡，但 `build_memory_cards` 没有 epoch 构建器，
+    下面 inject_long_term_memory 里过滤 `kind == "epoch_card"` 的那段是死代码 ——
+    卡全部躺在事件日志里，从未进入模型请求。补上接线。
+    """
+
+    cards: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for event in events:
+        if event["kind"] != "epoch_card_completed":
+            continue
+        payload = event["payload"]
+        if payload.get("error"):
+            continue
+        summary = str(payload.get("summary") or "").strip()
+        identity = str(payload.get("id") or payload.get("fingerprint") or "")
+        if not summary or not identity or identity in seen:
+            continue
+        seen.add(identity)
+        cards.append(
+            {
+                "kind": "epoch_card",
+                "id": identity,
+                "summary": summary,
+                "evidence_refs": [str(ref) for ref in (payload.get("evidence_refs") or [])][:6],
+            }
+        )
+    return cards
+
+
 def build_failure_cluster_cards(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     clusters: dict[str, dict[str, Any]] = {}
     for event in events:
@@ -439,6 +471,7 @@ def build_memory_cards(run: Mapping[str, Any], events: Sequence[Mapping[str, Any
     """Build all deterministic memory cards without model inference."""
 
     return [
+        *build_epoch_cards(events),
         *build_failure_cluster_cards(events),
         *build_interface_contract_cards(events),
         *build_requirement_trace_cards(run, events),
