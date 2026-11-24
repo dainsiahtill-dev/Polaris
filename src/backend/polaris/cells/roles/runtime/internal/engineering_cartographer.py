@@ -539,13 +539,13 @@ class CartographerRuntime:
         self._request: dict[str, Any] = {}
         self._rejections: set[str] = set()
 
-    def schedule(self, request: dict[str, Any], *, fingerprint: str) -> None:
+    def schedule(self, request: dict[str, Any], *, fingerprint: str) -> bool:
         # Never abandon an in-flight draw: the model may take longer than one
         # turn, and cancelling on every fingerprint change would starve it.
         if self._job is not None and not self._job.done():
-            return
+            return False
         if fingerprint == self._fingerprint:
-            return
+            return False
         self._fingerprint = fingerprint
         self._request = request
         from polaris.cells.roles.runtime.internal.engineering_plugin_slot import claim_plugin_slot
@@ -555,6 +555,7 @@ class CartographerRuntime:
                 return await self.pool.draw_many([request])
 
         self._job = asyncio.create_task(_draw())
+        return True
 
     def poll(self) -> str | None:
         if self._job is None or not self._job.done():

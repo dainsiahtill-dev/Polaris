@@ -861,10 +861,12 @@ async def run_engineering_loop(
     from polaris.cells.roles.runtime.internal.engineering_epoch_kimi import kimi_epoch_pool_from_environment
     from polaris.cells.roles.runtime.internal.engineering_epoch_runtime import EpochRuntime, facts_for_epoch
 
-    # 插件默认关闭：它们只在宿主显式打开时才占出口容量。退回蒸馏器池同样要显式打开，
-    # 否则一个插件就能把另一个插件挤掉（实测 11.2% 的叙述卡通过率就是这么来的）。
-    epoch_on = os.environ.get("KERNELONE_CONTEXTOS_EPOCH", "0").strip().lower() not in {"0", "false", "off"}
-    epoch_pool = kimi_epoch_pool_from_environment() if epoch_on else None
+    # 默认 auto：配了 devourer provider 就开，没配就静默不开。上一版默认 "0"，
+    # 结果吞噬兽再也没被创建过（实测 run 里 cartographer/semantic 都有事件，
+    # epoch_* 一条没有）。显式关掉用 KERNELONE_CONTEXTOS_EPOCH=0。
+    epoch_setting = os.environ.get("KERNELONE_CONTEXTOS_EPOCH", "auto").strip().lower()
+    epoch_pool = None if epoch_setting in {"0", "false", "off"} else kimi_epoch_pool_from_environment()
+    epoch_on = epoch_setting in {"1", "true", "on", "auto"} and epoch_pool is not None
     fallback_pool = (
         semantic_runtime.pool
         if epoch_on
@@ -891,22 +893,6 @@ async def run_engineering_loop(
     last_injection_fingerprint = ""
     last_run_card_key: tuple[str, str] | None = None
 
-    def _plugin_job_in_flight() -> bool:
-        """同一时刻只允许一个认知插件在途。
-
-        三个插件各有自己的 provider client，但抢的是同一份出口容量与同一段时间
-        预算。并发出击的实测结果是互相挤掉对方的轮次（制图师叙述卡通过率 5.6%，
-        且 62% 的拒绝是"与持久事实冲突"）。排队后，来不及产出卡片的插件这一轮
-        直接被跳过，下一轮再来。
-        """
-
-        for runtime in (semantic_runtime, epoch_runtime, cartographer_runtime):
-            if runtime is None:
-                continue
-            job = getattr(runtime, "_job", None)
-            if job is not None and not job.done():
-                return True
-        return False
     capability_last_used: dict[str, int] = {}
     capability_last_reminded: dict[str, int] = {}
     resident_stage: str | None = None
@@ -1258,7 +1244,7 @@ async def run_engineering_loop(
                 advice_request, advice_refs, advice_fingerprint = facts_for_advice(
                     run_now, store.load_events(command.session_id)
                 )
-                if advice_refs.node_ids and not _plugin_job_in_flight():
+                if advice_refs.node_ids:
                     semantic_runtime.schedule(advice_request, advice_refs, fingerprint=advice_fingerprint)
             if epoch_runtime is not None:
                 epoch_card = epoch_runtime.poll()
@@ -1273,7 +1259,7 @@ async def run_engineering_loop(
                 epoch_request, epoch_refs, epoch_fingerprint = facts_for_epoch(
                     run_now, store.load_events(command.session_id)
                 )
-                if epoch_refs.node_ids and not _plugin_job_in_flight():
+                if epoch_refs.node_ids:
                     epoch_runtime.schedule(epoch_request, epoch_refs, fingerprint=epoch_fingerprint)
             cartographer_card: dict[str, Any] | None = None
             if cartographer_runtime is None and turn_seq == 1:
@@ -1350,14 +1336,15 @@ async def run_engineering_loop(
                     run_card_request, run_card_fingerprint = facts_for_run_card(
                         run_now, store.load_events(command.session_id)
                     )
-                    if not _plugin_job_in_flight():
-                        cartographer_runtime.schedule(run_card_request, fingerprint=run_card_fingerprint)
-                    store.append_event(
-                        command.session_id,
-                        kind="cartographer_scheduled",
-                        role="cartographer",
-                        payload={"turn_seq": turn_seq},
-                    )
+                    # 只有真的排上了才记已调度：旧版无条件发事件，12 次里只有 4 次
+                    # 真有任务，指标是假的。
+                    if cartographer_runtime.schedule(run_card_request, fingerprint=run_card_fingerprint):
+                        store.append_event(
+                            command.session_id,
+                            kind="cartographer_scheduled",
+                            role="cartographer",
+                            payload={"turn_seq": turn_seq},
+                        )
             first_verification_due = False
             if (
                 command.role == "director"

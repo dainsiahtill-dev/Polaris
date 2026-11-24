@@ -8,8 +8,15 @@ from __future__ import annotations
 
 import asyncio
 
+from polaris.cells.roles.runtime.internal.engineering_cartographer import CartographerRuntime
 from polaris.cells.roles.runtime.internal.engineering_plugin_slot import claim_plugin_slot
 from polaris.cells.roles.runtime.internal.engineering_tools import _is_placeholder_evidence
+
+
+class _NeverPool:
+    async def draw_many(self, requests: list[dict[str, object]]) -> list[str]:
+        await asyncio.sleep(30)
+        return [""]
 
 
 async def test_plugin_slot_serialises_concurrent_plugins() -> None:
@@ -37,3 +44,13 @@ def test_live_observations_are_not_placeholder_evidence() -> None:
     assert _is_placeholder_evidence("no approval decision yet")
     assert not _is_placeholder_evidence("已读 src/core/brake.ts：只有接口没有距离断言。")
     assert not _is_placeholder_evidence("Host check verify-1 exit 0.")
+
+
+async def test_schedule_reports_whether_it_actually_queued() -> None:
+    """旧版无条件发 cartographer_scheduled 事件，12 次里只有 4 次真有任务。"""
+
+    runtime = CartographerRuntime(_NeverPool())
+    assert runtime.schedule({"a": 1}, fingerprint="one") is True
+    # 同一 fingerprint 不重排；在途不重排。
+    assert runtime.schedule({"a": 1}, fingerprint="one") is False
+    assert runtime.schedule({"a": 2}, fingerprint="two") is False
