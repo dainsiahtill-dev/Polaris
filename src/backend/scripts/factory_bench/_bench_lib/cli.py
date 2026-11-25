@@ -186,8 +186,14 @@ def main(argv: list[str] | None = None) -> int:
     directory: Path | None = None
     pending_record: dict[str, Any] | None = None
     try:
-        if args.timeout != 5400 or args.overall_timeout != 6000:
-            raise ValueError("original budgets required: project5400 / overall6000 seconds")
+        # 单项目预算仍是冻结的 5400s（跨批可比）；但 overall 不再是冻结值 ——
+        # 它以前只是被记录、从不参与控制流，6000 这个数是那个时代留下的，
+        # 而实测单项目 65–77 分钟，120 个项目要 ~5.8 天。现在它真的参与控制流，
+        # 所以必须允许按范围计算的值，只要求它不小于单项目预算。
+        if args.timeout != 5400:
+            raise ValueError("project budget is frozen at 5400 seconds")
+        if args.overall_timeout < args.timeout:
+            raise ValueError("overall-timeout must be at least the project budget")
         if args.limit < 0 or args.max_failed < 0:
             raise ValueError("limit and max-failed must be nonnegative")
         catalog = args.projects_file.resolve()
