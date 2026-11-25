@@ -1588,16 +1588,19 @@ async def run_engineering_loop(
                             "digest": hashlib.sha256(content.encode("utf-8")).hexdigest()[:16],
                         },
                     )
-                    # 阶段卡的 next_actions 才是"建议"，单独记，便于比对模型下一步。
+                    # 阶段卡已经并进上面那条记忆卡（同一条系统消息），所以这里
+                    # 只补记它的建议，供事后比对模型下一步；不再单独发
+                    # plugin_card_injected —— 旧版那条记的是 deterministic 卡而非
+                    # 真正被注入的内容（145/176 source=host），是个误导指标。
                     if run_card.get("next_actions"):
                         store.append_event(
                             command.session_id,
-                            kind="plugin_card_injected",
+                            kind="run_card_injected",
                             role=command.role,
                             payload={
                                 "turn_seq": turn_seq,
                                 "phase": run_card.get("phase"),
-                                "source": str((run_card.get("narrative") or {}).get("reason") or "host")[:60],
+                                "source": "cartographer" if (run_card.get("narrative") or {}).get("reason") else "host",
                                 "next_actions": [
                                     str(item.get("action"))[:120]
                                     for item in (run_card.get("next_actions") or [])
