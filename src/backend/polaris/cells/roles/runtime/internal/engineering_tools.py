@@ -123,6 +123,8 @@ _NON_DECISION_MARKERS = (
     "preliminary observation",
     "continuing review",
     "reading artifacts",
+    "provisional: reading",
+    "reading source next",
     "pending review of",
     "source reads pending",
 )

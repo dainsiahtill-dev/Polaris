@@ -572,3 +572,33 @@ def test_numeric_clause_labels_are_indexes_not_substrings() -> None:
     assert _clause_reference("2,4", clauses) == [clauses[1], clauses[3]]
     # 歧义摘录仍然 fail-closed。
     assert _clause_reference("不存在的条款", clauses) == []
+
+
+def test_a_decided_report_is_not_erased_by_a_later_progress_report() -> None:
+    """实测 L1-03：QA 第一份 approved=True / 11 pass，第二份
+    "Provisional: reading source next"（approved=False + 全 unknown）把它覆盖了，
+    整轮从 accepted 退回 interrupted。已作出的裁决不能被进度汇报抹掉。
+    """
+
+    approved = {
+        "call_id": "a",
+        "content": json.dumps(
+            {
+                "approved": True,
+                "feedback": "APPROVED",
+                "clause_findings": [{"clause": "1", "status": "pass", "evidence": "call_x"}],
+            }
+        ),
+    }
+    progress = {
+        "call_id": "b",
+        "content": json.dumps(
+            {
+                "approved": False,
+                "feedback": "Provisional: reading source next.",
+                "clause_findings": [{"clause": "1", "status": "unknown", "evidence": "Provisional"}],
+            }
+        ),
+    }
+    assert interpret_review_reports([approved, progress])[0] == "approved"
+    assert interpret_review_reports([progress, approved])[0] == "approved"

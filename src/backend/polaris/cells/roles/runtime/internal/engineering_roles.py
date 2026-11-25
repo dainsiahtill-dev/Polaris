@@ -536,6 +536,21 @@ def interpret_review_reports(
         )
     if rejected:
         return "rejected", "\n\n".join(feedback), rejected[0][0]
+    # 已作出的裁决优先：一份真正裁了的报告（approved 且有实质矩阵）不能被后续的
+    # 进度汇报抹掉。实测 L1-03：第一份 approved=True / 11 pass，第二份
+    # approved=False / 全 unknown 的 "Provisional: reading source next" 把它覆盖，
+    # 于是整轮从 accepted 退回 interrupted —— 只保护"否定不能被抹掉"是不够的。
+    decided = [
+        (index, report)
+        for index, report in valid
+        if report["approved"]
+        and any(
+            item.status in {"pass", "fail"}
+            for item in normalize_clause_findings(report.get("clause_findings"))
+        )
+    ]
+    if decided:
+        return "approved", "\n\n".join(feedback), decided[0][0]
     if inconclusive:
         return "unknown", "\n\n".join(feedback), min(inconclusive)
     if not valid or malformed:
