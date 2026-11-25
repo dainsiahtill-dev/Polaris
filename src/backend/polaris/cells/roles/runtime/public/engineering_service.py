@@ -2134,6 +2134,24 @@ class EngineeringRunService:
         # open_question + discriminating_check + 证据引用（实调 22KB 历史 → 2.8KB
         # 建议）。QA 的成本 90% 花在自己找证据上（实测 36–53 轮、29–35 次
         # browser_observe，每次数十秒），照建议只做一件，别自己反复渲染。
+        # 裁决意愿：QA 读完源码后仍可能回"正在读源码/初步探针"这种非裁决
+        # （实测 L1-03：读了 4 个核心文件、host 检查全绿，两份报告仍是占位）。
+        # 读够了就必须裁 —— 把"探索够了"变成宿主的硬信号。
+        source_reads = sum(
+            1
+            for event in self.store.load_events(command.session_id)
+            if event["role"] == "qa"
+            and event["kind"] == "tool_started"
+            and event["payload"].get("tool") in {"read_file", "repo_rg", "repo_tree"}
+        )
+        decision_deadline = ""
+        if source_reads >= 4 and row["verification"] == "passed":
+            decision_deadline = (
+                f"你已经读过 {source_reads} 次源码/仓库，宿主检查也全绿 —— 这足以裁定。"
+                "现在必须交 report_review：能从源码判的条款判 pass/fail（证据写你读过的文件与行），"
+                "判不了的标 unknown 并写明还需要什么观察。"
+                "不要再回「正在读源码」「初步探针」这类进度汇报 —— 那是非裁决，会被退回。\n\n"
+            )
         advice_block = ""
         for event in reversed(self.store.load_events(command.session_id)):
             if event["kind"] != "epoch_card_completed":
@@ -2166,6 +2184,7 @@ class EngineeringRunService:
             "clause_findings is REQUIRED: exactly one entry per acceptance clause listed above, each with status pass|fail|unknown and evidence. "
             "A report is rejected if any clause is missing, and a fail entry requires approved=false. Do not treat Director text as evidence."
             + (("\n\n" + extra_guidance) if extra_guidance.strip() else "")
+            + (("\n\n" + decision_deadline) if decision_deadline else "")
             + ("\n\n" + advice_block if advice_block else "")
             + "\n\n成本控制：先用源码与已有回执判条款；browser_observe 最多 3 次，"
             "只在'没有渲染就无法判'的条款上使用。缺的条款宿主会补成 unknown 并点名，"

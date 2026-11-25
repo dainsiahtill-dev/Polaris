@@ -117,6 +117,12 @@ _NON_DECISION_MARKERS = (
     "pending browser verification",
     "pending source and browser verification",
     "pending verification",
+    # L1-03 实测新增：QA 读完源码后仍回"正在读/初步探针/裁决前"
+    "reading source",
+    "before ruling",
+    "preliminary observation",
+    "continuing review",
+    "reading artifacts",
     "pending review of",
     "source reads pending",
 )

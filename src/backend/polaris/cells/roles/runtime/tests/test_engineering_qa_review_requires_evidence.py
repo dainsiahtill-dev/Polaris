@@ -314,3 +314,13 @@ def test_a_bare_receipt_is_evidence_even_with_pending_wording(tmp_path) -> None:
     )
     assert result.ok
     assert reviewer.calls and reviewer.calls[0][0] is False
+
+
+def test_l103_real_placeholder_wording_is_rejected() -> None:
+    """L1-03 实测：QA 读完 4 个核心文件后仍交了两份这样的非裁决。"""
+
+    from polaris.cells.roles.runtime.internal.engineering_tools import _is_placeholder_evidence
+
+    assert _is_placeholder_evidence("Reading source in progress; preliminary observation call_UkEEp1Ms")
+    assert _is_placeholder_evidence("Reading source and artifacts before ruling.")
+    assert _is_placeholder_evidence("Provisional — continuing review.")
