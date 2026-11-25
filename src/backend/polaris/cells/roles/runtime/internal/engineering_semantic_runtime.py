@@ -188,7 +188,11 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
         slice_ids.update(slices)
         candidates.append(
             {
-                "node_id": path,
+                # 必须是 plane-qualified key：折叠侧
+                # engineering_tool_payload_projection 用 file_node_id(path) 查摘要，
+                # 这里写裸 path 永远查不中 —— 实测 62 次 file_card 折叠 0 次拿到
+                # model_inference 摘要，全部退化成 512B 预览，模型只能重读。
+                "node_id": file_node_id(path),
                 "snapshot_id": reference,
                 "slice_ids": slices,
                 "content": preview or card.get("summary") or "",

@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
 import subprocess
 import time
@@ -272,11 +273,56 @@ class EngineeringRunService:
         self.context_reference_recovery: dict[str, Any] = {"status": "pending"}
         try:
             with self.store.acquire_workspace(self.workspace):
+                self._sweep_orphaned_runs()
                 self._reconcile_context_references()
         except WorkspaceBusyError:
             # A read observer must not steal an active owner's lock. Its next
             # execution reconciles after acquiring the original workspace lock.
             self.context_reference_recovery = {"status": "deferred_active_owner"}
+
+    def _sweep_orphaned_runs(self) -> None:
+        """收敛上一次进程留下的 pending/running run。
+
+        实测 95 个 SQLite 里 20 个僵尸 run（age 最长 3.8 天）。全仓没有任何启动
+        巡检，只有优雅停机才收敛 —— SIGKILL/崩溃即残留。后果：stop 栅栏看到
+        active_runs 非空就直接返回 UNKNOWN 且不执行 stop → resources_closed=False
+        → 整批 bench 中断；find_current_session_id 也会把僵尸当成"当前 run"。
+
+        只在取得 workspace lock 之后执行，不会误杀并发的真实 owner。
+        """
+
+        # 只收敛"陈旧"的 run：僵尸都是上一次进程留下的（实测 age 672–5540 分钟），
+        # 而正常在途 run 的 created_at 就在几秒内。没有这个阈值会误杀刚启动的 run
+        # （既有的 loop 测试就会因此失败），也会给"workspace lock 按操作获取、
+        # 并不覆盖 run 全生命周期"的并发 owner 带来风险。
+        cutoff = time.time() - max(
+            0.0, float(os.environ.get("KERNELONE_ORPHAN_RUN_SWEEP_AGE_SECONDS", "1800"))
+        )
+        orphaned = [
+            row
+            for row in self.store.list_runs(workspace=self.workspace, limit=20)
+            if str(row.get("status")) in {"pending", "running"}
+            and isinstance(row.get("created_at"), (int, float))
+            and float(row["created_at"]) < cutoff
+        ]
+        for row in orphaned:
+            session_id = str(row["session_id"])
+            self.store.update_run(
+                session_id,
+                status="interrupted",
+                verification="unknown",
+                checks=(),
+            )
+            self.store.append_event(
+                session_id,
+                kind="run_ended",
+                role="host",
+                payload={
+                    "status": "interrupted",
+                    "verification": "unknown",
+                    "reason": "orphaned_run_swept_at_startup",
+                },
+            )
 
     def _reference_owner(
         self, session_id: str, role: str, turn_seq: int, provider_request_id: str, host_call_id: str

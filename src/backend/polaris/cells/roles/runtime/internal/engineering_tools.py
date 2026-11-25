@@ -773,14 +773,26 @@ class EngineeringTools:
                 from polaris.cells.roles.runtime.internal.engineering_file_cards import build_file_card
 
                 reference = args.get("content_ref")
-                if reference is not None:
-                    if not isinstance(reference, str) or not reference.startswith("filecard:"):
-                        raise ValueError("content_ref must be a filecard:<sha256> reference")
+                ignored_reference = ""
+                resolved_card: dict[str, Any] | None = None
+                if isinstance(reference, str) and reference.startswith("filecard:"):
                     if self.file_card_resolver is None:
                         raise ValueError("file_card reference resolution requires the active run journal")
-                    card = self.file_card_resolver(reference)
-                    if "file" in args and args["file"] != card["path"]:
+                    resolved_card = self.file_card_resolver(reference)
+                    if "file" in args and args["file"] != resolved_card["path"]:
                         raise ValueError("file and content_ref must identify the same source path")
+                elif reference is not None:
+                    # 坏 ref 不该拖垮一个有效的 file 读取：实测 17 次 read_file
+                    # 失败全部同时带正确且存在的 `file`（如 `file=package.json`
+                    # 只因 `content_ref=filecard:0000…0` 被拒）。降级读 file
+                    # 并注明被忽略的 ref，路径授权不变。
+                    if isinstance(args.get("file"), str) and args["file"].strip():
+                        ignored_reference = str(reference)
+                    else:
+                        raise ValueError("content_ref must be a filecard:<sha256> reference")
+                if resolved_card is not None:
+                    assert isinstance(reference, str)
+                    card = resolved_card
                     target = self._path(str(card["path"]), write=False)
                     if target.is_file():
                         current = self.filesystem.workspace_read_text(str(target), encoding="utf-8")
@@ -881,6 +893,7 @@ class EngineeringTools:
                                 if normalized_from
                                 else {}
                             ),
+                            **({"ignored_content_ref": ignored_reference} if ignored_reference else {}),
                         },
                         ensure_ascii=False,
                     ),
