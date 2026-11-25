@@ -193,15 +193,59 @@ def command_may_write(command: str) -> bool:
 
     if not command:
         return False
-    if ">" in _blank_quoted_spans(command):
+    # 先剔除 fd 复制/丢弃重定向：`2>&1`、`>&2`、`<&0`、`>/dev/null`、`2>/dev/null`。
+    # 旧版只看 ">".strip() 之后还有没有 ">"，于是 `ls -la README* 2>&1`、
+    # `node --test … 2>&1 | tail` 全被判成写 —— 实测 QA 的只读探测因此顶掉候选
+    # revision（L1-01 rev111→133），Wrap-up 门禁 12 次里 5 次误伤。
+    without_redirects = _FD_DUP_REDIRECT.sub("", _blank_quoted_spans(command))
+    if ">" in without_redirects:
         return True
-    for segment in re.split(r"[|;&\n]+", command):
-        for token in segment.strip().split():
+    for segment in re.split(r"[|;&\n]+", without_redirects):
+        tokens = segment.strip().split()
+        for position, token in enumerate(tokens):
             if token.startswith("-"):
                 continue
-            if Path(token).name in _WRITE_COMMANDS:
-                return True
+            name = Path(token).name
+            if name not in _WRITE_COMMANDS:
+                continue
+            # 类型检查/构建类命令带 --noEmit 时不产出文件（`npx tsc --noEmit`）。
+            if name == "tsc" and "--noEmit" in tokens:
+                continue
+            # 包管理器的子命令决定它写不写：`npm test` / `cargo test` /
+            # `go test` 都是只读的。旧版按基名一刀切，于是 `npm test` 被判成写。
+            if name in _READ_ONLY_SUBCOMMAND_PREFIXES:
+                following = [item for item in tokens[position + 1 :] if not item.startswith("-")]
+                if following and following[0] in _READ_ONLY_SUBCOMMAND_PREFIXES[name]:
+                    continue
+            if name == "sed" and "-i" not in tokens:
+                continue
+            return True
     return False
+
+
+# fd 复制与丢弃重定向：不产生新文件。
+_FD_DUP_REDIRECT = re.compile(
+    r"(?:\d?\>(?:\&(?:\d+|-)|\s*/dev/null))|(?:\<\&\d*)",
+)
+
+# 这些命令的"写不写"由子命令决定；列出的子命令是只读的。
+# 只列**明确只读**的子命令：`npm run`/`npm ci`/`go mod tidy` 这类会写的绝不进来，
+# 漏判只让门禁更严（退回旧行为），误判才会把写入当成只读。
+_READ_ONLY_SUBCOMMAND_PREFIXES = {
+    "npm": frozenset({"test", "t", "ls", "ll", "list", "outdated", "view", "pkg", "audit", "doctor", "env", "config", "status", "ping", "info", "why"}),
+    "yarn": frozenset({"test", "list", "info", "why", "outdated", "config", "status"}),
+    "pnpm": frozenset({"test", "list", "ls", "outdated", "config", "status"}),
+    "bun": frozenset({"test"}),
+    "pip": frozenset({"show", "list", "freeze", "check", "inspect"}),
+    "pip3": frozenset({"show", "list", "freeze", "check", "inspect"}),
+    "uv": frozenset({"version"}),
+    "cargo": frozenset({"test", "check", "metadata", "tree", "search", "locate-project", "pkgid", "version", "verify-project", "report"}),
+    "go": frozenset({"test", "vet", "list", "env", "version", "doc"}),
+    "mvn": frozenset({"validate", "dependency", "help", "version"}),
+    "gradle": frozenset({"tasks", "properties", "dependencies", "projects", "version"}),
+    "dotnet": frozenset({"nuget", "tool", "vstest"}),
+    "cmake": frozenset({"-E", "environment"}),
+}
 
 
 def verification_observation(call_id: str, payload: dict[str, Any], max_output_bytes: int) -> ToolObservation:
