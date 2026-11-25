@@ -264,13 +264,39 @@ def facts_for_advice(run: dict[str, Any], events: list[dict[str, Any]]) -> tuple
     # Spend the bounded slots where the fold will actually happen. The fold tier
     # takes the oldest, largest payloads first, so a newest-first selection
     # spends every slot on payloads the fold has not reached yet.
-    selected = sorted(
+    ranked = sorted(
         candidates,
         key=lambda item: (
             -int(item.get("activity_age") or 0),
             -len(str(item.get("content") or "").encode("utf-8")),
         ),
-    )[:_MAX_DISTILLER_CANDIDATES]
+    )
+    # 平面公平：结果平面（file_card）折了就要重读，最需要语义摘要；调用平面
+    # （write/command 正文）折了不要钱。旧版纯按 age/size 取前 6，write 正文
+    # 普遍更大更旧，file_card 被整体挤掉 —— 实测蒸馏候选里 file: 前缀 0 条，
+    # 于是 62 次 file_card 折叠全都拿不到摘要，只能退化成 512B 预览。
+    selected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for wants_file_card in (True, False):
+        if len(selected) >= _MAX_DISTILLER_CANDIDATES:
+            break
+        for item in ranked:
+            identity = str(item.get("node_id") or "")
+            if identity in seen:
+                continue
+            if str(identity).startswith("file:") == wants_file_card:
+                selected.append(item)
+                seen.add(identity)
+                break
+    for item in ranked:
+        if len(selected) >= _MAX_DISTILLER_CANDIDATES:
+            break
+        identity = str(item.get("node_id") or "")
+        if identity in seen:
+            continue
+        selected.append(item)
+        seen.add(identity)
+    selected = selected[:_MAX_DISTILLER_CANDIDATES]
     activity_text = last_error or str(run.get("verification") or "not_run")
     request = {
         "task": run.get("instruction") or "",

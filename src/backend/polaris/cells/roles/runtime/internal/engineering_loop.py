@@ -1515,6 +1515,13 @@ async def run_engineering_loop(
                     "narrative": card_narrative,
                     "narrative_evidence_refs": cartographer_card.get("evidence_refs") or [],
                 }
+            # 阶段卡必须真正到达 provider：并记忆卡这条每轮都在场的系统消息，
+            # 不新增第二条 system（那会被 native 编码器并入角色身份）。
+            from polaris.cells.roles.runtime.internal.engineering_memory_cards import (
+                attach_run_card_section,
+            )
+
+            attach_run_card_section(messages, run_card)
             card_key = (
                 str(run_card["phase"]),
                 json.dumps(card_narrative, sort_keys=True, ensure_ascii=False),

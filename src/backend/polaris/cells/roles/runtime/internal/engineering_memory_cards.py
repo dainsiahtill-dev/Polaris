@@ -357,18 +357,74 @@ def build_evidence_lease_cards(events: Sequence[Mapping[str, Any]]) -> list[dict
     return leases[-32:]
 
 
+def attach_run_card_section(messages: list[dict[str, Any]], run_card: Mapping[str, Any]) -> None:
+    """把阶段卡并进已注入的记忆卡消息（同一条系统消息，不新增消息）。"""
+
+    section = run_card_section(run_card)
+    if not section:
+        return
+    for message in messages:
+        if message.get("role") != "system":
+            continue
+        content = message.get("content")
+        if not isinstance(content, str) or "ContextOS" not in content:
+            continue
+        if section in content:
+            return
+        message["content"] = content.rstrip() + "\n\n" + section
+        return
+
+
+def run_card_section(run_card: Mapping[str, Any]) -> str:
+    """把阶段卡压成一行一节的文本，供记忆卡携带。
+
+    制图师叙述原本 0 到达 provider（第二条 system 消息会被 native 编码器并入
+    角色身份）。并进这条每轮都在场的系统消息：零新增消息，100% 到达。
+    """
+
+    narrative = run_card.get("narrative") or {}
+    phase = str(run_card.get("phase") or "")
+    intent = str(narrative.get("intent") or run_card.get("intent") or "")
+    reason = str(narrative.get("reason") or "")
+    actions = [
+        str(item.get("action"))
+        for item in (run_card.get("next_actions") or [])
+        if isinstance(item, dict) and item.get("action")
+    ]
+    lines = [line for line in (f"当前阶段：{phase}" if phase else "", f"判断：{reason}" if reason else "") if line]
+    if actions:
+        lines.append("建议下一步：" + "；".join(actions[:3]))
+    if intent:
+        lines.append(f"意图：{intent[:160]}")
+    if not lines:
+        return ""
+    return "ContextOS RunCard（宿主阶段 + 制图师叙述，非验收证据）：\n" + "\n".join(lines)
+
+
 def build_context_memory_messages(
-    run: Mapping[str, Any], events: Sequence[Mapping[str, Any]], *, limit_chars: int = 4000
+    run: Mapping[str, Any],
+    events: Sequence[Mapping[str, Any]],
+    *,
+    limit_chars: int = 4000,
+    run_card: Mapping[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     """Inject the highest-value long-term memory into the provider request.
 
     Only unresolved failures, the latest verification contract and recent epoch
     summaries are injected, so the model keeps the facts that prevent repeated
     exploration without re-reading the full history.
+
+    ``run_card`` 也走这个槽：制图师的叙述原本 0 到达（第二条 system 消息会被
+    native 编码器并入角色身份，破坏"角色指令逐字节不变"），所以并入这条已经
+    每轮在场、且不参与角色身份的系统消息 —— 零新增消息，100% 到达。
     """
 
     cards = build_memory_cards(run, events)
     sections: list[str] = []
+    if run_card:
+        section = run_card_section(run_card)
+        if section:
+            sections.append(section)
     failures = [card for card in cards if card.get("kind") == "failure_cluster" and card.get("unresolved") is not False]
     failures.sort(key=lambda card: (-int(card.get("count") or 0), str(card.get("title") or "")))
     if failures:
@@ -378,7 +434,9 @@ def build_context_memory_messages(
             hint = f" · 证据: {', '.join(refs[-2:])}" if refs else ""
             lines.append(f"- {card.get('title')}: {card.get('summary')}{hint}")
         sections.append(
-            "未解决失败聚类（避免重复探索；可用 read_command_result/read_file 按证据引用取回原始输出）：\n"
+            "未解决失败聚类（避免重复探索；command:<hash> 用 read_command_result、"
+            "filecard:<hash> 用 read_file 取回原始输出 —— 旧文案只说 read_command_result，"
+            "而多数 host profile 没启用它，实测证据引用取回率 0）：\n"
             + "\n".join(lines)
         )
     contracts = [card for card in cards if card.get("kind") == "verification_contract"]

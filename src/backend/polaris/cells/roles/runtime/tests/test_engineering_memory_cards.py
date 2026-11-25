@@ -6,8 +6,10 @@ from polaris.cells.roles.runtime.internal.engineering_command_cards import build
 from polaris.cells.roles.runtime.internal.engineering_epoch_runtime import EpochRuntime, facts_for_epoch
 from polaris.cells.roles.runtime.internal.engineering_file_cards import build_file_card
 from polaris.cells.roles.runtime.internal.engineering_memory_cards import (
+    attach_run_card_section,
     build_context_memory_messages,
     build_memory_cards,
+    run_card_section,
 )
 from polaris.cells.roles.runtime.internal.engineering_semantic_advice import CandidateRefs
 
@@ -246,3 +248,29 @@ def test_epoch_cards_reach_the_injected_memory() -> None:
     assert len(cards) == 1 and cards[0]["id"] == "epoch-0001-0010"
     messages = build_context_memory_messages({"instruction": "做花园"}, events, limit_chars=20_000)
     assert any("已改 src/garden.ts" in str(message.get("content")) for message in messages)
+
+
+def test_run_card_reaches_the_provider_memory_message() -> None:
+    """制图师叙述原本 0 到达：第二条 system 消息会被 native 编码器并入角色身份。
+    并入这条每轮都在场、不参与角色身份的记忆卡 —— 零新增消息，100% 到达。
+    """
+
+    card = {
+        "phase": "EDIT",
+        "intent": "修复月相亮度映射",
+        "narrative": {"intent": "修复月相亮度映射", "reason": "rev12 的 tsc 失败指向 brightness.ts"},
+        "next_actions": [{"action": "先修最近一次失败：TS6234", "why": "宿主推导", "expected": "签名消失"}],
+    }
+    messages = list(build_context_memory_messages({"instruction": "做花园"}, [], run_card=card))
+    assert len(messages) == 1 and messages[0]["role"] == "system"
+    assert "ContextOS RunCard" in messages[0]["content"]
+    assert "当前阶段：EDIT" in messages[0]["content"]
+    assert "TS6234" in messages[0]["content"]
+
+    # 已注入的记忆卡消息也能在 run card 算出来之后补上（同一批消息对象）。
+    existing = [{"role": "system", "content": "ContextOS 长期记忆（摘要，非验收证据）：\n- 失败聚类 X"}]
+    attach_run_card_section(existing, card)
+    assert "ContextOS RunCard" in existing[0]["content"]
+    attach_run_card_section(existing, card)  # 幂等
+    assert existing[0]["content"].count("ContextOS RunCard") == 1
+    assert run_card_section({}) == ""
