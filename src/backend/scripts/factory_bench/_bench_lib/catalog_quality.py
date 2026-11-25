@@ -280,19 +280,39 @@ def _run_typescript_check(workspace: Path, *, timeout_s: int = 300) -> bool:
 def _run_command(command: list[str], *, cwd: Path, timeout_s: int = 600) -> bool:
     """Run a compiler inside KernelOne confinement with only the scratch copy writable."""
     try:
-        # Only system-mounted toolchains may extend the clean sandbox PATH.
+        # 把**宿主自己选中的那个工具**所在目录交给沙箱。
+        # 旧版只认 /usr 下的工具链，于是 host 配置里明明配了的
+        # /home/<user>/.local/go/bin 被丢掉 —— 沙箱里没有 go，returncode 127
+        # 被报成 "toolchain unavailable"，整个 Go 项目的 catalog_quality 变
+        # UNKNOWN（实测 L1-04：平台侧 completed/accepted/passed 全绿，
+        # 唯独 bench_gate=UNKNOWN，只因为 catalog 质检跑不了 go_compile）。
         system_tool = shutil.which(command[0])
         tool_dirs: list[Path] = []
-        if system_tool and Path(system_tool).resolve().is_relative_to("/usr"):
+        if system_tool:
             tool_dirs.append(Path(system_tool).resolve().parent)
+        # 工具链目录必须**同时**是只读挂载：sandbox 会拒绝
+        # "toolchain bin directory is outside existing read mounts"。
+        # 旧代码只传 toolchain_bin_dirs，靠 /usr 恰好是默认只读挂载才没暴露；
+        # 一旦工具链装在 ~/.local（Go/Rust/JDK 的常见位置）就整条 catalog
+        # 质检变成 UNKNOWN。
+        # 免安装版 Go（~/.local/go/bin/go）是 trimmed 二进制，必须知道 GOROOT；
+        # 沙箱的 toolchain_env 就是为"工具链自带的配置环境"准备的。
+        toolchain_env: dict[str, str] = {}
+        goroot = None
+        if command[0] == "go" and tool_dirs:
+            goroot = tool_dirs[0].parent
+            toolchain_env["GOROOT"] = str(goroot)
+        # toolchain_env 的值同样必须在已授予的只读根内。
+        env_roots = [goroot] if goroot is not None else []
         argv = build_workspace_sandbox_argv(
             command,
             workspace=cwd,
             cwd=cwd,
-            read_roots=[cwd],
+            read_roots=[cwd, *tool_dirs, *env_roots],
             write_roots=[cwd],
             network_allowed=False,
             toolchain_bin_dirs=tool_dirs,
+            toolchain_env=toolchain_env or None,
         )
         completed = run_process_tree_safe(argv, timeout=timeout_s, cancel_control=ProcessTreeRunControl())
     except ProcessTreeDrainError:

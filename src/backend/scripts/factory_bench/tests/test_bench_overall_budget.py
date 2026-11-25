@@ -44,3 +44,34 @@ def test_deadline_check_stops_before_the_next_project(monkeypatch: pytest.Monkey
     # 到期：停
     now[0] = 100.0 + 6001.0
     assert now[0] >= deadline
+
+
+def test_go_compile_check_uses_the_host_toolchain(tmp_path) -> None:
+    """非 /usr 安装的工具链也要能进沙箱。
+
+    实测 L1-04（Go 项目）：平台侧 completed/accepted/passed 全绿，唯独
+    bench_gate=UNKNOWN —— 因为 catalog 质检的 go_compile 报
+    "toolchain unavailable"（旧版只认 /usr 下的工具链），而
+    host 配置里明明配了 /home/<user>/.local/go/bin。
+    """
+
+    import shutil
+
+    from scripts.factory_bench._bench_lib import catalog_quality as cq
+
+    if shutil.which("go") is None:
+        import pytest
+
+        pytest.skip("host has no go toolchain")
+
+    # pytest 的 tmp_path 在 /tmp（tmpfs，沙箱保留挂载）——那会被
+    # build_workspace_sandbox_argv 拒成 "workspace overlaps a reserved mount"，
+    # 与工具链无关。用 home 下的临时目录。
+    root = Path.home() / ".polaris" / "bench-sandbox-checks"
+    root.mkdir(parents=True, exist_ok=True)
+    workspace = root / "go-project"
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "go.mod").write_text("module example.com/x\n\ngo 1.23\n", encoding="utf-8")
+    (workspace / "main.go").write_text("package main\n\nfunc main() {}\n", encoding="utf-8")
+
+    assert cq._run_command(["go", "build", "./..."], cwd=workspace) is True
