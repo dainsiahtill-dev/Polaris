@@ -358,7 +358,12 @@ def build_evidence_lease_cards(events: Sequence[Mapping[str, Any]]) -> list[dict
 
 
 def attach_run_card_section(messages: list[dict[str, Any]], run_card: Mapping[str, Any]) -> None:
-    """把阶段卡并进已注入的记忆卡消息（同一条系统消息，不新增消息）。"""
+    """把阶段卡并进记忆卡消息；没有记忆卡时**新建**一条放在最前。
+
+    位置与记忆卡一致（角色指令之前），不构成"第二条 system 消息并入角色身份"
+    的问题。阶段卡必须每轮都在场 —— 只在记忆卡有内容时才出现的话，实测只有 38%
+    的请求带它，等于大部分轮次模型没有阶段感。
+    """
 
     section = run_card_section(run_card)
     if not section:
@@ -373,6 +378,7 @@ def attach_run_card_section(messages: list[dict[str, Any]], run_card: Mapping[st
             return
         message["content"] = content.rstrip() + "\n\n" + section
         return
+    messages.insert(0, {"role": "system", "content": section})
 
 
 def run_card_section(run_card: Mapping[str, Any]) -> str:
