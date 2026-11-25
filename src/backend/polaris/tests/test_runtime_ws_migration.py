@@ -26,6 +26,11 @@ def _create_test_app(tmp_path, monkeypatch) -> tuple[FastAPI, str]:
     runtime_cache = tmp_path / "runtime-cache"
     runtime_cache.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("KERNELONE_RUNTIME_CACHE_ROOT", str(runtime_cache))
+    # 固定进程绑定：否则同批其他测试泄漏的 KERNELONE_INSTANCE_WORKSPACE 会被
+    # create_app 的 enforce_process_bound_workspace 用来改写 settings.workspace，
+    # 使本用例解析到别人的 runtime root。
+    monkeypatch.setenv("KERNELONE_INSTANCE_WORKSPACE", str(workspace))
+    monkeypatch.setenv("KERNELONE_WORKSPACE", str(workspace))
 
     settings = Settings(
         workspace=workspace,
