@@ -1543,9 +1543,11 @@ async def run_engineering_loop(
                 fingerprint = hashlib.sha256(
                     "||".join(str(message["content"]) for message in injected).encode("utf-8")
                 ).hexdigest()
-                if fingerprint == last_injection_fingerprint:
-                    request_messages = [message for message in request_messages if message not in injected]
-                else:
+                if fingerprint != last_injection_fingerprint:
+                    # 记忆卡每轮都前置，**不能**因为内容没变就移除：它是"长期记忆"，
+                    # 移除就退化成一次性便签 —— 实测 1338 条 director 请求里只有
+                    # 103 个 turn（15.4%）真的看到它，其余轮次模型是"失忆"的。
+                    # 这里只在内容变化时记事件，用于事后对比模型有没有用上。
                     last_injection_fingerprint = fingerprint
                     # 效益可审计：记下这一刻模型被告知了什么，之后由审计对比它真正
                     # 做了什么。注入的是记忆卡文本（失败聚类/验证契约/设计决策/
