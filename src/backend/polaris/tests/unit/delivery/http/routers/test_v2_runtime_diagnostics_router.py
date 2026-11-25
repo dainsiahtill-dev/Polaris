@@ -269,3 +269,24 @@ async def test_runtime_diagnostics_required_nats_disconnected_is_unhealthy(clien
     nats = response.json()["nats"]
     assert nats["ok"] is False
     assert nats["state"] == "required_disconnected"
+
+
+def test_process_section_reports_rss_and_flags_over_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """进程 RSS/线程必须可见，超限要明确告警。
+
+    实测：一个实例跑项目约一小时 RSS 1.2GB→2.8GB（≈0.8MB/s），到阈值后事件循环
+    周期性拒不接请求（前端"连接断开"），而 fd/连接数都正常 —— 纯堆增长。
+    没有这个 section，这类退化在诊断面板上完全不可见。
+    """
+
+    from polaris.delivery.http.v2.runtime_diagnostics import _process_section
+
+    section = _process_section()
+    assert section.state == "ok" and section.ok is True
+    assert section.details["rss_mb"] >= 0
+    assert section.details["threads"] >= 1
+
+    monkeypatch.setenv("KERNELONE_RSS_LIMIT_MB", "1")
+    over = _process_section()
+    assert over.state == "over_limit" and over.ok is False
+    assert over.evidence

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -42,6 +44,50 @@ class RuntimeDiagnosticsResponse(BaseModel):
     runtime_receipts: RuntimeDiagnosticSection
     context_os_replay: RuntimeDiagnosticSection
     dormant_modules: RuntimeDiagnosticSection
+    process: RuntimeDiagnosticSection
+
+
+def _process_section() -> RuntimeDiagnosticSection:
+    """进程自身的 RSS / 线程数。
+
+    实测：一个实例在跑项目的约一小时里 RSS 从 1.2GB 涨到 2.8GB（≈0.8MB/s），
+    到阈值后事件循环周期性拒不接请求（前端表现为"连接断开"/转圈），
+    而 fd 与连接数都正常 —— 纯堆增长。没有这个 section，这类退化在诊断面板上
+    完全不可见。
+    """
+
+    rss_kb = 0
+    threads = 0
+    try:
+        status = Path("/proc/self/status").read_text(encoding="utf-8")
+        for line in status.splitlines():
+            if line.startswith("VmRSS:"):
+                rss_kb = int(line.split()[1])
+            elif line.startswith("Threads:"):
+                threads = int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    rss_mb = round(rss_kb / 1024)
+    limit_mb = int(os.environ.get("KERNELONE_RSS_LIMIT_MB", "4096"))
+    over = bool(rss_mb and rss_mb > limit_mb)
+    return RuntimeDiagnosticSection(
+        state="over_limit" if over else "ok",
+        ok=not over,
+        details={
+            "rss_mb": rss_mb,
+            "threads": threads,
+            "limit_mb": limit_mb,
+            "env_limit": "KERNELONE_RSS_LIMIT_MB",
+        },
+        evidence=(
+            [
+                f"RSS {rss_mb}MB 超过 KERNELONE_RSS_LIMIT_MB={limit_mb}MB；"
+                "事件循环可能已开始周期性停顿，实例应回收而不是继续接单。"
+            ]
+            if over
+            else []
+        ),
+    )
 
 
 def _utc_now() -> str:
@@ -255,6 +301,7 @@ async def get_runtime_diagnostics(request: Request) -> RuntimeDiagnosticsRespons
         runtime_receipts=_runtime_receipts_section(workspace),
         context_os_replay=_context_os_replay_section(workspace),
         dormant_modules=_dormant_modules_section(),
+        process=_process_section(),
     )
 
 
