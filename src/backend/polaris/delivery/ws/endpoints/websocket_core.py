@@ -118,6 +118,16 @@ async def runtime_websocket(
         await websocket.close(code=error.code, reason=error.reason)
         return
     resolved_workspace = workspace_ctx.workspace
+    # DirectorService 是单例，可能仍绑在启动时的 workspace 上。HTTP 依赖会在每个
+    # 请求前按请求 workspace rebind，WS 路径没有这一步 —— 于是 owner 查询拿旧绑定
+    # （往往是进程 cwd）去校验 KERNELONE_RUNTIME_ROOT → fail-closed →
+    # director_status.running=false + projection_error，前端"运行实况"全空。
+    try:
+        from polaris.cells.director.execution.public import rebind_director_service
+
+        await rebind_director_service(resolved_workspace)
+    except Exception as exc:  # noqa: BLE001 - rebind 失败不该拖垮连接，状态会如实报错
+        logger.warning("ws director rebind failed for %s: %s", resolved_workspace, exc)
     cache_root = workspace_ctx.runtime_root
     workspace_details = {
         "workspace": resolved_workspace,
