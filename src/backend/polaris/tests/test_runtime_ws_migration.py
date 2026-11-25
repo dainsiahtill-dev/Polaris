@@ -253,3 +253,47 @@ def test_runtime_v2_workspace_key_uses_connection_workspace_context(tmp_path) ->
     )
 
     assert resolved_key == resolve_storage_roots(str(workspace)).workspace_key
+
+
+def test_ws_binding_never_falls_back_to_cwd(tmp_path, monkeypatch) -> None:
+    """纯绑定决策：缺失或冲突一律拒绝，绝不回落进程 cwd（主仓）。
+
+    实测缺陷：旧版先拿空 settings 去 resolve，它回落到 default_workspace
+    （= 进程 cwd，通常 src/backend），owner 查询拿主仓路径校验
+    KERNELONE_RUNTIME_ROOT（指向真实 workspace）→ fail-closed →
+    director_status.running=false + projection_error → 前端"运行实况"整片空白。
+    """
+
+    from polaris.delivery.ws.endpoints.websocket_core import (
+        WorkspaceBindingError,
+        resolve_ws_workspace_binding,
+    )
+
+    cwd_path = tmp_path / "meta-project"
+    cwd_path.mkdir(parents=True, exist_ok=True)
+    cwd = str(cwd_path)
+
+    # 两边都没有 → 拒绝（绝不回落 cwd）。
+    with pytest.raises(WorkspaceBindingError) as missing:
+        resolve_ws_workspace_binding(
+            settings_workspace="",
+            query_workspace="",
+            ramdisk_root="",
+            default_workspace=cwd,
+        )
+    assert missing.value.code == 4400
+
+    # 冲突 → 拒绝，而不是静默投影其中一条。
+    configured = tmp_path / "configured"
+    configured.mkdir(parents=True, exist_ok=True)
+    other = tmp_path / "other"
+    other.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(configured / ".polaris" / "runtime"))
+    with pytest.raises(WorkspaceBindingError) as conflict:
+        resolve_ws_workspace_binding(
+            settings_workspace=str(configured),
+            query_workspace=str(other),
+            ramdisk_root="",
+            default_workspace=cwd,
+        )
+    assert conflict.value.code == 4401

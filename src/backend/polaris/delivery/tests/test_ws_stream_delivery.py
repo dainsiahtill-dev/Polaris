@@ -39,8 +39,8 @@ class FakeRuntimeWebSocket(FakeWebSocket):
     async def accept(self) -> None:
         self.accepted = True
 
-    async def close(self, code: int = 1000) -> None:
-        self.messages.append({"type": "closed", "code": code})
+    async def close(self, code: int = 1000, reason: str = "") -> None:
+        self.messages.append({"type": "closed", "code": code, "reason": reason})
 
 
 async def _build_status() -> tuple[str, dict[str, Any]]:
@@ -178,7 +178,7 @@ def test_runtime_websocket_entrypoint_exposes_only_runtime_v2_loop_kwargs(monkey
         monkeypatch.setattr(websocket_loop, "run_main_loop", _fake_run_main_loop)
 
         ws = FakeRuntimeWebSocket()
-        await websocket_core.runtime_websocket(cast(Any, ws))
+        await websocket_core.runtime_websocket(cast(Any, ws), workspace=None)
         assert ws.accepted is True
         return seen_kwargs
 
@@ -234,7 +234,8 @@ def test_runtime_websocket_rejects_foreign_workspace_before_subscription(monkeyp
     messages, main_loop_called = asyncio.run(_run())
 
     assert main_loop_called is False
-    assert {"type": "closed", "code": 1008} in messages
+    # 4401 = 进程绑定与客户端绑定冲突；订阅前拒绝的语义不变，只是码更明确。
+    assert {"type": "closed", "code": 4401, "reason": "workspace binding conflict"} in messages
 
 
 def test_handle_client_message_rejects_non_object_json_without_closing() -> None:

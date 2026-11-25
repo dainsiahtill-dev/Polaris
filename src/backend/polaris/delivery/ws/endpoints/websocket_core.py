@@ -11,6 +11,7 @@ import logging
 import time
 import uuid
 from contextlib import suppress
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import Query, WebSocket, WebSocketDisconnect
@@ -30,6 +31,60 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class WorkspaceBindingError(RuntimeError):
+    """WebSocket 的 workspace 绑定无法确定或相互冲突。"""
+
+    def __init__(self, code: int, reason: str) -> None:
+        super().__init__(reason)
+        self.code = code
+        self.reason = reason
+
+
+def resolve_ws_workspace_binding(
+    *,
+    settings_workspace: str,
+    query_workspace: str,
+    ramdisk_root: str,
+    default_workspace: str,
+) -> tuple[Any, str, bool]:
+    """决定 /v2/ws/runtime 用哪个 workspace 投影，绝不静默回落 cwd。
+
+    旧版先拿 settings_workspace 去 resolve；为空时
+    resolve_workspace_runtime_context 会回落到 default_workspace（= 进程 cwd，
+    通常是主仓 src/backend），于是 owner 查询拿主仓路径去校验
+    KERNELONE_RUNTIME_ROOT（指向真实 workspace）→ fail-closed →
+    director_status.running=false + projection_error，前端"运行实况"整片空白。
+    实测主实例与 audit 实例同时中招。CLAUDE.md 明文禁止这种静默回退：
+    "前端 API 与 /v2/ws/runtime 必须使用该 workspace 绑定，禁止静默回退到
+     默认 backend、默认 workspace 或主仓 runtime"。
+
+    判定：进程绑定优先；进程未绑定则客户端绑定是唯一权威；两者都有且不一致
+    则拒绝；两者都无则拒绝。
+    """
+
+    requested_workspace = str(Path(query_workspace).expanduser().resolve()) if query_workspace else ""
+    if settings_workspace:
+        settings_ctx = resolve_workspace_runtime_context(
+            configured_workspace=settings_workspace,
+            default_workspace=default_workspace,
+            ramdisk_root=ramdisk_root,
+        )
+        # 只比归一化路径：resolve 对方会先撞它自己的 runtime-root 校验，
+        # 把"绑定冲突"误报成"root 不匹配"。
+        if requested_workspace and requested_workspace != settings_ctx.workspace:
+            raise WorkspaceBindingError(4401, "workspace binding conflict")
+        return settings_ctx, requested_workspace, bool(requested_workspace)
+    if requested_workspace:
+        # 进程未绑定：客户端绑定是唯一权威，绝不回落 cwd。
+        query_ctx = resolve_workspace_runtime_context(
+            configured_workspace=query_workspace,
+            default_workspace=default_workspace,
+            ramdisk_root=ramdisk_root,
+        )
+        return query_ctx, requested_workspace, False
+    raise WorkspaceBindingError(4400, "workspace binding required")
+
+
 async def runtime_websocket(
     websocket: WebSocket,
     roles: str | None = Query(None, description="Comma-separated roles: pm,director,qa"),
@@ -46,24 +101,21 @@ async def runtime_websocket(
 
     # Resolve workspace context
     connection_id = uuid.uuid4().hex
-    query_workspace = str(workspace or "").strip()
+    # 直接调用（非经 FastAPI）时 workspace 可能是 Query 哨兵对象；只有真正的
+    # 字符串才算客户端绑定。
+    query_workspace = workspace.strip() if isinstance(workspace, str) else ""
     settings_workspace = str(getattr(state.settings, "workspace", "") or "").strip()
     ramdisk_root = str(getattr(state.settings, "ramdisk_root", "") or "").strip()
-    workspace_ctx = resolve_workspace_runtime_context(
-        configured_workspace=settings_workspace,
-        default_workspace=DEFAULT_WORKSPACE,
-        ramdisk_root=ramdisk_root,
-    )
-    workspace_binding_mismatch = False
-    requested_workspace = ""
-    if query_workspace:
-        query_workspace_ctx = resolve_workspace_runtime_context(
-            configured_workspace=query_workspace,
-            default_workspace=DEFAULT_WORKSPACE,
+    try:
+        workspace_ctx, requested_workspace, workspace_binding_mismatch = resolve_ws_workspace_binding(
+            settings_workspace=settings_workspace,
+            query_workspace=query_workspace,
             ramdisk_root=ramdisk_root,
+            default_workspace=DEFAULT_WORKSPACE,
         )
-        requested_workspace = query_workspace_ctx.workspace
-        workspace_binding_mismatch = bool(settings_workspace and requested_workspace != workspace_ctx.workspace)
+    except WorkspaceBindingError as error:
+        await websocket.close(code=error.code, reason=error.reason)
+        return
     resolved_workspace = workspace_ctx.workspace
     cache_root = workspace_ctx.runtime_root
     workspace_details = {
