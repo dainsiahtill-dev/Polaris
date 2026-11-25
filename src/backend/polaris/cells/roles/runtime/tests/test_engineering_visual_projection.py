@@ -740,6 +740,9 @@ async def test_prepared_visual_origins_stay_bound_after_repeated_injection(
             content = messages[item["message_index"]]["content"]
             assert isinstance(content, list)
             assert all(0 <= index < len(content) for index in item["block_indices"])
-    # The second request deduped the repeated injection, so no ContextOS system
-    # message remains there.
-    assert "ContextOS" not in json.dumps(prepared[-1]["request"]["options"]["messages"], ensure_ascii=False)
+    # 记忆卡现在**每轮都在场**（旧版内容未变就整条移除，实测只有 15.4% 的请求
+    # 真的看到它，"长期记忆"退化成一次性便签）。这条回归真正要保的是视觉原点
+    # 索引仍然绑定：上面已逐条断言每个索引都指向一个 list content 消息 ——
+    # 那正是旧版"先投影记录索引、再移除注入消息"导致 invalid_host_visual_origin
+    # 的失败点。
+    assert "ContextOS" in json.dumps(prepared[-1]["request"]["options"]["messages"], ensure_ascii=False)

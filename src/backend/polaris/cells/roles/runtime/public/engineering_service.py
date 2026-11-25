@@ -212,6 +212,11 @@ def is_read_only_failure(checks: tuple[ToolObservation, ...]) -> bool:
     return any(failure_for_content(str(check.content or "")) for check in checks)
 
 
+# 2000-01-01。僵尸 run 判定用的下界：真实 run 的 created_at 是当代 epoch，
+# 而测试夹具常用 1/0。没有下界会把夹具当成"陈旧"清掉。
+_PLAUSIBLE_EPOCH = 946_684_800.0
+
+
 class EngineeringRunService:
     """Own live handles; persistent facts belong only to EngineeringSessionStore.
 
@@ -303,7 +308,8 @@ class EngineeringRunService:
             for row in self.store.list_runs(workspace=self.workspace, limit=20)
             if str(row.get("status")) in {"pending", "running"}
             and isinstance(row.get("created_at"), (int, float))
-            and float(row["created_at"]) < cutoff
+            # 下界排除测试夹具的 created_at=1/0（epoch 1 并不是"陈旧"，是虚构）。
+            and _PLAUSIBLE_EPOCH < float(row["created_at"]) < cutoff
         ]
         for row in orphaned:
             session_id = str(row["session_id"])
