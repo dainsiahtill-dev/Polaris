@@ -27,6 +27,7 @@ import argparse
 import hashlib
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -53,6 +54,25 @@ _RETIRED_OPTIONS = frozenset(
         "--launcher-supervisor-url",
     }
 )
+
+
+def overall_budget_exhausted_record(
+    *, budget_seconds: int, completed: int, selected: int
+) -> dict[str, object]:
+    """overall 预算耗尽的 batch_error。
+
+    `--overall-timeout` 以前只被校验和记录，从不参与控制流：120 个项目每个最多
+    5400s，实际要跑 7 天以上，而这个参数假装兜住了。
+    """
+
+    return {
+        "harness_status": "UNKNOWN",
+        "exit_code": 2,
+        "reason": "overall_budget_exhausted",
+        "overall_budget_seconds": budget_seconds,
+        "completed_records": completed,
+        "selected_count": selected,
+    }
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -254,7 +274,20 @@ def main(argv: list[str] | None = None) -> int:
         directory = destination
         _write_summary(directory, report)
         failed = 0
+        # --overall-timeout 以前只是被校验和记录，从不参与控制流：120 个项目
+        # 每个最多 5400s，实际要跑 7 天以上，而这个参数假装兜住了。
+        overall_deadline = time.monotonic() + max(0.0, float(args.overall_timeout))
         for project in selected:
+            remaining_budget = overall_deadline - time.monotonic()
+            if remaining_budget <= 0:
+                report["batch_error"] = overall_budget_exhausted_record(
+                    budget_seconds=args.overall_timeout,
+                    completed=len(report.get("records") or []),
+                    selected=len(selected),
+                )
+                _write_summary(directory, report)
+                print(str(directory / "summary.json"))
+                return 2
             try:
                 changed = [
                     label
