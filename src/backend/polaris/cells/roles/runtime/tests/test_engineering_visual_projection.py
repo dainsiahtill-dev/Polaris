@@ -746,3 +746,45 @@ async def test_prepared_visual_origins_stay_bound_after_repeated_injection(
     # 那正是旧版"先投影记录索引、再移除注入消息"导致 invalid_host_visual_origin
     # 的失败点。
     assert "ContextOS" in json.dumps(prepared[-1]["request"]["options"]["messages"], ensure_ascii=False)
+
+
+async def test_run_card_section_reaches_the_prepared_request(
+    isolated_workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """阶段卡必须真的进 provider。
+
+    挂在 `messages` 上时它会被 946/1072 的重建冲掉 —— 实测 request_prepared 里
+    RunCard 段 0/76。必须挂真正发出去的 request_messages。
+    """
+
+    from dataclasses import replace as _replace
+
+    from polaris.cells.roles.runtime.internal import engineering_memory_cards
+    from polaris.cells.roles.runtime.internal.engineering_loop import run_engineering_loop
+
+    stable = {"role": "system", "content": "ContextOS 长期记忆（摘要，非验收证据）：\nstable"}
+    monkeypatch.setattr(
+        engineering_memory_cards, "build_context_memory_messages", lambda *_args, **_kwargs: [stable]
+    )
+    store, command, scope, limits = _history(isolated_workspace)
+    scope = _replace(scope, enabled_tools=frozenset({"read_file"}))
+    result = await run_engineering_loop(
+        command,
+        scope=scope,
+        limits=limits,
+        cancel=__import__("asyncio").Event(),
+        store=store,
+        client=cast(Any, _TwoTurnClient()),
+        visual_binding=lambda: _binding(2),
+    )
+    if result.status != "completed":
+        errors = [e["payload"] for e in store.load_events("projection") if e["kind"] == "role_error"]
+        pytest.fail(f"{result.text}\n{errors[-1].get('traceback') if errors else ''}")
+    prepared = [
+        event["payload"] for event in store.load_events("projection") if event["kind"] == "request_prepared"
+    ]
+    assert prepared, "no prepared request recorded"
+    assert any(
+        "ContextOS RunCard" in json.dumps(item["request"]["options"]["messages"], ensure_ascii=False)
+        for item in prepared
+    ), "run card never reached the provider request"

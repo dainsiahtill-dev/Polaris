@@ -1517,11 +1517,13 @@ async def run_engineering_loop(
                 }
             # 阶段卡必须真正到达 provider：并记忆卡这条每轮都在场的系统消息，
             # 不新增第二条 system（那会被 native 编码器并入角色身份）。
+            # 必须挂 request_messages —— `messages` 会在 946/1072 被重建，挂在它
+            # 上面等于没挂（实测 RunCard 段在 request_prepared 里 0/76）。
             from polaris.cells.roles.runtime.internal.engineering_memory_cards import (
                 attach_run_card_section,
             )
 
-            attach_run_card_section(messages, run_card)
+            attach_run_card_section(request_messages, run_card)
             card_key = (
                 str(run_card["phase"]),
                 json.dumps(card_narrative, sort_keys=True, ensure_ascii=False),
