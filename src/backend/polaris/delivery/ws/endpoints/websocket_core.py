@@ -73,7 +73,8 @@ def resolve_ws_workspace_binding(
         # 把"绑定冲突"误报成"root 不匹配"。
         if requested_workspace and requested_workspace != settings_ctx.workspace:
             raise WorkspaceBindingError(4401, "workspace binding conflict")
-        return settings_ctx, requested_workspace, bool(requested_workspace)
+        # 第三个返回值是"是否冲突"，不是"是否带了 query" —— 调用方据此发 1008。
+        return settings_ctx, requested_workspace, False
     if requested_workspace:
         # 进程未绑定：客户端绑定是唯一权威，绝不回落 cwd。
         query_ctx = resolve_workspace_runtime_context(

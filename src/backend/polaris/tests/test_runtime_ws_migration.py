@@ -302,3 +302,14 @@ def test_ws_binding_never_falls_back_to_cwd(tmp_path, monkeypatch) -> None:
             default_workspace=cwd,
         )
     assert conflict.value.code == 4401
+
+    # 绑定一致 ≠ 冲突。实测：把第三个返回值写成"是否带了 query"之后，凡是带
+    # workspace= 的连接都被 1008 关掉 —— 前端页面整片空白。
+    same_ctx, same_requested, same_mismatch = resolve_ws_workspace_binding(
+        settings_workspace=str(configured),
+        query_workspace=str(configured),
+        ramdisk_root="",
+        default_workspace=cwd,
+    )
+    assert same_ctx.workspace == str(configured)
+    assert same_requested == str(configured) and same_mismatch is False
