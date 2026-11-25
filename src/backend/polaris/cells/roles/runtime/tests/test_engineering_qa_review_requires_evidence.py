@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 
 from polaris.cells.roles.runtime.internal.engineering_roles import register_review_tool
@@ -188,7 +189,12 @@ def test_numbered_clause_references_cover_the_matrix(tmp_path) -> None:
     assert reviewer.calls and reviewer.calls[0][0] is False
 
 
-def test_out_of_range_clause_reference_establishes_no_coverage(tmp_path) -> None:
+def test_out_of_range_clause_reference_is_host_completed(tmp_path) -> None:
+    """越界/未匹配的标签不再让整份矩阵被拒：没覆盖到的条款由宿主补全并点名。
+
+    实测旧行为：9 次 report_review 里 7 次被"缺条款"拒回，QA 53 轮仍交不出裁决。
+    """
+
     clauses = ("条款一：支持刹车", "条款二：月相只改亮度")
     tools, _reviewer = _tools(tmp_path, clauses)
     result = asyncio.run(
@@ -197,8 +203,8 @@ def test_out_of_range_clause_reference_establishes_no_coverage(tmp_path) -> None
             "report_review",
             {
                 "approved": False,
-                "feedback": "未审查",
-                "major_findings": ["未审查"],
+                "feedback": "条款一未查到对应实现",
+                "major_findings": ["条款一未查到对应实现"],
                 "clause_findings": [
                     {"clause": "9", "status": "unknown", "evidence": "已读 src/core/brake.ts：未见对应实现。"},
                     {"clause": "2", "status": "unknown", "evidence": "已读 src/core/moon.ts：未见亮度对照。"},
@@ -206,8 +212,9 @@ def test_out_of_range_clause_reference_establishes_no_coverage(tmp_path) -> None
             },
         )
     )
-    assert not result.ok
-    assert "cover every acceptance clause" in result.content
+    assert result.ok
+    payload = json.loads(result.content)
+    assert [item["clause"] for item in payload["host_completed_clauses"]] == ["条款一：支持刹车"]
 
 
 def test_an_all_unknown_matrix_is_a_progress_report_not_a_verdict(tmp_path) -> None:
