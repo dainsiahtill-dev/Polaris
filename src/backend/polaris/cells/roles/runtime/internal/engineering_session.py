@@ -409,7 +409,7 @@ class EngineeringSessionStore:
         return [dict(row) for row in rows]
 
     def load_projection_inputs(
-        self, session_id: str, *, workspace: Path, kinds: tuple[str, ...]
+        self, session_id: str, *, workspace: Path, kinds: tuple[str, ...] | None
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         """Read the run and selected context facts from the same SQLite snapshot."""
         self._assert_workspace(workspace)
@@ -1557,11 +1557,25 @@ class EngineeringSessionStore:
         accepted = row["status"] == "completed" and evidence and (not required or verdict == "approved") and fidelity_ok
         if terminal is not None and terminal["outcome"] != "accepted":
             accepted = False
+        # unproven：宿主检查全绿、当前 revision 有绑定证据，但**没有有效的独立裁决**
+        # （QA 未裁/复审未裁完）。这与"harness 坏了"的 unknown 是两回事 ——
+        # 实测 L1-03：QA 第一次裁 rejected（"视觉层没真正落到屏幕上""缺 README"，
+        # 是真实缺陷），Director 修完候选变了，复审两帧都交占位，于是整轮停在
+        # unknown/UNKNOWN，与 harness 故障无法区分。unproven 是诚实且可操作的
+        # （动作是"补一次裁决"），既不冒充通过，也不冒充故障。
+        unproven = bool(
+            required
+            and verdict == "unknown"
+            and evidence
+            and row["verification"] == "passed"
+        )
         outcome = (
             "accepted"
             if accepted
             else "rejected"
             if required and verdict == "rejected"
+            else "unproven"
+            if unproven
             else "unknown"
             if row["verification"] == "unknown"
             or (required and verdict == "unknown")

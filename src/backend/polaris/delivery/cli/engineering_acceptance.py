@@ -728,6 +728,11 @@ def _observed_result(binding: dict[str, Any], snapshot: dict[str, Any], client: 
                 else (
                     ("REJECTED", 1)
                     if snapshot.get("project_outcome") == "rejected" or snapshot.get("verification") == "failed"
+                    # UNPROVEN 与 UNKNOWN 分开：宿主检查全绿但无有效独立裁决
+                    # （QA 未裁/复审未裁完）。实测 L1-03 的 QA 第一次裁的是真实缺陷，
+                    # 复审没裁完 —— 那是"没验完"，不是"harness 坏了"。
+                    else ("UNPROVEN", 3)
+                    if snapshot.get("project_outcome") == "unproven"
                     else ("UNKNOWN", 2)
                 )
             )

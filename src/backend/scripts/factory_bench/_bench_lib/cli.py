@@ -132,6 +132,8 @@ def _bench_gate(record: dict[str, Any]) -> str:
         and record.get("catalog_quality") == "PASS"
     ):
         return "PASS"
+    if status == "UNPROVEN":
+        return "UNPROVEN"
     return "UNKNOWN"
 
 
