@@ -333,7 +333,9 @@ def test_single_clause_review_surface_keeps_matrix_optional(tmp_path: Path) -> N
     assert "clause_findings" not in (schema["function"]["parameters"].get("required") or [])
 
 
-def test_multi_clause_report_review_rejects_partial_matrix(tmp_path: Path) -> None:
+def test_multi_clause_report_review_completes_partial_matrix(tmp_path: Path) -> None:
+    """部分矩阵被接受并补全，缺的条款被点名 —— 不再用拒回逼 QA 重数。"""
+
     tools = _review_tools(tmp_path, ("clause one", "clause two"))
     observation = asyncio.run(
         tools.execute(
@@ -346,8 +348,9 @@ def test_multi_clause_report_review_rejects_partial_matrix(tmp_path: Path) -> No
             },
         )
     )
-    assert observation.ok is False
-    assert "clause two" in observation.content
+    assert observation.ok is True
+    payload = json.loads(observation.content)
+    assert [item["clause"] for item in payload["host_completed_clauses"]] == ["clause two"]
 
 
 def test_multi_clause_report_review_accepts_full_matrix(tmp_path: Path) -> None:

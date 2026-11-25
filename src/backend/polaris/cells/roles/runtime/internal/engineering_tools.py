@@ -501,22 +501,20 @@ class EngineeringTools:
                     if len(self.review_clauses) >= 2
                     else []
                 )
-                if gap and self._coverage_rejections < _MAX_COVERAGE_REJECTS:
-                    # Dispatch-boundary gate: a decomposed goal cannot be ruled
-                    # on by a partial matrix. The same coverage helper grades the
-                    # acceptance ledger, so the corrective message and the final
-                    # verdict cannot drift apart. Bounded, so a reviewer that
-                    # cannot enumerate the clauses is graded rather than looped.
-                    self._coverage_rejections += 1
-                    remaining = _MAX_COVERAGE_REJECTS - self._coverage_rejections + 1
-                    raise ValueError(
-                        "report_review clause_findings must cover every acceptance clause. "
-                        f"Missing {len(gap)} of {len(self.review_clauses)} clauses: "
-                        + json.dumps(gap, ensure_ascii=False)
-                        + f". Set clause to each clause's 1-based number from the list ({remaining} attempt(s) left); "
-                        "after that a best-effort matrix is accepted and the missing clauses stay unknown."
-                    )
+                host_completed: list[ClauseFinding] = []
                 if gap:
+                    # 覆盖前移：缺的条款由宿主补成 unknown 并**点名**，QA 只对点名
+                    # 那几条负责。旧版是"拒回 → QA 重数 → 再拒"，实测 9 次
+                    # report_review 里 7 次被拒，QA 53 轮仍交不出裁决。
+                    host_completed = [
+                        ClauseFinding(
+                            clause=clause,
+                            status="unknown",
+                            evidence="宿主补全：本条款未被你的矩阵覆盖，需要你实际检查后再判。",
+                        )
+                        for clause in gap
+                    ]
+                    clause_findings = [*clause_findings, *host_completed]
                     match = ClauseMatchResult(match.matched, "partial")
                 if not approved and self.review_clauses:
                     # A rejection without a reviewed clause matrix is an
@@ -569,6 +567,11 @@ class EngineeringTools:
                             "feedback": feedback,
                             "major_findings": findings,
                             "clause_match": match.mode,
+                            # 宿主补全了哪几条：下一轮 QA 只对这些负责，不用重数全部。
+                            "host_completed_clauses": [
+                                {"clause": item.clause, "status": item.status, "evidence": item.evidence}
+                                for item in host_completed
+                            ],
                             "clause_findings": [
                                 {"clause": item.clause, "status": item.status, "evidence": item.evidence}
                                 for item in clause_findings

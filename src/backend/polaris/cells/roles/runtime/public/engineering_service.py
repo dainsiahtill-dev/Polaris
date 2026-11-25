@@ -2130,6 +2130,24 @@ class EngineeringRunService:
             ToolSpecRegistry.get_canonical(name) for name in scope.enabled_tools
         }
         web_entry = find_web_entry(self.workspace) if browser_allowed else None
+        # 把吞噬兽的"判别性检查"当成 QA 的工作单：它已经能产出
+        # open_question + discriminating_check + 证据引用（实调 22KB 历史 → 2.8KB
+        # 建议）。QA 的成本 90% 花在自己找证据上（实测 36–53 轮、29–35 次
+        # browser_observe，每次数十秒），照建议只做一件，别自己反复渲染。
+        advice_block = ""
+        for event in reversed(self.store.load_events(command.session_id)):
+            if event["kind"] != "epoch_card_completed":
+                continue
+            probe = event["payload"].get("exploration")
+            if isinstance(probe, dict) and probe.get("discriminating_check"):
+                advice_block = (
+                    "未经验证的建议（吞噬兽，可能已过时 —— 用之前必须自己核对）:\n"
+                    f"  开放问题: {probe.get('open_question')}\n"
+                    f"  建议只做这一项判别性检查: {probe.get('discriminating_check')}\n"
+                    "  证据引用: " + ", ".join(str(ref) for ref in (probe.get("evidence_refs") or [])) + "\n"
+                    "未被这条建议覆盖的条款，才需要你自己再找证据。\n\n"
+                )
+                break
         instruction = (
             "Original user goal:\n"
             + row["instruction"]
@@ -2148,6 +2166,10 @@ class EngineeringRunService:
             "clause_findings is REQUIRED: exactly one entry per acceptance clause listed above, each with status pass|fail|unknown and evidence. "
             "A report is rejected if any clause is missing, and a fail entry requires approved=false. Do not treat Director text as evidence."
             + (("\n\n" + extra_guidance) if extra_guidance.strip() else "")
+            + ("\n\n" + advice_block if advice_block else "")
+            + "\n\n成本控制：先用源码与已有回执判条款；browser_observe 最多 3 次，"
+            "只在'没有渲染就无法判'的条款上使用。缺的条款宿主会补成 unknown 并点名，"
+            "你只对点名那几条负责。"
         )
         if web_entry is not None:
             instruction = (

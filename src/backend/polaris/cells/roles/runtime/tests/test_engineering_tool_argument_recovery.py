@@ -115,23 +115,27 @@ def test_report_review_accepts_numeric_and_enumeration_matrix(tmp_path: Path) ->
     assert [item["clause"] for item in payload["clause_findings"]] == ["1", "C2", "3"]
 
 
-def test_partial_matrix_is_sent_back_twice_then_graded(tmp_path: Path) -> None:
-    """The coverage gate corrects, it does not loop until the QA budget is gone."""
+def test_partial_matrix_is_completed_and_named(tmp_path: Path) -> None:
+    """部分矩阵不再拒回：宿主补全缺的条款并点名，QA 只对这些负责。
+
+    旧版"拒回 → QA 重数 → 再拒"，实测 9 次 report_review 里 7 次被拒，QA 53 轮
+    仍交不出裁决（成本几乎全花在重复清点条款上）。
+    """
     tools = _review_tools(tmp_path, ("clause one", "clause two", "clause three"))
     partial = {
         "approved": True,
         "feedback": "best effort",
         "clause_findings": [{"clause": "1", "status": "pass", "evidence": "call_x"}],
     }
-    for attempt in (1, 2):
-        observation = asyncio.run(tools.execute(f"call_partial_{attempt}", "report_review", dict(partial)))
-        assert observation.ok is False
-        assert "cover every acceptance clause" in observation.content
-    final = asyncio.run(tools.execute("call_partial_3", "report_review", dict(partial)))
-    assert final.ok is True
-    payload = json.loads(final.content)
+    observation = asyncio.run(tools.execute("call_partial", "report_review", dict(partial)))
+    assert observation.ok is True
+    payload = json.loads(observation.content)
     assert payload["clause_match"] == "partial"
-    assert [item["clause"] for item in payload["clause_findings"]] == ["1"]
+    completed = {item["clause"] for item in payload["host_completed_clauses"]}
+    assert completed == {"clause two", "clause three"}
+    statuses = {item["clause"]: item["status"] for item in payload["clause_findings"]}
+    assert statuses["1"] == "pass"
+    assert statuses["clause two"] == "unknown" and statuses["clause three"] == "unknown"
 
 
 def test_write_file_accepts_path_alias_and_null_body(tmp_path: Path) -> None:
