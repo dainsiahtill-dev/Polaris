@@ -2405,9 +2405,19 @@ async def run_engineering_loop(
                             # timed-out command whose effect is unknown, and a
                             # command run where the sandbox cannot physically
                             # guarantee read-only (network reachable, or a
-                            # read-write command cache). A non-empty write root
-                            # alone is not such a guarantee — the command text is
-                            # what says whether it writes.
+                            # read-write command cache).
+                            #
+                            # 候选 owner 判定：只有 Director 能推进候选 revision。
+                            # QA/PM/CE 默认只读（write_roots=()、network 关、
+                            # command_cache=read_only），它们的探测是验证动作，不是
+                            # 候选变更。旧版只看命令文本，于是 QA 的
+                            # `ls … 2>&1` / `npm test` 因 command_may_write 误判
+                            # （2>&1 里的 >）把 revision 一路顶掉：实测 L1-01
+                            # rev111 → 133、verification 被重置 not_run，最后
+                            # 14 份 qa_review_completed 全部 verdict=unknown 且
+                            # report_call_id=None —— 报告被整体丢弃，run 恒
+                            # interrupted。'同 workspace 仅一个源码写入者'。
+                            and command.role == "director"
                             and (
                                 command_may_write(str(normalized.get("command") or ""))
                                 or observation.timed_out

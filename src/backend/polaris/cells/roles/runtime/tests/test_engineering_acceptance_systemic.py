@@ -546,3 +546,26 @@ def test_report_review_fail_finding_with_approved_true_is_treated_as_rejected(tm
     assert observation.ok is True
     assert json.loads(observation.content)["approved"] is False
 
+
+
+def test_numeric_clause_labels_are_indexes_not_substrings() -> None:
+    """实测：裸数字标签曾被"子串摘录"路径劫持 —— 9 条条款里
+    _clause_reference("4") 命中第 7 条（因为第 7 条含 "4"），"5" 命中第 8 条。
+    模型交出完整 1..N 矩阵却被判"缺条款"，26/43 次 report_review 拒绝出自这里。
+    """
+
+    from polaris.cells.roles.runtime.internal.engineering_acceptance import _clause_reference
+
+    clauses = [
+        "| 第一条 |",
+        "| 种子7、同布局运行10秒 | 重置一致； |",  # 含 "1"
+        "| 第三条 |",
+        "| 第四条 | 含数字 4 |",  # 含 "4"
+        "| 清空全部花朵 | 仍可继续观察默认节律。 |",
+    ]
+    assert _clause_reference("1", clauses) == [clauses[0]]
+    assert _clause_reference("4", clauses) == [clauses[3]]
+    assert _clause_reference("5", clauses) == [clauses[4]]
+    assert _clause_reference("2,4", clauses) == [clauses[1], clauses[3]]
+    # 歧义摘录仍然 fail-closed。
+    assert _clause_reference("不存在的条款", clauses) == []

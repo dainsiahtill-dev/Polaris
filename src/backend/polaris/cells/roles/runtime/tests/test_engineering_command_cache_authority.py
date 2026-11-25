@@ -262,3 +262,46 @@ async def test_native_command_with_empty_source_write_grant_advances_revision_fo
     assert result.status == "completed", result.text
     row = service.store.load_run(identity, workspace=workspace)
     assert row["workspace_revision"] == revision
+
+
+async def test_qa_read_only_probe_does_not_advance_the_candidate_revision(
+    isolated_workspace: Path,
+    scripted_provider: ScriptedProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """实测 L1-01：QA 的 `ls … 2>&1` 因 command_may_write 误判（2>&1 里的 >）
+    把 rev111 一路顶到 133、verification 被重置 not_run，最后 14 份
+    qa_review_completed 全部 verdict=unknown 且 report_call_id=None —— 报告被整体
+    丢弃，run 恒 interrupted。只有候选 owner（Director）的探测可以推进 revision。
+    """
+
+    workspace = isolated_workspace
+    settings = host_settings(workspace, "read_only")
+    host = resolve_engineering_profile(settings, workspace, "explicit")
+    scope = role_scope("qa", host)
+    fs = KernelFileSystem(str(workspace), get_default_adapter(), read_only_paths=True)
+    fs.workspace_mkdir(".polaris/runtime/command-cache/data", parents=True, exist_ok=True)
+    service = cold_service(workspace, settings)
+    check = "python3 -B -c 'assert 6 * 7 == 42'"
+    # 候选与验证归 Director（host authority）；随后 QA 用只读 scope 探测。
+    identity = persist(service, host, required_checks=(check,))
+    limits = RunLimits(None, 100_000, 16_000)
+    verifier = EngineeringVerification(
+        workspace, store=service.store, scope=host, limits=limits, cancel=asyncio.Event()
+    )
+    with service.store.acquire_workspace(workspace):
+        checks = await verifier.run_verification((check,), session_id=identity, workspace_revision=0)
+    assert checks and checks[0].ok
+    before = service.store.load_run(identity, workspace=workspace)["workspace_revision"]
+    scripted_provider.enqueue_json(_native(("qa-probe", "execute_command", {"command": "ls -la README* 2>&1"})))
+    scripted_provider.enqueue_json(_native(text="QA probe done."))
+    result = await run_engineering_loop(
+        RoleRunCommand(identity, "qa", "Probe the candidate read-only.", workspace),
+        scope=scope,
+        limits=limits,
+        cancel=asyncio.Event(),
+        store=service.store,
+        client=scripted_provider.client("openai", workspace, monkeypatch),
+    )
+    assert result.status == "completed", result.text
+    assert service.store.load_run(identity, workspace=workspace)["workspace_revision"] == before

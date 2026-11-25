@@ -176,9 +176,11 @@ def _clause_reference(clause: str, goal_clauses: Sequence[str]) -> list[str]:
         return []
     if text in goal_clauses:
         return [text]
-    candidates = [item for item in goal_clauses if item in text or text in item]
-    if len(candidates) == 1:
-        return candidates
+    # 数字/区间/列表/枚举标签必须先按 1-based 索引解析。旧顺序先走"子串摘录"，
+    # 于是裸数字标签被任何含该数字的条款劫持 —— 实测 9 条条款里
+    # _clause_reference("4") 命中第 7 条、"5" 命中第 8 条（因为第 7 条含 "4"）。
+    # 后果：模型交出完整 1..N 矩阵，宿主却回"缺 N 条"，下一轮只能更乱
+    # （L1-01 第二次从缺 2 条变成缺 8 条）。26/43 次 report_review 拒绝出自这里。
     indices: list[int] = []
     ranged = _CLAUSE_RANGE.match(text)
     if ranged:
@@ -194,7 +196,12 @@ def _clause_reference(clause: str, goal_clauses: Sequence[str]) -> list[str]:
     for index in indices:
         if 1 <= index <= total and goal_clauses[index - 1] not in resolved:
             resolved.append(goal_clauses[index - 1])
-    return resolved
+    if resolved:
+        return resolved
+    candidates = [item for item in goal_clauses if item in text or text in item]
+    if len(candidates) == 1:
+        return candidates
+    return []
 
 
 @dataclass(frozen=True)
@@ -299,8 +306,25 @@ def require_observed_clause_evidence(
             if any(not token.startswith(_NATIVE_ID_MARKERS) for token in references):
                 references = set()
         if not references or any(ref not in usable or identities[ref] != 1 for ref in references):
+            # 点名具体不可用的引用：旧版只报条款号，模型只能猜，于是把整份矩阵
+            # 退成 unknown（实测 L1-06 一份 12 条全 pass 的完整矩阵被拒，只因
+            # 证据里同时提到自己一次失败的 call，原文已说明"是我的入参错误"）。
+            unusable = sorted(
+                str(ref)
+                for ref in references
+                if ref not in usable or identities.get(ref) != 1
+            )[:4]
             raise ValueError(
-                f"Clause {finding.clause!r} needs the exact call ID of a successful current check or earlier QA observation for each citation."
+                f"Clause {finding.clause!r} needs the exact call ID of a successful current check or "
+                "earlier QA observation for each citation."
+                + (
+                    " Unusable citation(s): "
+                    + json.dumps(unusable, ensure_ascii=False)
+                    + " — a failed or out-of-frame call cannot be pass evidence; delete it from the "
+                    "evidence text and keep only the receipt that actually supports the clause."
+                    if unusable
+                    else ""
+                )
             )
 
 
