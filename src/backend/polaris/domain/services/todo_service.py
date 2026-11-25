@@ -6,6 +6,7 @@ Extends the basic TodoManager with round-based nag reminders.
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -523,7 +524,18 @@ def get_todo_service(
                 resolve_workspace_persistent_path,
             )
 
-            workspace = "."
+            # 绝不能写 "."：resolve_storage_roots(".") 会解析成**进程 cwd**。
+            # 实例后端的 cwd 是主仓 src/backend，而 KERNELONE_RUNTIME_ROOT 指向
+            # 实例 workspace —— 于是 fail-closed 抛
+            # "must equal the canonical project-local root: <cwd>"，
+            # DirectorService 单例永远建不起来，owner 查询永远失败，
+            # 前端"运行实况"永远空白。用进程绑定的 workspace；只有在完全没有
+            # 绑定的纯 CLI 场景才回落 "."。
+            workspace = str(
+                os.environ.get("KERNELONE_INSTANCE_WORKSPACE")
+                or os.environ.get("KERNELONE_WORKSPACE")
+                or "."
+            )
             state_path = resolve_workspace_persistent_path(workspace, "workspace/brain/todo_state.json")
             events_path = resolve_workspace_persistent_path(workspace, "workspace/brain/todo_events.jsonl")
             state_file = state_path

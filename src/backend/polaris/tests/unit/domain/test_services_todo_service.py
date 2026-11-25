@@ -322,3 +322,26 @@ class TestGlobalFunctions:
         reset_todo_service()
         svc3 = get_todo_service(state_file=Path("/tmp/test_todo.json"))
         assert svc3 is not svc1
+
+
+def test_default_todo_service_uses_process_bound_workspace(tmp_path, monkeypatch) -> None:
+    """默认 state_file=None 时不能用 "."（那会解析成进程 cwd）。
+
+    实测：实例后端的 cwd 是主仓 src/backend，而 KERNELONE_RUNTIME_ROOT 指向实例
+    workspace；"." 让 resolve_storage_roots 拿主仓路径去校验 → fail-closed 抛
+    "must equal the canonical project-local root: <cwd>" → DirectorService 单例
+    永远建不起来 → owner 查询永远失败 → 前端"运行实况"永远空白。
+    """
+
+    from polaris.domain.services import todo_service as module
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("KERNELONE_INSTANCE_WORKSPACE", str(workspace))
+    monkeypatch.setenv("KERNELONE_WORKSPACE", str(workspace))
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(workspace / ".polaris" / "runtime"))
+    monkeypatch.setattr(module, "_todo_service_instance", None)
+
+    service = module.get_todo_service()
+    assert service is not None
+    assert str(workspace) in str(service.state_file)
