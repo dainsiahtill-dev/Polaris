@@ -378,7 +378,11 @@ def attach_run_card_section(messages: list[dict[str, Any]], run_card: Mapping[st
             return
         message["content"] = content.rstrip() + "\n\n" + section
         return
-    messages.insert(0, {"role": "system", "content": section})
+    # 不能新建消息：预算/可见性/信封等 13 条既有测试要求消息序列逐轮恒定
+    # （系统面尤其不能动，第一条 system 必须是角色身份）。所以阶段卡只搭
+    # 记忆卡这条**已经存在**的系统消息；没有记忆卡内容时这一轮就没有阶段卡，
+    # 也不许为此新增消息。
+    return
 
 
 def run_card_section(run_card: Mapping[str, Any]) -> str:
