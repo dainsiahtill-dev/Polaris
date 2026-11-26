@@ -1,0 +1,17 @@
+card_id: vc-20261126-long-horizon-labs
+classification: structural
+owner: roles.runtime
+related_blueprint: docs/blueprints/LONG_HORIZON_RESEARCH_EVIDENCE_20261126.md
+assumptions:
+  - statement: Experimental identities need a laboratory and a stable local ID.
+    evidence: Two experimental branches in the frozen case use the same display ordinal.
+  - statement: A current consumer artifact can still refer to a superseded producer report.
+    evidence: The three-laboratory replay checks the actual consumer pointer and producer digest.
+pre_mortem:
+  - A plan or hash supplied in research data must never grant path or command access.
+  - Treating hash matches as accepted behavior would erase observed negative controls.
+  - A new research plan on a retried request must not silently change the old run.
+verification_plan:
+  - Check drift, missing artifacts, shared content, explicit portable roots and denied reads.
+  - Prove dependency invalidation, isolated branches, prepared requests, resume and durable identity.
+  - Confirm plain direct runs and independent QA keep their existing semantics.

@@ -1,13 +1,19 @@
-import { useMemo, useState, type ReactElement } from 'react';
+import { useMemo, useRef, useState, type ReactElement } from 'react';
 import type { EngineeringRole } from '@/services/api.types';
 import type { EngineeringRunBinding } from '@/hooks/useEngineeringRun';
 import { discussionSnapshotRef } from '@/runtime/contextSnapshot';
+import { readResearchPlan, type EngineeringResearchPlan } from '@/runtime/researchPlan';
 import { ROLE_LABELS } from './format';
 import { IconFolder, IconLayers, IconShield, IconUser } from './icons';
 
 function workspaceBase(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() || path;
 }
+
+type ResearchDraft =
+  | { state: 'off' | 'empty' | 'loading' }
+  | { state: 'invalid'; error: string }
+  | { state: 'ready'; plan: EngineeringResearchPlan; labs: string[]; lab: string };
 
 function EnvRow({ icon, label, value }: { icon: ReactElement; label: string; value: string }): ReactElement {
   return (
@@ -28,17 +34,36 @@ export function GoalComposer({ binding, workspace, role, onStarted }: {
   const [instruction, setInstruction] = useState('');
   const [checks, setChecks] = useState('');
   const [workflow, setWorkflow] = useState<'direct' | 'collaborative'>('direct');
+  const [research, setResearch] = useState<ResearchDraft>({ state: 'off' });
+  const importVersion = useRef(0);
+  const importPlan = async (file?: File) => {
+    const version = ++importVersion.current;
+    if (!file) { setResearch({ state: 'empty' }); return; }
+    setResearch({ state: 'loading' });
+    try {
+      const plan = await readResearchPlan(file);
+      const labs = [...new Set(plan.experiments.map((experiment) => experiment.lab))];
+      if (version === importVersion.current)
+        setResearch({ state: 'ready', plan, labs, lab: labs.length === 1 ? labs[0] : '' });
+    } catch (error) {
+      if (version === importVersion.current)
+        setResearch({ state: 'invalid', error: error instanceof Error ? error.message : '计划导入失败。' });
+    }
+  };
   const busy = Boolean(binding.pending);
   const snapshot = binding.projection.snapshot;
   const canStart = !snapshot || (snapshot.status !== 'running' && snapshot.status !== 'pending');
+  const researchReady = research.state === 'off' || (research.state === 'ready' && Boolean(research.lab));
   const checkLines = useMemo(() => checks.split('\n').length, [checks]);
   const start = async () => {
     const trimmed = instruction.trim();
+    if (!researchReady || busy || !canStart || !trimmed) return;
     const ok = await binding.start({
       instruction: trimmed,
       role,
       workflow: role === 'director' ? workflow : 'direct',
       required_checks: checks.split('\n').map((line) => line.trim()).filter(Boolean),
+      ...(research.state === 'ready' ? { research: { lab: research.lab, plan: research.plan } } : {}),
     });
     if (ok) { setInstruction(''); onStarted?.(trimmed); }
   };
@@ -90,6 +115,31 @@ export function GoalComposer({ binding, workspace, role, onStarted }: {
               })}
             </div>
           </fieldset>
+          <fieldset className="rounded-xl border border-[var(--cx-line)] p-4">
+            <legend className="sr-only">研究配置</legend>
+            <label className="flex items-center gap-2 text-sm font-semibold">
+              <input type="checkbox" className="accent-[var(--cx-teal)]" checked={research.state !== 'off'} disabled={busy}
+                onChange={(event) => { importVersion.current += 1; setResearch({ state: event.target.checked ? 'empty' : 'off' }); }} />
+              多实验室研究
+            </label>
+            {research.state !== 'off' ? <div className="mt-3 grid gap-3">
+              <label className="grid gap-1 text-sm">研究计划文件（UTF-8 JSON）
+                <input type="file" accept=".json,application/json" disabled={busy} className="cx-input min-w-0"
+                  onChange={(event) => void importPlan(event.target.files?.[0])} />
+              </label>
+              {research.state === 'loading' ? <p role="status" className="text-xs">正在读取计划…</p> : null}
+              {research.state === 'invalid' ? <p role="alert" className="text-sm text-red-700">{research.error}</p> : null}
+              {research.state === 'ready' ? <>
+                <p className="break-words text-xs text-[var(--cx-ink-dim)]">项目 {research.plan.project} · {research.plan.experiments.length} 项实验</p>
+                <label className="grid gap-1 text-sm">本次实验室
+                  <select value={research.lab} className="cx-input" disabled={busy} onChange={(event) => setResearch({ ...research, lab: event.target.value })}>
+                    <option value="">选择实验室</option>
+                    {research.labs.map((lab) => <option key={lab} value={lab}>{lab}</option>)}
+                  </select>
+                </label>
+              </> : null}
+            </div> : null}
+          </fieldset>
           <div>
             <span className="text-base font-bold">验证命令 <span className="ml-1 text-xs font-normal text-[var(--cx-ink-faint)]">（可选）</span></span>
             <div className="cx-code cx-code-input mt-2">
@@ -109,7 +159,7 @@ export function GoalComposer({ binding, workspace, role, onStarted }: {
             <p className="mt-1.5 text-xs text-[var(--cx-ink-faint)]">留空由 Director 自行选择并执行验证命令。</p>
           </div>
           <div className="flex flex-wrap items-center gap-3 border-t border-[var(--cx-line)] pt-4">
-            <button type="button" onClick={() => void start()} disabled={busy || !canStart || !instruction.trim()} className="cx-btn cx-btn--primary">
+            <button type="button" onClick={() => void start()} disabled={busy || !canStart || !instruction.trim() || !researchReady} className="cx-btn cx-btn--primary">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="h-4 w-4"><path d="M7 4.5 19 12 7 19.5Z" /></svg>
               {binding.pending === 'start' ? '启动中…' : '开始执行'}
             </button>
@@ -119,6 +169,7 @@ export function GoalComposer({ binding, workspace, role, onStarted }: {
             </button>
             <span className="text-xs text-[var(--cx-ink-faint)]">只读建议，不创建运行</span>
           </div>
+          {binding.error ? <p role="alert" className="text-sm text-red-700">{binding.error}</p> : null}
           {binding.discussion ? (
             <div className="rounded-xl border border-[var(--cx-line)] bg-[#fbfbfc] p-4">
               <p className="cx-eyebrow">角色建议 · ADVISORY ONLY</p>

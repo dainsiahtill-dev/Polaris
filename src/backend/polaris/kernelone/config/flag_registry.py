@@ -305,8 +305,104 @@ _LEGACY_SWEEP_FLAG_NAMES: tuple[str, ...] = (
     "KERNELONE_WORKSPACE_SENTINEL",
 )
 
+# Engineering runtime controls and their consuming owners. Defaults mirror the readers.
+_ENGINEERING_CONTROLS: tuple[tuple[str, str | None, str, str], ...] = (
+    ("KERNELONE_CONTEXTOS_CARTOGRAPHER", "0", "roles.runtime", "Enable the run cartographer."),
+    ("KERNELONE_CONTEXTOS_EPOCH", "auto", "roles.runtime", "Select the historical epoch memory policy."),
+    ("KERNELONE_CONTEXTOS_EPOCH_FALLBACK", "0", "roles.runtime", "Allow the optional epoch advisor fallback."),
+    (
+        "KERNELONE_CONTEXTOS_EPOCH_MODEL",
+        "kimi-for-coding-highspeed",
+        "roles.runtime",
+        "Model used for closed epoch summarization.",
+    ),
+    (
+        "KERNELONE_CONTEXTOS_EPOCH_PROVIDER_ID",
+        "anthropic_compat-1771249789301",
+        "roles.runtime",
+        "Provider binding for the epoch advisor.",
+    ),
+    (
+        "KERNELONE_CONTEXTOS_FOLD_KEPT_PREVIEW_BYTES",
+        "512",
+        "roles.runtime",
+        "Preview bytes to retain on a folded card.",
+    ),
+    ("KERNELONE_CONTEXTOS_FOLD_MIN_BYTES", "1024", "roles.runtime", "Minimum size of a foldable call payload."),
+    (
+        "KERNELONE_CONTEXTOS_FOLD_RESULT_MIN_BYTES",
+        "4096",
+        "roles.runtime",
+        "Minimum size of a foldable result payload.",
+    ),
+    (
+        "KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES",
+        "24",
+        "roles.runtime",
+        "Inactive focus window before an eligible payload folds.",
+    ),
+    (
+        "KERNELONE_CONTEXTOS_REHYDRATION_GRACE_ACTIVITIES",
+        "2",
+        "roles.runtime",
+        "Retention interval on recovered evidence.",
+    ),
+    (
+        "KERNELONE_CONTEXTOS_SEMANTIC_ADVISOR_CONFIG",
+        "",
+        "roles.runtime",
+        "Explicit model bindings for semantic advice.",
+    ),
+    (
+        "KERNELONE_CONTEXTOS_SEMANTIC_ADVISOR_MODE",
+        "shadow",
+        "roles.runtime",
+        "Select delivery mode for semantic advice.",
+    ),
+    ("KERNELONE_CONTEXTOS_VALIDATION_MEASUREMENT", "1", "roles.runtime", "Record context validation measurements."),
+    (
+        "KERNELONE_ENGINEERING_BROWSER_AUTODETECT",
+        "1",
+        "engineering.bootstrap",
+        "Discover available browser tools when resolving a host profile.",
+    ),
+    ("KERNELONE_ENGINEERING_STAGE_GATE_WRITES", "0", "roles.runtime", "Configure stage-based restrictions on writes."),
+    ("KERNELONE_ENGINEERING_STRUCTURED_REPAIR", "1", "roles.runtime", "Project current structured repair feedback."),
+    (
+        "KERNELONE_ORPHAN_RUN_SWEEP_AGE_SECONDS",
+        "1800",
+        "roles.runtime",
+        "Minimum age of an orphan run eligible for cleanup.",
+    ),
+    ("KERNELONE_RESIDENT_AGI", "0", "roles.runtime", "Enable the optional Resident project advisor."),
+    ("KERNELONE_RESIDENT_PROJECT_PROFILE", "1", "roles.runtime", "Enable deterministic repository profile hints."),
+    ("KERNELONE_RSS_LIMIT_MB", "4096", "delivery.diagnostics", "RSS threshold for diagnostic reporting."),
+    (
+        "KERNELONE_ENGINEERING_WORKING_SET_TOKENS",
+        "256000",
+        "roles.runtime",
+        "Target for engineering history selection.",
+    ),
+    ("KERNELONE_ENGINEERING_WRAP_UP_GATE", "1", "roles.runtime", "Enable wrap-up after a verified candidate."),
+    ("KERNELONE_ENGINEERING_WRAP_UP_CYCLES", "0", "roles.runtime", "Pass-to-write cycles permitted before wrap-up."),
+    (
+        "KERNELONE_ENGINEERING_FIRST_VERIFICATION_FRACTION",
+        "0.4",
+        "roles.runtime",
+        "Deadline fraction reserved for first verification.",
+    ),
+    ("KERNELONE_ENGINEERING_QA_MAX_TURNS", "50", "roles.runtime", "Bound QA turns before requesting the verdict."),
+    ("KERNELONE_ENGINEERING_QA_MIN_FRACTION", "0.45", "roles.runtime", "Minimum deadline share reserved for QA."),
+    ("KERNELONE_INSTANCE_BIND_HOST", None, "instances", "Network bind host for an instance."),
+    ("KERNELONE_INSTANCE_PUBLIC_HOST", None, "instances", "Host published to remote instance clients."),
+)
+
 KERNELONE_FLAG_REGISTRY: dict[str, FlagSpec] = {
     **{name: _legacy_sweep_spec(name) for name in _LEGACY_SWEEP_FLAG_NAMES},
+    **{
+        name: FlagSpec(name, default, owner, purpose, "2026-11-26", None)
+        for name, default, owner, purpose in _ENGINEERING_CONTROLS
+    },
     "KERNELONE_ENGINEERING_HOST_CONFIG": FlagSpec(
         name="KERNELONE_ENGINEERING_HOST_CONFIG",
         default=None,

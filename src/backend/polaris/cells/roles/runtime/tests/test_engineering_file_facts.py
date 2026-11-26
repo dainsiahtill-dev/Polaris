@@ -74,6 +74,36 @@ def test_unrelated_workspace_snapshots_and_unrecoverable_cards_stay_out(tmp_path
     assert build_known_facts_cards({"workspace": str(tmp_path)}, [bad]) == []
 
 
+@pytest.mark.parametrize("with_verifier", [False, True])
+def test_no_source_manifest_still_exposes_issued_ref_from_this_run_only(tmp_path: Path, with_verifier: bool) -> None:
+    read = _read(1, "inside.py", "def saved(): pass", 3)
+    denied = _read(2, "denied.py", "def other(): pass", 3)
+    events = [read, denied]
+    if with_verifier:
+        events.append(
+            {
+                "seq": 3,
+                "kind": "verification_completed",
+                "role": "director",
+                "payload": {
+                    "workspace_revision": 3,
+                    "verification": "passed",
+                    "checks": [{"ok": True, "exit_code": 0}],
+                    "input_binding": {},
+                },
+            }
+        )
+    (card,) = build_known_facts_cards(
+        {"workspace": str(tmp_path), "workspace_revision": 3, "verification": "passed"},
+        events,
+        can_read=lambda name: name == "inside.py",
+    )
+    assert card["paths"] == ["inside.py"]
+    (row,) = card["entries"]
+    assert row["candidate_check"] == "unknown"
+    assert row["content_ref"] == "filecard:" + hashlib.sha256(b"def saved(): pass").hexdigest()
+
+
 def test_historical_snapshot_cannot_pass_a_current_qa_clause() -> None:
     read = _read(3, "a.py", "def old(): pass", 1, stale=True, recovered_from="saved")
     read["role"] = "qa"

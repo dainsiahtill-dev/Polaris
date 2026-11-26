@@ -162,6 +162,8 @@ class EngineeringSessionStore:
                 connection.execute("ALTER TABLE runs ADD COLUMN verification_output_roots TEXT")
             if "verification_execution_policy" not in columns:
                 connection.execute("ALTER TABLE runs ADD COLUMN verification_execution_policy TEXT")
+            if "research_binding" not in columns:
+                connection.execute("ALTER TABLE runs ADD COLUMN research_binding TEXT")
             connection.execute("""CREATE TABLE IF NOT EXISTS events (
                 session_id TEXT NOT NULL REFERENCES runs(session_id), seq INTEGER NOT NULL,
                 kind TEXT NOT NULL, role TEXT NOT NULL, payload TEXT NOT NULL, created_at REAL NOT NULL,
@@ -285,6 +287,9 @@ class EngineeringSessionStore:
             read_roots=scope.read_roots,
             write_roots=scope.write_roots,
         )
+        from polaris.cells.roles.runtime.internal.engineering_research_labs import bind_research
+
+        research = bind_research(command.research)
         payload = {
             "workspace": str(self.workspace),
             "role": command.role,
@@ -326,6 +331,7 @@ class EngineeringSessionStore:
             if verification_output_roots is not None
             else None,
             "verification_execution_policy": verification_execution_policy,
+            "research_binding": self._json(research) if research is not None else None,
         }
         with self._transaction() as connection:
             identity_row = connection.execute("SELECT * FROM runs WHERE session_id=?", (command.session_id,)).fetchone()
@@ -392,7 +398,7 @@ class EngineeringSessionStore:
         return str(row["session_id"]) if row is not None else None
 
     def load_run(self, session_id: str, *, workspace: Path) -> dict[str, Any]:
-        row, _ = self.load_projection_inputs(session_id, workspace=workspace, kinds=())
+        row, _ = self.load_projection_inputs(session_id, workspace=workspace, kinds=(), include_research=True)
         return row
 
     def list_runs(self, *, workspace: Path, limit: int = 5) -> list[dict[str, Any]]:
@@ -408,8 +414,25 @@ class EngineeringSessionStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def previous_memory_run(self, session_id: str, *, workspace: Path) -> dict[str, Any] | None:
+        """Choose only a prior terminal run with the same host scope and research intent."""
+        self._assert_workspace(workspace)
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT p.session_id,p.workspace,p.instruction,p.verification,p.status FROM runs c JOIN runs p "
+                "ON p.workspace=c.workspace AND p.engine_version=c.engine_version AND p.scope=c.scope "
+                "AND p.permission_profile_id IS c.permission_profile_id "
+                "AND json_extract(p.research_binding,'$.plan_sha256') IS json_extract(c.research_binding,'$.plan_sha256') "
+                "AND json_extract(p.research_binding,'$.lab') IS json_extract(c.research_binding,'$.lab') "
+                "WHERE c.session_id=? AND c.workspace=? AND p.session_id!=c.session_id AND p.created_at<=c.created_at "
+                "AND p.status IN ('completed','interrupted','failed','cancelled') "
+                "ORDER BY p.created_at DESC,p.session_id DESC LIMIT 1",
+                (session_id, str(self.workspace)),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
     def load_projection_inputs(
-        self, session_id: str, *, workspace: Path, kinds: tuple[str, ...] | None
+        self, session_id: str, *, workspace: Path, kinds: tuple[str, ...] | None, include_research: bool = False
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         """Read the run and selected context facts from the same SQLite snapshot."""
         self._assert_workspace(workspace)
@@ -423,6 +446,9 @@ class EngineeringSessionStore:
             raise PermissionError("stored engineering session workspace mismatch")
         for field in ("required_checks", "scope", "limits", "checks"):
             row[field] = json.loads(row[field])
+        saved_research = row.pop("research_binding", None)
+        if include_research and saved_research is not None:
+            row["research"] = json.loads(saved_research)
         row.update(acceptance)
         row["verification_commands"] = commands
         row["verification_output_roots"] = (
@@ -466,6 +492,11 @@ class EngineeringSessionStore:
             ).fetchall()
         for field in ("required_checks", "scope", "limits", "checks"):
             row[field] = json.loads(row[field])
+        saved_research = row.pop("research_binding", None)
+        if saved_research is not None:
+            from polaris.cells.roles.runtime.internal.engineering_research_labs import research_identity
+
+            row["research"] = research_identity(json.loads(saved_research))
         row.update(acceptance)
         row["verification_commands"] = commands
         row["verification_output_roots"] = (
@@ -1097,6 +1128,56 @@ class EngineeringSessionStore:
     def verification_completion_is_observed(self, session_id: str, payload: Mapping[str, Any]) -> bool:
         with self._connection() as connection:
             return self._completion_observed(connection, session_id, payload)
+
+    def research_publication(self, session_id: str, digest: str) -> dict[str, Any]:
+        with self._connection() as connection:
+            self._require_run(connection, session_id)
+            event = connection.execute(
+                "SELECT payload FROM events WHERE session_id=? AND kind='research_publication_issued' "
+                "AND json_extract(payload,'$.publication_sha256')=? ORDER BY seq LIMIT 1",
+                (session_id, digest),
+            ).fetchone()
+        if event is None:
+            raise KeyError("no such issued research publication")
+        return dict(json.loads(event["payload"])["descriptor"])
+
+    def publication_for_selection(self, session_id: str, selector: str) -> tuple[int, str] | None:
+        with self._connection() as connection:
+            self._require_run(connection, session_id)
+            event = connection.execute(
+                "SELECT seq,json_extract(payload,'$.publication_sha256') FROM events "
+                "WHERE session_id=? AND kind='research_publication_issued' AND json_extract(payload,'$.selector')=? LIMIT 1",
+                (session_id, selector),
+            ).fetchone()
+        return (int(event[0]), str(event[1])) if event is not None else None
+
+    def record_research_publication(
+        self, session_id: str, selector: str, digest: str, descriptor: dict[str, Any]
+    ) -> int:
+        with self._transaction() as connection:
+            row = self._require_run(connection, session_id)
+            existing = connection.execute(
+                "SELECT seq,payload FROM events WHERE session_id=? AND kind='research_publication_issued' "
+                "AND json_extract(payload,'$.publication_sha256')=? LIMIT 1",
+                (session_id, digest),
+            ).fetchone()
+            if existing is not None:
+                if json.loads(existing["payload"])["descriptor"] != descriptor:
+                    raise EngineeringSessionConflictError("publication identity conflict")
+                return int(existing["seq"])
+            if (
+                row["status"] != "completed"
+                or row["verification"] != "passed"
+                or row["workspace_revision"] != descriptor["workspace_revision"]
+            ):
+                raise EngineeringSessionConflictError("producer candidate changed before publication")
+            return self._append_event(
+                connection,
+                session_id,
+                kind="research_publication_issued",
+                role="host",
+                payload={"selector": selector, "publication_sha256": digest, "descriptor": descriptor},
+            )
 
     def comparable_failed_verification(self, target_id: str, source_id: str, event_seq: int) -> dict[str, Any] | None:
         """Resolve one pinned historical failure for an identically scoped run."""
@@ -1738,6 +1819,50 @@ def existing_journal(root: Path, database: Path) -> Iterator[tuple[sqlite3.Conne
             metadata = path.lstat()
             if (metadata.st_dev, metadata.st_ino) != identity:
                 raise PermissionError("engineering resource namespace changed during query")
+
+
+def query_research_laboratories(
+    workspace: Path, project: str, *, lab: str | None = None, offset: int = 0, limit: int = 50
+) -> dict[str, Any]:
+    """Discover each laboratory's latest run without creating or migrating an engineering store."""
+    root = workspace.resolve(strict=True)
+    if (
+        not project
+        or len(project) > 100
+        or (lab is not None and not 1 <= len(lab) <= 100)
+        or offset < 0
+        or not 1 <= limit <= 100
+    ):
+        raise ValueError("invalid laboratory query or page")
+    rows: list[sqlite3.Row] = []
+    try:
+        with existing_journal(root, root / ".polaris" / "runtime" / "engineering" / "sessions.sqlite3") as (
+            connection,
+            _,
+        ):
+            if any(col["name"] == "research_binding" for col in connection.execute("PRAGMA table_info(runs)")):
+                rows = connection.execute(
+                    "WITH ranked AS (SELECT session_id,status,verification,created_at,"
+                    "json_extract(research_binding,'$.lab') AS lab,json_extract(research_binding,'$.plan_sha256') AS digest,"
+                    "ROW_NUMBER() OVER(PARTITION BY json_extract(research_binding,'$.lab') ORDER BY created_at DESC,session_id DESC) AS n "
+                    "FROM runs WHERE workspace=? AND engine_version='engineering_v2' AND research_binding IS NOT NULL "
+                    "AND json_extract(research_binding,'$.plan.project')=? AND (? IS NULL OR json_extract(research_binding,'$.lab')=?)) "
+                    "SELECT session_id,status,verification,lab,digest AS plan_sha256,created_at FROM ranked "
+                    "WHERE (? IS NOT NULL OR n=1) ORDER BY lab,created_at DESC,session_id DESC LIMIT ? OFFSET ?",
+                    (str(root), project, lab, lab, lab, limit + 1, offset),
+                ).fetchall()
+    except FileNotFoundError:
+        rows = []
+    return {
+        "project": project,
+        "workspace": str(root),
+        **(
+            {"lab": lab, "runs": [dict(row) for row in rows[:limit]]}
+            if lab is not None
+            else {"laboratories": [dict(row) for row in rows[:limit]]}
+        ),
+        "next_offset": offset + limit if len(rows) > limit else None,
+    }
 
 
 def query_resource_state(

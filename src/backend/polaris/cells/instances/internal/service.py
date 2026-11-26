@@ -57,7 +57,7 @@ def instance_bind_host() -> str:
     WSL2 workspace.
     """
 
-    configured = str(os.environ.get(INSTANCE_BIND_HOST_ENV) or "").strip()
+    configured = str(os.environ.get("KERNELONE_INSTANCE_BIND_HOST") or "").strip()
     return configured or DEFAULT_HOST
 
 
@@ -69,7 +69,7 @@ def instance_public_host(bind_host: str) -> str:
     consumer can actually reach.
     """
 
-    configured = str(os.environ.get(INSTANCE_PUBLIC_HOST_ENV) or "").strip()
+    configured = str(os.environ.get("KERNELONE_INSTANCE_PUBLIC_HOST") or "").strip()
     if configured:
         return configured
     if bind_host in {"0.0.0.0", "::", "[::]"}:

@@ -6,6 +6,14 @@ import { cancelEngineeringRun, getCurrentEngineeringRun, getEngineeringRun, resu
 const saved = { session_id: 'r1', run_id: 'r1', engine_version: 'engineering_v2', workspace: '/work', workflow: 'direct', role: 'director', status: 'running', active_roles: [], roles: { pm: 'not_called', chief_engineer: 'not_called', director: 'running', qa: 'not_called' }, text: '', verification: 'not_run', checks: [], required_checks: [], permission_profile_id: null, resource_url: '/v2/engineering/runs/r1', last_seq: 1, events: [] };
 beforeEach(() => { vi.clearAllMocks(); post.mockResolvedValue({ ok: true, data: saved }); get.mockResolvedValue({ ok: true, data: saved }); });
 describe('engineering API client', () => {
+  it('sends a selected laboratory and preserves its returned plan identity', async () => {
+    const plan = { schema: 'engineering.research-plan.v1' as const, project: 'study', experiments: [{ lab: 'sample', id: 'first', scope: 'initial data' }] };
+    const identity = { project: 'study', lab: 'sample', plan_sha256: 'a'.repeat(64) };
+    post.mockResolvedValueOnce({ ok: true, data: { ...saved, research: identity } });
+    const result = await startEngineeringRun({ workspace: '/work', instruction: 'Inspect the first sample.', research: { lab: 'sample', plan } });
+    expect(post.mock.calls[0][1].research).toEqual({ lab: 'sample', plan });
+    expect(result.data?.research).toEqual(identity);
+  });
   it('uses only the canonical new-run resources and host profile identity', async () => {
     await startEngineeringRun({ instruction: 'Review', workspace: '/work', permission_profile_id: 'none', request_key: 'one' });
     expect(post.mock.calls[0][0]).toBe('/v2/engineering/runs');

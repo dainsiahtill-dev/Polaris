@@ -22,6 +22,7 @@ from polaris.bootstrap.engineering_runtime import (
 from polaris.cells.roles.runtime.internal.engineering_session import EngineeringSessionStore
 from polaris.cells.roles.runtime.public.engineering_service import EngineeringRunService
 from polaris.delivery.http.dependencies import require_auth
+from polaris.delivery.http.routers.engineering_research_exchange import router as research_exchange_router
 from polaris.kernelone.concurrency import get_concurrency_manager
 from pydantic import BaseModel, Field
 
@@ -38,6 +39,7 @@ class EngineeringRunRequest(BaseModel):
     role: Literal["pm", "chief_engineer", "director", "qa"] = "director"
     permission_profile_id: str | None = None
     required_checks: tuple[str, ...] = ()
+    research: dict[str, Any] | None = None
     request_key: str | None = None
 
 
@@ -106,6 +108,29 @@ async def find_request(request_key: str, request: Request) -> JSONResponse:
         raise _error(error) from error
 
 
+@router.get("/research/{project}/laboratories")
+async def get_research_laboratories(
+    project: str, request: Request, lab: str | None = None, offset: int = 0, limit: int = 50
+) -> JSONResponse:
+    def read(service: EngineeringRunService, workspace: Path) -> dict[str, Any]:
+        return service.research_laboratories(project, workspace=workspace, lab=lab, offset=offset, limit=limit)
+
+    try:
+        return await _read_response(request, read)
+    except (KeyError, OSError, ValueError, RuntimeError) as error:
+        raise _error(error) from error
+
+
+@router.get("/runs/{session_id}/research-plan")
+async def get_run_research_plan(session_id: str, request: Request) -> JSONResponse:
+    try:
+        return await _read_response(
+            request, lambda service, workspace: service.research_plan(session_id, workspace=workspace)
+        )
+    except (KeyError, OSError, ValueError, RuntimeError) as error:
+        raise _error(error) from error
+
+
 @router.get("/runs/current")
 async def get_current_run(request: Request) -> JSONResponse:
     """Read current workspace facts through the injected engineering owner."""
@@ -148,9 +173,7 @@ def observation_image(store: EngineeringSessionStore, session_id: str, call_id: 
 
 
 @router.get("/runs/{session_id}/observations/{call_id}/images/{index}")
-async def get_observation_image(
-    session_id: str, call_id: str, index: int, request: Request
-) -> Response:
+async def get_observation_image(session_id: str, call_id: str, index: int, request: Request) -> Response:
     """Serve one captured frame's bytes.
 
     The live event stream deliberately carries image metadata only, so the
@@ -203,3 +226,6 @@ async def resume_run(
         return await _read_response(request, lambda owner, bound: observe_engineering_run(owner, session_id, bound))
     except (KeyError, OSError, ValueError, RuntimeError) as error:
         raise _error(error) from error
+
+
+router.include_router(research_exchange_router)

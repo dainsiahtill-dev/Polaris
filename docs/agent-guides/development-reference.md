@@ -77,3 +77,18 @@ pytest src/backend/polaris/tests
 python scripts/run_factory_e2e_smoke.py --workspace .
 ```
 
+
+## 内部批次与后端源码编辑互斥
+
+原生 `run_factory_bench.py` 进入真实执行栈前取得源码共享锁并持有到进程退出。多个只读批次可按各自的资格要求并存。`--dry-run`、帮助、已有报告的对比与指纹查询可以在源码编辑期间执行。需要稳定资格证据时，继续保留原运行的启动指纹、独立验收和退出结算。
+
+在仓库根执行以下命令。第一条返回当前可编辑状态、源码根与可定位的运行 PID。第二条把整个前台编辑命令放入独占期。快照查询与编辑之间可能有新批次启动，editor 必须使用第二条取得独占锁。命令行工具、补丁脚本和编辑器都应前台运行到实际写盘完成。
+
+```bash
+rtk proxy python src/backend/scripts/factory_bench/source_freeze.py status
+rtk proxy python src/backend/scripts/factory_bench/source_freeze.py edit -- rtk proxy python /path/to/edit_script.py
+```
+
+两个入口争用时立即返回 75。编辑命令正常运行时保留其退出码。可用 `--backend-root /absolute/checkout/src/backend` 在子命令前指定源码根。工具以真实目录识别别名。普通工程运行、生成项目和已有批次报告均由各自原入口管理。升级前的 native Python 入口及已知 `run_one.sh`、`run_march.sh` 会通过只读进程检查发现。此前已在运行且未持锁的脚本只能提供瞬时证据。
+
+Linux、WSL 与支持目录 `flock` 的 POSIX 系统直接锁定目录 inode，多个工作区和不同 HOME 不会改变锁的身份。前台编辑进程继承锁的描述符，正常退出和崩溃均由内核释放。原生 Windows 使用 checkout 的 `.polaris/internal-bench-source-locks` 下的 SQLite 回滚模式共享读事务及独占写事务，前台命令由持锁父进程等待。Windows 编辑期间强杀持锁父进程时，应先确认编辑子进程已退出。不同操作系统同时挂载同一源码树、网络文件系统及脱离前台的后台编辑无法提供本地锁互斥保证；请使用同一主机内核和本地 checkout。所有编辑器须消费同一入口；直接写盘仍由资格审计的指纹和冻结观察判定。

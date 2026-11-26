@@ -76,6 +76,26 @@ describe('MissionControlView', () => {
     expect(screen.getByTestId('engineering-verification')).toHaveTextContent('未运行验证');
     expect(screen.getByTestId('engineering-project-outcome')).toHaveTextContent('未知');
     expect(screen.getByRole('button', { name: '取消运行' })).toBeInTheDocument();
+    expect(screen.queryByTestId('research-run-panel')).toBeNull();
+  });
+
+  it('projects the exact current laboratory observation and drops foreign and superseded bindings', () => {
+    const research = { project: 'case', lab: 'display', plan_sha256: 'a'.repeat(64) };
+    const payload = { ...research, state_counts: { matched: 1, needs_recheck: 1 }, experiments: [
+      { key: 'display/image', scope: '同一输入', state: 'needs_recheck', affected_by: ['source/scale'], next_question: '检查最新校准值' },
+    ] };
+    const events = [event(3, 'research_evidence_observed', payload),
+      event(4, 'research_evidence_observed', { ...payload, plan_sha256: 'b'.repeat(64), state_counts: { matched: 99 } }),
+      { ...event(5, 'research_evidence_observed', payload), workspace: '/foreign' }];
+    const binding = makeBinding({ projection: { snapshot: snapshot({ research }), events, error: null, snapshotRequiredSeq: null, historyWindowed: false } });
+    render(<MissionControlView workspace="/workspace/pelican" binding={binding} role="director" />);
+    const panel = within(screen.getByTestId('research-run-panel'));
+    expect(panel.getByText(research.plan_sha256)).toBeVisible();
+    expect(panel.getByTestId('research-observation')).toHaveTextContent('证据观察 #3 · 引用匹配 1 · 需复核 1');
+    fireEvent.click(panel.getByText('查看实验依赖'));
+    expect(panel.getByText('display/image')).toBeVisible();
+    expect(panel.getByText(/受影响的依赖：source\/scale/)).toBeVisible();
+    expect(panel.getByText(/检查最新校准值/)).toBeVisible();
   });
 
   it('shows the host run_card_active card with its phase, completed work and next actions', () => {

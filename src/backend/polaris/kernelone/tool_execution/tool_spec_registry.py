@@ -1338,7 +1338,7 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
     "read_file": {
         "category": "read",
         "cost_level": "high",
-        "description": "Read source as a bounded FileCard (path, revision, sha256, symbols, content_ref and an 8KB default preview). Use start_line/end_line for larger files; use content_ref to retrieve an earlier card without rereading the file.",
+        "description": "Read current source by file alone. For an unchanged version, cite its issued FileCard directly. To recover details, copy its exact content_ref and request the needed start_line/end_line; include file to distinguish paths that share identical bytes.",
         "aliases": ["rf", "cat", "file_read"],
         "arg_aliases": {
             "file_path": "file",
@@ -1830,20 +1830,29 @@ def _build_tool_spec_from_dict(tool_name: str, spec_dict: dict[str, Any]) -> Too
         "type": "object",
         "properties": properties,
     }
+    # The runtime requires one key from *each* group. Singleton groups are
+    # ordinary required fields; alternatives within a group form one disjunction.
+    alternatives: list[dict[str, Any]] = []
+    required_any = spec_dict.get("required_any")
+    if isinstance(required_any, list):
+        for group in required_any:
+            keys = list(group) if isinstance(group, (list, tuple)) else [group]
+            if not keys or not all(isinstance(key, str) and key for key in keys):
+                raise ValueError("invalid required_any group")
+            if len(keys) == 1:
+                if keys[0] not in required:
+                    required.append(keys[0])
+            else:
+                alternatives.append({"anyOf": [{"required": [key]} for key in keys]})
     if required:
         parameters["required"] = required
-    # "at least one of these groups"（read_file: file XOR content_ref）必须落在
-    # parameters 里 —— registry.get() 只从 arguments 重建 parameters，解析层
-    # 只认 parameters，所以只写 required_any 会被丢掉。
-    required_any = spec_dict.get("required_any")
-    if isinstance(required_any, list) and required_any and "anyOf" not in parameters:
-        parameters["anyOf"] = [
-            {"required": list(group)} if isinstance(group, (list, tuple)) else {"required": [group]}
-            for group in required_any
-        ]
     parameter_any_of = spec_dict.get("parameter_any_of")
     if isinstance(parameter_any_of, list) and parameter_any_of:
-        parameters["anyOf"] = deepcopy(parameter_any_of)
+        alternatives.append({"anyOf": deepcopy(parameter_any_of)})
+    if len(alternatives) == 1:
+        parameters.update(alternatives[0])
+    elif alternatives:
+        parameters["allOf"] = alternatives
     # Effective snapshots and direct ToolSpec registrations already own the
     # complete schema. Rebuilding from argument metadata would lose nested
     # required lists and root/composition constraints.

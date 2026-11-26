@@ -2081,6 +2081,7 @@ export interface EngineeringEvent {
 }
 export type AcceptanceDimensionStatus = 'passed' | 'failed' | 'unknown' | 'not_required';
 export interface EngineeringRunSnapshot {
+  research?: { project: string; lab: string; plan_sha256: string };
   session_id: string; run_id: string; engine_version: 'engineering_v2'; workspace: string;
   workflow: 'direct' | 'collaborative'; role: EngineeringRole; status: EngineeringRunStatus;
   active_roles: string[]; roles: Record<EngineeringRole, EngineeringRoleStatus>; text: string;
@@ -2096,4 +2097,17 @@ export interface EngineeringRunSnapshot {
 export interface EngineeringStartOptions {
   instruction: string; workspace: string; workflow?: 'direct' | 'collaborative'; role?: EngineeringRole;
   permission_profile_id?: string; required_checks?: string[]; request_key?: string;
+  research?: {
+    lab: string;
+    plan: {
+      schema: 'engineering.research-plan.v1';
+      project: string;
+      experiments: Array<{
+        lab: string; id: string; scope: string; next_question?: string;
+        report?: { manifest: string; sha256: string; references: Array<{ path_pointer: string; digest_pointer: string }> } | null;
+        depends_on?: Array<{ lab: string; id: string; sha256?: string | null }>;
+      }>;
+    };
+    plan_sha256?: string;
+  };
 }

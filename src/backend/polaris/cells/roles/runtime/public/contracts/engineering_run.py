@@ -19,6 +19,7 @@ class RoleRunCommand:
     workspace: Path
     workflow: Literal["direct", "collaborative"] = "direct"
     required_checks: tuple[str, ...] = ()
+    research: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

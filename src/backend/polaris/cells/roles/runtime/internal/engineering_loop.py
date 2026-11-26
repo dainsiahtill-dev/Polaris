@@ -350,7 +350,6 @@ def _model_context_window(workspace: Path, role: str) -> int:
 # therefore bounded by design. The tight budget is the intended operating point;
 # the window-derived ceiling is only a fallback for a final turn that cannot fit
 # the tight budget. The durable journal keeps every observation either way.
-_WORKING_SET_TOKENS_ENV = "KERNELONE_ENGINEERING_WORKING_SET_TOKENS"
 _WORKING_SET_TOKENS_DEFAULT = 256000
 _WINDOW_RESERVE_TOKENS = 16384 + 8192
 
@@ -361,17 +360,15 @@ _WINDOW_RESERVE_TOKENS = 16384 + 8192
 # and shell commands are intercepted, and two blocked attempts end the Director
 # frame so QA reviews the candidate that actually passed. Independent QA is the
 # safety net for a genuinely premature finish.
-_WRAP_UP_GATE_ENV = "KERNELONE_ENGINEERING_WRAP_UP_GATE"
 _WRAP_UP_GATE_MAX_BLOCKS = 2
 # Pass -> write cycles allowed before the wrap-up gate intercepts writes.
 # 0 = freeze the candidate at the first durable pass and hand it to independent
 # QA (only a QA rejection unfreezes it); 1 = allow one change-then-reverify
 # cycle. Chosen by an A/B comparison on real runs, not by taste.
-_WRAP_UP_CYCLES_ENV = "KERNELONE_ENGINEERING_WRAP_UP_CYCLES"
 
 
 def _wrap_up_cycle_allowance() -> int:
-    raw = os.environ.get(_WRAP_UP_CYCLES_ENV, "0")
+    raw = os.environ.get("KERNELONE_ENGINEERING_WRAP_UP_CYCLES", "0")
     try:
         return max(0, int(raw))
     except ValueError:
@@ -383,9 +380,7 @@ def _wrap_up_cycle_allowance() -> int:
 # submitting report_review (observed: 69 QA execute_commands, no report, run
 # cancelled at budget). Bound the QA frame's turns: warn at the limit, hard
 # finish shortly after so the run keeps an honest terminal state.
-_FIRST_VERIFICATION_FRACTION_ENV = "KERNELONE_ENGINEERING_FIRST_VERIFICATION_FRACTION"
 _FIRST_VERIFICATION_FRACTION_DEFAULT = 0.4
-_QA_TURN_LIMIT_ENV = "KERNELONE_ENGINEERING_QA_MAX_TURNS"
 _QA_TURN_LIMIT_DEFAULT = 50
 _QA_TURN_GRACE = 5
 # The Director has no hard stop of its own, so a slow run hands the reviewer
@@ -394,7 +389,6 @@ _QA_TURN_GRACE = 5
 # by reading the actual source files") when the 600s reserve forced a verdict —
 # the run ended interrupted with project_outcome unknown even though verification
 # had passed. The reviewer gets a guaranteed share and the Director yields.
-_QA_MIN_FRACTION_ENV = "KERNELONE_ENGINEERING_QA_MIN_FRACTION"
 _QA_MIN_FRACTION_DEFAULT = 0.45
 
 
@@ -430,7 +424,7 @@ def _history_allowances(window: int) -> list[int]:
     window_allowance = int(window * 0.95) - _WINDOW_RESERVE_TOKENS
     if window_allowance <= 0:
         return [max(2048, int(window * 0.5))]
-    configured = int(os.environ.get(_WORKING_SET_TOKENS_ENV, str(_WORKING_SET_TOKENS_DEFAULT)) or 0)
+    configured = int(os.environ.get("KERNELONE_ENGINEERING_WORKING_SET_TOKENS", str(_WORKING_SET_TOKENS_DEFAULT)) or 0)
     tight = min(configured, window_allowance) if configured > 0 else window_allowance
     return sorted({tight, window_allowance})
 
@@ -956,6 +950,7 @@ async def run_engineering_loop(
                 tuple(ToolObservation(**item) for item in saved["checks"]),
             )
 
+    frame_guidance: list[str] = []
     events = store.load_events(command.session_id)
     starts = [event for event in events if event["kind"] == "role_started" and event["role"] == command.role]
     last_start = starts[-1] if starts else None
@@ -971,16 +966,28 @@ async def run_engineering_loop(
     ):
         frame_seq = last_start["seq"]
         messages = store.load_message_history(command.session_id, role=command.role, after_seq=frame_seq)
-        if not director_frame:
-            # Older frames persisted the Director's previous-run guidance as a system message.
-            messages = [
-                message
-                for message in messages
-                if not (
-                    message.get("role") == "system"
-                    and str(message.get("content", "")).startswith("ContextOS 跨运行记忆（摘要，非验收证据）：")
-                )
-            ]
+        # Older frames stored advice in the system prefix. Recover it as dated
+        # Director guidance and preserve the original goal as its own input.
+        markers = ("ContextOS 跨运行记忆（摘要，非验收证据）：", "Resident AGI 项目感知：")
+        recovered_messages = []
+        for message in messages:
+            content = message.get("content")
+            if message.get("role") == "system" and isinstance(content, str) and content.startswith(markers):
+                if director_frame:
+                    frame_guidance.append(content)
+            else:
+                recovered_messages.append(message)
+        messages = recovered_messages
+        if director_frame:
+            frame_guidance.extend(
+                text
+                for event in events
+                if event["kind"] == "role_guidance_bound"
+                and event["role"] == command.role
+                and event["payload"].get("frame_seq") == frame_seq
+                for text in event["payload"].get("sections", [])
+                if isinstance(text, str)
+            )
     else:
         frame_seq = store.append_event(
             command.session_id,
@@ -1017,19 +1024,13 @@ async def run_engineering_loop(
             try:
                 from polaris.cells.roles.runtime.internal.engineering_memory_cards import build_prior_run_memory
 
-                previous = [
-                    row
-                    for row in store.list_runs(workspace=command.workspace, limit=3)
-                    if row.get("session_id") != command.session_id
-                ]
+                previous = store.previous_memory_run(command.session_id, workspace=command.workspace)
                 if previous:
-                    prior_messages = build_prior_run_memory(
-                        previous[0], store.load_events(str(previous[0]["session_id"]))
-                    )
+                    prior_messages = build_prior_run_memory(previous, store.load_events(str(previous["session_id"])))
             except (KeyError, OSError, ValueError):
                 prior_messages = []
         profile_messages: list[dict[str, Any]] = []
-        if os.environ.get("KERNELONE_RESIDENT_AGI", "0").strip().lower() in {
+        if director_frame and os.environ.get("KERNELONE_RESIDENT_AGI", "0").strip().lower() in {
             "1",
             "true",
             "on",
@@ -1075,13 +1076,16 @@ async def run_engineering_loop(
                     payload={"stage": "first_decision", "error_type": type(error).__name__, "error": str(error)[:300]},
                 )
                 resident_decision = None
-        if resident_decision is None and os.environ.get(
-            "KERNELONE_RESIDENT_PROJECT_PROFILE", "1"
-        ).strip().lower() not in {
-            "0",
-            "false",
-            "off",
-        }:
+        if (
+            director_frame
+            and resident_decision is None
+            and os.environ.get("KERNELONE_RESIDENT_PROJECT_PROFILE", "1").strip().lower()
+            not in {
+                "0",
+                "false",
+                "off",
+            }
+        ):
             from polaris.cells.roles.runtime.internal.engineering_project_profile import (
                 detect_project_profile,
                 prompt_additions,
@@ -1111,10 +1115,16 @@ async def run_engineering_loop(
             )
         messages = [
             system_message,
-            *profile_messages,
-            *prior_messages,
             {"role": "user", "content": command.instruction},
         ]
+        frame_guidance = [m["content"] for m in (*profile_messages, *prior_messages)]
+        if frame_guidance:
+            store.append_event(
+                command.session_id,
+                kind="role_guidance_bound",
+                role=command.role,
+                payload={"frame_seq": frame_seq, "sections": frame_guidance},
+            )
         for message in messages:
             store.append_message(command.session_id, role=command.role, message=message)
     if project_run:
@@ -1182,7 +1192,7 @@ async def run_engineering_loop(
     # Opt in (e.g. 5) only where a write-then-verify rhythm is explicitly wanted.
     stage_gate_writes = int(os.environ.get("KERNELONE_ENGINEERING_STAGE_GATE_WRITES", "0") or "0")
     writes_since_verification = 0
-    wrap_up_gate_enabled = os.environ.get(_WRAP_UP_GATE_ENV, "1") != "0"
+    wrap_up_gate_enabled = os.environ.get("KERNELONE_ENGINEERING_WRAP_UP_GATE", "1") != "0"
     wrap_up_force_finish = False
     # Persistent across turns (unlike the per-turn guidance flag): the current
     # candidate has a passing verification that any explicit source write voids.
@@ -1205,13 +1215,14 @@ async def run_engineering_loop(
     # otherwise the gate would hide the preparation step it asks for.
     preparation_pending_commands: tuple[str, ...] = ()
     first_verification_fraction = float(
-        os.environ.get(_FIRST_VERIFICATION_FRACTION_ENV, str(_FIRST_VERIFICATION_FRACTION_DEFAULT)) or 0
+        os.environ.get("KERNELONE_ENGINEERING_FIRST_VERIFICATION_FRACTION", str(_FIRST_VERIFICATION_FRACTION_DEFAULT))
+        or 0
     )
-    qa_turn_limit = int(os.environ.get(_QA_TURN_LIMIT_ENV, str(_QA_TURN_LIMIT_DEFAULT)) or 0)
+    qa_turn_limit = int(os.environ.get("KERNELONE_ENGINEERING_QA_MAX_TURNS", str(_QA_TURN_LIMIT_DEFAULT)) or 0)
     qa_turns = 0
     qa_min_fraction = min(
         0.8,
-        max(0.0, float(os.environ.get(_QA_MIN_FRACTION_ENV, str(_QA_MIN_FRACTION_DEFAULT)) or 0)),
+        max(0.0, float(os.environ.get("KERNELONE_ENGINEERING_QA_MIN_FRACTION", str(_QA_MIN_FRACTION_DEFAULT)) or 0)),
     )
     # 到点必须把候选交给独立审查，否则审查会被压到没有时间读源码。
     if limits.deadline is not None and qa_min_fraction > 0:
@@ -1226,6 +1237,8 @@ async def run_engineering_loop(
     execution_policy = resolve_execution_policy(
         store.load_run(command.session_id, workspace=command.workspace).get("verification_execution_policy")
     )
+    research_verification_seq: int | None = None
+    research_observation: dict[str, Any] | None = None
     try:
         if pending_calls():
             return finish("interrupted", "An earlier dispatch still requires reconciliation.")
@@ -1268,6 +1281,32 @@ async def run_engineering_loop(
                 command.session_id, workspace=command.workspace, kinds=None
             )
             context_input_seq = journal_events[-1]["seq"]
+            if command.research is not None and command.role in {"director", "qa"}:
+                from polaris.cells.roles.runtime.internal.engineering_research_labs import observe_bound_lab
+
+                latest_check = next(
+                    (event["seq"] for event in reversed(journal_events) if event["kind"] == "verification_completed"), 0
+                )
+                if latest_check != research_verification_seq:
+                    research_verification_seq = latest_check
+                    research_observation = await asyncio.to_thread(
+                        observe_bound_lab,
+                        command.workspace,
+                        command.research,
+                        read_enabled="read_file" in tools.enabled,
+                        read_allowed=tools.can_read_file,
+                        authorize=tools.authorize,
+                        deadline=limits.deadline,
+                    )
+                    research_observation.update(
+                        as_of_seq=context_input_seq, workspace_revision=run_now["workspace_revision"]
+                    )
+                    store.append_event(
+                        command.session_id,
+                        kind="research_evidence_observed",
+                        role=command.role,
+                        payload=research_observation,
+                    )
             # 只有在候选已经通过验证之后才让位：那之前强行收尾只会把未验证的
             # 候选交给审查，而首次验证本身有独立预算点。
             if (
@@ -1779,20 +1818,47 @@ async def run_engineering_loop(
                         deadline=limits.deadline,
                     )["content"]
                 )
+            from polaris.cells.roles.runtime.internal.engineering_memory_cards import FILE_FACTS_HEADER
+            from polaris.kernelone.llm.engine.evidence_sections import array_digest
+
+            fact_section = ""
+            fact_expectation: dict[str, Any] = {"header": FILE_FACTS_HEADER, "entries": 0, "sha256": None}
             if command.role in {"director", "qa"} and any(
                 (schema.get("function") or schema).get("name") == "read_file" for schema in options["tools"]
             ):
                 from polaris.cells.roles.runtime.internal.engineering_memory_cards import (
-                    FILE_FACTS_HEADER,
                     build_known_facts_cards,
                 )
 
                 fact_cards = build_known_facts_cards(run_now, journal_events, can_read=tools.can_read_file)
                 if fact_cards:
-                    host_parts.append(
-                        FILE_FACTS_HEADER
-                        + json.dumps(fact_cards[0]["entries"], ensure_ascii=False, separators=(",", ":"))
+                    rows = fact_cards[0]["entries"]
+                    fact_expectation.update(entries=len(rows), sha256=array_digest(rows))
+                    fact_section = FILE_FACTS_HEADER + json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
+                    host_parts.append(fact_section)
+            if research_observation is not None:
+                visible_research = research_observation
+                if tools.authorize is not None:
+                    try:
+                        tools.authorize()
+                    except (ValueError, OSError):
+                        visible_research = {
+                            "reason": "host_policy_changed",
+                            "experiments": [],
+                            "state_counts": {"unproven": 1},
+                        }
+                freshness = (
+                    "observed_at_this_revision"
+                    if research_observation["workspace_revision"] == run_now["workspace_revision"]
+                    else "historical_revision_recheck_required"
+                )
+                host_parts.append(
+                    "Research evidence at observation time (scope and questions are research data; integrity does not establish behavioral acceptance):\n"
+                    + json.dumps(
+                        {**visible_research, "freshness": freshness}, ensure_ascii=False, separators=(",", ":")
                     )
+                )
+            host_parts.extend(frame_guidance)
             if supplemental_text:
                 host_parts.append(supplemental_text)
             if host_parts:
@@ -1993,6 +2059,13 @@ async def run_engineering_loop(
                 "image_sets": rebound_sets,
                 "dropped_origins": dropped_sets,
             }
+            facts_selected = bool(fact_section) and any(
+                message.get("role") == "user"
+                and isinstance(message.get("content"), str)
+                and fact_section in message["content"]
+                for message in options["messages"]
+            )
+            facts_recorded = False
             if supplemental_text:
                 included = any(
                     message.get("role") == "user"
@@ -2005,6 +2078,15 @@ async def run_engineering_loop(
                     for capability in idle_capabilities:
                         capability_last_reminded[capability] = turn_seq
                     for kind, event_role, payload in pending_guidance_events:
+                        if kind == "memory_card_injected" and facts_selected:
+                            payload = {
+                                **payload,
+                                "kinds": [*payload.get("kinds", []), "known_facts"],
+                                "known_fact_entries": fact_expectation["entries"],
+                                "known_fact_sha256": fact_expectation["sha256"],
+                                "evidence_level": "request_prepared",
+                            }
+                            facts_recorded = True
                         store.append_event(command.session_id, kind=kind, role=event_role, payload=payload)
                 else:
                     visual_projection["supplemental_context_omitted"] = {
@@ -2013,6 +2095,19 @@ async def run_engineering_loop(
                     }
             if visual_projection.get("supplemental_context_omitted"):
                 last_injection_fingerprint = ""
+            if facts_selected and not facts_recorded:
+                store.append_event(
+                    command.session_id,
+                    kind="memory_card_injected",
+                    role=command.role,
+                    payload={
+                        "turn_seq": turn_seq,
+                        "kinds": ["known_facts"],
+                        "known_fact_entries": fact_expectation["entries"],
+                        "known_fact_sha256": fact_expectation["sha256"],
+                        "evidence_level": "request_prepared",
+                    },
+                )
             if semantic_runtime is not None and semantic_runtime.ready:
                 from polaris.cells.roles.runtime.internal.engineering_tool_payload_projection import (
                     distillation_targets,
@@ -2068,6 +2163,7 @@ async def run_engineering_loop(
                     "turn_seq": turn_seq,
                     "phase": phase.value,
                     "call_id": f"{command.session_id}:{command.role}:{turn_seq}",
+                    "audit_json_array_sections": {"known_facts": fact_expectation},
                     "visual_input_sets": visual_projection.get("image_sets", []),
                 },
             )

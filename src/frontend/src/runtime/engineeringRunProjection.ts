@@ -1,10 +1,17 @@
 /** One read model for new-engine facts; transport cursor is deliberately absent. */
 import type { EngineeringEvent, EngineeringRole, EngineeringRunSnapshot } from '@/services/api.types';
 import { normalizeRuntimeWorkspacePath } from '@/app/hooks/_runtimeEventFilter';
+import { researchDigest, researchId } from './researchPlan';
 export const ENGINEERING_ROLES: EngineeringRole[] = ['pm', 'chief_engineer', 'director', 'qa'];
 const ROLE_STATES = new Set(['not_called', 'running', 'completed', 'failed', 'cancelled', 'interrupted', 'unknown']);
 const RUN_STATES = new Set(['pending', 'running', 'completed', 'failed', 'cancelled', 'interrupted']);
 const VERIFICATION = new Set(['passed', 'failed', 'not_run', 'unknown']);
+export function isEngineeringRunStatus(value: unknown): value is EngineeringRunSnapshot['status'] {
+  return typeof value === 'string' && RUN_STATES.has(value);
+}
+export function isEngineeringVerification(value: unknown): value is EngineeringRunSnapshot['verification'] {
+  return typeof value === 'string' && VERIFICATION.has(value);
+}
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 export function parseEngineeringSnapshot(value: unknown): EngineeringRunSnapshot {
   if (!record(value) || value.engine_version !== 'engineering_v2')
@@ -13,7 +20,7 @@ export function parseEngineeringSnapshot(value: unknown): EngineeringRunSnapshot
     throw new Error('Invalid engineering run identity');
   if (!Number.isSafeInteger(value.last_seq) || Number(value.last_seq) < 0)
     throw new Error('Engineering snapshot watermark unavailable');
-  if (!RUN_STATES.has(String(value.status)) || !VERIFICATION.has(String(value.verification)) || !ENGINEERING_ROLES.includes(value.role as EngineeringRole) || !['direct', 'collaborative'].includes(String(value.workflow)))
+  if (!isEngineeringRunStatus(value.status) || !isEngineeringVerification(value.verification) || !ENGINEERING_ROLES.includes(value.role as EngineeringRole) || !['direct', 'collaborative'].includes(String(value.workflow)))
     throw new Error('Unsupported engineering run state');
   if (value.require_qa !== undefined && typeof value.require_qa !== 'boolean' || value.qa_verdict !== undefined && !['not_run', 'approved', 'rejected', 'unknown'].includes(String(value.qa_verdict)) || value.project_outcome !== undefined && !['not_accepted', 'accepted', 'rejected', 'unknown'].includes(String(value.project_outcome)) || value.acceptance_basis !== undefined && value.acceptance_basis !== null && !['checks_only', 'independent_qa'].includes(String(value.acceptance_basis)))
     throw new Error('Engineering QA/outcome state unavailable');
@@ -29,6 +36,9 @@ export function parseEngineeringSnapshot(value: unknown): EngineeringRunSnapshot
     throw new Error('Engineering role/check evidence unavailable');
   if (value.verification_commands !== undefined && (!Array.isArray(value.verification_commands) || value.verification_commands.some((command) => typeof command !== 'string')))
     throw new Error('Engineering verification command evidence unavailable');
+  if (value.research !== undefined && (!record(value.research) || !researchId(value.research.project)
+    || !researchId(value.research.lab) || !researchDigest(value.research.plan_sha256)))
+    throw new Error('Engineering research plan identity unavailable');
   return { ...value, verification_commands: value.verification_commands ?? value.required_checks } as unknown as EngineeringRunSnapshot;
 }
 export interface EngineeringProjection {

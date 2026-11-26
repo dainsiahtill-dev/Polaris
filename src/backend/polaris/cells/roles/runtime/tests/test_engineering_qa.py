@@ -90,6 +90,23 @@ async def test_both_roles_receive_the_same_file_digest_on_the_native_wire(
     observations = service.store.load_events("qa-task", kinds=("tool_observed",), role="qa")
     read = next(e["payload"] for e in observations if e["payload"]["call_id"] == "qa_read")
     assert read["ok"] and json.loads(read["content"])["file_card"]["recovered_from"] == ref
+    events = service.store.load_events("qa-task")
+    declared = {
+        (e["role"], e["payload"]["turn_seq"]): e["payload"]
+        for e in events
+        if e["kind"] == "memory_card_injected" and "known_facts" in e["payload"]["kinds"]
+    }
+    physical = {
+        (e["role"], e["payload"]["turn_seq"]): e["payload"]["audit"]["evidence_sections"]["known_facts"]
+        for e in events
+        if e["kind"] == "llm_request_observed" and e["payload"].get("status") == "completed"
+    }
+    assert {role for role, _ in declared} == {"director", "qa"}
+    assert set(declared) == {key for key, v in physical.items() if v["state"] == "present"}
+    assert all(
+        physical[key]["sha256"] == d["known_fact_sha256"] and physical[key]["wire_entries"] == d["known_fact_entries"]
+        for key, d in declared.items()
+    )
 
 
 async def _run(service: EngineeringRunService, *, key: str | None = None) -> tuple[dict[str, Any], RunLimits]:

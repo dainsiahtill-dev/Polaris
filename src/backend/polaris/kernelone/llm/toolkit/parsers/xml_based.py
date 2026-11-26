@@ -105,11 +105,11 @@ def _qwen3coder_allows_empty_arguments(tool_name: str) -> bool:
     if parameters.get("required"):
         return False
     # `anyOf: [{required:[file]}, {required:[content_ref]}]` is the schema's
-    # "at least one of these" contract (read_file: file XOR content_ref). An
+    # "at least one of these" contract (read_file accepts file, content_ref, or both). An
     # empty call satisfies neither, so it is as much a non-call as one missing a
     # plain required argument. registry.get() 只把 `arguments` 重建进 parameters，
     # builder 已把 required_any 同步成 parameters.anyOf。
-    return not parameters.get("anyOf")
+    return not (parameters.get("anyOf") or parameters.get("allOf"))
 
 
 class XMLToolParser:

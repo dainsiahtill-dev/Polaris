@@ -37,12 +37,17 @@ def add_engineering_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--engineering-action",
-        choices=("discuss", "execute", "observe", "cancel", "resume", "export"),
+        choices=("discuss", "execute", "observe", "cancel", "resume", "export", "research-status"),
         default="discuss",
         help="New-engine action; discussion creates no run",
     )
     parser.add_argument("--instruction", "--goal", default="", help="Discussion or execution instruction")
     parser.add_argument("--workflow", choices=("direct", "collaborative"), default="direct")
+    parser.add_argument("--research-plan", type=Path, help="UTF-8 engineering.research-plan.v1 JSON for this run")
+    parser.add_argument("--laboratory", help="Laboratory selected from the supplied research plan")
+    parser.add_argument("--research-project", help="Project ID for research-status")
+    parser.add_argument("--research-offset", type=int, default=0)
+    parser.add_argument("--research-limit", type=int, default=50)
     parser.add_argument("--permission-profile-id", default=None, help="Exact server-configured permission profile")
     parser.add_argument(
         "--required-check",
@@ -73,6 +78,25 @@ async def run_engineering_action(
 
     action = args.engineering_action
     try:
+        if action == "research-status":
+            from polaris.cells.roles.runtime.public.engineering_research import query_research_laboratories
+
+            project = getattr(args, "research_project", None)
+            if not project or getattr(args, "research_plan", None):
+                raise ValueError("research-status requires --research-project and reads saved runs")
+            print(
+                json.dumps(
+                    query_research_laboratories(
+                        Path(args.workspace),
+                        project,
+                        lab=getattr(args, "laboratory", None),
+                        offset=args.research_offset,
+                        limit=args.research_limit,
+                    ),
+                    ensure_ascii=False,
+                )
+            )
+            return 0
         # Host/provider diagnostics may print, including enabled native HTTP
         # traces. Preserve them on stderr while stdout remains one CLI result.
         with redirect_stdout(sys.stderr):
@@ -85,6 +109,8 @@ async def run_engineering_action(
                 getattr(args, "destination", None) is not None or getattr(args, "verification_seq", None) is not None
             ):
                 raise ValueError("--destination and --verification-seq apply only to export")
+            if action != "execute" and (getattr(args, "research_plan", None) or getattr(args, "laboratory", None)):
+                raise ValueError("--research-plan and --laboratory apply only when creating a run")
             if action == "export":
                 if not args.run_id or args.destination is None:
                     raise ValueError("--run-id and --destination are required for export")
@@ -116,6 +142,17 @@ async def run_engineering_action(
                             "execute cannot convert existing runs; select --engineering-action resume --run-id"
                         )
                     instruction = args.instruction or getattr(args, "goal", "")
+                    plan_path = getattr(args, "research_plan", None)
+                    lab = getattr(args, "laboratory", None)
+                    if bool(plan_path) != bool(lab):
+                        raise ValueError("--research-plan and --laboratory must be supplied together")
+                    research = None
+                    if plan_path is not None:
+                        from polaris.cells.roles.runtime.public.engineering_research import decode_research_json
+
+                        if plan_path.stat().st_size > 2 * 1024 * 1024:
+                            raise ValueError("research plan exceeds 2 MiB")
+                        research = {"plan": decode_research_json(plan_path.read_bytes()), "lab": lab}
                     started = await start_engineering_run(
                         service,
                         settings,
@@ -126,6 +163,7 @@ async def run_engineering_action(
                         permission_profile_id=args.permission_profile_id,
                         required_checks=tuple(args.required_check),
                         request_key=args.request_key,
+                        research=research,
                     )
                     identity = str(started["run_id"])
                     await service.wait(identity, workspace=workspace)

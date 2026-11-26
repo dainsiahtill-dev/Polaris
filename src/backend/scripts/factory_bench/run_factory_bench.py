@@ -25,6 +25,12 @@ from pathlib import Path
 _MODULE_BACKEND_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_MODULE_BACKEND_ROOT))
 
+from scripts.factory_bench.source_freeze import native_main
+
+# Acquire the physical source before importing the execution stack.
+if __name__ == "__main__":
+    raise SystemExit(native_main())
+
 from scripts.factory_bench._bench_lib import impl as _impl
 
 # ---------------------------------------------------------------------------
@@ -42,7 +48,7 @@ discover_artifacts = _impl.discover_artifacts
 grade_chain_state = _impl.grade_chain_state
 load_projects = _impl.load_projects
 load_workspace_validation_repair_coverage = _impl.load_workspace_validation_repair_coverage
-main = _impl.main
+main = native_main
 map_factory_run_to_chain_results = _impl.map_factory_run_to_chain_results
 project_final_request_refs = _impl.project_final_request_refs
 read_chain_results = _impl.read_chain_results
@@ -170,7 +176,3 @@ _build_source_tree_contract = _impl._build_source_tree_contract
 _build_feature_keywords_contract = _impl._build_feature_keywords_contract
 _extract_feature_keywords = _impl._extract_feature_keywords
 _fallback_audit_bundle_from_workspace = _impl._fallback_audit_bundle_from_workspace
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

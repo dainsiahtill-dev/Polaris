@@ -130,7 +130,15 @@ def _scan_node(node: ast.AST, scope: tuple[str, ...], state: _ScanState) -> None
         scope = (*scope, node.name)
     elif isinstance(node, ast.Call):
         _classify_call(node, _scope_marker(scope), state)
-    elif isinstance(node, ast.Subscript) and _is_environ_expression(node.value, state):
+    elif (
+        isinstance(node, ast.AugAssign)
+        and isinstance(node.target, ast.Subscript)
+        and _is_environ_expression(node.target.value, state)
+    ):
+        _record_env_read(node.target.slice, _scope_marker(scope), state)
+    elif (
+        isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load) and _is_environ_expression(node.value, state)
+    ):
         _record_env_read(node.slice, _scope_marker(scope), state)
     for child in ast.iter_child_nodes(node):
         _scan_node(child, scope, state)
@@ -138,6 +146,11 @@ def _scan_node(node: ast.AST, scope: tuple[str, ...], state: _ScanState) -> None
 
 def _scope_marker(scope: tuple[str, ...]) -> str:
     return ".".join(scope) if scope else MODULE_LEVEL_MARKER
+
+
+def test_store_does_not_mask_a_dynamic_environment_read() -> None:
+    source = "import os\ndef restore(k, v):\n    os.environ[k]=v\ndef lookup(k):\n    return os.environ[k]\ndef extend(k):\n    os.environ[k]+='x'"
+    assert scan_env_reads(source, filename="fixture.py").dynamic_read_sites == ("lookup", "extend")
 
 
 def scan_env_reads(source: str, filename: str) -> EnvReadScan:

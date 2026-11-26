@@ -60,6 +60,8 @@ verify_targets:
   - polaris/cells/roles/runtime/tests/test_engineering_artifact_handoff.py
   - polaris/cells/roles/runtime/tests/test_engineering_observation.py
   - polaris/cells/roles/runtime/tests/test_engineering_resource_state.py
+  - polaris/cells/roles/runtime/tests/test_engineering_research_labs.py
+  - polaris/cells/roles/runtime/tests/test_engineering_research_references.py
   - polaris/delivery/http/tests/test_engineering_observation_responsiveness.py
   - polaris/cells/roles/runtime/tests/test_engineering_roles.py
   - polaris/cells/roles/runtime/tests/test_engineering_service.py

@@ -27,6 +27,10 @@
 - Launcher/Instance Registry 管实例发现与运维；每实例单 workspace，显式 backend/token/workspace，非主实例不占 `49977/5173`。
 - cancel/resume 保留身份、原权限/deadline 和当前 policy 校验；保留 failed/interrupted/UNKNOWN，不自动重放未知命令/写入，不把旧 ID 转为 engineering run。
 
+## 长期研究与实验室
+
+长期研究项目通过创建工程运行时的 `research` 字段绑定实验室与版本化计划，继续使用原有角色工作流、权限和 SQLite owner。`roles.runtime.public.engineering_research` 提供引用复核与依赖投影；按 project 查询实验室运行，按明确版本消费跨实验室成果。实验结论的适用域、反例及正常产品入口仍需独立验收。见[多实验室研究的证据与续接](../blueprints/LONG_HORIZON_RESEARCH_EVIDENCE_20261126.md)。
+
 ## 历史实现与可选工具
 
 旧 `RoleRuntimeService`、`RoleExecutionKernel`、`KernelToolExecutor`、Factory 合同编排、TaskBoard/Task Market、RoleSession/Run Ledger 记录只用于原引擎只读解码/审计；旧在途运行留在原冻结 owner。它们不是新工程入口的复用建议，也不表示所有历史源码已删除。

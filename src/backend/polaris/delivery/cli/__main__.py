@@ -1001,7 +1001,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     # main() is also called in-process by adapters. A CLI-created binding
     # belongs only to this invocation, including when bootstrap or dispatch fails.
-    env_before = {key: os.environ.get(key) for key in ("KERNELONE_CONTEXT_ROOT", "KERNELONE_RUNTIME_ROOT")}
+    env_before = {
+        "KERNELONE_CONTEXT_ROOT": os.environ.get("KERNELONE_CONTEXT_ROOT"),
+        "KERNELONE_RUNTIME_ROOT": os.environ.get("KERNELONE_RUNTIME_ROOT"),
+    }
     try:
         if not history_query:
             # Historical owners receive their workspace explicitly and must not

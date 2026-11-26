@@ -431,25 +431,10 @@ def build_projection_manifest(
         if memory["kind"] != "known_facts":
             continue
         count = None
-        if isinstance(body, Mapping) and isinstance(body.get("messages"), list):
-            visible = []
-            for message in messages:
-                if message.get("role") != "user":
-                    continue
-                content = message.get("content")
-                texts = (
-                    [block.get("text") for block in content if isinstance(block, Mapping)]
-                    if isinstance(content, list)
-                    else [content]
-                )
-                for part in texts:
-                    if isinstance(part, str) and FILE_FACTS_HEADER in part:
-                        try:
-                            rows, _ = json.JSONDecoder().raw_decode(part.partition(FILE_FACTS_HEADER)[2])
-                        except ValueError:
-                            continue
-                        if isinstance(rows, list):
-                            visible.extend(rows)
+        if isinstance(body, Mapping) and isinstance(body.get("messages", body.get("input")), list):
+            from polaris.kernelone.llm.engine.evidence_sections import user_json_arrays
+
+            visible = [entry for rows in user_json_arrays(body, FILE_FACTS_HEADER) for entry in rows]
             count = sum(entry in visible for entry in memory["entries"])
         memory["wire_entry_count"] = count
     original = sum(node["original_tokens"] for node in nodes)

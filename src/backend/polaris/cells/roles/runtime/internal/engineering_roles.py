@@ -104,7 +104,7 @@ def qa_review_reserve_seconds(*, deadline: float, created_at: float, observed_at
 
     This is the buffer that lets a forced verdict be recorded. It is deliberately
     not the reviewer's working window: the reviewer's share comes from the
-    Director yielding (``_QA_MIN_FRACTION_ENV`` in engineering_loop). Shrinking
+    Director yielding (``KERNELONE_ENGINEERING_QA_MIN_FRACTION`` in engineering_loop). Shrinking
     this further does not buy the reviewer more time — the wall clock is the wall
     clock — it only risks the run ending without a recorded decision.
     """

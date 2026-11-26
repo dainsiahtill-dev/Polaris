@@ -228,6 +228,7 @@ def observe_engineering_run(service: EngineeringRunService, session_id: str, wor
         "engine_version": row["engine_version"],
         "workspace": row["workspace"],
         "workflow": row["workflow"],
+        **({"research": row["research"]} if row.get("research") is not None else {}),
         "role": row["role"],
         "status": row["status"],
         "active_roles": active_roles,
@@ -265,6 +266,7 @@ async def start_engineering_run(
     role: Literal["pm", "chief_engineer", "director", "qa"] = "director",
     permission_profile_id: str | None = None,
     required_checks: tuple[str, ...] = (),
+    research: dict[str, Any] | None = None,
     request_key: str | None = None,
 ) -> dict[str, Any]:
     """Map explicit user intent and host policy into the same service command."""
@@ -290,7 +292,7 @@ async def start_engineering_run(
             # Absolute admission time is not a new user command. Preserve the
             # original deadline while still comparing current scope and limits.
             limits = RunLimits(existing["limits"]["deadline"], limits.max_output_bytes, limits.max_tool_output_bytes)
-    command = RoleRunCommand(uuid4().hex, role, instruction, bound, workflow, tuple(required_checks))
+    command = RoleRunCommand(uuid4().hex, role, instruction, bound, workflow, tuple(required_checks), research)
     session_id = await service.start(
         command, scope=scope, limits=limits, request_key=request_key, permission_profile_id=selected
     )

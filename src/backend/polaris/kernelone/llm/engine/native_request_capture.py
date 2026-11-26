@@ -350,6 +350,11 @@ class NativeRequestCapturePort:
                 "output_token_limit"
             ] == generation.get("effective_output_tokens")
         audit["final_physical_wire_hash"] = wire_hash
+        from polaris.kernelone.llm.engine.evidence_sections import audit_array_sections
+
+        sections = audit_array_sections(body,self._request.context.get("audit_json_array_sections"),qualified=bool(protocol) and not opaque_sdk)
+        if sections:
+            audit["evidence_sections"]=sections
         if isinstance(audit.get("final_request_evidence_coverage"), dict):
             audit["final_request_evidence_coverage"]["context_snapshot_ref"] = ""
         with self._lock:
@@ -461,6 +466,7 @@ class NativeRequestCapturePort:
         attempt = provider_request["physical_attempt"]
         audit = provider_request["final_request_context_audit"]
         metric_keys = (
+            "evidence_sections",
             "visual_working_set",
             "audit_scope",
             "native_protocol",

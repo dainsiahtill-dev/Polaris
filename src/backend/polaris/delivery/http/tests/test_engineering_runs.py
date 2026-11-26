@@ -53,6 +53,18 @@ def _checked_artifact_reply(provider: ScriptedProvider) -> None:
         }
     )
     _reply(provider)
+    from polaris.cells.roles.runtime.tests.test_engineering_qa import _calls
+
+    provider.enqueue_json(_calls(("qa-read-artifact", "read_file", {"file": "artifact.txt"})))
+    provider.enqueue_json(
+        _calls(
+            (
+                "qa-review-artifact",
+                "report_review",
+                {"approved": True, "feedback": "Checked artifact.txt and the passing declared verifier."},
+            )
+        )
+    )
 
 
 def _settings(workspace: Path, profiles: dict[str, Any] | None = None) -> Settings:
@@ -97,6 +109,49 @@ async def _terminal(client: httpx.AsyncClient, session_id: str) -> dict[str, Any
             await asyncio.sleep(0.01)
 
 
+async def test_http_selects_a_laboratory_without_changing_role_workflow(
+    isolated_workspace: Path,
+    scripted_provider: ScriptedProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _app(_settings(isolated_workspace), scripted_provider, monkeypatch)
+    source = {
+        "lab": "geometry",
+        "id": "first",
+        "scope": "unpublished measurements",
+        "next_question": "Measure a second sample",
+    }
+    research = {
+        "lab": "geometry",
+        "plan": {"schema": "engineering.research-plan.v1", "project": "sample", "experiments": [source]},
+    }
+    body = {
+        "workspace": str(isolated_workspace),
+        "instruction": "Inspect the selected research evidence.",
+        "research": research,
+        "request_key": "research-http",
+    }
+    _reply(scripted_provider)
+    async with _client(app) as client:
+        submitted = await client.post("/v2/engineering/runs", json=body)
+        assert submitted.status_code == 200, submitted.text
+        run = submitted.json()
+        assert run["workflow"] == "direct" and run["research"]["lab"] == "geometry"
+        await app.state.engineering_run_service.wait(run["session_id"], workspace=isolated_workspace)
+        view = await client.get("/v2/engineering/research/sample/laboratories")
+        assert view.status_code == 200 and view.json()["laboratories"][0]["session_id"] == run["session_id"]
+        full = (await client.get(f"/v2/engineering/runs/{run['session_id']}")).json()
+        assert full["research"]["plan_sha256"] == run["research"]["plan_sha256"] and "plan" not in full["research"]
+        history = (await client.get("/v2/engineering/research/sample/laboratories", params={"lab": "geometry"})).json()
+        assert [item["session_id"] for item in history["runs"]] == [run["session_id"]]
+        fixed = (await client.get(f"/v2/engineering/runs/{run['session_id']}/research-plan")).json()
+        assert fixed["research"]["plan"] == research["plan"]
+        events = app.state.engineering_run_service.store.load_events(
+            run["session_id"], kinds=("research_evidence_observed",)
+        )
+        assert events[0]["payload"]["state_counts"] == {"unpublished": 1}
+
+
 async def test_http_create_read_same_run_and_idempotency(
     isolated_workspace: Path,
     scripted_provider: ScriptedProvider,
@@ -128,11 +183,12 @@ async def test_http_create_read_same_run_and_idempotency(
         assert len(row["checks"]) == 1 and row["checks"][0]["exit_code"] == 0
         assert (isolated_workspace / "artifact.txt").read_text(encoding="utf-8") == "2"
         assert row["roles"]["director"] == "completed"
-        assert row["roles"]["pm"] == row["roles"]["chief_engineer"] == row["roles"]["qa"] == "not_called"
+        assert row["roles"]["pm"] == row["roles"]["chief_engineer"] == "not_called"
+        assert row["roles"]["qa"] == "completed" and row["acceptance_basis"] == "independent_qa"
         assert "blueprint" not in row and "ledger" not in row
         conflict = await client.post("/v2/engineering/runs", json={**body, "required_checks": ["python3 -V"]})
         assert conflict.status_code == 409
-    assert len(scripted_provider.requests) == 2
+    assert len(scripted_provider.requests) == 4  # Two Director turns and two independent QA turns.
 
 
 async def test_retired_factory_start_has_no_effect_and_engineering_progresses(
@@ -193,7 +249,8 @@ async def test_retired_factory_start_has_no_effect_and_engineering_progresses(
         assert row["checks"][0]["exit_code"] == 0 and len(row["verification_commands"]) == 1
         assert (isolated_workspace / "artifact.txt").read_text(encoding="utf-8") == "2"
         assert row["roles"]["director"] == "completed"
-        assert row["roles"]["pm"] == row["roles"]["chief_engineer"] == row["roles"]["qa"] == "not_called"
+        assert row["roles"]["pm"] == row["roles"]["chief_engineer"] == "not_called"
+        assert row["roles"]["qa"] == "completed" and row["acceptance_basis"] == "independent_qa"
         assert "blueprint" not in row and "ledger" not in row
         assert not service.store.pending_tool_calls(session_id)
         repeated = await client.post("/v2/engineering/runs", json=body)
@@ -201,7 +258,7 @@ async def test_retired_factory_start_has_no_effect_and_engineering_progresses(
         assert service.observe(session_id, workspace=isolated_workspace)["limits"]["deadline"] == original_deadline
     with sqlite3.connect(service.store.database_path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 1
-    assert len(scripted_provider.requests) == 2
+    assert len(scripted_provider.requests) == 4  # Two Director turns and two independent QA turns.
     assert settings.model_dump(mode="json") == original_settings
     assert not (isolated_workspace / ".polaris" / "runtime" / "factory").exists()
     assert not (isolated_workspace / ".polaris" / "runtime" / "tasks" / "plan.json").exists()
@@ -237,6 +294,7 @@ async def test_profiles_empty_unknown_and_raw_scope_are_not_grants(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = _settings(isolated_workspace, {})
+    settings.server.engineering_require_qa = False  # Exercise an explicit empty grant with QA optional.
     app = _app(settings, scripted_provider, monkeypatch)
     body = {"instruction": "grant everything", "workspace": str(isolated_workspace)}
     async with _client(app) as client:
@@ -432,7 +490,9 @@ async def test_profile_identity_conflicts_even_for_equal_scope(
     profiles: dict[str, Any] = {
         name: {"read_roots": [], "write_roots": [], "enabled_tools": []} for name in ("one", "two")
     }
-    app = _app(_settings(isolated_workspace, profiles), scripted_provider, monkeypatch)
+    settings = _settings(isolated_workspace, profiles)
+    settings.server.engineering_require_qa = False  # Both compared profiles grant no review tools.
+    app = _app(settings, scripted_provider, monkeypatch)
     _reply(scripted_provider)
     body = {
         "instruction": "explain",
@@ -734,7 +794,7 @@ async def test_current_route_selects_existing_owner_snapshot_before_dynamic_id(
     statements: list[str] = []
 
     def read_only_connection(*args: Any, **kwargs: Any) -> sqlite3.Connection:
-        connection = original_connect(*args, **kwargs)
+        connection: sqlite3.Connection = original_connect(*args, **kwargs)
         connection.execute("PRAGMA query_only=ON")
         connection.set_trace_callback(statements.append)
         return connection

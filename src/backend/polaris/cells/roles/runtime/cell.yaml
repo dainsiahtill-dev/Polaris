@@ -14,6 +14,7 @@ tags:
 current_modules:
 - polaris.cells.roles.runtime.public.engineering_service
 - polaris.cells.roles.runtime.public.engineering_resource_state
+- polaris.cells.roles.runtime.public.engineering_research
 - polaris.cells.roles.runtime.public.contracts.engineering_run
 - polaris.cells.roles.runtime.internal.engineering_loop
 - polaris.cells.roles.runtime.internal.engineering_session
@@ -35,6 +36,7 @@ public_contracts:
   - polaris.cells.roles.runtime.public.contracts
   - polaris.cells.roles.runtime.public.contracts.engineering_run
   - polaris.cells.roles.runtime.public.engineering_resource_state
+  - polaris.cells.roles.runtime.public.engineering_research
   - polaris.cells.roles.runtime.public.cfo_advisor
   - polaris.cells.roles.runtime.public.hr_advisor
   commands:
@@ -136,6 +138,8 @@ verification:
   - polaris/cells/roles/runtime/tests/test_engineering_artifact_handoff.py
   - polaris/cells/roles/runtime/tests/test_engineering_observation.py
   - polaris/cells/roles/runtime/tests/test_engineering_resource_state.py
+  - polaris/cells/roles/runtime/tests/test_engineering_research_labs.py
+  - polaris/cells/roles/runtime/tests/test_engineering_research_references.py
   - polaris/delivery/http/tests/test_engineering_observation_responsiveness.py
   - polaris/cells/roles/runtime/tests/test_engineering_roles.py
   - polaris/cells/roles/runtime/tests/test_engineering_qa_execution.py

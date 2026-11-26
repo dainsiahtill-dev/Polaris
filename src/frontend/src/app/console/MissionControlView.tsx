@@ -4,6 +4,8 @@ import type { EngineeringRunBinding } from '@/hooks/useEngineeringRun';
 import { ContextViewerModal } from '@/app/components/contextos/ContextViewerModal';
 import { ContextOSNavigator } from '@/app/components/contextos/ContextOSNavigator';
 import { GoalComposer } from './GoalComposer';
+import { ResearchRunPanel } from './ResearchRunPanel';
+import { normalizeRuntimeWorkspacePath } from '@/app/hooks/_runtimeEventFilter';
 import { RoleTracks } from './RoleTracks';
 import { ToolTimeline } from './ToolTimeline';
 import { VerdictBoard } from './VerdictBoard';
@@ -124,7 +126,7 @@ export function MissionControlView({ workspace, binding, role }: {
           <h1 className="mt-1 text-2xl font-bold tracking-tight">新建工程运行</h1>
           <p className="mt-1 text-sm text-[var(--cx-ink-dim)]">为当前工作区创建一次工程运行，执行实现、验证与验收。</p>
         </div>
-        <GoalComposer binding={binding} workspace={workspace} role={role} onStarted={(instruction) => setGoal(instruction)} />
+        <GoalComposer key={workspace} binding={binding} workspace={workspace} role={role} onStarted={(instruction) => setGoal(instruction)} />
         <p className="cx-faint text-xs">示例工作区 · 工作区 {workspace || '未绑定'}</p>
       </div>
     );
@@ -176,6 +178,9 @@ export function MissionControlView({ workspace, binding, role }: {
         </div>
       </div>
       <RoleTracks roles={run.roles} />
+      {run.research && normalizeRuntimeWorkspacePath(run.workspace) === normalizeRuntimeWorkspacePath(workspace)
+        ? <ResearchRunPanel workspace={workspace} sessionId={run.session_id} identity={run.research} events={projection.events} />
+        : null}
       <div className={`cx-banner cx-banner--${banner.tone} cx-enter cx-enter-2`} role="status">
         <IconInfo className="h-4.5 w-4.5 shrink-0" />
         <p>{banner.text}</p>
@@ -367,7 +372,7 @@ export function MissionControlView({ workspace, binding, role }: {
         <section className="cx-card">
           <div className="cx-card-head"><h2 className="cx-card-title">新建运行 · NEW RUN</h2></div>
           <div className="p-4">
-            <GoalComposer binding={binding} workspace={workspace} role={role} onStarted={(instruction) => setGoal(instruction)} />
+          <GoalComposer key={JSON.stringify([workspace, run.session_id])} binding={binding} workspace={workspace} role={role} onStarted={(instruction) => setGoal(instruction)} />
           </div>
         </section>
       ) : null}

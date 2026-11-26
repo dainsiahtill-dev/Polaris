@@ -71,6 +71,64 @@ def _is_write_mode(call: ast.Call) -> bool:
     return any(ch in token for ch in ("w", "a", "x", "+"))
 
 
+def _in_memory_tar_calls(tree: ast.Module) -> set[int]:
+    """Exclude archives proven to target only a locally allocated BytesIO."""
+    imports = {
+        name.name for node in tree.body if isinstance(node, ast.Import) for name in node.names if name.asname is None
+    }
+    if not {"io", "tarfile"} <= imports:
+        return set()
+    in_memory: set[int] = set()
+    for function in (n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))):
+        nodes = list(ast.walk(function))
+        if any(
+            n is not function and isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda))
+            for n in nodes
+        ):
+            continue
+        if any(isinstance(n, ast.arg) and n.arg in {"io", "tarfile"} for n in nodes):
+            continue
+        assignments = Counter(n.id for n in nodes if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store))
+        if assignments["io"] or assignments["tarfile"]:
+            continue
+        buffers = {
+            n.targets[0].id
+            for n in nodes
+            if isinstance(n, ast.Assign)
+            and len(n.targets) == 1
+            and isinstance(n.targets[0], ast.Name)
+            and assignments[n.targets[0].id] == 1
+            and isinstance(n.value, ast.Call)
+            and isinstance(n.value.func, ast.Attribute)
+            and isinstance(n.value.func.value, ast.Name)
+            and n.value.func.value.id == "io"
+            and n.value.func.attr == "BytesIO"
+        }
+        for n in nodes:
+            if (
+                isinstance(n, ast.Call)
+                and not n.args
+                and isinstance(n.func, ast.Attribute)
+                and n.func.attr == "open"
+                and isinstance(n.func.value, ast.Name)
+                and n.func.value.id == "tarfile"
+                and all(kw.arg in {"mode", "fileobj"} for kw in n.keywords)
+                and any(
+                    kw.arg == "fileobj" and isinstance(kw.value, ast.Name) and kw.value.id in buffers
+                    for kw in n.keywords
+                )
+            ):
+                in_memory.add(id(n))
+    return in_memory
+
+
+def test_memory_archive_exemption_requires_a_local_buffer_and_no_file_path() -> None:
+    source = "import io, tarfile\ndef save(stream):\n    memory=io.BytesIO()\n    tarfile.open(fileobj=memory,mode='w')\n    tarfile.open(fileobj=stream,mode='w')\n    tarfile.open('out.tar',mode='w')"
+    tree = ast.parse(source)
+    exempt = _in_memory_tar_calls(tree)
+    assert [node.lineno for node in ast.walk(tree) if isinstance(node, ast.Call) and id(node) in exempt] == [4]
+
+
 def _collect_direct_write_counts() -> Counter[str]:
     counts: Counter[str] = Counter()
     for py_file in KERNELONE_ROOT.rglob("*.py"):
@@ -81,6 +139,7 @@ def _collect_direct_write_counts() -> Counter[str]:
             continue
         source = py_file.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(py_file))
+        in_memory = _in_memory_tar_calls(tree)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
@@ -92,7 +151,7 @@ def _collect_direct_write_counts() -> Counter[str]:
             if node.func.attr in {"write_text", "write_bytes"}:
                 counts[rel] += 1
                 continue
-            if node.func.attr == "open" and _is_write_mode(node):
+            if node.func.attr == "open" and _is_write_mode(node) and id(node) not in in_memory:
                 counts[rel] += 1
                 continue
             if node.func.attr == "fdopen" and _is_write_mode(node):
