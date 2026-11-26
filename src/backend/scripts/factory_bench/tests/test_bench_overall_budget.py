@@ -75,3 +75,32 @@ def test_go_compile_check_uses_the_host_toolchain(tmp_path) -> None:
     (workspace / "main.go").write_text("package main\n\nfunc main() {}\n", encoding="utf-8")
 
     assert cq._run_command(["go", "build", "./..."], cwd=workspace) is True
+
+
+def test_cargo_compile_check_uses_the_host_toolchain(tmp_path) -> None:
+    """Rust 项目同理：~/.cargo/bin/cargo 是 rustup shim，需要 RUSTUP_HOME。
+
+    实测 L1-05 catalog 质检 FAIL："rustup could not choose a version of cargo"，
+    而宿主上 stable toolchain 明明是 default。
+    """
+
+    import shutil
+
+    from scripts.factory_bench._bench_lib import catalog_quality as cq
+
+    if shutil.which("cargo") is None:
+        import pytest
+
+        pytest.skip("host has no cargo")
+
+    root = Path.home() / ".polaris" / "bench-sandbox-checks"
+    root.mkdir(parents=True, exist_ok=True)
+    workspace = root / "rust-project"
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "Cargo.toml").write_text(
+        '[package]\nname = "x"\nversion = "0.1.0"\nedition = "2021"\n', encoding="utf-8"
+    )
+    (workspace / "src").mkdir(exist_ok=True)
+    (workspace / "src" / "main.rs").write_text("fn main() {}\n", encoding="utf-8")
+
+    assert cq._run_command(["cargo", "build", "--offline"], cwd=workspace, timeout_s=300) is True

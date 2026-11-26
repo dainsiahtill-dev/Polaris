@@ -299,11 +299,30 @@ def _run_command(command: list[str], *, cwd: Path, timeout_s: int = 600) -> bool
         # 沙箱的 toolchain_env 就是为"工具链自带的配置环境"准备的。
         toolchain_env: dict[str, str] = {}
         goroot = None
+        rustup_home = None
         if command[0] == "go" and tool_dirs:
             goroot = tool_dirs[0].parent
             toolchain_env["GOROOT"] = str(goroot)
+        if command[0] in {"cargo", "rustc"}:
+            # ~/.cargo/bin/cargo 是 rustup shim，必须知道 RUSTUP_HOME 才能找到
+            # 已安装的 toolchain；否则报 "rustup could not choose a version of
+            # cargo to run"（实测 L1-05 catalog 质检 FAIL，而宿主上 default
+            # toolchain 明明是配好的）。
+            candidate = Path.home() / ".rustup"
+            if candidate.is_dir():
+                rustup_home = candidate
+                toolchain_env["RUSTUP_HOME"] = str(candidate)
+                toolchain_env.setdefault("CARGO_HOME", str(Path.home() / ".cargo"))
         # toolchain_env 的值同样必须在已授予的只读根内。
-        env_roots = [goroot] if goroot is not None else []
+        env_roots = [
+            root
+            for root in (
+                goroot,
+                rustup_home,
+                Path(toolchain_env["CARGO_HOME"]) if "CARGO_HOME" in toolchain_env else None,
+            )
+            if root is not None
+        ]
         argv = build_workspace_sandbox_argv(
             command,
             workspace=cwd,

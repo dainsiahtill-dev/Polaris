@@ -465,6 +465,32 @@ def register_verification_tool() -> None:
     )
 
 
+_META_FINDINGS = frozenset(
+    {
+        "review not yet complete",
+        "review not yet performed",
+        "review in progress",
+        "not yet complete",
+        "not yet reviewed",
+        "placeholder",
+        "no findings",
+        "none",
+    }
+)
+
+
+def _is_meta_finding(text: str) -> bool:
+    """区分"我还没审完"这类元信息和真实工程缺陷。"""
+
+    lowered = text.strip().lower().rstrip(".")
+    if lowered in _META_FINDINGS:
+        return True
+    if any(marker in lowered for marker in ("review in progress", "not yet complete", "not yet performed")):
+        return True
+    # 太短且没有任何具体名词的，视为元信息而不是缺陷描述。
+    return len(lowered) < 6
+
+
 def interpret_review_reports(
     reports: Sequence[Mapping[str, Any]],
 ) -> tuple[Literal["approved", "rejected", "unknown"], str, int | None]:
@@ -512,12 +538,24 @@ def interpret_review_reports(
             valid.append((index, report))
         except (ValueError, TypeError):
             malformed = True
-    # major_findings 非空仍然是否决：把缺陷路由给同一 Director 去修，比整轮
-    # 停在 unknown 更有用（实测 22 个已验证 run 就是被 unknown 卡住的）。
+    # major_findings 非空是否决：把缺陷路由给同一 Director 去修，比整轮停在
+    # unknown 更有用（实测 22 个已验证 run 就是被 unknown 卡住的）。
+    # 但**"我还没审完"这类元信息不是缺陷**：实测 L1-05 的 QA 交了三份
+    # "Interim placeholder — review in progress"，major_findings 写着
+    # "Review not yet complete"，被当成工程缺陷 → 整轮 FAIL。
+    # 元信息过滤掉；过滤后为空就按未裁决处理（最终落到 unproven，不是 FAIL）。
+    def _substantive_findings(report: Mapping[str, Any]) -> list[str]:
+        return [
+            str(item)
+            for item in (report.get("major_findings") or [])
+            if not _is_meta_finding(str(item))
+        ]
+
     rejected = [
         (index, report)
         for index, report in valid
-        if (not report["approved"] and index not in inconclusive) or report.get("major_findings")
+        if (not report["approved"] and index not in inconclusive)
+        or _substantive_findings(report)
     ]
     feedback = list(
         dict.fromkeys(

@@ -602,3 +602,36 @@ def test_a_decided_report_is_not_erased_by_a_later_progress_report() -> None:
     }
     assert interpret_review_reports([approved, progress])[0] == "approved"
     assert interpret_review_reports([progress, approved])[0] == "approved"
+
+
+def test_meta_findings_are_not_engineering_defects() -> None:
+    """实测 L1-05：QA 交了三份"我还没审完"，major_findings 写着
+    "Review not yet complete"，被当成工程缺陷 → 整轮 FAIL。
+    元信息过滤后应按未裁决处理（最终 unproven），不是 FAIL。
+    """
+
+    report = {
+        "call_id": "meta",
+        "content": json.dumps(
+            {
+                "approved": False,
+                "feedback": "Interim placeholder — review in progress; not a final ruling.",
+                "major_findings": ["Review not yet complete"],
+                "clause_findings": [{"clause": "1", "status": "unknown", "evidence": "已读 src/a.py：尚未定位"}],
+            }
+        ),
+    }
+    assert interpret_review_reports([report])[0] == "unknown"
+
+    real = {
+        "call_id": "real",
+        "content": json.dumps(
+            {
+                "approved": False,
+                "feedback": "重置后 pending 未清空",
+                "major_findings": ["重置后 pending 状态未清空"],
+                "clause_findings": [{"clause": "1", "status": "fail", "evidence": "call_x：重置后状态未清"}],
+            }
+        ),
+    }
+    assert interpret_review_reports([real])[0] == "rejected"
