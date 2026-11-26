@@ -918,11 +918,15 @@ async def run_engineering_loop(
     capability_last_reminded: dict[str, int] = {}
     resident_stage: str | None = None
     resident_profile_fingerprint = ""
+    # MCP 工具（配置驱动）：无配置就是没有；配了但 server 不可用会明确报错。
+    from polaris.infrastructure.mcp.engineering_bridge import engineering_mcp_kwargs
+
     tools = EngineeringTools(
         command.workspace,
         scope,
         limits,
         cancel,
+        **engineering_mcp_kwargs(),
         consult=consult_current if consult is not None and command.role == "director" else None,
         review=review_current if command.role == "qa" else None,
         verify=verify_current if verify is not None and command.role == "director" else None,
