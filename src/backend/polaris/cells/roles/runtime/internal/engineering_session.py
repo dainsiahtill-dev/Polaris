@@ -1563,12 +1563,10 @@ class EngineeringSessionStore:
         # 是真实缺陷），Director 修完候选变了，复审两帧都交占位，于是整轮停在
         # unknown/UNKNOWN，与 harness 故障无法区分。unproven 是诚实且可操作的
         # （动作是"补一次裁决"），既不冒充通过，也不冒充故障。
-        unproven = bool(
-            required
-            and verdict == "unknown"
-            and evidence
-            and row["verification"] == "passed"
-        )
+        # 用 evidence（曾有通过且绑定 revision 的验证）而不是 row["verification"]：
+        # 快照会按当前字节重算并降级，而 Director 在 QA 拒绝后改过候选时，当前
+        # revision 本来就没有绑定证据 —— 那恰恰是"没验完"，不是"验过了"。
+        unproven = bool(required and verdict == "unknown" and evidence)
         outcome = (
             "accepted"
             if accepted
