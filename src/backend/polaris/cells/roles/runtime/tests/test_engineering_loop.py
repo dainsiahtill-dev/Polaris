@@ -900,13 +900,16 @@ async def test_independent_qa_keeps_current_evidence_without_director_guidance(
         assert {"read_file", "report_review"}.issubset(names)
     assert "candidate evidence 54321" in json.dumps(scripted_provider.requests[-1]["body"]["messages"])
     assert not configured
+    # Director 的**引导**不得进入独立 QA：阶段卡（run_card_*）、结构化修复、
+    # 停滞干预都不该由 QA 帧产生。
+    # 但**事实索引**（known_facts）可以 —— 它是事实而非引导，正是"用三兽增强
+    # QA"的目标；实测 QA 拿到事实索引后 rereads 从 40/50 降到 0/26。
     assert not store.load_events(
         command.session_id,
         kinds=(
             "structured_repair_engaged",
             "stall_intervention",
             "run_card_active",
-            "memory_card_injected",
             "run_card_injected",
         ),
     )
