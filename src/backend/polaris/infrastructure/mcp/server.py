@@ -26,6 +26,55 @@ class McpToolError(RuntimeError):
     """工具执行失败。消息原样回给调用方，不包装成成功。"""
 
 
+#: mcp_context_response 契约要求的字段。内部 pack 用的是另一套键，
+#: 直接返回会产出"不符合自己声明契约"的响应 —— 这里显式投影，缺的字段
+#: 用 pack 的 meta/budget 推导，推不出的如实留空而不是编。
+_CONTEXT_REQUIRED = (
+    "schema_version",
+    "status",
+    "out",
+    "top_files",
+    "snippets",
+    "verify_plan",
+    "estimated_tokens",
+    "estimated_source_tokens",
+    "compression_ratio",
+    "token_reduction_ratio",
+    "warnings",
+    "constraint_mode",
+)
+
+
+def project_context_response(pack: Mapping[str, Any] | None) -> dict[str, Any]:
+    """把 accel 内部 pack 投影到 mcp_context_response 契约。"""
+
+    if pack is None:
+        return dict.fromkeys(_CONTEXT_REQUIRED)
+    assert pack is not None  # 收窄 Optional，下面安全
+    raw_meta = pack.get("meta")
+    meta: Mapping[str, Any] = raw_meta if isinstance(raw_meta, Mapping) else {}
+    raw_budget = pack.get("budget")
+    budget: Mapping[str, Any] = raw_budget if isinstance(raw_budget, Mapping) else {}
+    source_chars = meta.get("source_chars_est") or meta.get("source_bytes") or 0
+    snippet_chars = meta.get("snippet_chars") or 0
+    ratio = (snippet_chars / source_chars) if source_chars else 0.0
+    projected: dict[str, Any] = {
+        "schema_version": pack.get("schema_version") or "accel.context.v1",
+        "status": "ok" if pack else "empty",
+        "out": pack.get("out"),
+        "top_files": pack.get("top_files") or [],
+        "snippets": pack.get("snippets") or [],
+        "verify_plan": pack.get("verify_plan") or [],
+        "estimated_tokens": meta.get("estimated_tokens"),
+        "estimated_source_tokens": source_chars,
+        "compression_ratio": round(ratio, 6),
+        "token_reduction_ratio": round(1.0 - ratio, 6) if source_chars else None,
+        "warnings": meta.get("warnings") or [],
+        "constraint_mode": "budget" if budget else None,
+    }
+    return {key: projected[key] for key in _CONTEXT_REQUIRED}
+
+
 def _accel_context(project: str, task: str, changed_files: Sequence[str] | None) -> dict[str, Any]:
     """调用 accel 编译上下文包（与 `accel context` 同一数据源）。"""
 
@@ -69,10 +118,13 @@ def build_default_tools() -> dict[str, Callable[[Mapping[str, Any]], Any]]:
         project = str(args.get("project") or "")
         if not project:
             raise McpToolError("accel_context requires 'project'")
-        return _accel_context(
-            project,
-            str(args.get("task") or ""),
-            args.get("changed_files") or [],
+        from typing import cast
+
+        return project_context_response(
+            cast(
+                Mapping[str, Any],
+                _accel_context(project, str(args.get("task") or ""), args.get("changed_files") or []),
+            )
         )
 
     def accel_verify_events(args: Mapping[str, Any]) -> Any:
