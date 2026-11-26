@@ -1571,7 +1571,11 @@ class EngineeringSessionStore:
             "SELECT verification FROM runs WHERE session_id=?", (row["session_id"],)
         ).fetchone()
         ever_passed = row["verification"] == "passed" or (durable is not None and durable[0] == "passed")
-        unproven = bool(required and verdict == "unknown" and (evidence or ever_passed))
+        # 没有有效独立裁决 = unknown（审了没决）**或** not_run（run 停止后快照里
+        # 没有活动裁决）。实测 bench 是在 run 停止之后取快照的，那时 verdict 已经
+        # 变成 not_run，只认 unknown 会让 unproven 永不触发 → 又退回 UNKNOWN。
+        no_valid_verdict = verdict in {"unknown", "not_run"}
+        unproven = bool(required and no_valid_verdict and (evidence or ever_passed))
         outcome = (
             "accepted"
             if accepted
