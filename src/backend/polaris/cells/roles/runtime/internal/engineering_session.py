@@ -1719,6 +1719,27 @@ class EngineeringSessionStore:
 _RESOURCE_QUERY_LIMIT = 256
 
 
+@contextmanager
+def existing_journal(root: Path, database: Path) -> Iterator[tuple[sqlite3.Connection, dict[Path, tuple[int, int]]]]:
+    """Open the existing workspace journal read-only and fence namespace replacement."""
+    identities = {}
+    for path in (root, root / ".polaris", database.parent.parent, database.parent, database):
+        metadata = path.lstat()
+        expected_kind = stat.S_ISREG if path == database else stat.S_ISDIR
+        if not expected_kind(metadata.st_mode) or (path == database and metadata.st_nlink != 1):
+            raise PermissionError("unsafe engineering resource namespace")
+        identities[path] = (metadata.st_dev, metadata.st_ino)
+    with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=0.1)) as connection:
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA query_only=ON")
+        connection.execute("BEGIN")
+        yield connection, identities
+        for path, identity in identities.items():
+            metadata = path.lstat()
+            if (metadata.st_dev, metadata.st_ino) != identity:
+                raise PermissionError("engineering resource namespace changed during query")
+
+
 def query_resource_state(
     workspace: Path | str, *, session_id: str | None = None, request_key: str | None = None
 ) -> dict[str, Any]:
@@ -1749,20 +1770,10 @@ def query_resource_state(
         if runtime != root / ".polaris" / "runtime":
             raise PermissionError("engineering runtime namespace differs from session owner")
         database = runtime / "engineering" / "sessions.sqlite3"
-        identities = {}
-        for path in (root, root / ".polaris", runtime, database.parent, database):
-            metadata = path.lstat()
-            expected_kind = stat.S_ISREG if path == database else stat.S_ISDIR
-            if not expected_kind(metadata.st_mode) or (path == database and metadata.st_nlink != 1):
-                raise PermissionError("unsafe engineering resource namespace")
-            identities[path] = (metadata.st_dev, metadata.st_ino)
-        result["namespace_identity"] = {str(path): list(identity) for path, identity in identities.items()}
         deadline = time.monotonic() + 1.0
-        with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=0.1)) as connection:
-            connection.row_factory = sqlite3.Row
+        with existing_journal(root, database) as (connection, identities):
+            result["namespace_identity"] = {str(path): list(identity) for path, identity in identities.items()}
             connection.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
-            connection.execute("PRAGMA query_only=ON")
-            connection.execute("BEGIN")
             active = [
                 dict(row)
                 for row in connection.execute(
@@ -1853,10 +1864,6 @@ def query_resource_state(
                         and not active
                         and not pending
                     )
-            for path, identity in identities.items():
-                metadata = path.lstat()
-                if (metadata.st_dev, metadata.st_ino) != identity:
-                    raise PermissionError("engineering resource namespace changed during query")
         if result.get("safe_to_stop"):
             # WAL lets a read proceed while a writer holds the database, so a
             # clean snapshot alone does not prove it is safe to stop. Probe the

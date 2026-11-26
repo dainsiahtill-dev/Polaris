@@ -1,0 +1,29 @@
+card_id: vc-20261125-context-decision-evidence
+classification: structural
+owner: roles.runtime
+bug_summary: Advisory material can exceed the evidence and role from which it was derived.
+assumptions:
+  - id: A1
+    statement: A successful check containing failure-like text must not create a current failure.
+    evidence: L1-01 verifier events 865 and 917 with physical request c262decf34a1231d3c89fed4.
+  - id: A2
+    statement: An epoch covers every activity in its declared closed range.
+    evidence: epoch-0041-0050 and physical request 3854f13c1ac15cc5ae7c158e contradict the observed writes.
+  - id: A3
+    statement: Distiller results apply only to the observed plane, snapshot and slice.
+    evidence: engineering_semantic_runtime builds per-node requests using a shared allowlist; fold selection historically used the path.
+  - id: A4
+    statement: Independent QA consumes original criteria and current-candidate evidence within its own role frame.
+    evidence: WIRE audit c26eb4cc949d47cf89724710ef6f9fa2 through seq 1241.
+pre_mortem:
+  - Filtering all output containing fail would hide real failures.
+  - Treating a dispatch as a write or missing evidence as absence would make an incorrect epoch look complete.
+  - Blocking all advisory content would deprive the Director of real semantic help.
+  - Changing native system merge order could invalidate visual or tool bindings.
+verification_plan:
+  - Reproduce passing mixed output, retained nonzero exit, resolved obsolete repair and unknown checks.
+  - Replay original closed epoch, verify paired writes, failures, refs and full observed range.
+  - Fold two payloads sharing one path and reject a stale or wrong-slice summary; match a current summary.
+  - Observe role-specific QA and Director requests in both native protocols.
+  - Preserve L1-L12 independent paired delivery and acceptance gates.
+related_blueprint: docs/blueprints/CONTEXTOS_DECISION_CONTEXT_20261125.md

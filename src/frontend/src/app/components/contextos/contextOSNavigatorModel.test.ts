@@ -63,6 +63,7 @@ const journal: EngineeringEvent[] = [
     model: 'kimi-for-coding',
     phase: 'EDIT',
     context_snapshot_ref: 'a'.repeat(24),
+    snapshot_status: 'available',
     status: 'ok',
     audit: { final_request_token_estimate: 6335, context_window_tokens: 1000000, context_window_utilization: 0.0063 },
   }),
@@ -136,7 +137,7 @@ describe('buildLiveContextGraph', () => {
 describe('liveContextMetrics', () => {
   it('carries the latest snapshot, cost and structure counts', () => {
     const metrics = liveContextMetrics(journal);
-    expect(metrics.lastSnapshotRef).toBe('a'.repeat(24));
+    expect(metrics.lastSnapshot).toEqual({ ref: 'a'.repeat(24), role: 'director' });
     expect(metrics.lastTokenEstimate).toBe(6335);
     expect(metrics.contextWindowTokens).toBe(1000000);
     expect(metrics.contextUtilization).toBeCloseTo(0.0063);

@@ -218,7 +218,7 @@ class EngineeringTools:
         artifact_binding: Callable[[], dict[str, Any]] | None = None,
         review_clauses: tuple[str, ...] = (),
         run_id: str | None = None,
-        file_card_resolver: Callable[[str], dict[str, Any]] | None = None,
+        file_card_resolver: Callable[[str, str | None], dict[str, Any]] | None = None,
         revision_provider: Callable[[], int] | None = None,
     ) -> None:
         self.workspace = workspace.resolve(strict=True)
@@ -779,136 +779,10 @@ class EngineeringTools:
                             )
                 return self._observation(call_id, name, True, "\n".join(entries))
             if name == "read_file":
-                args = self._alias_path(args)
-                self._keys(args, {"file", "content_ref", "max_bytes", "start_line", "end_line", "range_required"})
-                from polaris.cells.roles.runtime.internal.engineering_file_cards import build_file_card
-
-                reference = args.get("content_ref")
-                ignored_reference = ""
-                resolved_card: dict[str, Any] | None = None
-                if isinstance(reference, str) and reference.startswith("filecard:"):
-                    if self.file_card_resolver is None:
-                        raise ValueError("file_card reference resolution requires the active run journal")
-                    resolved_card = self.file_card_resolver(reference)
-                    if "file" in args and args["file"] != resolved_card["path"]:
-                        raise ValueError("file and content_ref must identify the same source path")
-                elif reference is not None:
-                    # 坏 ref 不该拖垮一个有效的 file 读取：实测 17 次 read_file
-                    # 失败全部同时带正确且存在的 `file`（如 `file=package.json`
-                    # 只因 `content_ref=filecard:0000…0` 被拒）。降级读 file
-                    # 并注明被忽略的 ref，路径授权不变。
-                    if isinstance(args.get("file"), str) and args["file"].strip():
-                        ignored_reference = str(reference)
-                    else:
-                        raise ValueError("content_ref must be a filecard:<sha256> reference")
-                if resolved_card is not None:
-                    assert isinstance(reference, str)
-                    card = resolved_card
-                    target = self._path(str(card["path"]), write=False)
-                    if target.is_file():
-                        current = self.filesystem.workspace_read_text(str(target), encoding="utf-8")
-                        current_digest = hashlib.sha256(current.encode("utf-8")).hexdigest()
-                        if current_digest != card["sha256"]:
-                            card = {**card, "stale": True, "current_sha256": current_digest}
-                    if (
-                        "start_line" in args
-                        or "end_line" in args
-                        or args.get("max_bytes") not in {None, 200000, 200001}
-                    ):
-                        from polaris.cells.roles.runtime.internal.engineering_file_cards import read_file_snapshot
-
-                        snapshot = read_file_snapshot(self.workspace, reference)
-                        original = str(snapshot["content"])
-                        start = self._integer(args, "start_line", 1, minimum=1)
-                        end = self._integer(args, "end_line", max(1, len(original.splitlines())), minimum=start)
-                        selected = "".join(original.splitlines(keepends=True)[start - 1 : end])
-                        maximum = self._integer(
-                            args, "max_bytes", min(8000, self.limits.max_tool_output_bytes), minimum=1
-                        )
-                        preview = bounded_output(selected, max(1, min(maximum, self.limits.max_tool_output_bytes) - 64))
-                        card = build_file_card(
-                            str(card["path"]),
-                            original,
-                            revision=card.get("revision"),
-                            preview=preview,
-                            truncated=len(preview.encode("utf-8")) < len(selected.encode("utf-8"))
-                            or end < len(original.splitlines()),
-                            start_line=start,
-                            end_line=end,
-                            snapshot_ref=reference,
-                        )
-                        card["recovered_from"] = reference
-                    return self._observation(
-                        call_id,
-                        name,
-                        True,
-                        json.dumps(
-                            {
-                                "file_card": card,
-                                **(
-                                    {"normalization": {"from": normalized_from, "reason": "shell_file_read"}}
-                                    if normalized_from
-                                    else {}
-                                ),
-                            },
-                            ensure_ascii=False,
-                        ),
-                    )
-                target = self._path(self._text(args, "file"), write=False)
-                if not target.is_file():
-                    return self._observation(call_id, name, False, self._missing_path_message(target), None)
-                content = self.filesystem.workspace_read_text(str(target), encoding="utf-8")
-                if args.get("range_required") and not {"start_line", "end_line"}.issubset(args):
-                    # Tolerant defaults for weak models: a partial range still
-                    # means "read bounded" — default the missing bound instead
-                    # of burning a turn on a pedantic error.
-                    if "start_line" not in args and isinstance(args.get("end_line"), int):
-                        args = {**args, "start_line": 1}
-                    if "end_line" not in args and isinstance(args.get("start_line"), int):
-                        args = {**args, "end_line": max(1, len(content.splitlines()))}
-                start = self._integer(args, "start_line", 1, minimum=1)
-                end = self._integer(args, "end_line", max(1, len(content.splitlines())), minimum=start)
-                selected = "".join(content.splitlines(keepends=True)[start - 1 : end])
-                default_preview = min(8000, self.limits.max_tool_output_bytes)
-                maximum = (
-                    default_preview
-                    if args.get("max_bytes") in {200000, 200001}
-                    else self._integer(args, "max_bytes", default_preview, minimum=1)
-                )
-                preview = bounded_output(selected, max(1, min(maximum, self.limits.max_tool_output_bytes) - 64))
-                from polaris.cells.roles.runtime.internal.engineering_file_cards import persist_file_snapshot
-
-                snapshot_ref = persist_file_snapshot(
-                    self.workspace, target.relative_to(self.workspace).as_posix(), content
-                )
-                card = build_file_card(
-                    target.relative_to(self.workspace).as_posix(),
-                    content,
-                    revision=self.revision_provider() if self.revision_provider is not None else None,
-                    preview=preview,
-                    truncated=len(preview.encode("utf-8")) < len(selected.encode("utf-8"))
-                    or end < len(content.splitlines()),
-                    start_line=start,
-                    end_line=end,
-                    snapshot_ref=snapshot_ref,
-                )
-                return self._observation(
-                    call_id,
-                    name,
-                    True,
-                    json.dumps(
-                        {
-                            "file_card": card,
-                            **(
-                                {"normalization": {"from": normalized_from, "reason": "shell_file_read"}}
-                                if normalized_from
-                                else {}
-                            ),
-                            **({"ignored_content_ref": ignored_reference} if ignored_reference else {}),
-                        },
-                        ensure_ascii=False,
-                    ),
-                )
+                result = self._read_file_card(self._alias_path(args))
+                if normalized_from:
+                    result["normalization"] = {"from": normalized_from, "reason": "shell_file_read"}
+                return self._observation(call_id, name, True, json.dumps(result, ensure_ascii=False))
             if name == "write_file":
                 args = self._alias_path(args)
                 self._keys(args, {"file", "content"})
@@ -1089,6 +963,83 @@ class EngineeringTools:
         finally:
             cancellation.cancel()
             await asyncio.gather(cancellation, return_exceptions=True)
+
+    def can_read_file(self, path: str) -> bool:
+        """Apply the same current read scope before including a path in a request."""
+        try:
+            self._path(path, write=False)
+        except (ValueError, OSError, PathSecurityError):
+            return False
+        return True
+
+    def _read_file_card(self, args: dict[str, Any]) -> dict[str, Any]:
+        from polaris.cells.roles.runtime.internal.engineering_file_cards import (
+            build_file_card,
+            persist_file_snapshot,
+            read_file_snapshot,
+        )
+
+        self._keys(args, {"file", "content_ref", "max_bytes", "start_line", "end_line", "range_required"})
+        reference = args.get("content_ref")
+        result: dict[str, Any] = {}
+        revision = self.revision_provider() if self.revision_provider else None
+        current_digest: str | None = None
+        snapshot_ref: str | None
+        if isinstance(reference, str) and reference.startswith("filecard:"):
+            if self.file_card_resolver is None:
+                raise ValueError("file_card reference resolution requires the active run journal")
+            requested = None
+            if "file" in args:
+                requested = self._path(self._text(args, "file"), write=False).relative_to(self.workspace).as_posix()
+            original_card = self.file_card_resolver(reference, requested)
+            path = str(original_card["path"])
+            if requested is not None and requested != path:
+                raise ValueError("file and content_ref must identify the same source path")
+            target = self._path(path, write=False)
+            content = str(read_file_snapshot(self.workspace, reference)["content"])
+            if target.is_file():
+                current = self.filesystem.workspace_read_text(str(target), encoding="utf-8")
+                current_digest = hashlib.sha256(current.encode("utf-8")).hexdigest()
+            revision = original_card.get("revision")
+            snapshot_ref = reference
+        else:
+            if reference is not None:
+                if not isinstance(args.get("file"), str) or not args["file"].strip():
+                    raise ValueError("content_ref must be a filecard:<sha256> reference")
+                result["ignored_content_ref"] = str(reference)
+            target = self._path(self._text(args, "file"), write=False)
+            if not target.is_file():
+                raise ValueError(self._missing_path_message(target))
+            path = target.relative_to(self.workspace).as_posix()
+            content = self.filesystem.workspace_read_text(str(target), encoding="utf-8")
+            snapshot_ref = persist_file_snapshot(self.workspace, path, content)
+
+        lines = content.splitlines(keepends=True)
+        start = self._integer(args, "start_line", 1, minimum=1)
+        end = self._integer(args, "end_line", max(1, len(lines)), minimum=start)
+        selected = "".join(lines[start - 1 : end])
+        default = min(8000, self.limits.max_tool_output_bytes)
+        maximum = (
+            default
+            if args.get("max_bytes") in (200000, 200001)
+            else self._integer(args, "max_bytes", default, minimum=1)
+        )
+        preview = bounded_output(selected, max(1, min(maximum, self.limits.max_tool_output_bytes) - 64))
+        card = build_file_card(
+            path,
+            content,
+            revision=revision,
+            preview=preview,
+            truncated=start > 1 or end < len(lines) or preview != selected,
+            start_line=start,
+            end_line=end,
+            snapshot_ref=snapshot_ref,
+        )
+        if snapshot_ref is not None and snapshot_ref == reference:
+            card.update(recovered_from=reference, stale=current_digest != card["sha256"], current_sha256=current_digest)
+            result["served_from_snapshot"] = True
+        result["file_card"] = card
+        return result
 
     def _path(self, value: str, *, write: bool) -> Path:
         target = self.filesystem.resolve_workspace_path(value)

@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from polaris.cells.roles.runtime.internal.engineering_evidence_graph import evidence_graph_projection
+from polaris.cells.roles.runtime.internal.engineering_file_cards import stale_file_observation
 
 QA_WORKING_STATE_EVENT_KINDS = (
     "run_updated",
@@ -120,7 +121,7 @@ def qa_working_state_message(
         "qa_frame": {
             "started_seq": frame_seq,
             "successful_source_read_count": sum(
-                e["payload"]["tool"] == "read_file"
+                (e["payload"]["tool"] == "read_file" and not stale_file_observation(e["payload"]))
                 or (e["payload"]["tool"] == "repo_rg" and bool(str(e["payload"].get("content", "")).strip()))
                 for e in successful
             )

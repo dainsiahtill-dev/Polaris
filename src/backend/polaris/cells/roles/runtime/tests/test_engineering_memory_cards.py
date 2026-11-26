@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
+import pytest
 from polaris.cells.roles.runtime.internal.engineering_command_cards import build_command_card
+from polaris.cells.roles.runtime.internal.engineering_epoch_kimi import KimiEpochPool
 from polaris.cells.roles.runtime.internal.engineering_epoch_runtime import EpochRuntime, facts_for_epoch
 from polaris.cells.roles.runtime.internal.engineering_file_cards import build_file_card
 from polaris.cells.roles.runtime.internal.engineering_memory_cards import (
@@ -11,7 +14,6 @@ from polaris.cells.roles.runtime.internal.engineering_memory_cards import (
     build_memory_cards,
     run_card_section,
 )
-from polaris.cells.roles.runtime.internal.engineering_semantic_advice import CandidateRefs
 
 
 def _file_event(path: str, preview: str, revision: int, seq: int, **extra: object) -> dict[str, object]:
@@ -182,7 +184,17 @@ def test_epoch_selection_ignores_reported_epoch_by_node_id() -> None:
 
 
 class _Pool:
-    async def summarize_many(self, requests):
+    def __init__(self, *, cite_command: bool = False, reject: bool = False, call_refs: tuple[str, ...] = ()) -> None:
+        self.cite_command = cite_command
+        self.reject = reject
+        self.call_refs = call_refs
+
+    async def summarize_many(self, requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if self.reject:
+            return [{"validation_result": "REJECTED", "error": "invalid response"}]
+        refs = list(self.call_refs)
+        if self.cite_command:
+            refs.append(json.loads(requests[0]["content"])["commands"][0]["evidence_ref"])
         return [
             {
                 "endpoint_index": 0,
@@ -190,10 +202,10 @@ class _Pool:
                 "result": {
                     "node_id": "epoch-0001-0010",
                     "snapshot_id": "epoch-0001-0010",
-                    "summary": "完成基础模块，验证仍有失败。",
+                    "summary": "No source files were changed.",
                     "summary_kind": "model_inference",
                     "coverage": {"observed_line_ranges": [[1, 1]], "summary_complete": False},
-                    "evidence_refs": [],
+                    "evidence_refs": refs,
                     "uncertain": True,
                     "reason": "基于关闭 epoch。",
                 },
@@ -201,53 +213,192 @@ class _Pool:
         ]
 
 
-async def test_epoch_runtime_returns_validated_epoch_card() -> None:
-    runtime = EpochRuntime(_Pool())
-    refs = CandidateRefs(node_ids={"epoch-0001-0010"}, slice_ids={"slice_epoch"}, evidence_refs=set())
-    request = {
-        "candidates": [
-            {
-                "node_id": "epoch-0001-0010",
-                "snapshot_id": "epoch-0001-0010",
-                "content": "step",
-                "coverage": {"observed_line_ranges": [[1, 1]]},
-            }
-        ]
+def _closed_epoch() -> list[dict[str, object]]:
+    # turn_seq is the journal seq of turn_started, not the activity ordinal.
+    events: list[dict[str, object]] = []
+
+    def append(kind: str, **payload: object) -> None:
+        events.append({"seq": len(events) + 1, "kind": kind, "payload": payload})
+
+    for activity in range(1, 31):
+        turn = len(events) + 1
+        append("turn_started")
+        if activity in (1, 2, 11):
+            path = {1: "early.ts", 2: "failed.ts", 11: "next.ts"}[activity]
+            # Provider call IDs may repeat across turns.
+            append("tool_started", call_id="write", turn_seq=turn, tool="write_file", arguments={"file": path})
+            append("tool_observed", call_id="write", turn_seq=turn, tool="write_file", ok=activity != 2)
+        if activity == 8:
+            append("tool_started", call_id="edit", turn_seq=turn, tool="edit_file", arguments={"file": "pending.ts"})
+        if activity == 9:
+            append("verification_completed", verification="failed")
+        if activity == 10:
+            append(
+                "tool_started", call_id="cmd", turn_seq=turn, tool="execute_command", arguments={"command": "npm test"}
+            )
+            append("tool_observed", call_id="cmd", turn_seq=turn, tool="execute_command", ok=False, exit_code=2)
+    return events
+
+
+def test_epoch_uses_observed_outcomes_across_entire_closed_range() -> None:
+    request, _, fingerprint = facts_for_epoch({}, _closed_epoch())
+    candidate = request["candidates"][0]
+    facts = json.loads(candidate["content"])
+    assert facts["activity_range"] == [1, 10]
+    assert facts["file_changes"] == ["early.ts"]
+    assert facts["verification_history"] == ["failed"]
+    assert [(item["file"], item["outcome"]) for item in facts["file_operations"]] == [
+        ("early.ts", "succeeded"),
+        ("failed.ts", "failed"),
+        ("pending.ts", "unknown"),
+    ]
+    assert [(item["command"], item["exit_code"]) for item in facts["commands"]] == [("npm test", 2)]
+
+    changed = _closed_epoch()
+    changed[1] = {
+        **changed[1],
+        "payload": {"tool": "write_file", "turn_seq": 1, "call_id": "write", "arguments": {"file": "other.ts"}},
     }
-    runtime.schedule(request, refs, fingerprint="epoch-fingerprint")
+    assert facts_for_epoch({}, changed)[2] != fingerprint
+
+
+async def test_epoch_runtime_keeps_model_inference_out_of_journal_facts_injected_as_memory() -> None:
+    runtime = EpochRuntime(_Pool())
+    events = _closed_epoch()
+    request, refs, fingerprint = facts_for_epoch({}, events)
+    runtime.schedule(request, refs, fingerprint=fingerprint)
     awaitable = runtime._job
     assert awaitable is not None
     await awaitable
     card = runtime.poll()
     assert card is not None and card["kind"] == "epoch_card"
-    assert card["summary"] == "完成基础模块，验证仍有失败。"
+    assert card["model_advice"]["summary"] == "No source files were changed."
+    assert card["summary_kind"] == "journal_facts"
+    memory = build_context_memory_messages({}, [{"kind": "epoch_card_completed", "payload": card}], limit_chars=20_000)
+    rendered = str(memory)
+    assert "early.ts" in rendered and "npm test" in rendered
+    assert "No source files were changed." not in rendered
 
 
-def test_epoch_cards_reach_the_injected_memory() -> None:
-    """实测 2026-11-25：吞噬兽出了 11 张卡却从未进入请求 ——
-    build_memory_cards 里没有 epoch 构建器，过滤 epoch_card 那段是死代码。"""
+async def test_epoch_devourer_can_highlight_an_observed_command_for_the_next_request() -> None:
+    runtime = EpochRuntime(_Pool(cite_command=True))
+    request, refs, fingerprint = facts_for_epoch({}, _closed_epoch())
+    runtime.schedule(request, refs, fingerprint=fingerprint)
+    assert runtime._job is not None
+    await runtime._job
+    card = runtime.poll()
+    assert card is not None
+    assert card["advice_status"] == "evidence_selected"
+    memory = build_context_memory_messages({}, [{"kind": "epoch_card_completed", "payload": card}], limit_chars=20_000)
+    assert "Devourer recall" in str(memory)
+    assert "No source files were changed." not in str(memory)
 
-    events = [
+
+async def test_rejected_epoch_advice_preserves_host_observations() -> None:
+    runtime = EpochRuntime(_Pool(reject=True))
+    request, refs, fingerprint = facts_for_epoch({}, _closed_epoch())
+    runtime.schedule(request, refs, fingerprint=fingerprint)
+    assert runtime._job is not None
+    await runtime._job
+    card = runtime.poll()
+    assert card is not None
+    assert card["advice_status"] == "rejected" and card["advice_error"] == "invalid response"
+    memory = build_context_memory_messages({}, [{"kind": "epoch_card_completed", "payload": card}], limit_chars=20_000)
+    assert "early.ts" in str(memory) and "Devourer recall" not in str(memory)
+
+
+async def test_epoch_resolves_unique_legacy_call_refs_and_ignores_reused_ids() -> None:
+    events = _closed_epoch()
+    request, refs, fingerprint = facts_for_epoch({}, events)
+    assert "cmd" in refs.evidence_refs and "write" not in refs.evidence_refs
+    runtime = EpochRuntime(_Pool(call_refs=("cmd", "write")))
+    runtime.schedule(request, refs, fingerprint=fingerprint)
+    assert runtime._job is not None
+    await runtime._job
+    card = runtime.poll()
+    assert card is not None
+    assert card["recall_refs"] == [request["candidates"][0]["host_facts"]["commands"][0]["evidence_ref"]]
+
+
+def test_epoch_unknown_effect_keeps_canonical_path_and_ignores_cross_turn_observation() -> None:
+    events = _activity_events(30)
+    events[1:1] = [
         {
-            "seq": 1,
-            "kind": "epoch_card_completed",
+            "seq": 100,
+            "kind": "tool_started",
             "payload": {
-                "id": "epoch-0001-0010",
-                "summary": "已改 src/garden.ts 与 src/render.ts；npm test 31 项通过；重置复现未验证",
-                "evidence_refs": ["call_abc"],
-                "error": None,
+                "turn_seq": 1,
+                "call_id": "same",
+                "tool": "edit_file",
+                "arguments": {"file": "canonical.ts", "path": "alias.ts"},
             },
         },
         {
-            "seq": 2,
-            "kind": "epoch_card_completed",
-            "payload": {"id": "epoch-0002-0020", "summary": "", "error": "empty"},
+            "seq": 101,
+            "kind": "tool_observed",
+            "payload": {"turn_seq": 999, "call_id": "same", "tool": "edit_file", "ok": True},
+        },
+        {
+            "seq": 102,
+            "kind": "tool_observed",
+            "payload": {"turn_seq": 1, "call_id": "same", "tool": "edit_file", "ok": False, "interrupted": True},
         },
     ]
-    cards = [card for card in build_memory_cards({"instruction": "做花园"}, events) if card.get("kind") == "epoch_card"]
-    assert len(cards) == 1 and cards[0]["id"] == "epoch-0001-0010"
-    messages = build_context_memory_messages({"instruction": "做花园"}, events, limit_chars=20_000)
-    assert any("已改 src/garden.ts" in str(message.get("content")) for message in messages)
+    candidate = facts_for_epoch({}, events)[0]["candidates"][0]
+    facts = json.loads(candidate["content"])
+    assert facts["file_changes"] == []
+    assert facts["file_operations"][0]["file"] == "canonical.ts"
+    assert facts["file_operations"][0]["outcome"] == "unknown"
+
+
+def test_legacy_epoch_memory_is_rederived_only_from_a_complete_journal() -> None:
+    legacy: dict[str, Any] = {"id": "epoch-0001-0010", "summary": "No source files were changed."}
+    events: list[dict[str, Any]] = [{"kind": "run_started", "seq": 1, "payload": {}}]
+    for event in _closed_epoch():
+        events.append({**event, "seq": len(events) + 1})
+    events.append({"kind": "epoch_card_completed", "seq": len(events) + 1, "payload": legacy})
+    cards = [card for card in build_memory_cards({}, events) if card["kind"] == "epoch_card"]
+    assert len(cards) == 1 and "early.ts" in cards[0]["summary"]
+    assert "No source files were changed." not in cards[0]["summary"]
+    assert legacy["summary"] == "No source files were changed."
+    for partial in (events[2:], events[:2] + events[3:], [events[-1]]):
+        assert all(card["kind"] != "epoch_card" for card in build_memory_cards({}, partial))
+
+
+@pytest.mark.parametrize("probe_ref", ["event:18", "event:999", "event:13", "epoch-0001-0010"])
+async def test_kimi_optional_probe_is_admitted_only_with_exact_observed_refs(
+    probe_ref: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pool = KimiEpochPool(base_url="https://kimi.example", api_key="secret", model="kimi")
+    probe = {
+        "open_question": "Did the failure occur before the test body?",
+        "discriminating_check": "Compare the recorded setup and test output.",
+        "evidence_refs": [probe_ref],
+    }
+    response = {"summary": "Historical notes infer all tests passed.", "exploration": probe}
+    monkeypatch.setattr(pool, "_post", lambda _: json.dumps(response))
+    events = [{"seq": 0, "kind": "run_updated", "payload": {"workspace_revision": 7}}, *_closed_epoch()]
+    run = {"role": "director", "workspace_revision": 7, "instruction": "Investigate npm test"}
+    request, refs, fingerprint = facts_for_epoch(run, events)
+    runtime = EpochRuntime(pool)
+    runtime.schedule(request, refs, fingerprint=fingerprint)
+    assert runtime._job is not None
+    await runtime._job
+    card = runtime.poll()
+    assert card is not None and card["validation_result"] == "VALID"
+    assert "Did the failure" not in card["summary"]
+    memory = str(
+        build_context_memory_messages(
+            run, [*events, {"kind": "epoch_card_completed", "payload": card}], limit_chars=4000
+        )
+    )
+    assert "Historical notes infer all tests passed." not in memory and "early.ts" in memory
+    if probe_ref == "event:18":
+        assert card["advice_status"] == "probe_proposed"
+        assert "Did the failure" in memory and "Compare the recorded setup" in memory and "event:18" in memory
+        assert "untrusted" in memory.lower()
+    else:
+        assert card["exploration_status"] == "rejected" and "Did the failure" not in memory
 
 
 def test_run_card_reaches_the_provider_memory_message() -> None:
@@ -274,3 +425,16 @@ def test_run_card_reaches_the_provider_memory_message() -> None:
     attach_run_card_section(existing, card)  # 幂等
     assert existing[0]["content"].count("ContextOS RunCard") == 1
     assert run_card_section({}) == ""
+
+
+def test_memory_distinguishes_a_proposed_choice_from_quoted_requirements() -> None:
+    text = "需求写着“选择距离近的对象”。我决定用索引保持相同距离时的稳定顺序。"
+    events = [
+        _command_event("node check.js", "TypeError: missing table", 1, 1),
+        {"seq": 2, "kind": "message", "payload": {"message": {"role": "assistant", "content": text}}},
+    ]
+    rendered = build_context_memory_messages({"instruction": "实现查询"}, events)[0]["content"]
+    assert "选择距离近的对象" not in rendered
+    assert "我决定用索引" in rendered and "模型自述" in rendered
+    assert "旧文案" not in rendered and "read_command_result" not in rendered
+    assert "TypeError" in rendered

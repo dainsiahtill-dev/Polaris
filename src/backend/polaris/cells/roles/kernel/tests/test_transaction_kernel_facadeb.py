@@ -22,12 +22,10 @@ from polaris.cells.roles.kernel.internal.transaction.retry_tool_definitions impo
 from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnStateMachine
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import TurnTransactionController
-from polaris.cells.roles.kernel.tests.tool_batch_fixtures import tool_batch_model_with_groups
 from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchId,
     FinalizeMode,
     RawLLMResponse,
-    ToolBatch,
     ToolCallId,
     ToolEffectType,
     ToolExecutionMode,
@@ -37,6 +35,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnId,
     classify_tool_invocation,
 )
+from polaris.cells.roles.kernel.tests.tool_batch_fixtures import tool_batch_model_with_groups
 from polaris.cells.roles.profile.public.service import RoleTurnRequest
 from polaris.kernelone.context.contracts import TurnEngineContextRequest
 

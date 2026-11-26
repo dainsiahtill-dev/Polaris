@@ -8,6 +8,8 @@
  */
 
 import * as Parsing from './runtimeParsing';
+import { normalizeContextSnapshotRef } from '@/runtime/contextSnapshot';
+export { normalizeContextSnapshotRef } from '@/runtime/contextSnapshot';
 import type { WebSocketMessage } from './useRuntime';
 import type { LogEntry } from '@/types/log';
 import { TaskStatus, type PmTask } from '@/types/task';
@@ -572,13 +574,6 @@ export function readLlmContentText(
     if (token) return token;
   }
   return '';
-}
-
-const CONTEXT_SNAPSHOT_REF_RE = /^[0-9a-f]{24}$/i;
-
-export function normalizeContextSnapshotRef(value: string): string {
-  const token = String(value || '').trim();
-  return CONTEXT_SNAPSHOT_REF_RE.test(token) ? token.toLowerCase() : '';
 }
 
 export function parseLlmStreamLine(channel: string, line: string): LogEntry | null {

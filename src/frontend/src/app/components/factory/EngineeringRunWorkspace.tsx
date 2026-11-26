@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { ArrowLeft, Loader2, Play, RefreshCw, Square } from 'lucide-react';
-import type { EngineeringRole, EngineeringEvent } from '@/services/api.types';
+import type { EngineeringRole } from '@/services/api.types';
+import { discussionSnapshotRef, engineeringSnapshotRef } from '@/runtime/contextSnapshot';
 import type { EngineeringRunBinding } from '@/hooks/useEngineeringRun';
 import { ENGINEERING_ROLES } from '@/runtime/engineeringRunProjection';
 import { ContextViewerModal } from '@/app/components/contextos/ContextViewerModal';
@@ -8,11 +9,6 @@ const names = { pm: 'PM', chief_engineer: 'Chief Engineer', director: 'Director'
 const statuses: Record<string, string> = { not_called: '未调用', running: '进行中', completed: '执行结束', failed: '执行失败', cancelled: '已取消', interrupted: '已中断', pending: '等待执行', unknown: '未知' };
 const verification: Record<string, string> = { passed: '已通过', failed: '未通过', not_run: '未运行验证', unknown: '未知' };
 function text(value: unknown): string { return typeof value === 'string' ? value : value == null ? '' : JSON.stringify(value, null, 2); }
-function contextRef(event: EngineeringEvent): string | null {
-  const payload = event.payload;
-  const raw = payload.context_snapshot_ref;
-  return payload.snapshot_status === 'available' && typeof raw === 'string' && /^[a-f0-9]{24}$/.test(raw) ? raw : null;
-}
 export function EngineeringRunWorkspace({ workspace, binding, role = 'director', onBackToMain, onOpenContext }: {
   workspace: string;
   binding: EngineeringRunBinding;
@@ -27,9 +23,7 @@ export function EngineeringRunWorkspace({ workspace, binding, role = 'director',
     ref: string;
     role: string;
   } | null>(null);
-  const discussionObservation = binding.discussionMetadata?.native_request_observation;
-  const discussionRef = binding.discussionMetadata?.context_snapshot_ref;
-  const readableDiscussionRef = discussionObservation && typeof discussionObservation === 'object' && (discussionObservation as Record<string, unknown>).snapshot_status === 'available' && typeof discussionRef === 'string' && /^[a-f0-9]{24}$/.test(discussionRef) ? discussionRef : null;
+  const readableDiscussionRef = discussionSnapshotRef(binding.discussionMetadata);
   const run = binding.projection.snapshot;
   const verificationCommands = run?.verification_commands ?? run?.required_checks ?? [];
   const snapshotUnavailable = Boolean(binding.projection.error || binding.projection.snapshotRequiredSeq);
@@ -94,7 +88,7 @@ export function EngineeringRunWorkspace({ workspace, binding, role = 'director',
         <div className="soft-panel-subtle rounded-xl p-4"><h2 className="text-sm font-medium">工具与运行记录</h2>{binding.projection.historyWindowed && <p className="mt-2 text-xs text-slate-400">仅展示最近记录窗口，更早记录未加载。</p>}
           {!events.length && <p className="mt-3 text-sm text-slate-400">{binding.loading ? '正在读取快照…' : '尚无可展示的运行记录'}</p>}
           <div className="mt-3 space-y-2">{events.map((event) => {
-            const ref = contextRef(event);
+            const ref = engineeringSnapshotRef(event.payload);
             const failed = event.payload.ok === false || event.kind.endsWith('failed');
             return <article key={event.seq} className={`rounded-lg border p-3 ${failed ? 'border-red-400/30 bg-red-500/5' : 'border-white/10'}`}>
               <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-medium">{event.role} · {event.kind === 'tool_started' ? '工具调用中' : event.kind === 'tool_observed' ? '工具结果' : event.kind}</span><span className="text-xs text-slate-500">#{event.seq}</span></div>

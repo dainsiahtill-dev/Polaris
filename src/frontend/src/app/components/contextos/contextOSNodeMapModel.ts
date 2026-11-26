@@ -1,7 +1,7 @@
 import type { EngineeringEvent } from '@/services/api.types';
 import type { ContextPayload } from './ContextViewerModal';
 import type { FinalProviderRequestPayload } from './finalProviderRequestProtocol';
-import type { ContextProjectionManifest } from './contextProjectionManifest';
+import type { ContextMemoryCard, ContextProjectionManifest } from './contextProjectionManifest';
 
 export type ContextNodeKind =
   | 'goal'
@@ -14,15 +14,7 @@ export type ContextNodeKind =
   | 'request'
   | 'file_card'
   | 'command_card'
-  | 'failure_cluster'
-  | 'interface_contract'
-  | 'requirement_trace'
-  | 'tool_pattern'
-  | 'file_diff'
-  | 'verification_contract'
-  | 'decision_journal'
-  | 'evidence_lease'
-  | 'epoch_card';
+  | ContextMemoryCard['kind'];
 export type ContextFoldState = 'ACTIVE' | 'FOLDED' | 'REFERENCE' | 'EVICTED' | 'UNKNOWN';
 
 export interface ContextNode {
@@ -220,7 +212,11 @@ export function nodesFromManifest(manifest: ContextProjectionManifest): ContextN
     summary: card.summary,
     role: 'ContextOS',
     foldState: 'REFERENCE',
-    foldReason: '长期记忆卡 · 原始证据引用保留',
+    foldReason: card.kind === 'known_facts'
+      ? typeof card.wire_entry_count === 'number'
+        ? `本次物理请求含 ${card.wire_entry_count} / ${card.entries?.length ?? 0} 条文件事实`
+        : '文件事实已索引，本次物理请求覆盖未知'
+      : '长期记忆卡 · 原始证据引用保留',
     evidenceRef: card.evidence_refs?.find((ref): ref is string => typeof ref === 'string' && ref.length > 0) || null,
     phase: null,
     ok: card.unresolved === undefined ? null : !card.unresolved,

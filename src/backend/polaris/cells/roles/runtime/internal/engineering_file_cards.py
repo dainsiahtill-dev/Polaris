@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ from polaris.kernelone.fs import (
 )
 
 _MAX_SNAPSHOT_BYTES = 16 * 1024 * 1024
+_FILE_REF = re.compile(r"filecard:[0-9a-f]{64}")
 
 
 def persist_file_snapshot(workspace: Path, path: str, content: str) -> str | None:
@@ -45,7 +47,7 @@ def persist_file_snapshot(workspace: Path, path: str, content: str) -> str | Non
 def read_file_snapshot(workspace: Path, reference: str) -> dict[str, Any]:
     """Read the exact saved snapshot; never substitute the live file for a missing ref."""
 
-    if not reference.startswith("filecard:"):
+    if not _FILE_REF.fullmatch(reference):
         raise ValueError("invalid filecard reference")
     root = workspace / ".polaris" / "runtime" / "filecards"
     name = reference.removeprefix("filecard:") + ".json"
@@ -54,7 +56,7 @@ def read_file_snapshot(workspace: Path, reference: str) -> dict[str, Any]:
     except (OSError, GuardedRegularFileSnapshotError) as error:
         raise ValueError(f"filecard snapshot unavailable: {reference}") from error
     payload = json.loads(snapshot.content.decode("utf-8"))
-    if not isinstance(payload, dict):
+    if not isinstance(payload, dict) or not isinstance(payload.get("content"), str):
         raise ValueError("filecard snapshot must be a JSON object")
     if (
         payload.get("sha256") != reference.removeprefix("filecard:")
@@ -74,17 +76,17 @@ _SYMBOL_PATTERNS = (
 )
 
 
-def _symbols(content: str) -> list[str]:
-    symbols: list[str] = []
-    for line in content.splitlines():
+def _declarations(lines: Sequence[str]) -> dict[str, int]:
+    declarations: dict[str, int] = {}
+    for number, line in enumerate(lines, 1):
         for pattern in _SYMBOL_PATTERNS:
             match = pattern.match(line)
             if match:
-                symbols.append(match.group(1))
+                declarations.setdefault(match.group(1), number)
                 break
-        if len(symbols) >= 24:
+        if len(declarations) >= 24:
             break
-    return symbols
+    return declarations
 
 
 def build_file_card(
@@ -102,7 +104,7 @@ def build_file_card(
 
     digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
     lines = content.splitlines()
-    symbols = _symbols(content)
+    declarations = _declarations(lines)
     return {
         "schema_version": "engineering.file_card.v1",
         "path": path,
@@ -110,8 +112,9 @@ def build_file_card(
         "sha256": digest,
         "size_bytes": len(content.encode("utf-8")),
         "line_count": len(lines),
-        "symbols": symbols,
-        "summary": f"{Path(path).name} · {len(lines)} lines · {len(symbols)} symbols",
+        "symbols": list(declarations),
+        "declaration_lines": declarations,
+        "summary": f"{Path(path).name} · {len(lines)} lines · {len(declarations)} symbols",
         "content_ref": snapshot_ref or f"filecard:{digest}",
         "snapshot_ref": snapshot_ref,
         "recoverable": snapshot_ref is not None,
@@ -141,3 +144,60 @@ def card_from_observation(content: str) -> dict[str, Any] | None:
         return None
     card = payload.get("file_card") if isinstance(payload, dict) else None
     return card if isinstance(card, dict) and card.get("schema_version") == "engineering.file_card.v1" else None
+
+
+def observed_file_card(event: Mapping[str, Any]) -> dict[str, Any] | None:
+    payload = event["payload"]
+    if (
+        event["kind"] != "tool_observed"
+        or payload.get("tool") != "read_file"
+        or payload.get("ok") is not True
+        or payload.get("interrupted")
+        or payload.get("timed_out")
+    ):
+        return None
+    return card_from_observation(payload.get("content", ""))
+
+
+def recoverable_ref(card: Mapping[str, Any]) -> str | None:
+    ref = card.get("snapshot_ref")
+    if (
+        card.get("recoverable") is True
+        and isinstance(ref, str)
+        and _FILE_REF.fullmatch(ref)
+        and ref == card.get("content_ref")
+        and ref.removeprefix("filecard:") == card.get("sha256")
+    ):
+        return ref
+    return None
+
+
+def resolve_observed_file(events: Sequence[Mapping[str, Any]], reference: str, path: str | None) -> dict[str, Any]:
+    """Bind shared snapshot bytes back to a source path observed in this run."""
+    if not _FILE_REF.fullmatch(reference):
+        raise ValueError("content_ref must be a filecard:<sha256> reference")
+    match = None
+    for event in reversed(events):
+        card = observed_file_card(event)
+        if card is None or recoverable_ref(card) != reference:
+            continue
+        if path is not None:
+            if card.get("path") == path:
+                return card
+        elif match is None:
+            match = card
+        elif match.get("path") != card.get("path"):
+            raise ValueError("multiple source paths share this content_ref; supply file as well")
+    if match is None:
+        raise ValueError(f"unknown file_card reference for the requested path: {reference}")
+    return match
+
+
+def stale_file_observation(payload: Mapping[str, Any]) -> bool:
+    if payload.get("tool") != "read_file":
+        return False
+    card = card_from_observation(payload.get("content", ""))
+    return card is not None and (
+        card.get("stale") is True
+        or (bool(card.get("recovered_from")) and card.get("current_sha256") != card.get("sha256"))
+    )

@@ -62,6 +62,8 @@ describe('ContextOS node folding model', () => {
       memory_cards: [
         { kind: 'failure_cluster', id: 'failure-1', title: 'root is not defined', summary: '8 次 · 未解决', evidence_refs: ['verify-1'], unresolved: true },
         { kind: 'epoch_card', id: 'epoch-0001-0010', title: 'epoch-0001-0010', summary: '完成基础模块', evidence_refs: [] },
+        { kind: 'known_facts', id: 'known-facts', title: '文件事实索引', summary: 'a.py', wire_entry_count: 0,
+          entries: [{ path: 'a.py', content_ref: 'filecard:' + 'a'.repeat(64), lines: 2, symbols: [], version: 'observed', candidate_check: 'unknown' }] },
       ],
       summary: { original_tokens: 0, projected_tokens: 0, compression_ratio: null, fold_counts: {}, kind_counts: {}, run_card_count: 0, scope: 'test' },
     });
@@ -69,5 +71,6 @@ describe('ContextOS node folding model', () => {
     expect(nodes[0].evidenceRef).toBe('verify-1');
     expect(nodes[0].parentId).toBe('memory-cards');
     expect(nodes[1].kind).toBe('epoch_card');
+    expect(nodes[2].foldReason).toContain('0 / 1');
   });
 });

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from polaris.cells.roles.runtime.internal.engineering_semantic_advice import summary_input_key, write_snapshot_id
 from polaris.cells.roles.runtime.internal.engineering_tool_payload_projection import (
     fold_tool_payload_previews,
     folded_payload_projections,
@@ -142,11 +143,15 @@ def test_long_shell_command_is_not_a_content_payload(monkeypatch: pytest.MonkeyP
     assert _arguments(folded[0])["command"] == script
 
 
+def _write_key(body: str = "x" * 4000) -> str:
+    return summary_input_key("write:src/a.ts", write_snapshot_id(body), body, [[1, 1]])
+
+
 def test_distiller_summary_wins_over_the_structural_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "24")
     messages = [_write("call_1", "src/a.ts"), _result("call_1", "ok"), *_pad(25)]
     folded = fold_tool_payload_previews(
-        messages, semantic_summaries={"write:src/a.ts": {"summary": "该文件实现萤火虫的固定步长推进。"}}
+        messages, semantic_summaries={_write_key(): {"summary": "该文件实现萤火虫的固定步长推进。"}}
     )
     arguments = _arguments(folded[0])
     assert arguments["summary"] == "该文件实现萤火虫的固定步长推进。"
@@ -181,8 +186,10 @@ def test_read_and_write_planes_keep_separate_summaries(monkeypatch: pytest.Monke
     folded = fold_tool_payload_previews(
         messages,
         semantic_summaries={
-            "write:src/a.ts": {"summary": "写入正文：萤火虫固定步长推进。"},
-            "file:src/a.ts": {"summary": "读取预览：花园状态类型定义。"},
+            _write_key(): {"summary": "写入正文：萤火虫固定步长推进。"},
+            summary_input_key("file:src/a.ts", "filecard:a", preview, [[1, 1]]): {
+                "summary": "读取预览：花园状态类型定义。"
+            },
         },
     )
     assert _arguments(folded[0])["summary"] == "写入正文：萤火虫固定步长推进。"
@@ -198,7 +205,7 @@ def test_fold_gate_applies_the_same_informativeness_rule_as_the_boundary(
 
     monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "24")
     messages = [_write("call_1", "src/a.ts"), _result("call_1", "ok"), *_pad(25)]
-    folded = fold_tool_payload_previews(messages, semantic_summaries={"write:src/a.ts": {"summary": "passed"}})
+    folded = fold_tool_payload_previews(messages, semantic_summaries={_write_key(): {"summary": "passed"}})
     arguments = _arguments(folded[0])
     assert arguments["summary_kind"] == "structural"
     assert "写入 src/a.ts" in arguments["summary"]
@@ -247,3 +254,17 @@ def test_folding_twice_is_stable(monkeypatch: pytest.MonkeyPatch) -> None:
     once = fold_tool_payload_previews(messages)
     twice = fold_tool_payload_previews(once)
     assert twice[0]["tool_calls"][0]["function"]["arguments"] == once[0]["tool_calls"][0]["function"]["arguments"]
+
+
+def test_stale_write_summary_is_not_reused_on_same_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "1")
+    folded = fold_tool_payload_previews(
+        [_write("w", "src/a.ts"), _result("w", "ok"), *_pad(25)],
+        semantic_summaries={
+            _write_key("previous version"): {
+                "snapshot_id": "writecall:obsolete",
+                "summary": "另一个版本采用不同的输入协议和缓冲算法。",
+            }
+        },
+    )
+    assert _arguments(folded[0])["summary_kind"] == "structural"

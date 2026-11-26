@@ -61,6 +61,18 @@ def advisor_configs_from_workspace(workspace: Path) -> list[RemoteAdvisorConfig]
         return []
 
 
+_DISTILLER_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["summary", "source_line", "uncertain"],
+    "properties": {
+        "summary": {"type": "string"},
+        "source_line": {"type": "integer"},
+        "uncertain": {"type": "boolean"},
+    },
+}
+
+
 _SUMMARY_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -145,41 +157,106 @@ class RemoteSemanticAdvisor:
         return content
 
     async def summarize_node(self, request: dict[str, Any]) -> dict[str, Any]:
-        example = {
-            "node_id": request["node_id"],
-            "snapshot_id": request["snapshot_id"],
-            "summary": "该文件负责显示宽度、Unicode 边界与表格换行计算。",
-            "summary_kind": "model_inference",
-            "coverage": {
-                "observed_line_ranges": request["coverage"]["observed_line_ranges"],
-                "summary_complete": False,
-            },
-            "evidence_refs": [request["snapshot_id"], *request.get("allowed_evidence_refs", [])],
-            "uncertain": True,
-            "reason": "摘要仅基于该快照和当前活动，不证明其它文件无关联。",
-        }
-        system = (
-            "You are a read-only ContextOS node summarizer. Return only one JSON object with exactly these keys: "
-            "node_id,snapshot_id,summary,summary_kind,coverage,evidence_refs,uncertain,reason. "
-            "summary_kind must be model_inference. Do not claim completion or test success. "
-            "Describe what the payload contains and why it matters; never answer with a bare status "
-            "word (completed/ok/failed) or a verbatim excerpt of the payload, because the summary "
-            "replaces the payload in the next request. "
-            "Keep summary within 192 tokens and reason within 160 characters. "
-            "Every key is required; evidence_refs and reason are never omitted. "
-            "observed_line_ranges appears exactly once; never repeat keys or array items. Example: "
-            + json.dumps(example, ensure_ascii=False)
-        )
-        messages: list[dict[str, str]] = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": json.dumps(request, ensure_ascii=False)},
-        ]
+        kind = request.get("node_kind")
+        distilling = kind in ("file_card", "write_call", "command_card")
+        schema = _SUMMARY_SCHEMA
+        messages: list[dict[str, str]]
+        if distilling:
+            if kind == "command_card":
+                focus = "Preserve the diagnostic, result or observed value that distinguishes the next debugging step."
+            elif kind == "write_call":
+                focus = (
+                    "Describe the interface, branch or invariant expressed by this write body. Execution is unobserved."
+                )
+            else:
+                focus = "Describe a local interface, condition or data relationship visible within this read slice."
+            schema = _DISTILLER_SCHEMA
+            source_lines = [
+                [index, line]
+                for index, line in enumerate(str(request.get("content") or "").splitlines(), 1)
+                if line.strip()
+            ]
+            source_name = str(request["node_id"]).partition(":")[2] if kind != "command_card" else "command output"
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        f"{focus} Choose one numbered line showing the property you explain. "
+                        "Return only summary (one short sentence in plain language), source_line (its integer index) "
+                        "and uncertain (boolean). The host will copy the evidence. Do not copy the line or add quotes. "
+                        "For implementation behavior, prefer a substantive executable condition or operation over a "
+                        "comment when available. Preserve conditions. A comment states intent; unseen callers, successful execution and "
+                        "public exposure need separate evidence. Mention exposure only when your chosen declaration "
+                        "or export list shows it. Use uncertain=true when the slice cannot establish a consequence."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {"node_kind": kind, "name": source_name, "source_lines": source_lines}, ensure_ascii=False
+                    ),
+                },
+            ]
+        else:
+            example = {
+                "node_id": request["node_id"],
+                "snapshot_id": request["snapshot_id"],
+                "summary": "<one concrete observation with a short exact excerpt in backticks and its meaning>",
+                "summary_kind": "model_inference",
+                "coverage": {
+                    "observed_line_ranges": request["coverage"]["observed_line_ranges"],
+                    "summary_complete": False,
+                },
+                "evidence_refs": [request["snapshot_id"], *request.get("allowed_evidence_refs", [])],
+                "uncertain": True,
+                "reason": "<which consequence or caller behavior this slice cannot establish>",
+            }
+            system = (
+                "You are a read-only ContextOS node summarizer. Return only one JSON object with exactly these keys: "
+                "node_id,snapshot_id,summary,summary_kind,coverage,evidence_refs,uncertain,reason. "
+                "summary_kind must be model_inference. Do not claim completion or test success. "
+                "Describe what the payload contains and why it matters; never answer with a bare status "
+                "word (completed/ok/failed) or a verbatim excerpt of the payload, because the summary "
+                "replaces the payload in the next request. Explain one useful distinction. "
+                "Quote the short declaration, comparison or diagnostic that supports it exactly in backticks. "
+                "Include visibility modifiers when claiming an interface is exported. Preserve input preconditions. "
+                "Treat comments about unseen callers as documented intent, not observed behavior. "
+                "Do not infer successful execution or architecture beyond this slice. "
+                "Keep summary within 192 tokens and reason within 160 characters. "
+                "Every key is required; evidence_refs and reason are never omitted. "
+                "observed_line_ranges appears exactly once; never repeat keys or array items. Example: "
+                + json.dumps(example, ensure_ascii=False)
+            )
+            messages = [
+                {"role": "system", "content": system},
+                {"role": "user", "content": json.dumps(request, ensure_ascii=False)},
+            ]
         last_error: ValueError | None = None
         for _ in range(2):
-            content = await asyncio.to_thread(self._post, messages, _SUMMARY_SCHEMA)
+            content = await asyncio.to_thread(self._post, messages, schema)
             try:
                 payload = json.loads(_json_content(content))
                 self.last_normalization = []
+                if distilling and isinstance(payload, dict) and "source_line" in payload:
+                    if (
+                        set(payload) != {"summary", "source_line", "uncertain"}
+                        or type(payload["source_line"]) is not int
+                    ):
+                        raise ValueError("use only summary, integer source_line and boolean uncertain")
+                    host_bound = {
+                        "node_id": request["node_id"],
+                        "snapshot_id": request["snapshot_id"],
+                        "summary": payload["summary"],
+                        "summary_kind": "model_inference",
+                        "coverage": {
+                            "observed_line_ranges": request["coverage"]["observed_line_ranges"],
+                            "summary_complete": False,
+                        },
+                        "evidence_refs": [request["snapshot_id"]],
+                        "uncertain": payload["uncertain"],
+                        "reason": "Based on the selected observed line; effects outside this slice are unverified.",
+                    }
+                    return validate_node_summary(host_bound, request, selected_line=payload["source_line"])
                 if isinstance(payload, dict):
                     coverage_value = payload.get("coverage")
                     coverage = coverage_value if isinstance(coverage_value, dict) else {}
@@ -190,6 +267,8 @@ class RemoteSemanticAdvisor:
                     allowed_refs = set(request.get("allowed_evidence_refs", [])) | {str(request["snapshot_id"])}
                     raw_refs = payload.get("evidence_refs")
                     if isinstance(raw_refs, list):
+                        if any(not isinstance(ref, str) for ref in raw_refs):
+                            raise ValueError("evidence_refs must contain only strings")
                         payload["evidence_refs"] = list(dict.fromkeys(ref for ref in raw_refs if ref in allowed_refs))[
                             :12
                         ]
@@ -227,4 +306,3 @@ class RemoteSemanticAdvisor:
                     ]
                 )
         raise ValueError(f"node summary failed validation after one corrective retry: {last_error}")
-

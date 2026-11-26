@@ -1,6 +1,54 @@
 import json
+from pathlib import Path
 
+from polaris.cells.roles.runtime.internal.engineering_session import EngineeringSessionStore
+from polaris.cells.roles.runtime.public.contracts.engineering_run import PermissionScope, RoleRunCommand, RunLimits
+from polaris.cells.roles.runtime.public.engineering_context_manifest import query_projection_manifest
 from polaris.delivery.http.v2.context_manifest import build_projection_manifest
+
+
+def test_request_manifest_cannot_see_future_observations_or_create_a_journal(tmp_path: Path) -> None:
+    key = "a" * 24
+    assert query_projection_manifest(tmp_path, key, {"call_id": "missing"}) is None
+    assert not (tmp_path / ".polaris").exists()
+    store = EngineeringSessionStore(tmp_path)
+    store.create_run(
+        RoleRunCommand("run", "director", "inspect files", tmp_path),
+        scope=PermissionScope((tmp_path,), (), frozenset({"read_file"}), False),
+        limits=RunLimits(None, 10000, 5000),
+        engine_version="engineering_v2",
+        request_key=None,
+    )
+    turn = store.append_event("run", kind="turn_started", role="director", payload={})
+    call = f"run:director:{turn}"
+    store.append_event(
+        "run", kind="request_prepared", role="director", payload={"turn_seq": turn, "context_input_seq": turn}
+    )
+    store.append_event(
+        "run",
+        kind="llm_request_observed",
+        role="director",
+        payload={
+            "call_id": call,
+            "turn_seq": turn,
+            "snapshot_status": "available",
+            "context_snapshot_ref": key,
+        },
+    )
+    future = store.append_event(
+        "run", kind="tool_observed", role="director", payload={"tool": "repo_tree", "content": "future evidence"}
+    )
+    body = {"messages": [{"role": "user", "content": "actual wire message"}]}
+    snapshot = {
+        "call_id": call,
+        "messages": [{"role": "user", "content": "auxiliary message"}],
+        "provider_request": {"final_physical_request": {"body": body}},
+    }
+    result = query_projection_manifest(tmp_path, key, snapshot)
+    assert result is not None and result["context_snapshot_ref"] == key
+    assert result["journal_input_seq"] == turn
+    assert all(node["seq"] != future for node in result["nodes"])
+    assert result["nodes"][-1]["summary"] == "actual wire message"
 
 
 def test_manifest_exposes_context_health_metrics() -> None:

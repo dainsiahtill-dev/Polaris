@@ -31,6 +31,7 @@ import type { ContextProjectionManifest, ProjectionRunCard } from './contextProj
 const KIND_STYLE: Record<ContextNodeKind, { color: string; label: string; icon: typeof GitBranch }> = {
   goal: { color: '#3987e5', label: '目标', icon: FileText },
   file_card: { color: '#3987e5', label: 'FileCard', icon: FileText },
+  known_facts: { color: '#3987e5', label: '文件事实索引', icon: FileText },
   command_card: { color: '#d95926', label: 'CommandCard', icon: Terminal },
   message: { color: '#d95926', label: '消息', icon: MessageSquare },
   tool_call: { color: '#9085e9', label: '工具调用', icon: Terminal },

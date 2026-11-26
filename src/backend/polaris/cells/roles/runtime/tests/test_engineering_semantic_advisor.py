@@ -69,3 +69,18 @@ def test_advisor_config_falls_back_to_environment_and_ignores_malformed(tmp_path
     assert advisor_configs_from_workspace(tmp_path) == []
     monkeypatch.delenv("KERNELONE_CONTEXTOS_SEMANTIC_ADVISOR_CONFIG")
     assert advisor_configs_from_workspace(tmp_path) == []
+
+
+async def test_invalid_reference_type_is_a_rejected_node(monkeypatch) -> None:
+    from polaris.cells.roles.runtime.internal.engineering_semantic_advisor_pool import RemoteAdvisorPool
+
+    def malformed(self, messages, schema=None):
+        return json.dumps({"evidence_refs": [{}]})
+
+    monkeypatch.setattr(RemoteSemanticAdvisor, "_post", malformed)
+    pool = RemoteAdvisorPool([RemoteAdvisorConfig(base_url="http://localhost", model="fixture")])
+    rows = await pool.summarize_many(
+        [{"node_id": "file:a", "snapshot_id": "filecard:a", "coverage": {"observed_line_ranges": [[1, 1]]}}]
+    )
+    assert rows[0]["validation_result"] == "REJECTED"
+    assert "evidence_refs" in rows[0]["error"]

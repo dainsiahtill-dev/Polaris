@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { engineeringContextRecords } from './contextOSTelemetry';
+import { engineeringContextRecords } from '@/runtime/contextSnapshot';
 import type { EngineeringEvent } from '@/services/api.types';
 function observed(seq: number, payload: Record<string, unknown>): EngineeringEvent { return { session_id: 'r1', workspace: '/work', seq, role: 'director', kind: 'llm_request_observed', payload }; }
 describe('engineering native context observations', () => {

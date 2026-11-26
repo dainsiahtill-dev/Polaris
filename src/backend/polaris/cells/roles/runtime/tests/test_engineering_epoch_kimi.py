@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 from pathlib import Path
 
@@ -105,3 +106,94 @@ def test_kimi_epoch_pool_reports_rejection_after_the_retry() -> None:
     result = asyncio.run(pool.summarize_many([_epoch_request()]))
     assert result[0]["validation_result"] == "REJECTED"
     assert "summary" in result[0]["error"]
+
+
+def _compact_exchange(monkeypatch, replies):
+    from polaris.cells.roles.runtime.internal.engineering_epoch_runtime import EpochRuntime, facts_for_epoch
+    from polaris.cells.roles.runtime.tests.test_engineering_memory_cards import _closed_epoch
+
+    sent = []
+
+    def post(req, **kwargs):
+        sent.append(json.loads(req.data))
+        return io.BytesIO(json.dumps(replies[min(len(sent) - 1, len(replies) - 1)]).encode("utf-8"))
+
+    monkeypatch.setattr("urllib.request.urlopen", post)
+
+    async def draw():
+        req, refs, fp = facts_for_epoch(
+            {"instruction": "Investigate npm test. " + "long irrelevant goal " * 300}, _closed_epoch()
+        )
+        runtime = EpochRuntime(KimiEpochPool(base_url="https://unit.invalid", api_key="test", model="kimi"))
+        runtime.schedule(req, refs, fingerprint=fp)
+        await runtime._job
+        return runtime.poll()
+
+    return sent, asyncio.run(draw())
+
+
+def _reply(obj):
+    return {
+        "content": [{"type": "text", "text": json.dumps(obj)}],
+        "stop_reason": "end_turn",
+        "usage": {"output_tokens": 16},
+    }
+
+
+def test_compact_epoch_selects_only_observed_refs_and_sends_bounded_cues_once(monkeypatch):
+    ref = "event:18"
+    result = {
+        "recall_refs": [ref],
+        "exploration": {
+            "open_question": "Did setup fail?",
+            "discriminating_check": "Inspect the recorded check output.",
+            "evidence_refs": [ref],
+        },
+    }
+    sent, card = _compact_exchange(monkeypatch, [_reply(result)])
+    assert len(sent) == 1 and sent[0]["thinking"] == {"type": "disabled"}
+    wire = json.loads(sent[0]["messages"][1]["content"])
+    assert set(wire) == {"goal_cue", "observations"} and len(wire["goal_cue"]) <= 240
+    assert sum(row["ref"] == ref for row in wire["observations"]) == 1
+    assert card["recall_refs"] == [ref] and card["exploration"] == result["exploration"]
+    assert card["advice_status"] == "probe_proposed" and card["provider_attempts"][0]["usage"]["output_tokens"] == 16
+
+
+def test_compact_epoch_accepts_explicit_abstention_and_rejects_unoffered_recall(monkeypatch):
+    sent, card = _compact_exchange(monkeypatch, [_reply({"abstain": True})])
+    assert len(sent) == 1 and card["advice_status"] == "abstained" and not card["recall_refs"]
+    assert "early.ts" in card["summary"]
+    sent, card = _compact_exchange(monkeypatch, [_reply({"recall_refs": ["event:999"]})])
+    assert card["advice_status"] == "rejected" and not card["recall_refs"] and "early.ts" in card["summary"]
+
+
+def test_thinking_only_epoch_records_counts_without_reading_reasoning_or_retrying(monkeypatch):
+    sent, card = _compact_exchange(
+        monkeypatch,
+        [
+            {
+                "content": [{"type": "thinking", "thinking": "SECRET DELIBERATION"}],
+                "stop_reason": "max_tokens",
+                "usage": {"output_tokens": 1400, "output_tokens_details": {"thinking_tokens": 1399}},
+            }
+        ],
+    )
+    assert len(sent) == 1 and card["advice_status"] == "rejected"
+    assert card["provider_attempts"][0]["stop_reason"] == "max_tokens"
+    assert card["provider_attempts"][0]["usage"]["output_tokens_details"]["thinking_tokens"] == 1399
+    assert "SECRET DELIBERATION" not in json.dumps(card)
+
+
+async def test_empty_observation_offer_skips_provider_and_records_that_no_draw_was_requested():
+    from polaris.cells.roles.runtime.internal.engineering_epoch_runtime import EpochRuntime, facts_for_epoch
+
+    events = [{"seq": n, "kind": "turn_started", "payload": {}} for n in range(1, 31)]
+    pool = KimiEpochPool(base_url="https://unit.invalid", api_key="test", model="test")
+    pool._post = lambda _messages: (_ for _ in ()).throw(AssertionError("no network request expected"))
+    request, refs, fp = facts_for_epoch({}, events)
+    runtime = EpochRuntime(pool)
+    runtime.schedule(request, refs, fingerprint=fp)
+    await runtime._job
+    card = runtime.poll()
+    assert card["validation_result"] == "NOT_REQUESTED" and card["advice_status"] == "no_observed_receipts"
+    assert card["provider_attempts"] == [] and "model_advice" not in card

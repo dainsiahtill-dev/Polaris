@@ -15,6 +15,7 @@ from polaris.cells.roles.kernel.internal.services.context_assembler import Conte
 from polaris.kernelone.context.contracts import TurnEngineContextRequest as ContextRequest
 from polaris.kernelone.errors import BudgetExceededError
 
+
 def _payload() -> str:
     return json.dumps({"body": "function body;\n" * 600, "tail": "完整尾部"}, ensure_ascii=False)
 

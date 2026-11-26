@@ -25,6 +25,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from polaris.cells.roles.runtime.internal.engineering_file_cards import stale_file_observation
+
 DimensionStatus = Literal["passed", "failed", "unknown", "not_required"]
 
 _CLAUSE_STRIP = re.compile(r"^\s*(?:[-*•+]|\d+[.、)])\s*")
@@ -286,6 +288,7 @@ def require_observed_clause_evidence(
             and observation.get("ok") is True
             and not observation.get("interrupted")
             and not observation.get("timed_out")
+            and not stale_file_observation(observation)
             and (observation.get("tool") != "repo_rg" or observation.get("exit_code") == 0)
         ):
             usable.add(identity)
@@ -309,11 +312,7 @@ def require_observed_clause_evidence(
             # 点名具体不可用的引用：旧版只报条款号，模型只能猜，于是把整份矩阵
             # 退成 unknown（实测 L1-06 一份 12 条全 pass 的完整矩阵被拒，只因
             # 证据里同时提到自己一次失败的 call，原文已说明"是我的入参错误"）。
-            unusable = sorted(
-                str(ref)
-                for ref in references
-                if ref not in usable or identities.get(ref) != 1
-            )[:4]
+            unusable = sorted(str(ref) for ref in references if ref not in usable or identities.get(ref) != 1)[:4]
             raise ValueError(
                 f"Clause {finding.clause!r} needs the exact call ID of a successful current check or "
                 "earlier QA observation for each citation."

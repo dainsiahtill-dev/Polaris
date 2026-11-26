@@ -5,7 +5,7 @@ import json
 
 import pytest
 from polaris.cells.roles.runtime.internal.engineering_file_cards import build_file_card
-from polaris.cells.roles.runtime.internal.engineering_semantic_advice import CandidateRefs
+from polaris.cells.roles.runtime.internal.engineering_semantic_advice import CandidateRefs, summary_input_key
 from polaris.cells.roles.runtime.internal.engineering_semantic_runtime import SemanticRuntime, facts_for_advice
 
 
@@ -47,7 +47,10 @@ async def test_semantic_runtime_stores_remote_fold_summary() -> None:
     await asyncio.sleep(0)
     result = runtime.poll()
     assert result is not None and result["validation_result"] == "VALID"
-    assert runtime.fold_summaries()["a.py"]["summary"] == "旧文件主要负责输入处理。"
+    assert (
+        runtime.fold_summaries()[summary_input_key("a.py", "filecard:a", "input", [[1, 1]])]["summary"]
+        == "旧文件主要负责输入处理。"
+    )
 
 
 class _SlowPool:
@@ -95,7 +98,10 @@ async def test_semantic_runtime_keeps_an_in_flight_job_across_a_reschedule() -> 
     await asyncio.sleep(0.2)
     assert runtime.poll() is not None
     assert runtime.pool.calls == 1
-    assert runtime.fold_summaries()["file:a.py"]["summary"] == "慢速摘要内容"
+    assert (
+        runtime.fold_summaries()[summary_input_key("file:a.py", "filecard:a", "x" * 600, [[1, 1]])]["summary"]
+        == "慢速摘要内容"
+    )
 
 
 def test_distiller_thresholds_derive_from_the_fold_knobs(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -140,11 +146,14 @@ async def test_semantic_runtime_drops_rejected_summary_so_host_falls_back() -> N
     await asyncio.sleep(0)
     await asyncio.sleep(0)
     result = runtime.poll()
-    assert result is not None and result["validation_result"] == "VALID"
+    assert result is not None and result["validation_result"] == "REJECTED"
     assert runtime.fold_summaries() == {}
+    runtime.schedule(request, refs, fingerprint="same-slice")
+    await asyncio.sleep(0)
+    assert runtime.poll() is None
 
 
-def test_facts_for_advice_bounds_candidates_and_failure() -> None:
+def test_facts_for_advice_carries_only_selected_sources() -> None:
     card = build_file_card(
         "a.py",
         "x" * 4000,
@@ -180,10 +189,9 @@ def test_facts_for_advice_bounds_candidates_and_failure() -> None:
     events.extend({"kind": "message", "seq": index + 15, "payload": {}} for index in range(100))
     request, refs, fingerprint = facts_for_advice({"instruction": "fix", "workspace_revision": 2}, events)
     assert refs.node_ids == {"file:a.py"}
-    assert "failure_1" in refs.evidence_refs
-    assert "command:abc" in refs.evidence_refs
+    assert refs.evidence_refs == {"filecard:a"}
     assert len(fingerprint) == 64
-    assert request["activity"] == "assertion failed"
+    assert set(request) == {"candidates"}
 
 
 def test_facts_for_advice_summarizes_written_bodies_for_folding() -> None:
@@ -304,3 +312,40 @@ def test_facts_for_advice_does_not_trigger_before_ten_activities() -> None:
     events.extend({"kind": "turn_started", "seq": index + 2, "payload": {}} for index in range(9))
     _request, refs, _fingerprint = facts_for_advice({"instruction": "fix"}, events)
     assert refs.node_ids == set()
+
+
+async def test_distill_one_snapshot_once_without_other_nodes_references() -> None:
+    class Pool:
+        def __init__(self) -> None:
+            self.requests = []
+
+        async def summarize_many(self, requests):
+            self.requests.extend(requests)
+            return [
+                {
+                    "validation_result": "VALID",
+                    "result": {
+                        "node_id": item["node_id"],
+                        "snapshot_id": item["snapshot_id"],
+                        "coverage": item["coverage"],
+                        "summary": "这个模块独立负责输入的规范化和校验。",
+                    },
+                }
+                for item in requests
+            ]
+
+    pool = Pool()
+    runtime = SemanticRuntime(pool, "assist")
+    refs = CandidateRefs(node_ids={"file:a.py"}, slice_ids=set(), evidence_refs={"command:unrelated"})
+    candidate = {
+        "node_id": "file:a.py",
+        "snapshot_id": "filecard:a",
+        "content": "source",
+        "coverage": {"observed_line_ranges": [[1, 1]]},
+    }
+    for key in ("first", "other journal activity"):
+        runtime.schedule({"candidates": [candidate]}, refs, fingerprint=key)
+        await asyncio.sleep(0)
+        runtime.poll()
+    assert [r["snapshot_id"] for r in pool.requests] == ["filecard:a"]
+    assert "command:unrelated" not in pool.requests[0]["allowed_evidence_refs"]

@@ -5,6 +5,7 @@
  * produced it, and unknown fold state stays UNKNOWN.
  */
 import type { EngineeringEvent } from '@/services/api.types';
+import { engineeringContextRecords, engineeringSnapshotRef } from '@/runtime/contextSnapshot';
 import {
   compressionFromEvents,
   preparedRequestMessages,
@@ -91,7 +92,7 @@ export interface LiveContextMetrics {
   distillCount: number;
   agentDecisionCount: number;
   epochCount: number;
-  lastSnapshotRef: string | null;
+  lastSnapshot: { ref: string; role: string } | null;
   lastTokenEstimate: number | null;
   peakTokenEstimate: number | null;
   contextWindowTokens: number | null;
@@ -459,7 +460,7 @@ export function buildLiveContextGraph(events: EngineeringEvent[], limit = 90): L
         tokens: numberOr(audit.final_request_token_estimate),
         layer: LIVE_LAYERS.model_call,
         turn,
-        evidenceRef: text(payload.context_snapshot_ref) || null,
+        evidenceRef: engineeringSnapshotRef(payload),
         phase: text(payload.phase) || null,
         ok: text(payload.status) === 'ok' || text(payload.status) === 'observed' ? true : null,
         createdAt: event.created_at ?? 0,
@@ -645,14 +646,12 @@ export function liveContextMetrics(events: EngineeringEvent[]): LiveContextMetri
       activeCards += 1;
     }
   }
-  let lastSnapshotRef: string | null = null;
+  let lastSnapshot: LiveContextMetrics['lastSnapshot'] = null;
   let lastTokenEstimate: number | null = null;
   let peakTokenEstimate: number | null = null;
   let contextWindowTokens: number | null = null;
   let contextUtilization: number | null = null;
-  for (const event of events) {
-    if (event.kind !== 'llm_request_observed') continue;
-    const audit = auditOf(event.payload);
+  for (const { event, audit, contextSnapshotRef } of engineeringContextRecords(events).reverse()) {
     const estimate = numberOr(audit.final_request_token_estimate);
     if (estimate !== null) {
       lastTokenEstimate = estimate;
@@ -662,8 +661,7 @@ export function liveContextMetrics(events: EngineeringEvent[]): LiveContextMetri
     if (window !== null) contextWindowTokens = window;
     const utilization = numberOr(audit.context_window_utilization);
     if (utilization !== null) contextUtilization = utilization;
-    const ref = text(event.payload.context_snapshot_ref);
-    if (ref) lastSnapshotRef = ref;
+    if (contextSnapshotRef) lastSnapshot = { ref: contextSnapshotRef, role: event.role };
   }
   const compression = compressionFromEvents(events);
   const workingSetUsedTokens = lastTokenEstimate;
@@ -689,7 +687,7 @@ export function liveContextMetrics(events: EngineeringEvent[]): LiveContextMetri
     distillCount: graph.nodes.filter((node) => node.kind === 'distill').length,
     agentDecisionCount: events.filter((event) => event.kind === 'resident_agi_decision').length,
     epochCount: events.filter((event) => event.kind === 'epoch_card_completed').length,
-    lastSnapshotRef,
+    lastSnapshot,
     lastTokenEstimate,
     peakTokenEstimate,
     contextWindowTokens,

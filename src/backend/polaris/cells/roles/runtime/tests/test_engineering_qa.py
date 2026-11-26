@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -58,6 +59,37 @@ def _service(
 ) -> EngineeringRunService:
     provider.client("openai", workspace, monkeypatch)  # Configuration only; default native client remains real.
     return EngineeringRunService(workspace, require_qa=required, permission_resolver=lambda _row: _scope(workspace))
+
+
+async def test_both_roles_receive_the_same_file_digest_on_the_native_wire(
+    isolated_workspace: Path,
+    scripted_provider: ScriptedProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (isolated_workspace / "value.txt").write_text("2", encoding="utf-8")
+    ref = "filecard:" + hashlib.sha256(b"2").hexdigest()
+    service = _service(isolated_workspace, scripted_provider, monkeypatch)
+    for response in (
+        _calls(("director_read", "read_file", {"file": "value.txt"})),
+        _text("Ready to check."),
+        _calls(("qa_read", "read_file", {"file": "value.txt", "content_ref": ref, "start_line": 1, "end_line": 1})),
+        _calls(("qa_report", "report_review", {"approved": True, "feedback": "Checked the value and command."})),
+    ):
+        scripted_provider.enqueue_json(response)
+    row, _ = await _run(service)
+    assert row["qa_verdict"] == "approved", row
+    for i in (1, 2):
+        messages = scripted_provider.requests[i]["body"]["messages"]
+        sections = [
+            m["content"].split("ContextOS known_facts · ", 1)[1]
+            for m in messages
+            if isinstance(m.get("content"), str) and "ContextOS known_facts · " in m["content"]
+        ]
+        assert len(sections) == 1
+        assert ref in sections[0] and "不要重读整文件" in sections[0]
+    observations = service.store.load_events("qa-task", kinds=("tool_observed",), role="qa")
+    read = next(e["payload"] for e in observations if e["payload"]["call_id"] == "qa_read")
+    assert read["ok"] and json.loads(read["content"])["file_card"]["recovered_from"] == ref
 
 
 async def _run(service: EngineeringRunService, *, key: str | None = None) -> tuple[dict[str, Any], RunLimits]:
@@ -895,7 +927,11 @@ async def test_a_non_decision_report_is_asked_again_instead_of_ending_the_run(
                     # 证据写得像具体观察（绕过工具层的占位词表），但整份没有一条
                     # pass/fail —— 工具层接受，由宿主导回。
                     "clause_findings": [
-                        {"clause": clause, "status": "unknown", "evidence": "已读 src/value.ts：只见接口，未见 value2 断言。"}
+                        {
+                            "clause": clause,
+                            "status": "unknown",
+                            "evidence": "已读 src/value.ts：只见接口，未见 value2 断言。",
+                        }
                     ],
                 },
             )

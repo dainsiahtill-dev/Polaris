@@ -35,6 +35,7 @@ export interface ProjectionRunCard {
 
 export interface ContextMemoryCard {
   kind:
+    | 'known_facts'
     | 'failure_cluster'
     | 'interface_contract'
     | 'requirement_trace'
@@ -56,6 +57,16 @@ export interface ContextMemoryCard {
   pin_reason?: string;
   validation_result?: string;
   uncertain?: boolean;
+  entries?: Array<{
+    path: string;
+    content_ref: string;
+    lines: number | null;
+    symbols: string[];
+    at_lines?: Array<number | null>;
+    version: 'observed' | 'historical';
+    candidate_check: string;
+  }>;
+  wire_entry_count?: number | null;
 }
 
 export interface ContextProjectionManifest {

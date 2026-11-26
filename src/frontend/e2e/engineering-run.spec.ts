@@ -18,6 +18,10 @@ async function openBoundRun(page: Page, audit: EngineeringNetworkAudit) {
   const snapshot = await response.json();
   expect(snapshot).toMatchObject({ session_id: binding.sessionId, workspace: binding.workspace, engine_version: 'engineering_v2' });
   await expect(page.getByTestId('engineering-run-workspace')).toBeVisible();
+  if (!component) {
+    await page.getByRole('button', { name: 'ContextOS', exact: true }).click();
+    await expect(page.getByTestId('engineering-contextos')).toBeVisible();
+  }
   await expect(page.getByText(binding.sessionId, { exact: true })).toBeVisible();
   await expect.poll(() => audit.sockets.filter((socket) => new URL(socket.url).pathname === '/v2/ws/runtime').length).toBe(1);
   await expect.poll(() => engineeringBootstrap(audit, binding).ready, { timeout: 5000, message: 'Initial hydration and observed first-connection freshness must both settle' }).toBe(true);
@@ -26,6 +30,16 @@ async function openBoundRun(page: Page, audit: EngineeringNetworkAudit) {
   return { watermark: bootstrap.maxSqlSeq!, reads: bootstrap.readCount };
 }
 async function waitForActualPush(page: Page, audit: EngineeringNetworkAudit, watermark: number, timeout: number) {
+  if (!component) {
+    await expect.poll(async () => {
+      const captures = scopedEvents(audit).filter((event) => event.seq > watermark && event.kind === 'llm_request_observed');
+      for (const capture of captures.reverse()) {
+        if (await page.getByTestId(`engineering-context-${capture.seq}`).isVisible()) return true;
+      }
+      return false;
+    }, { timeout, message: 'A post-bootstrap request from the bound WebSocket must reach its ContextOS row' }).toBe(true);
+    return;
+  }
   await expect.poll(() => scopedEvents(audit).filter((event) => event.seq > watermark && !['run_updated', 'message'].includes(event.kind)).length, { timeout }).toBeGreaterThan(0);
   const event = scopedEvents(audit).find((row) => row.seq > watermark && !['run_updated', 'message'].includes(row.kind))!;
   await expect(page.getByText(`#${event.seq}`, { exact: true })).toBeVisible();

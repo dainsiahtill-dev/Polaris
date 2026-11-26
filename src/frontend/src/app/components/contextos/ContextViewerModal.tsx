@@ -52,6 +52,7 @@ import {
   X,
 } from 'lucide-react';
 import { apiFetch } from '@/api';
+import { isContextSnapshotRef } from '@/runtime/contextSnapshot';
 import type { EngineeringEvent } from '@/services/api.types';
 import { cn } from '@/app/components/ui/utils';
 import { ContextOSNodeMap } from './ContextOSNodeMap';
@@ -73,8 +74,6 @@ import {
   normalizeFinalProviderRequestPayload,
   type FinalProviderRequestPayload,
 } from './finalProviderRequestProtocol';
-
-const CONTEXT_SNAPSHOT_REF_RE = /^[0-9a-f]{24}$/i;
 
 // 公共类型别名（保持原公共面不变）。
 export type ContextMessage = ViewModelMessage;
@@ -805,7 +804,8 @@ function GroupSection({ role, count, totalTokens, children }: GroupSectionProps)
 // Main component
 // ---------------------------------------------------------------------------
 
-export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, workspace, workerId, events = [], initialTab = 'messages' }: ContextViewerModalProps) {
+export function ContextViewerModal({ contextSnapshotRef: rawRef, roleId, onClose, workspace, workerId, events = [], initialTab = 'messages' }: ContextViewerModalProps) {
+  const contextSnapshotRef = rawRef?.toLowerCase() ?? null;
   const [content, setContent] = useState<ContextPayload | null>(null);
   const [finalRequest, setFinalRequest] = useState<FinalProviderRequestPayload | null>(null);
   const [manifest, setManifest] = useState<ContextProjectionManifest | null>(null);
@@ -844,7 +844,7 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worksp
   }, [workspace]);
 
   const fetchFinalRequest = useCallback(async (signal?: AbortSignal) => {
-    if (!contextSnapshotRef || !CONTEXT_SNAPSHOT_REF_RE.test(contextSnapshotRef)) {
+    if (!isContextSnapshotRef(contextSnapshotRef)) {
       setFinalRequest(null);
       setFinalRequestLoading(false);
       setFinalRequestError(null);
@@ -894,7 +894,7 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worksp
   }, [buildWorkspaceSuffix, contextSnapshotRef]);
 
   const fetchManifest = useCallback(async (signal?: AbortSignal) => {
-    if (!contextSnapshotRef || !CONTEXT_SNAPSHOT_REF_RE.test(contextSnapshotRef)) {
+    if (!isContextSnapshotRef(contextSnapshotRef)) {
       setManifest(null);
       return;
     }
@@ -914,7 +914,7 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worksp
 
   const fetchContext = useCallback(async (signal?: AbortSignal) => {
     if (!contextSnapshotRef) return;
-    if (!CONTEXT_SNAPSHOT_REF_RE.test(contextSnapshotRef)) {
+    if (!isContextSnapshotRef(contextSnapshotRef)) {
       setContent(null);
       setFinalRequest(null);
       setManifest(null);

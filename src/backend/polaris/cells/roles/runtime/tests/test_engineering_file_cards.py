@@ -24,6 +24,7 @@ def test_read_file_returns_bounded_file_card(isolated_workspace: Path) -> None:
     )
     result = asyncio.run(tools.execute("read-1", "read_file", {"file": "a.py"}))
     assert result.ok, result.content
+    assert "served_from_snapshot" not in json.loads(result.content)
     card = json.loads(result.content)["file_card"]
     assert card["schema_version"] == "engineering.file_card.v1"
     assert card["path"] == "a.py" and card["revision"] == 7
@@ -79,7 +80,7 @@ def test_content_ref_recovers_exact_snapshot_beyond_preview(isolated_workspace: 
     )
     first = asyncio.run(tools.execute("read-1", "read_file", {"file": "a.py"}))
     card = json.loads(first.content)["file_card"]
-    tools.file_card_resolver = lambda _ref: card
+    tools.file_card_resolver = lambda _ref, _path: card
     recovered = asyncio.run(
         tools.execute(
             "read-2",
@@ -107,10 +108,18 @@ def test_content_ref_recovers_card_and_marks_stale_source(isolated_workspace: Pa
     first = asyncio.run(tools.execute("read-1", "read_file", {"file": "a.py"}))
     card = json.loads(first.content)["file_card"]
     path.write_text("def alpha():\n    return 2\n", encoding="utf-8")
-    tools.file_card_resolver = lambda _ref: card
+    tools.file_card_resolver = lambda _ref, _path: card
     recovered = asyncio.run(tools.execute("read-2", "read_file", {"content_ref": card["content_ref"]}))
     restored = json.loads(recovered.content)["file_card"]
     assert restored["stale"] is True and restored["current_sha256"] != card["sha256"]
+    path.unlink()
+    historical = asyncio.run(tools.execute("deleted", "read_file", {"content_ref": card["content_ref"], "end_line": 1}))
+    assert historical.ok
+    saved = json.loads(historical.content)["file_card"]
+    assert saved["stale"] and saved["current_sha256"] is None and "def alpha" in saved["content_preview"]
+    (isolated_workspace / ".polaris/runtime/filecards" / (card["sha256"] + ".json")).unlink()
+    missing = asyncio.run(tools.execute("missing", "read_file", {"content_ref": card["content_ref"]}))
+    assert not missing.ok and "unavailable" in missing.content
 
 
 def test_manifest_projects_file_card_reference(isolated_workspace: Path) -> None:

@@ -1,4 +1,5 @@
 /** Pure presentation helpers for the Mission Control console. */
+import { engineeringSnapshotRef } from '@/runtime/contextSnapshot';
 
 import type { EngineeringEvent, EngineeringRole, EngineeringRoleStatus, EngineeringRunStatus, EngineeringVerification, EngineeringQAVerdict, EngineeringProjectOutcome } from '@/services/api.types';
 
@@ -139,13 +140,9 @@ export function runShortId(sessionId: string | undefined): string {
   return tail ? `RUN-${tail}` : 'RUN-····';
 }
 
-const CONTEXT_REF_PATTERN = /^[a-f0-9]{24}$/;
-
 /** A UI-usable context snapshot ref only when the backend marks it available. */
 export function contextRefOf(event: EngineeringEvent): string | null {
-  const payload = event.payload;
-  const raw = payload.context_snapshot_ref;
-  return payload.snapshot_status === 'available' && typeof raw === 'string' && CONTEXT_REF_PATTERN.test(raw) ? raw : null;
+  return engineeringSnapshotRef(event.payload);
 }
 
 export type EventTone = 'ok' | 'bad' | 'info';

@@ -1,0 +1,19 @@
+card_id: vc-20261126-file-facts
+classification: structural
+owner: roles.runtime
+related_blueprint: docs/blueprints/CONTEXT_FACT_CONVERGENCE_20261126.md
+assumptions:
+  - statement: Immutable bytes can be shared by paths. The journal binds a read to its run and path.
+    evidence: persist_file_snapshot keys bytes by digest. EngineeringTools records the logical path in every FileCard.
+  - statement: File observation order and candidate verification are recoverable from the journal.
+    evidence: L1-05 batch 5660dd0f40cd410f8cd6ddd2f5d47af3 records a source manifest at event 1392 and a versioned read at 1777.
+  - statement: A content reference can be present when a request snapshot is unavailable.
+    evidence: ContextOSNavigator formerly sent a filecard identifier to the provider-request viewer.
+pre_mortem:
+  - Selecting by SHA filename can resurrect an older path or a file from a different run.
+  - A reread of historical bytes can hide a newer revision or satisfy an independent QA check incorrectly.
+  - A whole-project check without a matching source hash cannot bind a path.
+verification_plan:
+  - Exercise shared digests, stale and missing sources, invalid references, and restricted paths.
+  - Compare both role requests and the capture-time manifest with the same journal.
+  - Measure exact reads, repeated paths, content-address recoveries, and independent acceptance on the same project before and after.

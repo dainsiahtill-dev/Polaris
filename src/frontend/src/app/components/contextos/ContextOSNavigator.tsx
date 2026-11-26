@@ -222,6 +222,8 @@ export function ContextOSNavigator({ events, selectedSeq = null, onOpenContext }
     ? projectedCards.find((card) => card.nodeId === selected.evidenceRef) ?? null
     : null;
   const detailSummaryKind = projectedCard?.summaryKind ?? selected?.summaryKind ?? null;
+  const requestRef = selected?.kind === 'model_call' ? selected.evidenceRef : null;
+  const { lastSnapshot } = metrics;
   const detailFoldReason = projectedCard?.foldReason || selected?.foldReason || '';
   const layerOptions = [...new Set(graph.nodes.map((node) => node.layer))].sort((a, b) => a - b);
 
@@ -388,15 +390,15 @@ export function ContextOSNavigator({ events, selectedSeq = null, onOpenContext }
             `${LIVE_SUMMARY_KIND_LABELS[kind]}（${kind}）`,
             metrics.summaryKindCounts[kind],
           ))}
-          {metrics.lastSnapshotRef ? (
+          {lastSnapshot ? (
             <button
               type="button"
-              onClick={() => onOpenContext?.(metrics.lastSnapshotRef as string, 'director')}
+              onClick={() => onOpenContext?.(lastSnapshot.ref, lastSnapshot.role)}
               className="mt-3 flex w-full items-center gap-1.5 rounded bg-accent-secondary/15 px-2 py-1 text-left text-[10px] text-accent-secondary hover:bg-accent-secondary/25"
               data-testid="contextos-nav-open-final-request"
             >
               <ChevronRight className="h-3 w-3 shrink-0" />
-              <span className="truncate font-mono">打开最终请求 {metrics.lastSnapshotRef.slice(0, 10)}…</span>
+              <span className="truncate font-mono">打开最终请求 {lastSnapshot.ref.slice(0, 10)}…</span>
             </button>
           ) : null}
         </div>
@@ -423,15 +425,17 @@ export function ContextOSNavigator({ events, selectedSeq = null, onOpenContext }
               丢弃说明 · {metrics.compression.text}
             </p>
           ) : null}
-          {selected.evidenceRef ? (
+          {requestRef ? (
             <button
               type="button"
-              onClick={() => onOpenContext?.(selected.evidenceRef as string, selected.role)}
+              onClick={() => onOpenContext?.(requestRef, selected.role)}
               className="mt-1.5 rounded bg-accent-secondary/15 px-2 py-1 text-[9px] text-accent-secondary hover:bg-accent-secondary/25"
               data-testid="contextos-nav-evidence-link"
             >
-              在最终请求中查找引用
+              打开最终请求
             </button>
+          ) : selected.evidenceRef ? (
+            <code className="break-all text-[9px] text-[#c3c2b7]">{selected.evidenceRef}</code>
           ) : null}
         </aside>
       ) : null}

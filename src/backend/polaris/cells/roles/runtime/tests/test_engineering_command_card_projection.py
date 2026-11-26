@@ -4,6 +4,7 @@ import json
 
 import pytest
 from polaris.cells.roles.runtime.internal.engineering_command_cards import build_command_card
+from polaris.cells.roles.runtime.internal.engineering_semantic_advice import summary_input_key
 from polaris.cells.roles.runtime.internal.engineering_tool_payload_projection import fold_tool_payload_previews
 
 
@@ -32,7 +33,9 @@ def test_command_card_folds_only_after_inactive_window(monkeypatch: pytest.Monke
             {"role": "assistant", "content": "step-4"},
             _command_message(),
         ],
-        semantic_summaries={"command:abc": {"summary": "旧命令摘要"}},
+        semantic_summaries={
+            summary_input_key("command:abc", "command:abc", "x" * 1200 + "\n", [[1, 1]]): {"summary": "旧命令摘要"}
+        },
     )
     tool_messages = [message for message in folded if message["role"] == "tool"]
     first = json.loads(tool_messages[0]["content"])["command_card"]
@@ -58,7 +61,11 @@ def test_old_failed_command_folds_without_current_dependency(monkeypatch: pytest
         messages.append(_command_message(exit_code=1 if index == 0 else 0))
     folded = fold_tool_payload_previews(
         messages,
-        semantic_summaries={"command:abc": {"summary": "该命令较早执行，输出已超出当前关注窗口，可按证据引用取回。"}},
+        semantic_summaries={
+            summary_input_key("command:abc", "command:abc", "x" * 1200 + "\n", [[1, 1]]): {
+                "summary": "该命令较早执行，输出已超出当前关注窗口，可按证据引用取回。"
+            }
+        },
     )
     first = next(message for message in folded if message["role"] == "tool")
     assert json.loads(first["content"])["command_card"]["fold_state"] == "FOLDED"
@@ -120,7 +127,9 @@ def test_uninformative_summaries_fall_back_to_structural(monkeypatch: pytest.Mon
     for uninformative in ("completed", "completed successfully", "xxxxxxxxxxxxxxxxxxxx"):
         folded = fold_tool_payload_previews(
             messages,
-            semantic_summaries={"command:abc": {"summary": uninformative}},
+            semantic_summaries={
+                summary_input_key("command:abc", "command:abc", "x" * 1200 + "\n", [[1, 1]]): {"summary": uninformative}
+            },
         )
         cards = [json.loads(message["content"])["command_card"] for message in folded if message["role"] == "tool"]
         folded_card = cards[0]
@@ -141,7 +150,9 @@ def test_real_distiller_summary_wins_over_structural(monkeypatch: pytest.MonkeyP
     folded = fold_tool_payload_previews(
         messages,
         semantic_summaries={
-            "command:abc": {"summary": "该命令执行了测试套件，末尾输出了汇总行，原始输出可按引用取回。"}
+            summary_input_key("command:abc", "command:abc", "x" * 1200 + "\n", [[1, 1]]): {
+                "summary": "该命令执行了测试套件，末尾输出了汇总行，原始输出可按引用取回。"
+            }
         },
     )
     card = json.loads(next(message for message in folded if message["role"] == "tool")["content"])["command_card"]

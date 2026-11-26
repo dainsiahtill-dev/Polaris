@@ -132,3 +132,127 @@ def test_current_edit_pin_keeps_preview_and_reason() -> None:
     first = json.loads(folded[0]["content"])["file_card"]
     assert first["pin_reason"] == "current_edit"
     assert first["content_preview"] == "source" and first["fold_state"] == "ACTIVE"
+
+
+def test_distiller_interprets_only_the_observed_snapshot_slice(monkeypatch: pytest.MonkeyPatch) -> None:
+    from polaris.cells.roles.runtime.internal.engineering_semantic_advice import summary_input_key
+
+    monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "1")
+    preview = "p" * 1500 + "\n" + "p" * 1499
+    message = _message("src/a.ts", preview)
+    source = json.loads(message["content"])["file_card"]
+    text = "解析输入后构造两个稀疏索引，供后续查询使用。"
+    for snapshot, content, ranges, expected in (
+        (source["content_ref"], preview, [[1, 2]], True),
+        ("filecard:obsolete", preview, [[1, 2]], False),
+        (source["content_ref"], preview, [[6, 7]], False),
+        (source["content_ref"], "q" * 3000, [[1, 2]], False),
+    ):
+        key = summary_input_key("file:src/a.ts", snapshot, content, ranges)
+        messages = fold_tool_payload_previews([message, *_pad(4)], semantic_summaries={key: {"summary": text}})
+        result = json.loads(messages[0]["content"])["file_card"]
+        assert (result["summary_kind"] == "model_inference") == expected
+        assert (result["summary"] == text) == expected
+
+
+@pytest.mark.parametrize("coverage_format", ["current", "absent", "partial", "unknown_offset"])
+def test_distiller_and_fold_use_only_locatable_visible_source(
+    coverage_format: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from polaris.cells.roles.runtime.internal.engineering_semantic_advice import summary_input_key
+    from polaris.cells.roles.runtime.internal.engineering_semantic_runtime import facts_for_advice
+
+    monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "1")
+    lines = ["A" * 1600 + "\n", "B" * 1600 + "\n", "C" * 1600 + "\n"]
+    source = "package\n" * 30 + "".join(lines)
+    visible = "".join(lines[:2])
+    preview = visible + "\n[output truncated: 1601 bytes omitted]"
+    card = build_file_card(
+        "a.py",
+        source,
+        revision=1,
+        preview=preview,
+        truncated=True,
+        start_line=31,
+        end_line=33,
+        snapshot_ref="filecard:old",
+    )
+    if coverage_format != "current":
+        card.pop("coverage")
+    if coverage_format == "partial":
+        card["coverage"] = {"presentation_truncated": True}
+    if coverage_format == "unknown_offset":
+        card.pop("content_bounds")
+    wire = json.dumps({"file_card": card})
+    events = [{"kind": "tool_observed", "seq": 1, "payload": {"tool": "read_file", "ok": True, "content": wire}}]
+    events.extend({"kind": "turn_started", "seq": i + 2, "payload": {}} for i in range(30))
+    request, _, _ = facts_for_advice({}, events)
+    candidates = request["candidates"]
+    if coverage_format == "unknown_offset":
+        assert candidates == []
+        return
+    assert [(item["content"], item["coverage"]["observed_line_ranges"]) for item in candidates] == [
+        (visible, [[31, 32]])
+    ]
+    key = summary_input_key("file:a.py", "filecard:old", visible, [[31, 32]])
+    message = {"role": "tool", "content": wire}
+    messages = fold_tool_payload_previews(
+        [message, *_pad(4)], semantic_summaries={key: {"summary": "只读取了中间两行的输入。"}}
+    )
+    assert json.loads(messages[0]["content"])["file_card"]["summary_kind"] == "model_inference"
+
+
+@pytest.mark.parametrize("kind", ["file_card", "write_call"])
+def test_fold_keeps_comment_provenance_visible_in_both_planes(kind, monkeypatch):
+    from polaris.cells.roles.runtime.internal.engineering_semantic_advice import (
+        summary_input_key,
+        validate_node_summary,
+        write_snapshot_id,
+    )
+    from polaris.cells.roles.runtime.tests.test_engineering_semantic_advice import valid_summary
+    from polaris.cells.roles.runtime.tests.test_engineering_tool_call_projection import _arguments, _call, _result
+
+    monkeypatch.setenv("KERNELONE_CONTEXTOS_INACTIVE_FOLD_ACTIVITIES", "1")
+    path = "src/view.ts"
+    source = "/**\n * Only reads the state.\n */\nfunction draw() {}\n// " + "padding " * 600
+    count = len(source.splitlines())
+    node = ("file:" if kind == "file_card" else "write:") + path
+    snapshot = "filecard:fixture" if kind == "file_card" else write_snapshot_id(source)
+    request = {
+        "node_kind": kind,
+        "node_id": node,
+        "snapshot_id": snapshot,
+        "content": source,
+        "coverage": {"observed_line_ranges": [[1, count]]},
+    }
+    raw = {
+        **valid_summary(),
+        "node_id": node,
+        "snapshot_id": snapshot,
+        "evidence_refs": [snapshot],
+        "coverage": {**request["coverage"], "summary_complete": False},
+        "summary": "Drawing has no side effects on simulation data.",
+        "uncertain": False,
+    }
+    cache = {
+        summary_input_key(node, snapshot, source, [[1, count]]): validate_node_summary(raw, request, selected_line=2)
+    }
+    if kind == "file_card":
+        card = build_file_card(
+            path,
+            source,
+            revision=1,
+            preview=source,
+            truncated=False,
+            start_line=1,
+            end_line=count,
+            snapshot_ref=snapshot,
+        )
+        messages = [{"role": "tool", "content": json.dumps({"file_card": card})}]
+    else:
+        messages = [_call("t", "write_file", {"file": path, "content": source}), _result("t", "ok")]
+    folded = fold_tool_payload_previews([*messages, *_pad(30)], semantic_summaries=cache)
+    exposed = json.loads(folded[0]["content"])["file_card"] if kind == "file_card" else _arguments(folded[0])
+    assert exposed["fold_state"] == "FOLDED" and exposed["summary_kind"] == "model_inference"
+    assert exposed["summary"].startswith("Documented intent")
+    assert "Only reads the state." in exposed["summary"]

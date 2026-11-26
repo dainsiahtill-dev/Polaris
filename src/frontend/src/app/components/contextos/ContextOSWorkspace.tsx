@@ -1,5 +1,5 @@
 import type { EngineeringRunBinding } from '@/hooks/useEngineeringRun';
-import { engineeringContextRecords } from './contextOSTelemetry';
+import { engineeringContextRecords } from '@/runtime/contextSnapshot';
 /**
  * ContextOS 实时视图 (ContextOS Real-time Dashboard)
  *

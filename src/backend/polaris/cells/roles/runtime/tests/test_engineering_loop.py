@@ -595,7 +595,9 @@ async def test_director_yields_once_the_qa_share_boundary_is_reached(
     monkeypatch.setattr(engineering_loop, "time", SimpleNamespace(time=lambda: created + 40, monotonic=time.monotonic))
     # 先让候选通过验证（未验证不让位），再进入下一轮触发让位。
     (isolated_workspace / "a.py").write_text("x = 1\n", encoding="utf-8")
-    scripted_provider.enqueue_json(_native(("first-verify", "verify_project", {"commands": ["python3 -m py_compile a.py"]})))
+    scripted_provider.enqueue_json(
+        _native(("first-verify", "verify_project", {"commands": ["python3 -m py_compile a.py"]}))
+    )
     scripted_provider.enqueue_json(_native(text="done"))
     from polaris.cells.roles.runtime.public.contracts.engineering_run import ToolObservation
 
@@ -614,13 +616,9 @@ async def test_director_yields_once_the_qa_share_boundary_is_reached(
         verify=fake_verify,
     )
     assert result.status == "completed"
-    assert any(
-        event["kind"] == "qa_share_enforced" for event in store.load_events(command.session_id)
-    )
+    assert any(event["kind"] == "qa_share_enforced" for event in store.load_events(command.session_id))
     # 首次验证之前不让位：候选先拿到 passing 证据，再交给独立审查。
-    assert next(
-        event for event in store.load_events(command.session_id) if event["kind"] == "turn_finished"
-    )
+    assert next(event for event in store.load_events(command.session_id) if event["kind"] == "turn_finished")
 
 
 async def test_qa_loop_guidance_uses_only_this_frames_previous_probe(
@@ -803,6 +801,115 @@ async def test_qa_receives_the_acceptance_clause_matrix(
             assert str(check["call_id"]) in tail
     event = store.load_events(command.session_id, role="qa", kinds=("qa_report_requested",))[-1]
     assert list(event["payload"]["acceptance_clauses"]) == list(clauses)
+
+
+@pytest.mark.parametrize("protocol", ["openai", "anthropic"])
+@pytest.mark.parametrize("resumed", [False, True], ids=["new", "resumed"])
+async def test_independent_qa_keeps_current_evidence_without_director_guidance(
+    isolated_workspace: Path,
+    scripted_provider: ScriptedProvider,
+    monkeypatch: pytest.MonkeyPatch,
+    protocol: str,
+    resumed: bool,
+) -> None:
+    from dataclasses import replace
+
+    from polaris.cells.roles.runtime.internal import engineering_cartographer, engineering_epoch_kimi
+
+    (isolated_workspace / "note.txt").write_text("candidate evidence 54321", encoding="utf-8")
+    loop, store, _tools, command, scope, limits = _setup(
+        isolated_workspace, write=False, enabled=frozenset({"read_file", "report_review"})
+    )
+    prior = replace(command, session_id="previous")
+    store.create_run(prior, scope=scope, limits=limits, engine_version="engineering_v2", request_key=None)
+    for session in (prior.session_id, command.session_id):
+        for revision in (1, 2):
+            store.append_event(
+                session,
+                kind="verification_completed",
+                role="director",
+                payload={
+                    "verification": "failed",
+                    "workspace_revision": revision,
+                    "checks": [
+                        {
+                            "call_id": f"v{revision}",
+                            "ok": False,
+                            "exit_code": 1,
+                            "content": json.dumps({"command_card": {"stdout_preview": "Error: director issue"}}),
+                        }
+                    ],
+                },
+            )
+    for _ in range(3):
+        store.append_event(command.session_id, kind="turn_started", role="director", payload={})
+
+    qa = replace(command, role="qa", instruction="Independently review the current note.")
+    if resumed:
+        from polaris.cells.roles.runtime.internal.engineering_roles import role_instruction
+
+        store.append_event(
+            qa.session_id, kind="role_started", role="qa", payload={"purpose": "role", "instruction": qa.instruction}
+        )
+        for role, content in (
+            ("system", role_instruction("qa")),
+            ("system", "ContextOS 跨运行记忆（摘要，非验收证据）：\n上一轮工程验证结论 failed，以下未解决失败已被携带"),
+            ("user", qa.instruction),
+        ):
+            store.append_message(qa.session_id, role="qa", message={"role": role, "content": content})
+
+    configured: list[str] = []
+    monkeypatch.setenv("KERNELONE_CONTEXTOS_CARTOGRAPHER", "1")
+    monkeypatch.setenv("KERNELONE_CONTEXTOS_EPOCH", "1")
+    monkeypatch.setattr(
+        engineering_cartographer, "cartographer_pool_from_environment", lambda: configured.append("map")
+    )
+    monkeypatch.setattr(engineering_epoch_kimi, "kimi_epoch_pool_from_environment", lambda: configured.append("epoch"))
+    scripted_provider.enqueue_json(_native(("qa-evidence", "read_file", {"file": "note.txt"}), protocol=protocol))
+    scripted_provider.enqueue_json(
+        _native(
+            ("qa-result", "report_review", {"approved": False, "feedback": "Additional evidence required."}),
+            protocol=protocol,
+        )
+    )
+    result = await loop(
+        qa,
+        scope=scope,
+        limits=limits,
+        cancel=asyncio.Event(),
+        store=store,
+        project_run=False,
+        client=scripted_provider.client(protocol, isolated_workspace, monkeypatch),
+    )
+    assert result.status == "completed"
+    assert len(scripted_provider.requests) == 2
+    for request in scripted_provider.requests:
+        body = request["body"]
+        system = body["system"] if protocol == "anthropic" else body["messages"][0]["content"]
+        assert system.startswith("You are QA,")
+        request_text = json.dumps(body, ensure_ascii=False)
+        for directive in (
+            "ContextOS RunCard",
+            "ContextOS 长期记忆",
+            "上一轮工程验证结论",
+            "结构化修复已触发",
+            "停滞检测",
+        ):
+            assert directive not in request_text
+        names = {tool.get("name") or tool["function"]["name"] for tool in body["tools"]}
+        assert {"read_file", "report_review"}.issubset(names)
+    assert "candidate evidence 54321" in json.dumps(scripted_provider.requests[-1]["body"]["messages"])
+    assert not configured
+    assert not store.load_events(
+        command.session_id,
+        kinds=(
+            "structured_repair_engaged",
+            "stall_intervention",
+            "run_card_active",
+            "memory_card_injected",
+            "run_card_injected",
+        ),
+    )
 
 
 async def test_qa_forced_report_limits_wire_and_rejects_ignored_provider_choice(

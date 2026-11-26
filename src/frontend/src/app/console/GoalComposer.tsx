@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactElement } from 'react';
 import type { EngineeringRole } from '@/services/api.types';
 import type { EngineeringRunBinding } from '@/hooks/useEngineeringRun';
+import { discussionSnapshotRef } from '@/runtime/contextSnapshot';
 import { ROLE_LABELS } from './format';
 import { IconFolder, IconLayers, IconShield, IconUser } from './icons';
 
@@ -41,9 +42,7 @@ export function GoalComposer({ binding, workspace, role, onStarted }: {
     });
     if (ok) { setInstruction(''); onStarted?.(trimmed); }
   };
-  const discussionObservation = binding.discussionMetadata?.native_request_observation;
-  const discussionRef = binding.discussionMetadata?.context_snapshot_ref;
-  const readableDiscussionRef = discussionObservation && typeof discussionObservation === 'object' && (discussionObservation as Record<string, unknown>).snapshot_status === 'available' && typeof discussionRef === 'string' && /^[a-f0-9]{24}$/.test(discussionRef) ? discussionRef : null;
+  const readableDiscussionRef = discussionSnapshotRef(binding.discussionMetadata);
   const workflowCards: Array<{ value: 'direct' | 'collaborative'; title: string; en: string; desc: string }> = [
     { value: 'direct', title: '直接执行', en: 'direct', desc: `${ROLE_LABELS[role]} 直接读写、运行和验证` },
     { value: 'collaborative', title: '协作执行', en: 'collaborative', desc: 'PM 规划 · CE 设计 · Director 执行' },

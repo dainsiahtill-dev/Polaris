@@ -33,7 +33,7 @@ const events: EngineeringEvent[] = [
   {
     session_id: 'run', workspace: '/ws', seq: 2, role: 'director', kind: 'llm_request_observed',
     payload: {
-      turn_seq: 8, model: 'kimi-for-coding', phase: 'EDIT', context_snapshot_ref: 'b'.repeat(24), status: 'ok',
+      turn_seq: 8, model: 'kimi-for-coding', phase: 'EDIT', context_snapshot_ref: 'b'.repeat(24), snapshot_status: 'available', status: 'ok',
       audit: { final_request_token_estimate: 6335, context_window_tokens: 1000000, context_window_utilization: 0.0063 },
     },
     created_at: 2,
@@ -102,13 +102,24 @@ describe('ContextOSNavigator', () => {
     expect(screen.getByTestId('contextos-nav-tab-structure')).toHaveAttribute('aria-pressed', 'true');
   });
 
-  it('selects a node and links its evidence back to the final request', () => {
+  it('displays a file reference without using it as a request snapshot', () => {
     const onOpenContext = vi.fn();
     render(<ContextOSNavigator events={events} onOpenContext={onOpenContext} />);
     fireEvent.click(screen.getByTestId('nav-node-card:call_1'));
     expect(screen.getByTestId('contextos-nav-detail')).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId('contextos-nav-evidence-link'));
-    expect(onOpenContext).toHaveBeenCalledWith('filecard:src/app.ts', 'director');
+    expect(screen.getByTestId('contextos-nav-detail')).toHaveTextContent('filecard:src/app.ts');
+    expect(screen.queryByTestId('contextos-nav-evidence-link')).toBeNull();
+    expect(onOpenContext).not.toHaveBeenCalled();
+  });
+
+  it('opens the available request with its captured role and skips unavailable receipts', () => {
+    const observed = { ...events[1], role: 'qa' };
+    const later = { ...observed, seq: 9, payload: { ...observed.payload, context_snapshot_ref: 'c'.repeat(24), snapshot_status: 'unavailable' } };
+    const onOpenContext = vi.fn();
+    render(<ContextOSNavigator events={[observed, later]} onOpenContext={onOpenContext} />);
+    fireEvent.click(screen.getByTestId('contextos-nav-tab-metrics'));
+    fireEvent.click(screen.getByTestId('contextos-nav-open-final-request'));
+    expect(onOpenContext).toHaveBeenCalledWith('b'.repeat(24), 'qa');
   });
 
   it('shows memory cards and live cost metrics', () => {

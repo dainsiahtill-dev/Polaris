@@ -27,8 +27,11 @@ from typing import Any
 
 from polaris.cells.roles.runtime.internal.engineering_semantic_advice import (
     file_node_id,
+    file_summary_source,
+    summary_input_key,
     summary_is_informative,
     write_node_id,
+    write_snapshot_id,
 )
 
 # Tools whose arguments embed a durable workspace body. Only these are folded:
@@ -258,6 +261,22 @@ def _structural_summary(card: dict[str, Any], original: str) -> str | None:
     )
 
 
+def _card_summary(
+    card: Mapping[str, Any], node_id: str, content: str, summaries: Mapping[str, Mapping[str, Any]] | None
+) -> Mapping[str, Any] | None:
+    if not summaries:
+        return None
+    if node_id.startswith("file:"):
+        source = file_summary_source(card, content)
+        if source is None:
+            return None
+        content, ranges = source
+    else:
+        ranges = [[1, max(1, len(content.splitlines()))]]
+    key = summary_input_key(node_id, str(card.get("content_ref") or ""), content, ranges)
+    return summaries.get(key)
+
+
 def _choose_fold_summary(
     card: dict[str, Any],
     summaries: Mapping[str, Mapping[str, Any]] | None,
@@ -267,7 +286,7 @@ def _choose_fold_summary(
 ) -> tuple[str, str] | None:
     """Prefer the distiller summary; fall back to the card's own only if it explains."""
 
-    summary = (summaries or {}).get(node_id)
+    summary = _card_summary(card, node_id, original, summaries)
     candidates: list[tuple[object, str]] = []
     if isinstance(summary, dict):
         candidates.append((summary.get("summary"), "model_inference"))
@@ -292,7 +311,7 @@ def _apply_fold_summary(
     if chosen is None:
         return False
     text, kind = chosen
-    entry = (summaries or {}).get(node_id)
+    entry = _card_summary(card, node_id, original, summaries)
     summary: Mapping[str, Any] = entry if isinstance(entry, dict) else {}
     card["source_summary"] = card.get("summary")
     card["summary"] = text
@@ -468,7 +487,11 @@ def _choose_call_summary(
 ) -> tuple[str, str] | None:
     # Only the write plane has distiller coverage; an edit call keeps its
     # deterministic envelope rather than borrowing some other payload's summary.
-    summary = (summaries or {}).get(node_key) if node_key else None
+    summary = None
+    body = arguments.get("content")
+    if summaries and node_key and isinstance(body, str):
+        key = summary_input_key(node_key, write_snapshot_id(body), body, [[1, max(1, len(body.splitlines()))]])
+        summary = summaries.get(key)
     if isinstance(summary, dict) and summary_is_informative(summary.get("summary"), original):
         return str(summary["summary"]), "model_inference"
     structural = _call_structural_summary(tool, arguments, len(original))
@@ -602,6 +625,73 @@ class _FoldPolicy:
         if duplicate:
             return duplicate_reason
         return "outside_current_focus"
+
+
+def distillation_targets(
+    messages: Sequence[Mapping[str, Any]], *, fold_window: int | None
+) -> dict[tuple[str, str], bool]:
+    """Index retained native calls worth summarizing. True means already folded."""
+    window = configured_inactive_fold_activities() if fold_window is None else fold_window
+    policy = _FoldPolicy(
+        messages,
+        semantic_summaries=None,
+        inactive_fold_activities=max(1, window - DISTILL_LEAD_ACTIVITIES),
+        force_fold_paths=(),
+    )
+    result: dict[tuple[str, str], bool] = {}
+    for index, message in enumerate(messages):
+        old_enough = policy.age_of(policy.activity_indices[index]) >= policy.fold_window
+        if message.get("role") == "assistant":
+            for call in message.get("tool_calls") or []:
+                function = call.get("function") if isinstance(call, Mapping) else None
+                if not isinstance(function, Mapping) or function.get("name") != "write_file":
+                    continue
+                raw = function.get("arguments")
+                args = _parse_arguments(raw)
+                path = _call_identity("write_file", args)
+                if not args or not path or not isinstance(call.get("id"), str):
+                    continue
+                folded = args.get("fold_state") == "FOLDED"
+                if args.get("summary_kind") == "model_inference":
+                    continue
+                if folded or (
+                    old_enough
+                    and isinstance(raw, str)
+                    and _byte_size(raw) >= policy.min_bytes
+                    and not policy.pin_reason(path)
+                ):
+                    result[call["id"], write_node_id(path)] = folded
+        elif message.get("role") == "tool" and isinstance(message.get("tool_call_id"), str):
+            body, _ = _card_payload(_parse_arguments(message.get("content")))
+            if not body:
+                continue
+            card = body.get("file_card") or body.get("command_card")
+            if not isinstance(card, dict) or card.get("summary_kind") == "model_inference":
+                continue
+            folded = card.get("fold_state") == "FOLDED"
+            if "file_card" in body:
+                file_path = card.get("path")
+                if (
+                    not isinstance(file_path, str)
+                    or not file_path
+                    or (not folded and policy.pin_reason(file_path, focus=True))
+                ):
+                    continue
+                node = file_node_id(file_path)
+                preview = str(card.get("content_preview") or "")
+            else:
+                reference = card.get("content_ref")
+                if (
+                    not isinstance(reference, str)
+                    or not reference
+                    or (not folded and (card.get("pin_reason") or reference in policy.reasoning_text))
+                ):
+                    continue
+                node = reference
+                preview = str(card.get("stdout_preview") or "") + "\n" + str(card.get("stderr_preview") or "")
+            if folded or (old_enough and _byte_size(preview) >= policy.result_min_bytes):
+                result[message["tool_call_id"], node] = folded
+    return result
 
 
 class _FoldAction:

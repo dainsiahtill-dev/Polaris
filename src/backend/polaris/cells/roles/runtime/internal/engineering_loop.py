@@ -18,9 +18,11 @@ from typing import Any, Literal, cast
 
 from polaris.cells.roles.runtime.internal.engineering_acceptance import ClauseFinding, require_observed_clause_evidence
 from polaris.cells.roles.runtime.internal.engineering_execution_policy import resolve_execution_policy
+from polaris.cells.roles.runtime.internal.engineering_file_cards import stale_file_observation
 from polaris.cells.roles.runtime.internal.engineering_roles import register_consult_tool, role_instruction, role_scope
 from polaris.cells.roles.runtime.internal.engineering_session import EngineeringSessionStore
 from polaris.cells.roles.runtime.internal.engineering_tools import EngineeringTools, bounded_output
+from polaris.cells.roles.runtime.internal.engineering_validation_fingerprint import active_failure_revisions
 from polaris.cells.roles.runtime.internal.engineering_verification import command_may_write
 from polaris.cells.roles.runtime.internal.engineering_visual import build_visual_messages, require_current_visual_input
 from polaris.cells.roles.runtime.public.contracts.engineering_run import (
@@ -80,39 +82,16 @@ def _active_structured_repairs(
 ) -> list[dict[str, Any]]:
     """Find symptoms that survived real re-tests on different candidates."""
 
-    from polaris.cells.roles.runtime.internal.engineering_validation_fingerprint import _FAILURE_MARK, _check_text
-
-    counts: dict[str, int] = {}
-    revisions: dict[str, set[object]] = {}
-    for event in events:
-        if event.get("kind") != "verification_completed":
-            continue
-        payload = event["payload"]
-        for check in payload.get("checks") or []:
-            text = _check_text(check.get("content") if isinstance(check, dict) else None)
-            for line in text.splitlines():
-                stripped = line.strip()
-                if not stripped or stripped.startswith("[PASS]") or not _FAILURE_MARK.search(stripped):
-                    continue
-                signature = re.sub(r"\s+", " ", stripped).split("——", 1)[0].strip()[:240]
-                if not signature:
-                    continue
-                counts[signature] = counts.get(signature, 0) + 1
-                revisions.setdefault(signature, set()).add(payload.get("workspace_revision"))
-    active = [
-        signature
-        for signature, count in counts.items()
-        if count >= threshold and len(revisions.get(signature, set())) >= 2
-    ]
-    active.sort(key=lambda signature: -counts[signature])
-    return [
-        {
-            "signature": signature,
-            "occurrences": counts[signature],
-            "candidate_revisions": len(revisions.get(signature, set())),
-        }
-        for signature in active[:limit]
-    ]
+    failures = active_failure_revisions(events)
+    repairs: list[dict[str, Any]] = []
+    for signature, revisions in failures.items():
+        candidate_revisions = len(set(revisions) - {None})
+        if len(revisions) >= threshold and candidate_revisions >= 2:
+            repairs.append(
+                {"signature": signature, "occurrences": len(revisions), "candidate_revisions": candidate_revisions}
+            )
+    repairs.sort(key=lambda repair: repair["occurrences"], reverse=True)
+    return repairs[:limit]
 
 
 def _structured_repair_message(repairs: list[dict[str, Any]]) -> dict[str, Any]:
@@ -468,6 +447,7 @@ def _bounded_request_messages(
     semantic_runtime: Any = None,
     fold_window: int | None = None,
     force_fold_paths: Sequence[str] = (),
+    supplemental_text: str = "",
 ) -> list[dict[str, Any]]:
     """Build the request messages inside the model's context window.
 
@@ -494,15 +474,6 @@ def _bounded_request_messages(
         inactive_fold_activities=fold_window,
         force_fold_paths=force_fold_paths,
     )
-    from polaris.cells.roles.runtime.internal.engineering_memory_cards import build_context_memory_messages
-
-    try:
-        memory_run = store.load_run(command.session_id, workspace=command.workspace)
-        memory_messages = build_context_memory_messages(memory_run, store.load_events(command.session_id))
-    except (KeyError, OSError, ValueError):
-        memory_messages = []
-    if memory_messages:
-        messages = [*memory_messages, *messages]
     prior_fold_refs = {
         str(event["payload"].get("projection_ref"))
         for event in store.load_events(command.session_id, kinds=("context_projection_folded",), role=role)
@@ -526,89 +497,146 @@ def _bounded_request_messages(
         role=role,
     )
 
-    def build(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        projected = build_visual_messages(
-            history,
-            events=events,
-            role=role,
-            binding_provider=visual_binding,
-            audit=audit,
-        )
-        # Pixel admission is bounded by the model window alone. There is no
-        # separate working-set target for images: the old 32k allowance admitted
-        # captures newest-first up to a token budget, which silently discarded
-        # visual evidence the model had already been shown. Mandatory captures
-        # (the current candidate, a pending reinspection, an explicit pin) are
-        # only demoted when they cannot fit the window at all. Removed pixels
-        # stay inspectable with browser_observe(revisit_call_ids=[...]).
-        hard_allowance = _history_allowances(window)[-1] if window > 0 else 0
-        if hard_allowance <= 0:
-            return projected
-        from polaris.kernelone.llm.engine.visual_working_set import select_visual_working_set
+    def required_call_ids(selection_audit: dict[str, Any]) -> set[str]:
+        return {
+            item["call_id"]
+            for item in selection_audit.get("image_sets", ())
+            if isinstance(item.get("call_id"), str) and item.get("required") is not False
+        }
 
-        selected, selection = select_visual_working_set(
-            projected,
-            audit.get("image_sets", []),
-            hard_allowance=hard_allowance,
-            optional_allowance=hard_allowance,
-        )
-        audit["visual_selection"] = selection
-        return selected
+    def select(text: str, selection_audit: dict[str, Any], encountered: set[str]) -> list[dict[str, Any]]:
+        # The newest native tool group stays mandatory during trimming. Price the
+        # request-local host data separately and project it onto the budgeted history.
+        supplement = [{"role": "user", "content": text}] if text else []
+        supplement_cost = sum(_visual_aligned_cost(message) for message in supplement)
 
-    built: list[dict[str, Any]] | None = None
+        def build(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            projected = build_visual_messages(
+                [*history, *supplement],
+                events=events,
+                role=role,
+                binding_provider=visual_binding,
+                audit=selection_audit,
+            )
+            encountered.update(required_call_ids(selection_audit))
+            # Pixel admission is bounded by the model window alone. There is no
+            # separate working-set target for images: the old 32k allowance admitted
+            # captures newest-first up to a token budget, which silently discarded
+            # visual evidence the model had already been shown. Mandatory captures
+            # (the current candidate, a pending reinspection, an explicit pin) are
+            # only demoted when they cannot fit the window at all. Removed pixels
+            # stay inspectable with browser_observe(revisit_call_ids=[...]).
+            hard_allowance = _history_allowances(window)[-1] if window > 0 else 0
+            if hard_allowance <= 0:
+                return projected
+            from polaris.kernelone.llm.engine.visual_working_set import select_visual_working_set
+
+            selected, selection = select_visual_working_set(
+                projected,
+                selection_audit.get("image_sets", []),
+                hard_allowance=hard_allowance,
+                optional_allowance=hard_allowance,
+            )
+            selection_audit["visual_selection"] = selection
+            return selected
+
+        built: list[dict[str, Any]] | None = None
+        try:
+            built = build(messages)
+        except ValueError as error:
+            if "required_visual_input_budget_exceeded" not in str(error):
+                raise
+            # The history does not fit the window yet.  The text budget belongs
+            # to the trimmer, so the raw history is trimmed first and only the
+            # trimmed history is projected.  Projecting the raw history must not
+            # end the run: a long conversation is a trimming question, not a
+            # visual budget failure.
+        if built is not None and window <= 0:
+            return built
+        from polaris.kernelone.llm.engine.visual_working_set import visual_payload_cost
+
+        cost = visual_payload_cost(built) if built is not None else None
+        allowances = _history_allowances(window)
+        if built is not None and cost is not None and cost["admission_proxy_tokens"] <= allowances[0]:
+            return built
+        from polaris.kernelone.llm.engine.prompt_budget import compress_native_tool_history
+
+        # The compression works on the raw history. The visual projection moves
+        # the image bytes out of the tool content into attachment blocks, so
+        # compressing an already projected history and projecting it again would
+        # read image blocks without their bytes.
+        # The text estimator and the admission estimator are not the same
+        # tokenizer, so a single trim pass can still project over the allowance.
+        # Retry with progressively smaller budgets instead of ending the run:
+        # a long conversation is a trimming question, not a terminal failure.
+        # With the aligned cost, group prices already include image bytes, so the
+        # retry budget is the full allowance, not the text-only remainder.
+        last_error: ValueError | None = None
+        for allowance in allowances:
+            for scale in (1.0, 0.75, 0.5, 0.3):
+                attempt_budget = max(2048, int(allowance * scale))
+                bounded = compress_native_tool_history(
+                    messages, attempt_budget - supplement_cost, message_cost=_visual_aligned_cost
+                )
+                if bounded is None:
+                    continue
+                try:
+                    return build(bounded)
+                except ValueError as error:
+                    message = str(error)
+                    # A tighter working set must never drop required visual evidence.
+                    # Fall back to the window-derived ceiling for this request
+                    # instead of failing the run or losing pinned pixels.
+                    if (
+                        "required_visual_input_budget_exceeded" not in message
+                        and "pinned visual input is unavailable" not in message
+                    ):
+                        raise
+                    last_error = error
+        if last_error is not None:
+            raise last_error
+        raise ValueError(
+            "required_visual_input_budget_exceeded: the trimmed history still does not fit the model window"
+        )
+
+    def retained_required(selection_audit: dict[str, Any]) -> set[str]:
+        selection = selection_audit.get("visual_selection", {})
+        removed = set(selection.get("demoted_call_ids", ())) | set(selection.get("dropped_mandatory_call_ids", ()))
+        return required_call_ids(selection_audit) - removed
+
+    if not supplemental_text:
+        return select("", audit, set())
+
+    advised_audit: dict[str, Any] = {}
+    encountered: set[str] = set()
     try:
-        built = build(messages)
+        advised = select(supplemental_text, advised_audit, encountered)
     except ValueError as error:
-        if "required_visual_input_budget_exceeded" not in str(error):
+        if not any(
+            reason in str(error)
+            for reason in ("required_visual_input_budget_exceeded", "pinned visual input is unavailable")
+        ):
             raise
-        # The history does not fit the window yet.  The text budget belongs
-        # to the trimmer, so the raw history is trimmed first and only the
-        # trimmed history is projected.  Projecting the raw history must not
-        # end the run: a long conversation is a trimming question, not a
-        # visual budget failure.
-    if built is not None and window <= 0:
-        return built
-    from polaris.kernelone.llm.engine.visual_working_set import visual_payload_cost
+        # A supplemental budget failure says nothing about admission of the native turn itself.
+        baseline = select("", audit, set())
+        audit["supplemental_context_omitted"] = {"reason": "model_budget", "chars": len(supplemental_text)}
+        return baseline
 
-    cost = visual_payload_cost(built) if built is not None else None
-    allowances = _history_allowances(window)
-    if built is not None and cost is not None and cost["admission_proxy_tokens"] <= allowances[0]:
-        return built
-    from polaris.kernelone.llm.engine.prompt_budget import compress_native_tool_history
-
-    # The compression works on the raw history. The visual projection moves
-    # the image bytes out of the tool content into attachment blocks, so
-    # compressing an already projected history and projecting it again would
-    # read image blocks without their bytes.
-    # The text estimator and the admission estimator are not the same
-    # tokenizer, so a single trim pass can still project over the allowance.
-    # Retry with progressively smaller budgets instead of ending the run:
-    # a long conversation is a trimming question, not a terminal failure.
-    # With the aligned cost, group prices already include image bytes, so the
-    # retry budget is the full allowance, not the text-only remainder.
-    last_error: ValueError | None = None
-    for allowance in allowances:
-        for scale in (1.0, 0.75, 0.5, 0.3):
-            attempt_budget = max(2048, int(allowance * scale))
-            bounded = compress_native_tool_history(messages, attempt_budget, message_cost=_visual_aligned_cost)
-            if bounded is None:
-                continue
-            try:
-                return build(bounded)
-            except ValueError as error:
-                message = str(error)
-                # A tighter working set must never drop required visual evidence.
-                # Fall back to the window-derived ceiling for this request
-                # instead of failing the run or losing pinned pixels.
-                if (
-                    "required_visual_input_budget_exceeded" not in message
-                    and "pinned visual input is unavailable" not in message
-                ):
-                    raise
-                last_error = error
-    if last_error is not None:
-        raise last_error
-    raise ValueError("required_visual_input_budget_exceeded: the trimmed history still does not fit the model window")
+    retained = retained_required(advised_audit)
+    if encountered - retained:
+        baseline_audit: dict[str, Any] = {}
+        baseline = select("", baseline_audit, set())
+        restored = retained_required(baseline_audit) - retained
+        if restored:
+            audit.update(baseline_audit)
+            audit["supplemental_context_omitted"] = {
+                "reason": "preserve_required_captures",
+                "chars": len(supplemental_text),
+                "restored_call_ids": sorted(restored),
+            }
+            return baseline
+    audit.update(advised_audit)
+    return advised
 
 
 _CONTINUATION_HISTORY_NOTE = (
@@ -637,7 +665,7 @@ def _qa_source_read(event: Mapping[str, Any]) -> bool:
         and not payload.get("interrupted")
         and not payload.get("timed_out")
         and (
-            payload.get("tool") == "read_file"
+            (payload.get("tool") == "read_file" and not stale_file_observation(payload))
             or (payload.get("tool") == "repo_rg" and bool(str(payload.get("content", "")).strip()))
         )
     )
@@ -802,18 +830,10 @@ async def run_engineering_loop(
                 )
             check_visual()
 
-    def resolve_file_card(reference: str) -> dict[str, Any]:
-        for event in reversed(store.load_events(command.session_id, kinds=("tool_observed",))):
-            payload = event["payload"]
-            if payload.get("tool") != "read_file" or payload.get("ok") is not True:
-                continue
-            try:
-                card = json.loads(str(payload.get("content") or "{}")).get("file_card")
-            except json.JSONDecodeError:
-                continue
-            if isinstance(card, dict) and card.get("content_ref") == reference:
-                return card
-        raise ValueError(f"unknown file_card reference: {reference}")
+    def resolve_file_card(reference: str, path: str | None) -> dict[str, Any]:
+        from polaris.cells.roles.runtime.internal.engineering_file_cards import resolve_observed_file
+
+        return resolve_observed_file(store.load_events(command.session_id, kinds=("tool_observed",)), reference, path)
 
     from polaris.cells.roles.runtime.internal.engineering_semantic_runtime import (
         SemanticRuntime,
@@ -865,7 +885,10 @@ async def run_engineering_loop(
     # 结果吞噬兽再也没被创建过（实测 run 里 cartographer/semantic 都有事件，
     # epoch_* 一条没有）。显式关掉用 KERNELONE_CONTEXTOS_EPOCH=0。
     epoch_setting = os.environ.get("KERNELONE_CONTEXTOS_EPOCH", "auto").strip().lower()
-    epoch_pool = None if epoch_setting in {"0", "false", "off"} else kimi_epoch_pool_from_environment()
+    director_frame = command.role == "director"
+    epoch_pool = (
+        kimi_epoch_pool_from_environment() if director_frame and epoch_setting not in {"0", "false", "off"} else None
+    )
     epoch_on = epoch_setting in {"1", "true", "on", "auto"} and epoch_pool is not None
     fallback_pool = (
         semantic_runtime.pool
@@ -878,7 +901,11 @@ async def run_engineering_loop(
         EpochRuntime(epoch_pool or fallback_pool) if epoch_pool is not None or fallback_pool is not None else None
     )
     cartographer_runtime = None
-    if os.environ.get("KERNELONE_CONTEXTOS_CARTOGRAPHER", "0").strip().lower() not in {"0", "false", "off"}:
+    if director_frame and os.environ.get("KERNELONE_CONTEXTOS_CARTOGRAPHER", "0").strip().lower() not in {
+        "0",
+        "false",
+        "off",
+    }:
         from polaris.cells.roles.runtime.internal.engineering_cartographer import (
             CartographerRuntime,
             cartographer_pool_from_environment,
@@ -944,6 +971,16 @@ async def run_engineering_loop(
     ):
         frame_seq = last_start["seq"]
         messages = store.load_message_history(command.session_id, role=command.role, after_seq=frame_seq)
+        if not director_frame:
+            # Older frames persisted the Director's previous-run guidance as a system message.
+            messages = [
+                message
+                for message in messages
+                if not (
+                    message.get("role") == "system"
+                    and str(message.get("content", "")).startswith("ContextOS 跨运行记忆（摘要，非验收证据）：")
+                )
+            ]
     else:
         frame_seq = store.append_event(
             command.session_id,
@@ -976,18 +1013,21 @@ async def run_engineering_loop(
             ),
         }
         prior_messages: list[dict[str, Any]] = []
-        try:
-            from polaris.cells.roles.runtime.internal.engineering_memory_cards import build_prior_run_memory
+        if director_frame:
+            try:
+                from polaris.cells.roles.runtime.internal.engineering_memory_cards import build_prior_run_memory
 
-            previous = [
-                row
-                for row in store.list_runs(workspace=command.workspace, limit=3)
-                if row.get("session_id") != command.session_id
-            ]
-            if previous:
-                prior_messages = build_prior_run_memory(previous[0], store.load_events(str(previous[0]["session_id"])))
-        except (KeyError, OSError, ValueError):
-            prior_messages = []
+                previous = [
+                    row
+                    for row in store.list_runs(workspace=command.workspace, limit=3)
+                    if row.get("session_id") != command.session_id
+                ]
+                if previous:
+                    prior_messages = build_prior_run_memory(
+                        previous[0], store.load_events(str(previous[0]["session_id"]))
+                    )
+            except (KeyError, OSError, ValueError):
+                prior_messages = []
         profile_messages: list[dict[str, Any]] = []
         if os.environ.get("KERNELONE_RESIDENT_AGI", "0").strip().lower() in {
             "1",
@@ -1203,7 +1243,31 @@ async def run_engineering_loop(
                         "QA review exceeded its effort budget without submitting report_review; "
                         "the candidate keeps its current verdict (unknown).",
                     )
-            run_now = store.load_run(command.session_id, workspace=command.workspace)
+            if semantic_runtime is not None:
+                advice = semantic_runtime.poll()
+                advice_fingerprint = str(advice.get("fingerprint") or "") if advice is not None else ""
+                if advice is not None and advice_fingerprint not in semantic_reported:
+                    store.append_event(
+                        command.session_id,
+                        kind="semantic_advice_completed",
+                        role="distiller",
+                        payload={**advice, "agent_role": "distiller"},
+                    )
+                    semantic_reported.add(advice_fingerprint)
+            if epoch_runtime is not None:
+                epoch_card = epoch_runtime.poll()
+                if epoch_card is not None and epoch_card["fingerprint"] not in epoch_reported:
+                    store.append_event(
+                        command.session_id,
+                        kind="epoch_card_completed",
+                        role="devourer",
+                        payload={**epoch_card, "agent_role": "devourer"},
+                    )
+                    epoch_reported.add(epoch_card["fingerprint"])
+            run_now, journal_events = store.load_projection_inputs(
+                command.session_id, workspace=command.workspace, kinds=None
+            )
+            context_input_seq = journal_events[-1]["seq"]
             # 只有在候选已经通过验证之后才让位：那之前强行收尾只会把未验证的
             # 候选交给审查，而首次验证本身有独立预算点。
             if (
@@ -1230,39 +1294,37 @@ async def run_engineering_loop(
                     f"Director reached the host's QA share boundary ({qa_min_fraction:.0%} of the run "
                     "budget reserved for independent review). Handing the current candidate to QA.",
                 )
-            if semantic_runtime is not None:
-                advice = semantic_runtime.poll()
-                advice_fingerprint = str(advice.get("fingerprint") or "") if advice is not None else ""
-                if advice is not None and advice_fingerprint not in semantic_reported:
-                    store.append_event(
-                        command.session_id,
-                        kind="semantic_advice_completed",
-                        role="distiller",
-                        payload={**advice, "agent_role": "distiller"},
-                    )
-                    semantic_reported.add(advice_fingerprint)
-                advice_request, advice_refs, advice_fingerprint = facts_for_advice(
-                    run_now, store.load_events(command.session_id)
-                )
-                if advice_refs.node_ids:
-                    semantic_runtime.schedule(advice_request, advice_refs, fingerprint=advice_fingerprint)
             if epoch_runtime is not None:
-                epoch_card = epoch_runtime.poll()
-                if epoch_card is not None and epoch_card["fingerprint"] not in epoch_reported:
-                    store.append_event(
-                        command.session_id,
-                        kind="epoch_card_completed",
-                        role="devourer",
-                        payload={**epoch_card, "agent_role": "devourer"},
-                    )
-                    epoch_reported.add(epoch_card["fingerprint"])
-                epoch_request, epoch_refs, epoch_fingerprint = facts_for_epoch(
-                    run_now, store.load_events(command.session_id)
-                )
+                epoch_request, epoch_refs, epoch_fingerprint = facts_for_epoch(run_now, journal_events)
                 if epoch_refs.node_ids:
                     epoch_runtime.schedule(epoch_request, epoch_refs, fingerprint=epoch_fingerprint)
+            first_verification_due = False
+            if (
+                command.role == "director"
+                and "verify_project" in tools.enabled
+                and first_verification_fraction > 0
+                and limits.deadline is not None
+                and run_now.get("verification") == "not_run"
+            ):
+                created_at = float(run_now["created_at"])
+                budget = max(0.0, float(limits.deadline) - created_at)
+                first_verification_due = time.time() >= created_at + budget * first_verification_fraction
+            from polaris.cells.roles.runtime.internal.engineering_phase_policy import phase_for
+
+            director_phase = (
+                phase_for(
+                    command.role,
+                    verification=str(run_now.get("verification") or "not_run"),
+                    first_verification_due=first_verification_due,
+                    preparation_pending=preparation_pending,
+                    qa_report_required=False,
+                )
+                if director_frame
+                else None
+            )
+            card_run = {**run_now, "execution_phase": director_phase.value if director_phase else None}
             cartographer_card: dict[str, Any] | None = None
-            if cartographer_runtime is None and turn_seq == 1:
+            if director_frame and cartographer_runtime is None and turn_seq == 1:
                 store.append_event(
                     command.session_id,
                     kind="cartographer_disabled",
@@ -1274,21 +1336,25 @@ async def run_engineering_loop(
                     NarrativeRejectedError,
                     current_facts,
                     facts_for_run_card,
-                    validate_run_card_narrative,
+                    parse_cartographer_response,
                 )
 
                 narrative = cartographer_runtime.poll()
-                if narrative:
-                    try:
-                        parsed = json.loads(narrative)
-                    except json.JSONDecodeError:
-                        parsed = None
-                    cartographer_events = store.load_events(command.session_id)
-                    facts = current_facts(run_now, cartographer_events)
+                if narrative is not None and await asyncio.to_thread(
+                    cartographer_runtime.retire_delivered_probe,
+                    journal_events,
+                    workspace=str(command.workspace),
+                    session_id=command.session_id,
+                ):
+                    narrative = None
+                if narrative is not None:
+                    parsed = parse_cartographer_response(narrative)
+                    cartographer_events = journal_events
+                    facts = current_facts(card_run, cartographer_events)
                     observed_phase = facts.get("phase")
                     returned_phase = (parsed or {}).get("phase") if isinstance(parsed, dict) else None
                     try:
-                        validated = validate_run_card_narrative(parsed, facts, allowed_refs=facts["evidence_refs"])
+                        validated = cartographer_runtime.validate_current(parsed, facts)
                     except NarrativeRejectedError as exc:
                         validated = None
                         detail = exc.detail or exc.code
@@ -1299,6 +1365,8 @@ async def run_engineering_loop(
                                 role="cartographer",
                                 payload={
                                     "reason": exc.code,
+                                    "raw_response": narrative,
+                                    "prior_raw_responses": cartographer_runtime.prior_raw_responses,
                                     "detail": detail,
                                     # 远程那一跳的真实原因（超时/空响应/HTTP），
                                     # 否则拒绝详情永远只是一句 NoneType。
@@ -1318,14 +1386,36 @@ async def run_engineering_loop(
                                     role="cartographer",
                                     payload={
                                         "reason": "narrative_disagrees_with_facts",
+                                        "raw_response": narrative,
+                                        "prior_raw_responses": cartographer_runtime.prior_raw_responses,
                                         "detail": detail,
                                         "observed_phase": observed_phase,
                                         "returned_phase": returned_phase,
                                         "fingerprint": cartographer_runtime.fingerprint,
                                     },
                                 )
-                    if validated is not None:
-                        cartographer_card = {**validated, "agent_role": "cartographer"}
+                    if validated is not None and validated.get("outcome") == "abstained":
+                        store.append_event(
+                            command.session_id,
+                            kind="cartographer_abstained",
+                            role="cartographer",
+                            payload={
+                                **validated,
+                                "fingerprint": cartographer_runtime.fingerprint,
+                                "validation_result": "VALID",
+                                "raw_response": narrative,
+                                "prior_raw_responses": cartographer_runtime.prior_raw_responses,
+                            },
+                        )
+                    elif validated is not None:
+                        cartographer_card = {
+                            **validated,
+                            **({"cognitive_focus": validated["phase"]} if "phase" in validated else {}),
+                            "raw_response": narrative,
+                            "prior_raw_responses": cartographer_runtime.prior_raw_responses,
+                            "execution_phase": facts["execution_phase"],
+                            "agent_role": "cartographer",
+                        }
                         key = f"{cartographer_runtime.fingerprint}:{json.dumps(validated, sort_keys=True, ensure_ascii=False)}"
                         if key not in cartographer_reported:
                             store.append_event(
@@ -1335,30 +1425,6 @@ async def run_engineering_loop(
                                 payload=cartographer_card,
                             )
                             cartographer_reported.add(key)
-                if turn_seq % 12 == 0:
-                    run_card_request, run_card_fingerprint = facts_for_run_card(
-                        run_now, store.load_events(command.session_id)
-                    )
-                    # 只有真的排上了才记已调度：旧版无条件发事件，12 次里只有 4 次
-                    # 真有任务，指标是假的。
-                    if cartographer_runtime.schedule(run_card_request, fingerprint=run_card_fingerprint):
-                        store.append_event(
-                            command.session_id,
-                            kind="cartographer_scheduled",
-                            role="cartographer",
-                            payload={"turn_seq": turn_seq},
-                        )
-            first_verification_due = False
-            if (
-                command.role == "director"
-                and "verify_project" in tools.enabled
-                and first_verification_fraction > 0
-                and limits.deadline is not None
-                and run_now.get("verification") == "not_run"
-            ):
-                created_at = float(run_now["created_at"])
-                budget = max(0.0, float(limits.deadline) - created_at)
-                first_verification_due = time.time() >= created_at + budget * first_verification_fraction
             visual_projection: dict[str, Any] = {}
             from polaris.cells.roles.runtime.internal.engineering_context_budget import context_fold_window
             from polaris.cells.roles.runtime.internal.engineering_tool_payload_projection import (
@@ -1381,7 +1447,6 @@ async def run_engineering_loop(
                 history_tokens=history_tokens,
                 context_window_tokens=context_window_tokens,
             )
-            journal_events = store.load_events(command.session_id)
             all_turns = [
                 event["seq"]
                 for event in journal_events
@@ -1389,26 +1454,19 @@ async def run_engineering_loop(
             ]
             stall_streak = _stall_streak(journal_events, all_turns[-3:]) if all_turns else 0
             repeated_reads = _repeated_read_paths(journal_events)
-            stalled = stall_streak >= 3
-            request_messages = _bounded_request_messages(
-                messages,
-                store=store,
-                command=command,
-                role=command.role,
-                context_window_tokens=context_window_tokens,
-                visual_binding=visual_binding if scope.browser is not None else None,
-                audit=visual_projection,
-                semantic_runtime=semantic_runtime,
-                fold_window=fold_window,
-                force_fold_paths=repeated_reads if stalled else (),
-            )
+            stalled = director_frame and stall_streak >= 3
+            director_guidance: list[str] = []
+            pending_guidance_events: list[tuple[str, str, dict[str, Any]]] = []
+            idle_capabilities: list[str] = []
+            next_injection_fingerprint = last_injection_fingerprint
             if stalled:
-                request_messages = [_stall_message(stall_streak, repeated_reads), *request_messages]
-                store.append_event(
-                    command.session_id,
-                    kind="stall_intervention",
-                    role=command.role,
-                    payload={"streak": stall_streak, "repeated_reads": repeated_reads, "turn_seq": turn_seq},
+                director_guidance.append(_stall_message(stall_streak, repeated_reads)["content"])
+                pending_guidance_events.append(
+                    (
+                        "stall_intervention",
+                        command.role,
+                        {"streak": stall_streak, "repeated_reads": repeated_reads, "turn_seq": turn_seq},
+                    )
                 )
             if resident_runtime is not None:
                 from polaris.cells.roles.runtime.internal.engineering_resident_agi import (
@@ -1467,148 +1525,144 @@ async def run_engineering_loop(
                     if capability_last_used.get(capability, -(10**9)) <= turn_seq - 5
                     and capability_last_reminded.get(capability, -(10**9)) <= turn_seq - 10
                 ]
-                for capability in idle_capabilities:
-                    capability_last_reminded[capability] = turn_seq
                 if idle_capabilities:
-                    request_messages = [
-                        {
-                            "role": "system",
-                            "content": (
-                                "能力使用提醒：已装配但未使用的能力 "
-                                + "、".join(str(item) for item in idle_capabilities[:4])
-                                + "。请说明为何不使用，或在合适的下一步实际使用。"
-                            ),
-                        },
-                        *request_messages,
-                    ]
-                    store.append_event(
-                        command.session_id,
-                        kind="capability_usage_reminder",
-                        role="resident_agi",
-                        payload={"idle_capabilities": idle_capabilities, "turn_seq": turn_seq},
+                    director_guidance.append(
+                        "已装配的可用工具：" + "、".join(str(item) for item in idle_capabilities[:4])
+                    )
+                    pending_guidance_events.append(
+                        (
+                            "capability_usage_reminder",
+                            "resident_agi",
+                            {"idle_capabilities": idle_capabilities, "turn_seq": turn_seq},
+                        )
                     )
             structured_repairs = (
-                _active_structured_repairs(store.load_events(command.session_id))
-                if os.environ.get("KERNELONE_ENGINEERING_STRUCTURED_REPAIR", "1").strip().lower()
+                _active_structured_repairs(journal_events)
+                if director_frame
+                and os.environ.get("KERNELONE_ENGINEERING_STRUCTURED_REPAIR", "1").strip().lower()
                 not in {"0", "false", "off"}
                 else []
             )
             if structured_repairs:
-                request_messages = [_structured_repair_message(structured_repairs), *request_messages]
-                store.append_event(
-                    command.session_id,
-                    kind="structured_repair_engaged",
-                    role=command.role,
-                    payload={"repairs": structured_repairs},
+                director_guidance.append(_structured_repair_message(structured_repairs)["content"])
+                pending_guidance_events.append(
+                    ("structured_repair_engaged", command.role, {"repairs": structured_repairs})
                 )
-            # 阶段卡只作为可观测事实发布，不注入请求。制图师的叙述 574 次里只有
-            # 32 次通过校验，所以这张确定性卡是运行实况UI的主要来源；但把它作为
-            # 第二条 system 消息加进去会让 native 编码器把它并入角色身份，破坏
-            # "角色指令逐字节不变"这条不变量（实测三条既有测试同时回归）。模型
-            # 的阶段感继续由既有的 stage gate / 记忆卡 / Resident AGI 承担。
-            run_card = deterministic_run_card(run_now, journal_events, phase="")
-            card_narrative = None
-            if cartographer_card is not None:
-                card_narrative = {key: cartographer_card.get(key) for key in ("intent", "reason", "next_actions")}
-                run_card = {
-                    **run_card,
-                    "narrative": card_narrative,
-                    "narrative_evidence_refs": cartographer_card.get("evidence_refs") or [],
-                }
-            # 阶段卡必须真正到达 provider：并记忆卡这条每轮都在场的系统消息，
-            # 不新增第二条 system（那会被 native 编码器并入角色身份）。
-            # 必须挂 request_messages —— `messages` 会在 946/1072 被重建，挂在它
-            # 上面等于没挂（实测 RunCard 段在 request_prepared 里 0/76）。
-            from polaris.cells.roles.runtime.internal.engineering_memory_cards import (
-                attach_run_card_section,
-            )
+            if director_frame:
+                run_card = deterministic_run_card(card_run, journal_events, phase="")
+                card_narrative = None
+                if cartographer_card is not None:
+                    card_narrative = {
+                        key: cartographer_card.get(key)
+                        for key in ("intent", "reason", "next_actions", "uncertain", "cognitive_focus")
+                    }
+                    run_card = {
+                        **run_card,
+                        "narrative": card_narrative,
+                        "narrative_evidence_refs": cartographer_card.get("evidence_refs") or [],
+                    }
+                from polaris.cells.roles.runtime.internal.engineering_memory_cards import (
+                    build_context_memory_messages,
+                    cartographer_action_proposals,
+                    run_card_section,
+                )
 
-            attach_run_card_section(request_messages, run_card)
-            card_key = (
-                str(run_card["phase"]),
-                json.dumps(card_narrative, sort_keys=True, ensure_ascii=False),
-            )
-            if card_key != last_run_card_key:
-                last_run_card_key = card_key
-                store.append_event(
-                    command.session_id,
-                    kind="run_card_active",
-                    role="director",
-                    payload={
-                        "phase": run_card["phase"],
-                        "source": "cartographer" if cartographer_card is not None else "host",
-                        "turn_seq": turn_seq,
-                        "card": run_card,
-                    },
+                proposals = cartographer_action_proposals(run_card)
+                memory = build_context_memory_messages(run_now, journal_events)
+                sections = [message["content"] for message in memory]
+                if memory or proposals:
+                    sections.append(run_card_section(run_card))
+                card_key = (
+                    str(run_card["phase"]),
+                    json.dumps(card_narrative, sort_keys=True, ensure_ascii=False),
                 )
-            injected = [
-                message
-                for message in request_messages
-                if message.get("role") == "system"
-                and isinstance(message.get("content"), str)
-                and "ContextOS" in message["content"]
-            ]
-            if injected:
-                fingerprint = hashlib.sha256(
-                    "||".join(str(message["content"]) for message in injected).encode("utf-8")
-                ).hexdigest()
-                if fingerprint != last_injection_fingerprint:
-                    # 记忆卡每轮都前置，**不能**因为内容没变就移除：它是"长期记忆"，
-                    # 移除就退化成一次性便签 —— 实测 1338 条 director 请求里只有
-                    # 103 个 turn（15.4%）真的看到它，其余轮次模型是"失忆"的。
-                    # 这里只在内容变化时记事件，用于事后对比模型有没有用上。
-                    last_injection_fingerprint = fingerprint
-                    # 效益可审计：记下这一刻模型被告知了什么，之后由审计对比它真正
-                    # 做了什么。注入的是记忆卡文本（失败聚类/验证契约/设计决策/
-                    # Epoch），不是 JSON —— 上一版按 JSON 解析，15 条全记成
-                    # phase=null/next_actions=[]，等于没测。
-                    content = "\n".join(str(message["content"]) for message in injected)
-                    kinds = [
-                        label
-                        for label, marker in (
-                            ("failure_cluster", "未解决失败聚类"),
-                            ("verification_contract", "最近验证契约"),
-                            ("decision_journal", "已确定的设计决策"),
-                            ("epoch_card", "Epoch 记忆"),
-                        )
-                        if marker in content
-                    ]
-                    titles = [
-                        str(line)[2:][:120]
-                        for line in content.splitlines()
-                        if line.startswith("- ")
-                    ]
+                if card_key != last_run_card_key:
+                    last_run_card_key = card_key
                     store.append_event(
                         command.session_id,
-                        kind="memory_card_injected",
+                        kind="run_card_active",
                         role=command.role,
                         payload={
+                            "phase": run_card["phase"],
+                            "source": "cartographer" if cartographer_card is not None else "host",
                             "turn_seq": turn_seq,
-                            "kinds": kinds,
-                            "titles": titles[:8],
-                            "chars": len(content),
-                            "digest": hashlib.sha256(content.encode("utf-8")).hexdigest()[:16],
+                            "card": run_card,
                         },
                     )
-                    # 阶段卡已经并进上面那条记忆卡（同一条系统消息），所以这里
-                    # 只补记它的建议，供事后比对模型下一步；不再单独发
-                    # plugin_card_injected —— 旧版那条记的是 deterministic 卡而非
-                    # 真正被注入的内容（145/176 source=host），是个误导指标。
-                    if run_card.get("next_actions"):
-                        store.append_event(
-                            command.session_id,
-                            kind="run_card_injected",
-                            role=command.role,
-                            payload={
-                                "turn_seq": turn_seq,
-                                "phase": run_card.get("phase"),
-                                "source": "cartographer" if (run_card.get("narrative") or {}).get("reason") else "host",
-                                "next_actions": [
-                                    str(item.get("action"))[:120]
-                                    for item in (run_card.get("next_actions") or [])
-                                ],
-                            },
-                        )
+                if sections:
+                    content = "\n".join(sections)
+                    director_guidance.append(content)
+                    fingerprint = hashlib.sha256(content.encode("utf-8")).hexdigest()
+                    if fingerprint != last_injection_fingerprint:
+                        next_injection_fingerprint = fingerprint
+                        kinds = [
+                            label
+                            for label, marker in (
+                                ("failure_cluster", "未解决失败聚类"),
+                                ("verification_contract", "最近验证契约"),
+                                ("decision_journal", "先前选择（模型自述）"),
+                                ("epoch_card", "Epoch 记忆"),
+                            )
+                            if marker in content
+                        ]
+                        titles = [str(line)[2:][:120] for line in content.splitlines() if line.startswith("- ")]
+                        if memory:
+                            pending_guidance_events.append(
+                                (
+                                    "memory_card_injected",
+                                    command.role,
+                                    {
+                                        "turn_seq": turn_seq,
+                                        "kinds": kinds,
+                                        "titles": titles[:8],
+                                        "chars": len(content),
+                                        "digest": hashlib.sha256(content.encode("utf-8")).hexdigest()[:16],
+                                    },
+                                )
+                            )
+                        host_actions = [str(item["action"]) for item in run_card["next_actions"][:3]]
+                        if proposals or host_actions:
+                            pending_guidance_events.append(
+                                (
+                                    "run_card_injected",
+                                    command.role,
+                                    {
+                                        "turn_seq": turn_seq,
+                                        "phase": run_card.get("phase"),
+                                        "source": "cartographer" if proposals else "host",
+                                        "next_actions": [item["action"] for item in proposals] or host_actions,
+                                        "host_next_actions": host_actions,
+                                        "advisory_next_actions": proposals,
+                                        **(
+                                            {"cartographer_fingerprint": cartographer_runtime.fingerprint}
+                                            if proposals and cartographer_runtime is not None
+                                            else {}
+                                        ),
+                                    },
+                                )
+                            )
+            supplemental_text = "\n".join(director_guidance)
+            request_messages = _bounded_request_messages(
+                messages,
+                store=store,
+                command=command,
+                role=command.role,
+                context_window_tokens=context_window_tokens,
+                visual_binding=visual_binding if scope.browser is not None else None,
+                audit=visual_projection,
+                semantic_runtime=semantic_runtime,
+                fold_window=fold_window,
+                force_fold_paths=repeated_reads if stalled else (),
+                supplemental_text=supplemental_text,
+            )
+            if visual_projection.get("supplemental_context_omitted"):
+                supplemental_text = ""
+            if supplemental_text:
+                # Move the already-budgeted tail into the final host user turn.
+                tail = request_messages[-1]
+                if tail.get("role") != "user" or tail.get("content") != supplemental_text:
+                    raise ValueError("Director supplemental context lost during request projection")
+                request_messages.pop()
             options: dict[str, Any] = {
                 "messages": request_messages,
                 "tools": tools.schemas(),
@@ -1710,9 +1764,8 @@ async def run_engineering_loop(
                     working_state_message,
                 )
 
-                run, state_events = store.load_projection_inputs(
-                    command.session_id, workspace=command.workspace, kinds=STATE_EVENT_KINDS
-                )
+                run = run_now
+                state_events = [event for event in journal_events if event["kind"] in STATE_EVENT_KINDS]
                 shadow_pack = shadow_decision_pack(
                     run, state_events, max_tokens=_history_allowances(context_window_tokens)[0]
                 )
@@ -1726,6 +1779,22 @@ async def run_engineering_loop(
                         deadline=limits.deadline,
                     )["content"]
                 )
+            if command.role in {"director", "qa"} and any(
+                (schema.get("function") or schema).get("name") == "read_file" for schema in options["tools"]
+            ):
+                from polaris.cells.roles.runtime.internal.engineering_memory_cards import (
+                    FILE_FACTS_HEADER,
+                    build_known_facts_cards,
+                )
+
+                fact_cards = build_known_facts_cards(run_now, journal_events, can_read=tools.can_read_file)
+                if fact_cards:
+                    host_parts.append(
+                        FILE_FACTS_HEADER
+                        + json.dumps(fact_cards[0]["entries"], ensure_ascii=False, separators=(",", ":"))
+                    )
+            if supplemental_text:
+                host_parts.append(supplemental_text)
             if host_parts:
                 options["messages"].append({"role": "user", "content": "\n".join(host_parts)})
             qa_report_required = False
@@ -1735,9 +1804,8 @@ async def run_engineering_loop(
                     qa_working_state_message,
                 )
 
-                run, working_events = store.load_projection_inputs(
-                    command.session_id, workspace=command.workspace, kinds=QA_WORKING_STATE_EVENT_KINDS
-                )
+                run = run_now
+                working_events = [event for event in journal_events if event["kind"] in QA_WORKING_STATE_EVENT_KINDS]
                 now = time.time()
                 remaining = max(0.0, limits.deadline - now) if limits.deadline is not None else None
                 reserve = (
@@ -1892,9 +1960,7 @@ async def run_engineering_loop(
                             "acceptance_clauses": list(review_clauses),
                         },
                     )
-            from polaris.cells.roles.runtime.internal.engineering_phase_policy import phase_for
-
-            phase = phase_for(
+            phase = director_phase or phase_for(
                 command.role,
                 verification=str(run_now.get("verification") or "not_run"),
                 first_verification_due=first_verification_due,
@@ -1927,6 +1993,69 @@ async def run_engineering_loop(
                 "image_sets": rebound_sets,
                 "dropped_origins": dropped_sets,
             }
+            if supplemental_text:
+                included = any(
+                    message.get("role") == "user"
+                    and isinstance(message.get("content"), str)
+                    and supplemental_text in message["content"]
+                    for message in options["messages"]
+                )
+                if included:
+                    last_injection_fingerprint = next_injection_fingerprint
+                    for capability in idle_capabilities:
+                        capability_last_reminded[capability] = turn_seq
+                    for kind, event_role, payload in pending_guidance_events:
+                        store.append_event(command.session_id, kind=kind, role=event_role, payload=payload)
+                else:
+                    visual_projection["supplemental_context_omitted"] = {
+                        "reason": "reduced_review_request",
+                        "chars": len(supplemental_text),
+                    }
+            if visual_projection.get("supplemental_context_omitted"):
+                last_injection_fingerprint = ""
+            if semantic_runtime is not None and semantic_runtime.ready:
+                from polaris.cells.roles.runtime.internal.engineering_tool_payload_projection import (
+                    distillation_targets,
+                )
+
+                demand = distillation_targets(options["messages"], fold_window=fold_window)
+                advice_request, advice_refs, advice_fingerprint = facts_for_advice(
+                    run_now,
+                    journal_events,
+                    evaluated=semantic_runtime.evaluated_inputs(),
+                    targets=demand,
+                    role=command.role,
+                )
+                if advice_refs.node_ids:
+                    semantic_runtime.schedule(advice_request, advice_refs, fingerprint=advice_fingerprint)
+            if cartographer_runtime is not None:
+                run_card_request, run_card_fingerprint = facts_for_run_card(
+                    card_run,
+                    journal_events,
+                    retained_messages=options["messages"],
+                    turn_seq=turn_seq,
+                    frame_seq=frame_seq,
+                )
+                if cartographer_runtime.schedule_for_decision(
+                    run_card_request,
+                    fingerprint=run_card_fingerprint,
+                    enabled_tools=frozenset(tools.enabled),
+                    recorded_keys={
+                        str(e["payload"]["decision_key"])
+                        for e in journal_events
+                        if e["kind"] == "cartographer_scheduled" and e["payload"].get("decision_key")
+                    },
+                ):
+                    store.append_event(
+                        command.session_id,
+                        kind="cartographer_scheduled",
+                        role="cartographer",
+                        payload={
+                            "turn_seq": turn_seq,
+                            "fingerprint": cartographer_runtime.fingerprint,
+                            **cartographer_runtime.decision_receipt,
+                        },
+                    )
             request = AIRequest(
                 task_type=TaskType.DIALOGUE,
                 role=command.role,
@@ -1952,6 +2081,7 @@ async def run_engineering_loop(
                 payload={
                     "turn_seq": turn_seq,
                     "evidence_kind": "auxiliary_prepared_request",
+                    "context_input_seq": context_input_seq,
                     **({"binding_selection": routing_audit} if routing_audit else {}),
                     "visual_projection": visual_projection,
                     **({"shadow_decision_pack": shadow_pack} if shadow_pack is not None else {}),

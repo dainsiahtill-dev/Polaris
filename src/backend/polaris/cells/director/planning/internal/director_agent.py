@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from polaris.cells.roles.runtime.public import (
+from polaris.cells.roles.runtime.public.service import (
     AgentMessage,
     MessageType,
     RoleAgent,
@@ -495,20 +495,23 @@ class DirectorAgent(RoleAgent):
 
         execution.assess_risk(files, lines_added, lines_removed)
 
-        if execution.risk_score > 0.5:
-            for factor in execution.risk_factors:
-                self.risk_registry.record_risk(
-                    execution_id=execution_id,
-                    risk_type=factor,
-                    description=f"Risk factor detected: {factor}",
-                    severity="high" if execution.risk_score > 0.7 else "medium",
-                )
+        self._record_execution_risks(execution)
 
         return {
             "ok": True,
             "risk_score": execution.risk_score,
             "risk_factors": execution.risk_factors,
         }
+
+    def _record_execution_risks(self, execution: ExecutionRecord) -> None:
+        if execution.risk_score > 0.5:
+            for factor in execution.risk_factors:
+                self.risk_registry.record_risk(
+                    execution_id=execution.execution_id,
+                    risk_type=factor,
+                    description=f"Risk factor detected: {factor}",
+                    severity="high" if execution.risk_score > 0.7 else "medium",
+                )
 
     def _tool_get_open_risks(self) -> dict[str, Any]:
         """Get all open risks."""
@@ -584,17 +587,20 @@ class DirectorAgent(RoleAgent):
                     }
                 )
 
-        execution.qa_result = qa_result
-        self.quality_tracker.record_qa_result(
-            execution_id=execution_id,
-            task_id=execution.task_id,
-            result=qa_result,
-        )
+        self._record_execution_qa(execution, qa_result)
 
         return {
             "ok": True,
             "qa_result": qa_result,
         }
+
+    def _record_execution_qa(self, execution: ExecutionRecord, qa_result: dict[str, Any]) -> None:
+        execution.qa_result = qa_result
+        self.quality_tracker.record_qa_result(
+            execution_id=execution.execution_id,
+            task_id=execution.task_id,
+            result=qa_result,
+        )
 
     def _tool_get_qa_history(self, limit: int = 50) -> dict[str, Any]:
         """Get QA history."""

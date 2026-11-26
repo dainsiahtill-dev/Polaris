@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -15,11 +16,9 @@ from polaris.cells.roles.kernel.internal.transaction.mutation_contract_guard imp
 from polaris.cells.roles.kernel.internal.transaction.retry_context_builders import build_contract_retry_context
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import TurnTransactionController
-from polaris.cells.roles.kernel.tests.tool_batch_fixtures import tool_batch_model_with_groups
 from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchId,
     FinalizeMode,
-    ToolBatch,
     ToolCallId,
     ToolInvocation,
     TurnDecision,
@@ -27,11 +26,12 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnId,
     classify_tool_invocation,
 )
+from polaris.cells.roles.kernel.tests.tool_batch_fixtures import tool_batch_model_with_groups
 
 PRESERVE = "Do not remove existing scripts, aliases, or compiler/linter options unless the task explicitly asks."
 
 
-def _context(instruction: object) -> list[dict]:
+def _context(instruction: object) -> list[dict[str, Any]]:
     return [
         {
             "role": "user",
@@ -210,8 +210,9 @@ async def test_readonly_leading_mode_wins_over_embedded_materialize_example() ->
 @pytest.mark.asyncio
 async def test_readonly_batch_cannot_finalize_current_task_that_requires_write() -> None:
     runtime = AsyncMock(return_value={"success": True, "result": "existing source"})
+    provider = AsyncMock()
     controller = TurnTransactionController(
-        llm_provider=AsyncMock(),
+        llm_provider=provider,
         tool_runtime=runtime,
         config=TransactionConfig(domain="code", role_id="director", mutation_guard_mode="strict"),
     )
@@ -258,4 +259,4 @@ async def test_readonly_batch_cannot_finalize_current_task_that_requires_write()
     with pytest.raises(RuntimeError, match="mutation requested but no write tool"):
         await controller._tool_batch_executor.execute_tool_batch(decision, state, ledger, context)
     runtime.assert_not_awaited()
-    controller.llm_provider.assert_not_awaited()
+    provider.assert_not_awaited()
