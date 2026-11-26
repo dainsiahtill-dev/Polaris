@@ -70,9 +70,29 @@ _SYMBOL_PATTERNS = (
     re.compile(
         r"^\s*(?:export\s+)?(?:async\s+)?(?:class|def|function|interface|type|enum|fn|struct|trait|impl)\s+([A-Za-z_][A-Za-z0-9_]*)"
     ),
-    re.compile(r"^\s*(?:export\s+)?const\s+([A-Za-z_][A-Za-z0-9_]*)"),
+    # `const <TYPE> <name>` 要的是 name：旧版直接抓第一个标识符，于是
+    # `const unsigned x` → `unsigned`、`const std::string s` → `std`、
+    # `const moon::Foo bar` → `moon`（实测 72 个符号里 25 个是类型关键字，
+    # 14/20 个文件受影响）。取 `=`/`;`/`[` 之前的最后一个标识符。
+    re.compile(
+        r"^\s*(?:static\s+|inline\s+)*(?:export\s+)?(?:const|constexpr)\s+"
+        r"(?:[A-Za-z_][A-Za-z0-9_:<>,\s]*?[\s*])?([A-Za-z_][A-Za-z0-9_]*)\s*(?:=|;|\[)"
+    ),
     re.compile(r"^\s*(?:pub\s+)?(?:type|func)\s+([A-Za-z_][A-Za-z0-9_]*)"),
     re.compile(r"^\s*(?:class|struct|namespace)\s+([A-Za-z_][A-Za-z0-9_]*)"),
+    # C/C++ 函数定义：`<返回类型> <名字>(...) {`。旧版没有这条，于是
+    # `int add(int a, int b) { ... }` 里的 add 抓不到，索引里只剩类型关键字。
+    # 要求以 `{` 结尾，排除同名调用；排除控制流关键字。
+    re.compile(
+        r"^\s*(?:[A-Za-z_][A-Za-z0-9_:<>,\*&\[\]]*\s+)+([A-Za-z_][A-Za-z0-9_]*)\s*\([^;]*\)\s*(?:const\s*)?(?:noexcept\s*)?\{"
+    ),
+)
+
+_NOT_SYMBOL_NAMES = frozenset(
+    {
+        "if", "for", "while", "switch", "catch", "return", "sizeof", "do", "else",
+        "main",  # main 是入口，不是符号
+    }
 )
 
 
@@ -82,7 +102,9 @@ def _declarations(lines: Sequence[str]) -> dict[str, int]:
         for pattern in _SYMBOL_PATTERNS:
             match = pattern.match(line)
             if match:
-                declarations.setdefault(match.group(1), number)
+                name = match.group(1)
+                if name not in _NOT_SYMBOL_NAMES:
+                    declarations.setdefault(name, number)
                 break
         if len(declarations) >= 24:
             break
