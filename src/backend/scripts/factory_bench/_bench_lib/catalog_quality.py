@@ -289,7 +289,15 @@ def _run_command(command: list[str], *, cwd: Path, timeout_s: int = 600) -> bool
         system_tool = shutil.which(command[0])
         tool_dirs: list[Path] = []
         if system_tool:
-            tool_dirs.append(Path(system_tool).resolve().parent)
+            tool_dir = Path(system_tool).resolve().parent
+            # 工具本身在 workspace 内（典型：node_modules/.bin/tsc →
+            # node_modules/typescript/bin/tsc，是符号链接）时，它已经被
+            # read/write root 覆盖，绝不能再作为 toolchain dir 传进去 ——
+            # sandbox 会拒绝 "toolchain bin directory overlaps a writable
+            # mount"，于是每个 TS 项目的 catalog 质检都变 UNKNOWN
+            # （实测 L1-08：平台 accepted/approved 全绿，唯 bench_gate=UNKNOWN）。
+            if not tool_dir.is_relative_to(Path(cwd).resolve()):
+                tool_dirs.append(tool_dir)
         # 工具链目录必须**同时**是只读挂载：sandbox 会拒绝
         # "toolchain bin directory is outside existing read mounts"。
         # 旧代码只传 toolchain_bin_dirs，靠 /usr 恰好是默认只读挂载才没暴露；

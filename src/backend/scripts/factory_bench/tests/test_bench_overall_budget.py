@@ -104,3 +104,36 @@ def test_cargo_compile_check_uses_the_host_toolchain(tmp_path) -> None:
     (workspace / "src" / "main.rs").write_text("fn main() {}\n", encoding="utf-8")
 
     assert cq._run_command(["cargo", "build", "--offline"], cwd=workspace, timeout_s=300) is True
+
+
+def test_workspace_local_toolchain_is_not_passed_as_a_toolchain_dir(tmp_path) -> None:
+    """工具在 workspace 内（node_modules/.bin/tsc 是符号链接）时不能再作为
+    toolchain dir 传给沙箱 —— 它会撞 "overlaps a writable mount"。
+
+    实测 L1-08：平台 completed/accepted/approved 全绿，唯 bench_gate=UNKNOWN，
+    只因为 catalog 质检的 ts_syntax 报 "isolated verifier unavailable: ValueError"。
+    """
+
+    import shutil
+
+    from scripts.factory_bench._bench_lib import catalog_quality as cq
+
+    # pytest 的 tmp_path 在 /tmp（沙箱保留挂载）—— 与工具链测试同一个坑。
+    root = Path.home() / ".polaris" / "bench-sandbox-checks"
+    shutil.rmtree(root, ignore_errors=True)
+    root.mkdir(parents=True, exist_ok=True)
+    workspace = root / "ts-project"
+    (workspace / "src").mkdir(parents=True, exist_ok=True)
+    (workspace / "src" / "index.ts").write_text("export const x = 1;\n", encoding="utf-8")
+    # 造一个 workspace 内的 tsc（符号链接，像真实 node_modules/.bin/tsc）
+    real = workspace / "node_modules" / "typescript" / "bin" / "tsc"
+    real.parent.mkdir(parents=True, exist_ok=True)
+    real.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    real.chmod(0o755)
+    bin_dir = workspace / "node_modules" / ".bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    (bin_dir / "tsc").symlink_to(real)
+
+    assert cq._run_typescript_check(workspace) is True
+    # 关键点：命令用的是 workspace 内的绝对路径（像真实 node_modules/.bin/tsc），
+    # 而不是 PATH 里的全局 tsc。
