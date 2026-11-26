@@ -39,9 +39,11 @@ class _FakeJetStream:
         delete_error: Exception | None = None,
         subscribe_error: Exception | None = None,
         stream_info_error: Exception | None = None,
+        consumers: list[object] | None = None,
     ) -> None:
         self.deleted: list[tuple[str, str]] = []
         self.streams_added: list[str] = []
+        self.consumers = consumers or []
         self.delete_error = delete_error
         self.subscribe_error = subscribe_error
         self.stream_info_error = stream_info_error
@@ -50,6 +52,9 @@ class _FakeJetStream:
         if self.stream_info_error is not None:
             raise self.stream_info_error
         return {"name": stream_name}
+
+    async def consumers_info(self, stream_name: str) -> list[object]:
+        return list(self.consumers)
 
     async def add_stream(self, config: Any) -> object:
         self.streams_added.append(str(config.name))
@@ -470,3 +475,43 @@ async def test_ack_cursor_advances_only_to_acknowledged_pending_cursor() -> None
     assert msg.ack_calls == 1
     assert manager._pending_acks == {}
     assert manager.get_current_cursor() == 42
+
+
+@pytest.mark.asyncio
+async def test_connect_sweeps_orphan_consumers_of_the_same_subscription(monkeypatch) -> None:
+    """durable_token 每次连接都带新 connection_id，只删自己那条会留下孤儿。
+
+    实测 6 个 `hp_delivery_*-ws-*` 孤儿，num_pending 单调增长。同 workspace_key
+    的历史消费者必须在连接时清扫。
+    """
+
+    class _Orphan:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    jetstream = _FakeJetStream(
+        consumers=[
+            _Orphan("hp_delivery_abc123-ws-client-1"),
+            _Orphan("hp_delivery_xyz999-ws-client-1"),
+            _Orphan("hp_delivery_keep-ws-client-2"),
+        ]
+    )
+
+    async def _get_default_client() -> _FakeNATSClient:
+        return _FakeNATSClient(jetstream)
+
+    monkeypatch.setattr(ws_consumer_manager, "get_default_client", _get_default_client)
+    manager = JetStreamConsumerManager(
+        workspace_key="workspace",
+        client_id="client-1",
+        channels=["llm"],
+        durable_token="abc123-client-1",
+    )
+    try:
+        assert await manager.connect() is True
+        deleted = [name for _stream, name in jetstream.deleted]
+        assert "hp_delivery_abc123-ws-client-1" in deleted  # 自己的
+        assert "hp_delivery_xyz999-ws-client-1" in deleted  # 同 client_id 的孤儿
+        assert "hp_delivery_keep-ws-client-2" not in deleted  # 别的订阅不动
+    finally:
+        await manager.disconnect()

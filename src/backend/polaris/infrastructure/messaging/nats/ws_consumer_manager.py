@@ -312,6 +312,38 @@ class JetStreamConsumerManager:
             logger.debug("NATS cleanup skipped missing consumer: %s", self._durable_name)
         except (RuntimeError, ValueError, JSAPIError) as exc:
             logger.debug("NATS cleanup (best-effort): %s", exc)
+        await self._sweep_orphan_consumers()
+
+    async def _sweep_orphan_consumers(self) -> None:
+        """清掉同一订阅身份的历史消费者。
+
+        durable_token 每次连接都带新的 connection_id，只删自己那条会留下孤儿
+        （实测 6 个 `hp_delivery_*-ws-*` 孤儿，`num_pending` 单调增长，服务端持续
+        向死 `_INBOX` 投递）。workspace_key 是稳定身份，用它做前缀匹配清扫。
+        """
+        if self._jetstream is None:
+            return
+        # 订阅身份是客户端显式提供的 client_id（durable_token = connection_id-client_id，
+        # 只有 client_id 稳定）；workspace_key 太粗，会误删同 workspace 的其他订阅。
+        key = _normalize_durable_token(self.client_id)
+        if not key:
+            return
+        try:
+            consumers = await self._jetstream.consumers_info(JetStreamConstants.STREAM_NAME)
+        except (RuntimeError, ValueError, JSAPIError, NotImplementedError) as exc:
+            logger.debug("NATS consumer sweep unavailable: %s", exc)
+            return
+        for info in consumers or []:
+            name = getattr(info, "name", None) or (info.get("name") if isinstance(info, dict) else None)
+            if not name or name == self._durable_name or key not in str(name):
+                continue
+            try:
+                await self._jetstream.delete_consumer(JetStreamConstants.STREAM_NAME, str(name))
+                logger.info("NATS orphan consumer removed: %s", name)
+            except JSConsumerNotFoundError:
+                continue
+            except (RuntimeError, ValueError, JSAPIError) as exc:
+                logger.debug("NATS orphan cleanup (best-effort): %s", exc)
 
     async def disconnect(self) -> None:
         """Disconnect and cleanup consumer."""
