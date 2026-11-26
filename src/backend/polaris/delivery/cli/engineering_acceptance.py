@@ -798,6 +798,19 @@ def observe(
                 or report["harness_status"] in {"OBSERVED_ACCEPTED", "REJECTED", "CANCELLED"}
                 or report.get("platform", {}).get("status") in _TERMINAL
             ):
+                if report.get("platform", {}).get("status") in _TERMINAL:
+                    # 终态那一瞬最终事件可能还没落盘：实测 L1-05 的 bench 拿到
+                    # last_seq=997 而 run 最终到 2520，于是平台已经写下的
+                    # unproven 被陈旧快照报成 UNKNOWN。重取一次再定稿。
+                    try:
+                        snapshot = client.request(
+                            "GET",
+                            f"/v2/engineering/runs/{binding['run_id']}?"
+                            + urlencode({"workspace": binding["plan"]["workspace"]}),
+                        )
+                        report = _observed_result(binding, snapshot, client, now())
+                    except Exception:  # noqa: BLE001 - 重取失败就保留上一份观测
+                        pass
                 return _record(binding, report)
             sleep(1)
     except Exception as error:  # noqa: BLE001 - recovery reads never imply a safe mutation replay.
