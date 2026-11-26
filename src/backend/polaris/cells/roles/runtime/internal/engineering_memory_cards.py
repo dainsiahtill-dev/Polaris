@@ -538,6 +538,16 @@ FILE_FACTS_HEADER = (
 )
 
 
+_TYPE_KEYWORDS = frozenset(
+    {
+        "void", "bool", "char", "int", "long", "short", "float", "double", "signed",
+        "unsigned", "const", "static", "constexpr", "struct", "class", "enum",
+        "namespace", "std", "size_t", "string", "auto", "let", "var", "final",
+        "public", "private", "protected", "virtual", "override",
+    }
+)
+
+
 def build_known_facts_cards(
     run: Mapping[str, Any],
     events: Sequence[Mapping[str, Any]],
@@ -608,6 +618,17 @@ def build_known_facts_cards(
             if checked and verified
             else "unknown",
         }
+        # 一行"可回忆"的摘要：索引给了地址却没给内容，模型只能重读整文件。
+        # 优先用蒸馏器已经产出的摘要（同一份文本，已过 summary_is_informative 闸）；
+        # 没有则用真实符号名 + 行数 —— 实测修 _declarations 后 symbols 才是真名。
+        summary = card.get("source_summary") or ""
+        if not isinstance(summary, str) or not summary.strip():
+            real = [name for name in entry["symbols"] if name not in _TYPE_KEYWORDS][:3]
+            summary = (
+                f"{Path(path).name}：{'、'.join(real) if real else '无符号'}"
+                f"（{card.get('line_count')} 行）"
+            )
+        entry["summary"] = summary.strip()[:200]
         locations = card.get("declaration_lines")
         if isinstance(locations, dict):
             entry["at_lines"] = [locations.get(name) for name in entry["symbols"]]

@@ -11,6 +11,7 @@ from polaris.cells.roles.runtime.internal.engineering_file_cards import build_fi
 from polaris.cells.roles.runtime.internal.engineering_memory_cards import (
     attach_run_card_section,
     build_context_memory_messages,
+    build_known_facts_cards,
     build_memory_cards,
     run_card_section,
 )
@@ -438,3 +439,37 @@ def test_memory_distinguishes_a_proposed_choice_from_quoted_requirements() -> No
     assert "我决定用索引" in rendered and "模型自述" in rendered
     assert "旧文案" not in rendered and "read_command_result" not in rendered
     assert "TypeError" in rendered
+
+
+def test_known_facts_entry_has_a_recallable_line() -> None:
+    """索引给了地址却没给可回忆的内容，模型只能重读整文件（实测 rereads 高）。"""
+
+    import json
+    import sqlite3
+    from pathlib import Path
+
+    workspace = Path("/home/dains/.polaris/leak-lab/L1-06")
+    db = workspace / ".polaris/runtime/engineering/sessions.sqlite3"
+    if not db.is_file():
+        import pytest
+
+        pytest.skip("leak-lab 工作区不存在")
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    events = [
+        {"seq": seq, "kind": kind, "role": role, "payload": json.loads(payload) if payload else {}}
+        for seq, kind, role, payload in conn.execute(
+            "select seq,kind,role,payload from events order by seq"
+        )
+    ]
+    revision = conn.execute("select workspace_revision from runs order by rowid desc limit 1").fetchone()[0]
+    conn.close()
+    cards = build_known_facts_cards(
+        {"workspace": str(workspace), "workspace_revision": revision, "instruction": "x"},
+        events,
+        can_read=lambda p: True,
+    )
+    assert cards and cards[0]["entries"], "该真实 run 应产出索引"
+    entry = cards[0]["entries"][0]
+    assert entry["summary"].strip(), "条目必须带一行可回忆的摘要"
+    # 结构摘要里不该再出现类型关键字。
+    assert "unsigned" not in entry["summary"].split("：")[-1]
