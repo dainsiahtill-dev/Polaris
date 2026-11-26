@@ -131,19 +131,34 @@ class JetStreamPublisher:
             logger.error("JetStream publisher queue full; dropping subject=%s", subject)
             return False
 
+    def _blocking_get(self) -> JetStreamPublishRequest:
+        """阻塞取一条发布请求；超时抛 queue.Empty。
+
+        放在 executor 里跑，这样等待期间事件循环仍在转动 —— NATS 客户端的
+        ping 任务靠循环调度，旧版在 `queue.get()` 上阻塞时循环停转，空闲超过
+        ping_interval × max_outstanding_pings 就被服务端断开（实测每个 bench
+        项目启动时一次 `Publish timeout` + `NATS disconnected`）。
+        """
+
+        return self._queue.get(timeout=_QUEUE_GET_TIMEOUT_SEC)
+
+    async def _run(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                request = await self._loop.run_in_executor(None, self._blocking_get)
+            except queue.Empty:
+                continue
+            try:
+                await self._publish_with_retry(request)
+            finally:
+                self._queue.task_done()
+
     def _thread_main(self) -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        self._loop = loop
         try:
-            while not self._stop_event.is_set():
-                try:
-                    request = self._queue.get(timeout=_QUEUE_GET_TIMEOUT_SEC)
-                except queue.Empty:
-                    continue
-                try:
-                    loop.run_until_complete(self._publish_with_retry(request))
-                finally:
-                    self._queue.task_done()
+            loop.run_until_complete(self._run())
         finally:
             try:
                 loop.run_until_complete(self._shutdown_async())
