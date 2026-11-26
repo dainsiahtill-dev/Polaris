@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import atexit
+import contextlib
 import threading
 from collections.abc import Mapping
 from typing import Any
@@ -74,7 +75,5 @@ def _close_all() -> None:
         clients = list(_CLIENTS.values())
         _CLIENTS.clear()
     for client in clients:
-        try:
+        with contextlib.suppress(Exception):  # 退出清理不抛
             client.close()
-        except Exception:  # noqa: BLE001 - 退出清理不抛
-            pass
