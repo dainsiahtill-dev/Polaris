@@ -11,7 +11,7 @@ import sys
 import textwrap
 
 import pytest
-from polaris.infrastructure.mcp.client import McpClient, McpServerError, load_server_configs
+from polaris.infrastructure.mcp.client import McpClient, McpServerError, load_server_configs, mcp_toolset
 from polaris.infrastructure.mcp.server import (
     METHOD_NOT_FOUND,
     build_default_tools,
@@ -110,3 +110,34 @@ def test_default_registry_has_accel_tools() -> None:
 
 def test_serve_stdio_is_importable_and_bound() -> None:
     assert callable(serve_stdio)
+
+
+def test_mcp_toolset_materializes_configured_servers() -> None:
+    """配置 → 拉起 server → 产出 mcp__<server>__<tool> schema，退出即回收。"""
+
+    import sys as _sys
+    import textwrap as _tw
+
+    stub = _tw.dedent(
+        """
+        import json, sys
+        for line in sys.stdin:
+            req = json.loads(line)
+            m = req.get("method")
+            if m == "initialize":
+                out = {"protocolVersion": "2024-11-05", "serverInfo": {"name": "stub"}}
+            elif m == "tools/list":
+                out = {"tools": [{"name": "add", "description": "add", "inputSchema": {"type": "object"}}]}
+            else:
+                continue
+            sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": req.get("id"), "result": out}) + chr(10))
+            sys.stdout.flush()
+        """
+    )
+    configs = [{"name": "calc", "command": [_sys.executable, "-c", stub]}]
+    with mcp_toolset(configs) as schemas:
+        assert "mcp__calc__add" in schemas
+        assert schemas["mcp__calc__add"]["parameters"] == {"type": "object"}
+    # 退出后配置再跑一次仍可用（说明没有泄漏/污染）。
+    with mcp_toolset(configs) as again:
+        assert "mcp__calc__add" in again

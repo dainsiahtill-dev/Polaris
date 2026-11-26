@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import hashlib
 import inspect
 import json
@@ -13,7 +14,7 @@ import re
 import shlex
 import subprocess
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -220,6 +221,8 @@ class EngineeringTools:
         run_id: str | None = None,
         file_card_resolver: Callable[[str, str | None], dict[str, Any]] | None = None,
         revision_provider: Callable[[], int] | None = None,
+        mcp_call: Callable[[str, str, Mapping[str, Any]], Awaitable[Any]] | None = None,
+        mcp_tools: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> None:
         self.workspace = workspace.resolve(strict=True)
         # Acceptance clauses of the original goal, when this session is a QA
@@ -228,6 +231,11 @@ class EngineeringTools:
         # weak model can silently omit.
         self.review_clauses = tuple(review_clauses)
         self._coverage_rejections = 0
+        # MCP 工具（配置驱动）：工具名形如 mcp__<server>__<tool>。
+        # 授权不外扩：MCP 工具与 repo_rg/read_file 一样是普通工具，
+        # 由 host 配置决定可用性；server 不可用时工具不可用（fail-closed）。
+        self.mcp_tools = dict(mcp_tools or {})
+        self._mcp_call = mcp_call
         self.scope = replace(
             scope,
             toolchain_bin_dirs=resolve_toolchain_bin_dirs(
@@ -279,13 +287,31 @@ class EngineeringTools:
 
     def schemas(self) -> list[dict[str, Any]]:
         """Derive session-specific contracts without mutating the registry."""
-        schemas = []
+        schemas: list[dict[str, Any]] = []
+        for name in sorted(self.mcp_tools):
+            schema = self.mcp_tools[name]
+            raw = schema.get("function")
+            mcp_function: Mapping[str, Any] = raw if isinstance(raw, Mapping) else dict(schema)
+            schemas.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": str(mcp_function.get("description") or name),
+                        "parameters": mcp_function.get("parameters") or {"type": "object", "properties": {}},
+                    },
+                }
+            )
         for name in sorted(self.enabled):
-            schema = ToolSpecRegistry.get_llm_schema(name)
-            if schema is None:
+            spec = ToolSpecRegistry.get_llm_schema(name)
+            if spec is None:
                 raise ValueError(f"missing engineering tool schema: {name}")
+            # deepcopy：edit_file/write_file/report_review 的 schema 按 session 定制。
+            # 浅拷贝不够 —— spec["function"] 是嵌套引用，直接改会漏进全局 registry
+            # （docstring 说"不污染 registry"，旧实现其实污染了）。
+            spec = copy.deepcopy(spec)
             if name == "edit_file":
-                function = schema["function"]
+                function = spec["function"]
                 parameters = function["parameters"]
                 parameters["properties"] = {
                     key: value
@@ -296,7 +322,7 @@ class EngineeringTools:
                 parameters.pop("anyOf", None)
                 function["description"] = "Replace one unique exact occurrence of search with replace in a UTF-8 file."
             if name == "execute_command":
-                function = schema["function"]
+                function = spec["function"]
                 if self.artifact_binding is None:
                     function["parameters"]["properties"].pop("artifacts", None)
                 persistence = (
@@ -350,7 +376,7 @@ class EngineeringTools:
                     maximum=COMMAND_TIMEOUT_MAXIMUM,
                 )
             if name == "write_file":
-                function = schema["function"]
+                function = spec["function"]
                 function["description"] = (
                     str(function.get("description") or "")
                     + " file is one relative path only; put the complete document body in content, never in file."
@@ -360,7 +386,7 @@ class EngineeringTools:
                 # decomposed goal. Expose it as required so a function-calling
                 # model is told the argument exists and must be filled, and so
                 # the dispatch boundary can reject an incomplete report.
-                function = schema["function"]
+                function = spec["function"]
                 parameters = function["parameters"]
                 properties = parameters.setdefault("properties", {})
                 clause_property = properties.get("clause_findings")
@@ -377,13 +403,20 @@ class EngineeringTools:
                 required = [item for item in (parameters.get("required") or []) if item != "clause_findings"]
                 required.append("clause_findings")
                 parameters["required"] = required
-            schemas.append(schema)
+            schemas.append(dict(spec))
         return schemas
 
     def normalize(
         self, tool: str, arguments: dict[str, Any], *, ignored: list[str] | None = None
     ) -> tuple[str, dict[str, Any]]:
         """Normalize one native call through the sole registry owner."""
+        # MCP 工具由配置注入（名字形如 mcp__<server>__<tool>），不在工具注册表里；
+        # 只有本 session 确实配置了才放行，否则照旧拒绝（fail-closed）。
+        # 它们没有 registry schema，直接原样透传参数。
+        if str(tool).startswith("mcp__"):
+            if str(tool) not in self.mcp_tools:
+                raise ValueError(f"{tool} 未配置 MCP server（未注入或未启用）")
+            return str(tool), dict(arguments)
         snapshot = ToolSpecRegistry.capture_effective_spec(tool)
         if not snapshot.registered:
             raise ValueError(f"unknown engineering tool: {tool}")
@@ -453,6 +486,13 @@ class EngineeringTools:
             if self.cancel.is_set():
                 return ToolObservation(call_id, name, False, "Execution cancelled before dispatch.", None, True)
             self._remaining()
+            if name.startswith("mcp__"):
+                if self._mcp_call is None:
+                    raise ValueError(f"{name} 需要 MCP 客户端（本 session 未配置 MCP server）")
+                server, _, tool_name = name[len("mcp__") :].partition("__")
+                outcome = await self._mcp_call(server, tool_name or name, args)
+                text = outcome if isinstance(outcome, str) else json.dumps(outcome, ensure_ascii=False, default=str)
+                return ToolObservation(call_id, name, True, text, None, False)
             if name == "browser_observe":
                 if self.observe is None:
                     raise ValueError("browser_observe requires the active session owner")

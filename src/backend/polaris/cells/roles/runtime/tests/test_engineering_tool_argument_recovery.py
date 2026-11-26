@@ -204,3 +204,42 @@ def test_read_file_miss_without_candidates_stays_short(tmp_path: Path) -> None:
     assert observation.ok is False
     assert "nothing/here.ts" in observation.content
     assert "相近现有文件" not in observation.content
+
+
+def test_mcp_tool_reaches_the_model_and_fails_closed(tmp_path) -> None:
+    """MCP 工具是配置驱动的普通工具：任意 MCP server 都能接，未配置即不可用。"""
+
+    seen = {}
+
+    async def mcp_call(server: str, tool: str, args: dict) -> object:
+        seen["call"] = (server, tool, args)
+        return {"echo": args}
+
+    tools = EngineeringTools(
+        tmp_path,
+        PermissionScope((tmp_path,), (), frozenset({"read_file"}), False),
+        RunLimits(None, 100_000, 16_000),
+        asyncio.Event(),
+        mcp_call=mcp_call,
+        mcp_tools={
+            "mcp__srv__echo": {
+                "name": "mcp__srv__echo",
+                "description": "echo",
+                "parameters": {"type": "object", "properties": {}},
+            }
+        },
+    )
+    observation = asyncio.run(tools.execute("c1", "mcp__srv__echo", {"x": 1}))
+    assert observation.ok
+    assert seen["call"] == ("srv", "echo", {"x": 1})
+    assert tools.schemas()[0]["function"]["name"] == "mcp__srv__echo"
+
+    bare = EngineeringTools(
+        tmp_path,
+        PermissionScope((tmp_path,), (), frozenset({"read_file"}), False),
+        RunLimits(None, 100_000, 16_000),
+        asyncio.Event(),
+    )
+    blocked = asyncio.run(bare.execute("c2", "mcp__srv__echo", {}))
+    assert blocked.ok is False
+    assert "未配置 MCP server" in str(blocked.content)

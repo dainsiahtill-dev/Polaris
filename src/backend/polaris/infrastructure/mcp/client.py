@@ -6,11 +6,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
 DEFAULT_TIMEOUT = 60.0
@@ -220,3 +221,47 @@ def load_server_configs(raw: str | None = None) -> list[dict[str, Any]]:
             }
         )
     return result
+
+
+@contextlib.contextmanager
+def mcp_toolset(
+    configs: Sequence[Mapping[str, Any]] | None = None,
+    *,
+    enabled_tools: Mapping[str, Sequence[str]] | None = None,
+) -> Iterator[dict[str, Mapping[str, Any]]]:
+    """按配置拉起 MCP server，产出可注入 `EngineeringTools` 的工具 schema。
+
+    退出即关闭所有子进程。任一 server 不可用即抛 `McpServerError` ——
+    不静默降级成"没有 MCP 工具"。
+    """
+
+    clients: list[McpClient] = []
+    schemas: dict[str, Mapping[str, Any]] = {}
+    try:
+        for config in configs if configs is not None else load_server_configs():
+            allowed = (enabled_tools or {}).get(str(config["name"]))
+            client = McpClient(
+                str(config["name"]),
+                command=config.get("command"),
+                url=config.get("url"),
+                timeout=float(config.get("timeout", DEFAULT_TIMEOUT)),
+                cwd=config.get("cwd"),
+                env=config.get("env"),
+            )
+            client.initialize()
+            clients.append(client)
+            for tool in client.list_tools():
+                name = str(tool.get("name"))
+                if allowed is not None and name not in allowed:
+                    continue
+                schemas[f"mcp__{config['name']}__{name}"] = {
+                    "name": f"mcp__{config['name']}__{name}",
+                    "description": str(tool.get("description") or name),
+                    "parameters": (tool.get("inputSchema") or {}).get("parameters")
+                    or (tool.get("inputSchema") or {})
+                    or {"type": "object", "properties": {}},
+                }
+        yield schemas
+    finally:
+        for client in clients:
+            client.close()
