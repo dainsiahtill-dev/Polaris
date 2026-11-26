@@ -1563,10 +1563,15 @@ class EngineeringSessionStore:
         # 是真实缺陷），Director 修完候选变了，复审两帧都交占位，于是整轮停在
         # unknown/UNKNOWN，与 harness 故障无法区分。unproven 是诚实且可操作的
         # （动作是"补一次裁决"），既不冒充通过，也不冒充故障。
-        # 用 evidence（曾有通过且绑定 revision 的验证）而不是 row["verification"]：
-        # 快照会按当前字节重算并降级，而 Director 在 QA 拒绝后改过候选时，当前
-        # revision 本来就没有绑定证据 —— 那恰恰是"没验完"，不是"验过了"。
-        unproven = bool(required and verdict == "unknown" and evidence)
+        # 用耐久事实而不是快照降级值：快照会按当前字节重算并降级，而 Director 在
+        # QA 拒绝后改过候选时，当前 revision 本来就没有绑定证据 —— 那恰恰是
+        # "没验完"。判据 = 从未有过通过验证（连耐久行也不算）→ 才算没验过；
+        # 只要这轮曾经通过过、而现在没有有效裁决，就是 unproven。
+        durable = connection.execute(
+            "SELECT verification FROM runs WHERE session_id=?", (row["session_id"],)
+        ).fetchone()
+        ever_passed = row["verification"] == "passed" or (durable is not None and durable[0] == "passed")
+        unproven = bool(required and verdict == "unknown" and (evidence or ever_passed))
         outcome = (
             "accepted"
             if accepted
