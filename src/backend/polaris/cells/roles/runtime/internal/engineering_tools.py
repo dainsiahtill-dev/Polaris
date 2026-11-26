@@ -575,6 +575,12 @@ class EngineeringTools:
                             "feedback": feedback,
                             "major_findings": findings,
                             "clause_match": match.mode,
+                            # 裁决绑定提交时的候选 revision：QA 帧退化成交替占位时，
+                            # 宿主仍能识别"同一个候选已经有人裁过"，不会用最后一帧的
+                            # 进度汇报覆盖前面的实质裁决（实测 L1-03/05/10 三次）。
+                            "workspace_revision": (
+                                self.revision_provider() if self.revision_provider is not None else None
+                            ),
                             # 宿主补全了哪几条：下一轮 QA 只对这些负责，不用重数全部。
                             "host_completed_clauses": [
                                 {"clause": item.clause, "status": item.status, "evidence": item.evidence}

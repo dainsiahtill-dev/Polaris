@@ -300,9 +300,7 @@ class EngineeringRunService:
         # 而正常在途 run 的 created_at 就在几秒内。没有这个阈值会误杀刚启动的 run
         # （既有的 loop 测试就会因此失败），也会给"workspace lock 按操作获取、
         # 并不覆盖 run 全生命周期"的并发 owner 带来风险。
-        cutoff = time.time() - max(
-            0.0, float(os.environ.get("KERNELONE_ORPHAN_RUN_SWEEP_AGE_SECONDS", "1800"))
-        )
+        cutoff = time.time() - max(0.0, float(os.environ.get("KERNELONE_ORPHAN_RUN_SWEEP_AGE_SECONDS", "1800")))
         orphaned = [
             row
             for row in self.store.list_runs(workspace=self.workspace, limit=20)
@@ -588,6 +586,173 @@ class EngineeringRunService:
         """Resolve committed current identity without claiming fresh acceptance."""
         self._assert_workspace(workspace)
         return self.store.find_current_session_id(workspace=workspace, engine_version=self.engine_version)
+
+    def publish_research(
+        self,
+        session_id: str,
+        *,
+        workspace: Path,
+        experiment: str,
+        files: list[str],
+        verification_seq: int | None = None,
+    ) -> dict[str, Any]:
+        """Issue a portable version of selected files from this owner's actual verified candidate."""
+        from polaris.cells.roles.runtime.internal.engineering_research_exchange import (
+            eligible_path,
+            publication_hash,
+            seal_verified_files,
+            source_paths,
+            validate_descriptor,
+        )
+
+        self._assert_workspace(workspace)
+        selected = source_paths(files)
+        if verification_seq is not None and (type(verification_seq) is not int or verification_seq < 1):
+            raise ValueError("invalid publication verification sequence")
+        if verification_seq is not None:
+            key = publication_hash({"experiment": experiment, "verification_seq": verification_seq, "files": selected})
+            issued_before = self.store.publication_for_selection(session_id, key)
+            if issued_before is not None:
+                seq, digest = issued_before
+                saved = self.research_publication(session_id, digest, workspace=workspace)
+                return {"publication_sha256": digest, "issued_seq": seq, "descriptor": saved}
+        with self.store.acquire_workspace(self.workspace):
+            run = self.observe(session_id, workspace=workspace)
+            research = run.get("research")
+            if (
+                not research
+                or run["status"] != "completed"
+                or run["verification"] != "passed"
+                or run["project_outcome"] != "accepted"
+            ):
+                raise ValueError("publication needs an accepted, currently verified research run")
+            scope = self._revalidated_scope(run)
+            experiment_node = next(
+                (n for n in research["plan"]["experiments"] if n["id"] == experiment and n["lab"] == research["lab"]),
+                None,
+            )
+            if experiment_node is None:
+                raise ValueError("experiment is outside the producing laboratory")
+            events = self.store.load_events(session_id, kinds=("verification_completed",))
+            event = next(
+                (
+                    e
+                    for e in reversed(events)
+                    if e["payload"].get("workspace_revision") == run["workspace_revision"]
+                    and (verification_seq is None or e["seq"] == verification_seq)
+                ),
+                None,
+            )
+            if (
+                event is None
+                or event["payload"].get("verification") != "passed"
+                or not self.store.verification_completion_is_observed(session_id, event["payload"])
+            ):
+                raise ValueError("no observed passed verification for this candidate")
+            binding = event["payload"].get("input_binding") or {}
+            manifest = binding.get("result_manifest")
+            if not isinstance(manifest, dict) or binding.get("workspace_revision") != run["workspace_revision"]:
+                raise ValueError("no verified file manifest for the selected revision")
+            items = seal_verified_files(
+                self.workspace,
+                self.store.control_root,
+                selected,
+                manifest,
+                lambda name: eligible_path(self.workspace, name, scope, write=False),
+            )
+            descriptor = {
+                "schema": "engineering.research-publication.v1",
+                "producer_workspace": str(self.workspace),
+                "run_id": session_id,
+                "project": research["plan"]["project"],
+                "lab": research["lab"],
+                "experiment": experiment,
+                "scope": experiment_node["scope"],
+                "plan_sha256": research["plan_sha256"],
+                "verification_seq": event["seq"],
+                "workspace_revision": run["workspace_revision"],
+                "producer_acceptance_basis": run.get("acceptance_basis"),
+                "depends_on": experiment_node.get("depends_on", []),
+                "files": items,
+            }
+            digest = publication_hash(descriptor)
+            validate_descriptor(descriptor, digest)
+            self._revalidated_scope(run)
+            key = publication_hash({"experiment": experiment, "verification_seq": event["seq"], "files": selected})
+            issued = self.store.record_research_publication(session_id, key, digest, descriptor)
+        return {"publication_sha256": digest, "issued_seq": issued, "descriptor": descriptor}
+
+    def research_publication(self, session_id: str, digest: str, *, workspace: Path) -> dict[str, Any]:
+        from polaris.cells.roles.runtime.internal.engineering_research_exchange import (
+            eligible_path,
+            valid_digest,
+            validate_descriptor,
+        )
+
+        self._assert_workspace(workspace)
+        if not valid_digest(digest):
+            raise ValueError("invalid publication SHA-256")
+        run = self.store.load_run(session_id, workspace=workspace)
+        scope = self._revalidated_scope(run)
+        descriptor = self.store.research_publication(session_id, digest)
+        validate_descriptor(descriptor, digest)
+        if descriptor["producer_workspace"] != str(self.workspace) or descriptor["run_id"] != session_id:
+            raise PermissionError("publication origin mismatch")
+        if not all(eligible_path(self.workspace, f["path"], scope, write=False) for f in descriptor["files"]):
+            raise PermissionError("published files exceed the current host read grants")
+        return descriptor
+
+    def research_publication_file(self, session_id: str, digest: str, index: int, *, workspace: Path) -> bytes:
+        from polaris.cells.roles.runtime.internal.engineering_research_exchange import read_publication_blob
+
+        descriptor = self.research_publication(session_id, digest, workspace=workspace)
+        if type(index) is not int or not 0 <= index < len(descriptor["files"]):
+            raise KeyError("no such publication file")
+        return read_publication_blob(self.store.control_root, descriptor["files"][index])
+
+    def import_research_publication(
+        self,
+        *,
+        workspace: Path,
+        digest: str,
+        descriptor: dict[str, Any],
+        fetch: Callable[[int], bytes],
+        scope: PermissionScope,
+    ) -> dict[str, Any]:
+        from polaris.cells.roles.runtime.internal.engineering_research_exchange import (
+            eligible_path,
+            install_publication,
+        )
+
+        self._assert_workspace(workspace)
+        if descriptor.get("producer_workspace") == str(self.workspace):
+            raise ValueError("research transfer requires two independent workspaces")
+        with self.store.acquire_workspace(self.workspace):
+            return install_publication(
+                self.workspace,
+                digest,
+                descriptor,
+                fetch,
+                lambda name: eligible_path(self.workspace, name, scope, write=True),
+            )
+
+    def research_laboratories(
+        self, project: str, *, workspace: Path, lab: str | None = None, offset: int = 0, limit: int = 50
+    ) -> dict[str, Any]:
+        self._assert_workspace(workspace)
+        from polaris.cells.roles.runtime.internal.engineering_session import query_research_laboratories
+
+        return query_research_laboratories(workspace, project, lab=lab, offset=offset, limit=limit)
+
+    def research_plan(self, session_id: str, *, workspace: Path) -> dict[str, Any]:
+        """Read the immutable plan for the exact run when explicitly requested."""
+        self._assert_workspace(workspace)
+        bound = self.store.load_run(session_id, workspace=workspace).get("research")
+        if bound is None:
+            raise KeyError("run has no research plan")
+        from polaris.cells.roles.runtime.internal.engineering_research_labs import bind_research
+
+        return {"session_id": session_id, "workspace": str(self.workspace), "research": bind_research(bound)}
 
     def request_identity(self, request_key: str, *, workspace: Path) -> dict[str, Any] | None:
         """Read committed request identity only; it carries no current verdict."""
@@ -2212,6 +2377,7 @@ class EngineeringRunService:
             for event in events
             if event["kind"] == "role_started" and event["role"] == "qa" and event["seq"] > review_start_seq
         ]
+        # 主判据保持原语义：只折叠**当前 QA 帧**的报告（冷恢复复用同一裁决）。
         durable_reports = [
             event
             for event in events
@@ -2224,6 +2390,34 @@ class EngineeringRunService:
             and event["payload"].get("ok") is True
             and not event["payload"].get("interrupted")
         ]
+        if durable_reports and interpret_review_reports([e["payload"] for e in durable_reports])[0] == "unknown":
+            # 回退：当前帧退化成占位（unknown）时，若**候选 revision 未变**，
+            # 采信较早帧已经作出的实质裁决。实测 L1-03/05/10：QA 先交
+            # 14 pass + 2 fail，后续帧变成 "Review in progress"，终态只取
+            # 最后一帧 → 整轮 unknown。候选变了就不继承（旧裁决本就不适用）。
+            current_revision = None
+            try:
+                current_revision = (binding or {}).get("workspace_revision")
+            except AttributeError:
+                current_revision = None
+            _history = [
+                event["payload"]
+                for event in events
+                if event["seq"] <= (starts[-1]["seq"] if starts else 0)
+                and event["kind"] == "tool_observed"
+                and event["role"] == "qa"
+                and event["payload"].get("tool") == "report_review"
+                and event["payload"].get("ok") is True
+                and not event["payload"].get("interrupted")
+                and (
+                    current_revision is None
+                    or event["payload"].get("workspace_revision") in {None, current_revision}
+                )
+            ]
+            if _history:
+                _verdict, _feedback, _index = interpret_review_reports(_history)
+                if _verdict != "unknown":
+                    durable_reports = [_history[_index]] if _index is not None else _history[-1:]
         if durable_reports:
             _verdict, feedback, _index = interpret_review_reports([event["payload"] for event in durable_reports])
             result = RoleRunResult(command.session_id, "qa", feedback, "completed", "not_run", ())
@@ -2534,14 +2728,20 @@ class EngineeringRunService:
                 report = build_effect_report(final_run, self.store.load_events(command.session_id))
                 report["role_status"] = result.status
                 report["role_verification"] = result.verification
-                report_root = self.workspace / ".polaris" / "runtime" / "contextos" / "effect-reports"
-                report_root.mkdir(parents=True, exist_ok=True)
-                (report_root / f"{command.session_id}.json").write_text(
-                    json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+                from urllib.parse import quote
+
+                from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+
+                fs = KernelFileSystem(str(self.workspace), get_default_adapter())
+                report_root = ".polaris/runtime/contextos/effect-reports"
+                fs.workspace_mkdir(report_root, parents=True, exist_ok=True)
+                fs.workspace_write_text(
+                    f"{report_root}/{quote(command.session_id, safe='')}.json",
+                    json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
                 )
-            except (KeyError, OSError, ValueError):
-                # Diagnostics only; never change a terminal verdict.
-                pass
+            except (KeyError, OSError, ValueError) as error:
+                logger.warning("Engineering effect report unavailable: %s", type(error).__name__)
             self.store.append_event(
                 command.session_id,
                 kind="run_ended",
@@ -2576,6 +2776,7 @@ class EngineeringRunService:
             Path(row["workspace"]),
             workflow=row["workflow"],
             required_checks=tuple(row["required_checks"]),
+            research=row.get("research"),
         )
 
     @staticmethod
