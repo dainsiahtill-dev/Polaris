@@ -110,6 +110,28 @@ export async function getInstanceLogs(
   );
 }
 
+/**
+ * 工作台是否真的能打开。
+ *
+ * 没有实例前端时，主前端必须跨源访问实例后端 —— dev 的 connect-src 策略会
+ * 拒绝，浏览器里表现为每个请求 403、runtime WebSocket 断连（实测：用
+ * ?instance=...&workspace=... 打开非主实例时全部 403）。CLAUDE.md 要求
+ * "禁止静默回退到默认 backend"，所以这里明确判定，而不是生成一个必失败然后
+ * 静默回退的 URL。
+ */
+export function isLauncherWorkspaceOpenable(instance: PolarisInstance): boolean {
+  if (!instance.workspace) return false;
+  const frontend = instance.public_frontend_url || instance.frontend_url;
+  if (frontend) return true;
+  const backend = instance.public_backend_url || instance.backend_url;
+  if (!backend) return false;
+  try {
+    return new URL(backend).origin === window.location.origin;
+  } catch {
+    return false;
+  }
+}
+
 export function buildInstanceWorkspaceUrl(instance: PolarisInstance): string {
   // A published instance is reachable from another host, so its page is
   // opened on the published address.

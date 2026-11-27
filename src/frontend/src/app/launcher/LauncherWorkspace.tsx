@@ -24,6 +24,7 @@ import {
 } from '@/runtime/transport';
 import {
   buildInstanceWorkspaceUrl,
+  isLauncherWorkspaceOpenable,
   deleteInstance,
   getInstanceLogs,
   listInstances,
@@ -526,13 +527,16 @@ function LauncherInstanceWorkspace({ onOpenFoundation }: { onOpenFoundation: () 
               const isRestarting = actionId === restartingActionId;
               const isDeleting = actionId === deletingActionId;
               const canStop = isLauncherInstanceStoppable(instance);
-              const openable = isLauncherBackendOpenable(instance);
+              const openable =
+                isLauncherBackendOpenable(instance) && isLauncherWorkspaceOpenable(instance);
               const openLabel = openable ? '打开' : instance.status === 'stopped' ? '已停止' : '等待后端';
               const openTitle = openable
                 ? '打开该实例工作台'
                 : instance.status === 'stopped'
                   ? '实例已停止，不能打开工作台'
-                  : '后端或前端尚未就绪';
+                  : !isLauncherWorkspaceOpenable(instance)
+                    ? '该实例没有自己的前端，且其后端与当前页面不同源（浏览器会拒绝跨源请求）。请为实例配置前端或使用其实例页面。'
+                    : '后端或前端尚未就绪';
               const stopDisabled = Boolean(actionId) || isCurrentControl || !canStop;
               const stopTitle = isCurrentControl
                 ? '当前控制后端不能自我停止'
