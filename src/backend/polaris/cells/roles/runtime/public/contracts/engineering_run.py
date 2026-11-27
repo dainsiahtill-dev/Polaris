@@ -20,6 +20,9 @@ class RoleRunCommand:
     workflow: Literal["direct", "collaborative"] = "direct"
     required_checks: tuple[str, ...] = ()
     research: dict[str, Any] | None = None
+    # collaborative 的 PM/CE 建议。走 supplemental 通道（最后一条 user turn），
+    # 不拼进 instruction：instruction 是首条 user，会被 prompt_budget 永久 pin。
+    advice: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

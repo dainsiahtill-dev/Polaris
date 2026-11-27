@@ -1513,6 +1513,13 @@ async def run_engineering_loop(
             repeated_reads = _repeated_read_paths(journal_events)
             stalled = director_frame and stall_streak >= 3
             director_guidance: list[str] = []
+            # collaborative 建议：作为 supplemental 尾消息注入（可折叠/受预算/可省略），
+            # 不拼进 instruction。实测拼进 instruction 会让 22-27k 字符的建议
+            # 永久 pin 在首条 user 上（prompt_budget 保留 goal），每轮都付。
+            for item in command.advice or ():
+                advice_text = str(item).strip()
+                if advice_text:
+                    director_guidance.append(advice_text)
             pending_guidance_events: list[tuple[str, str, dict[str, Any]]] = []
             idle_capabilities: list[str] = []
             next_injection_fingerprint = last_injection_fingerprint

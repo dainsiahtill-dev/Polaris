@@ -1705,14 +1705,21 @@ class EngineeringRunService:
                 },
             },
         )
+        # 建议走 advice 通道（supplemental 尾消息），不拼进 instruction：
+        # instruction 是首条 user，会被永久 pin；supplemental 受预算、可折叠、
+        # 超预算时省略而不丢已写事实。角色标签保留，CE 修正优先规则在 _COMMON。
+        director_advice = tuple(
+            f"{label} (ordinary guidance):\n{advice[role]}"
+            for role, label in (("pm", "PM advice"), ("chief_engineer", "Chief Engineer advice"))
+            if advice.get(role)
+        )
         return await self.run_role(
             replace(
                 command,
                 role="director",
-                instruction=collaborative_instruction(
-                    instruction, pm_advice=advice["pm"], ce_advice=advice["chief_engineer"]
-                ),
+                instruction=collaborative_instruction(instruction),
                 workflow="direct",
+                advice=director_advice,
             ),
             scope=scope,
             limits=limits,

@@ -259,14 +259,16 @@ async def test_collaborative_role_assignments_reach_final_provider_requests(
         "\n\nHost runtime budget observation (request preparation): "
     )
     assert budget_separator
-    assert director_instruction == (
-        "Original user goal:\n"
-        + original
-        + "\n\nPM advice (ordinary guidance):\n"
-        + pm_advice
-        + "\n\nChief Engineer advice (ordinary guidance):\n"
-        + ce_advice
-    )
+    # 建议不再拼进首条 user —— 首条 user 会被 prompt_budget 永久保留
+    # （"a working set without the original request would be a conversation
+    # about nothing"），22-27k 字符的建议会永久 pin 并在每轮重复计费。
+    # 现在走 supplemental 尾消息：受预算约束、可折叠、超预算时省略而不丢事实。
+    assert director_instruction == "Original user goal:\n" + original
+    director_users = [
+        message["content"] for message in captured_bodies[2]["messages"] if message["role"] == "user"
+    ]
+    assert "PM advice (ordinary guidance):\n" + pm_advice in director_users[-1]
+    assert "Chief Engineer advice (ordinary guidance):\n" + ce_advice in director_users[-1]
     assert [_names(body) for body in bodies] == ([_READ, _READ, _ALL] if host_tools else [set(), set(), set()])
     if host_tools:
         expected_choice: Any = {"type": "auto"} if protocol == "anthropic" else "auto"
