@@ -1708,6 +1708,53 @@ class EngineeringRunService:
         # 建议走 advice 通道（supplemental 尾消息），不拼进 instruction：
         # instruction 是首条 user，会被永久 pin；supplemental 受预算、可折叠、
         # 超预算时省略而不丢已写事实。角色标签保留，CE 修正优先规则在 _COMMON。
+        # AGI 选工具：一次轻量选择轮（可配置，默认关）。宿主代问，避免把全部
+        # MCP 工具塞给 LLM —— 目录里有什么、任务要什么，由 AGI 说。
+        selected_categories: tuple[str, ...] = ()
+        if os.environ.get("KERNELONE_MCP_AGI_SELECT", "0").strip().lower() in {"1", "true", "on"}:
+            try:
+                from polaris.infrastructure.mcp.catalog import McpToolCatalog
+                from polaris.infrastructure.mcp.client import load_server_configs
+                from polaris.infrastructure.mcp.selector import (
+                    SELECT_SYSTEM,
+                    select_categories,
+                )
+
+                catalog = McpToolCatalog.from_configs(load_server_configs()).refresh()
+                categories = ", ".join(sorted({entry.category for entry in catalog.entries.values()}))
+                answer = await _client.invoke(
+                    AIRequest(
+                        TaskType.DIALOGUE,
+                        "director",
+                        input=(
+                            SELECT_SYSTEM
+                            + "\n\nTask:\n"
+                            + str(instruction)[:4000]
+                            + "\n\nAvailable categories: "
+                            + categories
+                            + "\n\nWhich categories does this task need? JSON array only."
+                        ),
+                        options={"max_tokens": 128, "temperature": 0},
+                    )
+                )
+                answer_text = answer.output if isinstance(answer.output, str) else ""
+                _schemas, evidence = select_categories(
+                    catalog, task_text=str(instruction), agi_answer=answer_text
+                )
+                selected_categories = tuple(evidence.get("chosen_categories") or ())
+                self.store.append_event(
+                    session_id,
+                    kind="mcp_categories_selected",
+                    role="director",
+                    payload={
+                        "turn_seq": 0,
+                        "source": evidence.get("source") or "fallback",
+                        "chosen_categories": list(selected_categories),
+                        "catalog_size": len(catalog.entries),
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001 - 选择失败退回确定性规则
+                logger.warning("AGI MCP category selection failed: %s", exc)
         director_advice = tuple(
             f"{label} (ordinary guidance):\n{advice[role]}"
             for role, label in (("pm", "PM advice"), ("chief_engineer", "Chief Engineer advice"))
@@ -1720,6 +1767,7 @@ class EngineeringRunService:
                 instruction=collaborative_instruction(instruction),
                 workflow="direct",
                 advice=director_advice,
+                mcp_categories=selected_categories,
             ),
             scope=scope,
             limits=limits,

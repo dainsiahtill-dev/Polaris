@@ -23,6 +23,8 @@ class RoleRunCommand:
     # collaborative 的 PM/CE 建议。走 supplemental 通道（最后一条 user turn），
     # 不拼进 instruction：instruction 是首条 user，会被 prompt_budget 永久 pin。
     advice: tuple[str, ...] = ()
+    # AGI 选中的 MCP 工具类别（由宿主代问一次轻量选择轮得到，缺省退回确定性规则）。
+    mcp_categories: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

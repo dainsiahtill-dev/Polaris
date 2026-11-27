@@ -934,7 +934,11 @@ async def run_engineering_loop(
     # MCP：目录 + 按任务选择。只有选中的工具进请求；未选中的不进（省 token、不稀释注意力）。
     from polaris.infrastructure.mcp.engineering_bridge import engineering_mcp_kwargs
 
-    _mcp_kwargs = engineering_mcp_kwargs(task_text=str(command.instruction or ""))
+    # AGI 选中的类别优先；缺省时 engineering_bridge 用确定性关键词规则。
+    _mcp_kwargs = engineering_mcp_kwargs(
+        task_text=str(command.instruction or ""),
+        extra_categories=command.mcp_categories,
+    )
     tools = EngineeringTools(
         command.workspace,
         scope,
