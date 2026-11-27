@@ -857,3 +857,38 @@ async def test_local_collaboration_join_keeps_admitted_owner_without_cold_policy
         "chief_engineer",
         "director",
     ]
+
+
+async def test_collaborative_records_planning_cost(
+    isolated_workspace: Path,
+    scripted_provider: ScriptedProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """规划成本必须可观测：实测占墙钟 8.8%/22.3%，此前 run 投影完全看不到。"""
+
+    monkeypatch.setenv("KERNELONE_COLLAB_ADVICE_MAX_CHARS", "64")
+    long_advice = "x" * 200
+    for text in (long_advice, long_advice, "Director reply."):
+        scripted_provider.enqueue_json(_native(text=text))
+    service = EngineeringRunService(
+        isolated_workspace,
+        client=scripted_provider.client("openai", isolated_workspace, monkeypatch),
+        permission_resolver=lambda _row: _scope(isolated_workspace),
+    )
+    command = RoleRunCommand("plan-cost", "director", "原始目标", isolated_workspace, workflow="collaborative")
+    service.store.create_run(
+        command,
+        scope=_scope(isolated_workspace),
+        limits=_limits(),
+        engine_version="engineering_v2",
+        request_key=None,
+    )
+    result = await service.run_collaborative("原始目标", session_id=command.session_id)
+    assert result.status == "completed", result.text
+    events = service.store.load_events(command.session_id)
+    cost = [event for event in events if event["kind"] == "collaborative_planning_cost"]
+    assert cost, "缺少 collaborative_planning_cost 事件"
+    assert set(cost[0]["payload"]["advice_bytes"]) == {"pm", "chief_engineer"}
+    assert cost[0]["payload"]["elapsed_s"] >= 0
+    truncated = [event for event in events if event["kind"] == "collaborative_advice_truncated"]
+    assert {event["role"] for event in truncated} == {"pm", "chief_engineer"}

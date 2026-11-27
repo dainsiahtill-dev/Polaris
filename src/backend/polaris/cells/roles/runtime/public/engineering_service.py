@@ -1660,6 +1660,14 @@ class EngineeringRunService:
         }
         advice: dict[str, str] = {}
         planning_started = time.monotonic()
+        # 规划预算硬顶：PM/CE 是纯咨询，不能吃掉 Director 实现与 QA 验收的时间。
+        # 实测 L3-21 collaborative：规划占 22.3% 墙钟，Director 55%，QA 只剩 574s
+        # 被慢 provider 吃光 → budget_starved_by_provider 中断，拿不到 QA 裁决。
+        # 做法是给咨询层一个收窄的 deadline（不改蓝图"不增加重试/超时"：这是上限不是重试）。
+        plan_budget_s = float(os.environ.get("KERNELONE_COLLAB_PLAN_BUDGET_S", "600"))
+        plan_limits = limits
+        if limits.deadline is not None:
+            plan_limits = replace(limits, deadline=min(limits.deadline, time.time() + plan_budget_s))
         for role in ("pm", "chief_engineer"):
             saved = finished.get(role)
             if saved is not None and saved.get("status") == "completed":
@@ -1676,7 +1684,7 @@ class EngineeringRunService:
                     required_checks=(),
                 ),
                 scope=scope,
-                limits=limits,
+                limits=plan_limits,
                 cancel=cancel,
             )
             if result.status != "completed":
