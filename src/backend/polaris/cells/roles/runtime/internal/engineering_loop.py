@@ -935,7 +935,6 @@ async def run_engineering_loop(
     from polaris.infrastructure.mcp.engineering_bridge import engineering_mcp_kwargs
 
     _mcp_kwargs = engineering_mcp_kwargs(task_text=str(command.instruction or ""))
-
     tools = EngineeringTools(
         command.workspace,
         scope,
