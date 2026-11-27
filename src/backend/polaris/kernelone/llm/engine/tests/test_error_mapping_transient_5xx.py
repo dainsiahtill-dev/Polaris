@@ -50,3 +50,20 @@ def test_transient_5xx_and_overload_are_retryable(message: str) -> None:
 def test_no_false_positive_5xx_classification(message: str, expected: str) -> None:
     category, _retryable, _hint = map_error_to_category(RuntimeError(message))
     assert category.name == expected, f"{message} -> {category.name}"
+
+
+def test_service_unavailable_is_not_retried() -> None:
+    """既有安全契约：5xx 不重试。
+
+    我一度把 SERVICE_UNAVAILABLE 加进可重试并给了更高预算，破坏了这条契约 ——
+    5xx 重试对非幂等操作不安全。回退。529 抖动的正确解法是 provider 轮换/看护，
+    不是盲目重试（见 provider 延迟看护，它检测持续慢并如实归因）。
+    """
+
+    from polaris.kernelone.errors import ErrorCategory
+    from polaris.kernelone.llm.engine.resilience import RetryConfig
+
+    config = RetryConfig.from_options({})
+    assert ErrorCategory.SERVICE_UNAVAILABLE not in config.retryable_errors
+    assert not hasattr(config, "max_attempts_5xx")
+

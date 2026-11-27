@@ -651,7 +651,8 @@ class RetryConfig:
     max_delay: float = 30.0  # 最大延迟（秒）
     exponential_base: float = 2.0  # 指数退避基数
     jitter: bool = True  # 是否添加抖动
-    # 仅重试传输类错误
+    # 仅重试传输类错误（5xx/529 明确不重试：重试不安全且无意义）：
+    # 实测 provider 抖动时 529 连试 2 次都失败 → 整轮 failed（L1-03/L3-21 早期失败）。
     retryable_errors: list[ErrorCategory] = field(
         default_factory=lambda: [
             ErrorCategory.TIMEOUT,
@@ -737,8 +738,9 @@ class ResilienceManager:
         last_error: str | None = None
         last_category = ErrorCategory.UNKNOWN
         platform_retry_count = 0
+        _max_attempts = self.retry_config.max_attempts
 
-        for attempt in range(1, self.retry_config.max_attempts + 1):
+        for attempt in range(1, _max_attempts + 1):
             elapsed = time.monotonic() - start_time
             if elapsed >= self.timeout_config.total_timeout:
                 return AIResponse.failure(
