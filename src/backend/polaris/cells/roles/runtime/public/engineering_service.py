@@ -1705,22 +1705,6 @@ class EngineeringRunService:
                 },
             },
         )
-        # 建议长度上限：实测 PM+CE 全文 27k 字符，占 Director 首条消息 86%，
-        # 每轮永久 pin、host 压缩也不驱逐。超长按角色截断并留痕，全文仍在 role_finished。
-        max_chars = int(os.environ.get("KERNELONE_COLLAB_ADVICE_MAX_CHARS", "12000"))
-        for role in ("pm", "chief_engineer"):
-            text = str(advice[role])
-            if len(text) > max_chars:
-                self.store.append_event(
-                    session_id,
-                    kind="collaborative_advice_truncated",
-                    role=role,
-                    payload={"original_chars": len(text), "kept_chars": max_chars},
-                )
-                advice[role] = (
-                    text[:max_chars]
-                    + f"\n\n[建议已截断：仅注入前 {max_chars} 字符，全文见该角色的 role_finished 事件]"
-                )
         return await self.run_role(
             replace(
                 command,

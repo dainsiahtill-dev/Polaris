@@ -866,9 +866,7 @@ async def test_collaborative_records_planning_cost(
 ) -> None:
     """规划成本必须可观测：实测占墙钟 8.8%/22.3%，此前 run 投影完全看不到。"""
 
-    monkeypatch.setenv("KERNELONE_COLLAB_ADVICE_MAX_CHARS", "64")
-    long_advice = "x" * 200
-    for text in (long_advice, long_advice, "Director reply."):
+    for text in ("PM advice body.", "CE advice body.", "Director reply."):
         scripted_provider.enqueue_json(_native(text=text))
     service = EngineeringRunService(
         isolated_workspace,
@@ -890,5 +888,3 @@ async def test_collaborative_records_planning_cost(
     assert cost, "缺少 collaborative_planning_cost 事件"
     assert set(cost[0]["payload"]["advice_bytes"]) == {"pm", "chief_engineer"}
     assert cost[0]["payload"]["elapsed_s"] >= 0
-    truncated = [event for event in events if event["kind"] == "collaborative_advice_truncated"]
-    assert {event["role"] for event in truncated} == {"pm", "chief_engineer"}
