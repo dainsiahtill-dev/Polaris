@@ -939,7 +939,9 @@ class EngineeringRunService:
             limits=limits,
             request_key=request_key,
             cancel=asyncio.Event(),
-            collaborative=True,
+            # collaborative 由 workflow 派生：真门是 command.workflow，
+            # 硬编码 True 会让 direct 也"允许"协作，参数语义分裂。
+            collaborative=command.workflow == "collaborative",
             permission_profile_id=permission_profile_id,
         )
 
@@ -1657,6 +1659,7 @@ class EngineeringRunService:
             if event["kind"] == "role_finished" and event["payload"].get("frame_seq") in workflow_frames
         }
         advice: dict[str, str] = {}
+        planning_started = time.monotonic()
         for role in ("pm", "chief_engineer"):
             saved = finished.get(role)
             if saved is not None and saved.get("status") == "completed":
@@ -1679,6 +1682,42 @@ class EngineeringRunService:
             if result.status != "completed":
                 return result
             advice[role] = result.text
+            if not str(result.text or "").strip():
+                # 空建议不该静默等于 direct：显式降级标记。
+                self.store.append_event(
+                    session_id,
+                    kind="collaborative_advice_degraded",
+                    role=role,
+                    payload={"reason": "empty_advice"},
+                )
+        # 规划成本必须可观测：实测占 8.8%/22.3% 墙钟，此前 run 投影完全看不到。
+        self.store.append_event(
+            session_id,
+            kind="collaborative_planning_cost",
+            role="director",
+            payload={
+                "elapsed_s": round(time.monotonic() - planning_started, 1),
+                "advice_bytes": {
+                    role: len(str(text).encode("utf-8")) for role, text in advice.items()
+                },
+            },
+        )
+        # 建议长度上限：实测 PM+CE 全文 27k 字符，占 Director 首条消息 86%，
+        # 每轮永久 pin、host 压缩也不驱逐。超长按角色截断并留痕，全文仍在 role_finished。
+        max_chars = int(os.environ.get("KERNELONE_COLLAB_ADVICE_MAX_CHARS", "12000"))
+        for role in ("pm", "chief_engineer"):
+            text = str(advice[role])
+            if len(text) > max_chars:
+                self.store.append_event(
+                    session_id,
+                    kind="collaborative_advice_truncated",
+                    role=role,
+                    payload={"original_chars": len(text), "kept_chars": max_chars},
+                )
+                advice[role] = (
+                    text[:max_chars]
+                    + f"\n\n[建议已截断：仅注入前 {max_chars} 字符，全文见该角色的 role_finished 事件]"
+                )
         return await self.run_role(
             replace(
                 command,
@@ -2653,7 +2692,11 @@ class EngineeringRunService:
                             role="director",
                             feedback="Current workspace or verification inputs changed after a saved QA attempt. Continue the same goal from committed observations, inspect current files, and revalidate; old QA reports do not apply.",
                         )
-                if resume_review:
+                if collaborative and command.workflow == "collaborative":
+                    # 必须先于 resume_review：否则带 pending QA 的 collaborative run
+                    # 恢复时会直接返回 saved，PM/CE 协作被静默跳过（违背 once 契约）。
+                    result = await self.run_collaborative(command.instruction, session_id=command.session_id)
+                elif resume_review:
                     result = RoleRunResult(
                         command.session_id,
                         "director",
@@ -2662,8 +2705,6 @@ class EngineeringRunService:
                         saved["verification"],
                         tuple(ToolObservation(**check) for check in saved["checks"]),
                     )
-                elif collaborative and command.workflow == "collaborative":
-                    result = await self.run_collaborative(command.instruction, session_id=command.session_id)
                 else:
                     result = await self.run_role(command, scope=scope, limits=limits, cancel=cancel)
                 result = await self._verify_director(command, result, scope=scope, limits=limits, cancel=cancel)
