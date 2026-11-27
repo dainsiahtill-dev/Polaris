@@ -264,6 +264,7 @@ class EngineeringRunService:
         )
         self._require_qa = require_qa
         self._tasks: dict[str, asyncio.Task[RoleRunResult]] = {}
+        self._watchdogs: dict[str, asyncio.Task[None]] = {}
         self._cancellations: dict[str, asyncio.Event] = {}
         self._retained_locks: dict[str, AbstractContextManager[None]] = {}
         self._shutdown_error: BaseException | None = None
@@ -1023,6 +1024,10 @@ class EngineeringRunService:
             self._tasks[session_id] = asyncio.create_task(
                 self._drive(command, scope=scope, limits=limits, cancel=cancel, lock=lock, collaborative=collaborative),
                 name=f"engineering:{session_id}",
+            )
+            self._watchdogs[session_id] = asyncio.create_task(
+                self._watch_run_liveness(session_id),
+                name=f"engineering-watchdog:{session_id}",
             )
         except BaseException:
             self._cancellations.pop(session_id, None)
@@ -2600,6 +2605,55 @@ class EngineeringRunService:
         )
         return verdict, feedback
 
+
+
+    async def _watch_run_liveness(self, session_id: str) -> None:
+        """卡死看门狗：运行期长时间无新事件就 fail-closed。
+
+        实测真实项目：workspace 在 drvfs（WSL2 9p）上，9p RPC 无超时，
+        一个线程卡在 p9_client_rpc（D 状态）就能让整个 run 永久挂起 ——
+        run 显示 running/pm running，但事件与日志都不再增长。
+        没有看门狗时只能靠人发现（本次即用户报告"卡死了"）。
+
+        判据：run 仍在 running 且 **stall_timeout 秒内没有任何新事件**。
+        触发后走既有的 cancel 路径（保留已提交观察，标记 interrupted/unknown），
+        不静默重试、不假装还在工作。
+        """
+
+        timeout_s = float(os.environ.get("KERNELONE_RUN_STALL_TIMEOUT_S", "900"))
+        poll_s = 30.0
+        while True:
+            await asyncio.sleep(poll_s)
+            task = self._tasks.get(session_id)
+            if task is None or task.done():
+                return
+            row = self.store.load_run(session_id, workspace=self.workspace)
+            if row["status"] != "running":
+                return
+            try:
+                events = self.store.load_events(session_id)
+            except Exception:  # noqa: BLE001 - 看门狗不因读取失败退出
+                continue
+            if not events:
+                continue
+            latest = max(float(event["created_at"]) for event in events)
+            idle = time.time() - latest
+            if idle < timeout_s:
+                continue
+            logger.warning(
+                "engineering run %s 卡死：%.0fs 无新事件，fail-closed（疑似 IO 阻塞）",
+                session_id,
+                idle,
+            )
+            self.store.append_event(
+                session_id,
+                kind="run_stalled",
+                role=row.get("role") or "director",
+                payload={"idle_seconds": round(idle, 1), "timeout_seconds": timeout_s},
+            )
+            await self.cancel(session_id, workspace=self.workspace)
+            return
+
     def _revalidated_scope(self, row: dict[str, Any]) -> PermissionScope:
         """Re-admit saved grants against current host policy; never infer authority."""
         if self._permission_resolver is None:
@@ -2851,6 +2905,9 @@ class EngineeringRunService:
             if release_allowed:
                 lock.__exit__(None, None, None)
             self._tasks.pop(command.session_id, None)
+            watchdog = self._watchdogs.pop(command.session_id, None)
+            if watchdog is not None:
+                watchdog.cancel()
             self._cancellations.pop(command.session_id, None)
 
     @staticmethod
