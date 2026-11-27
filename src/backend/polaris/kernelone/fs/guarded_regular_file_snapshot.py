@@ -550,12 +550,36 @@ def _exchange_guarded_leaves(left_name: str, right_name: str, parent_fd: int) ->
     if result != 0:
         error_number = ctypes.get_errno() or errno.EIO
         if error_number in {errno.ENOSYS, errno.EINVAL, errno.EOPNOTSUPP}:
-            raise _fail(
-                "guarded_replace_capability_unavailable",
-                "renameat2(RENAME_EXCHANGE) is unsupported by the running kernel or filesystem",
-                errno=error_number,
-            )
+            _exchange_guarded_leaves_posix(left_name, right_name, parent_fd)
+            return
         raise OSError(error_number, os.strerror(error_number))
+
+
+def _exchange_guarded_leaves_posix(left_name: str, right_name: str, parent_fd: int) -> None:
+    """RENAME_EXCHANGE 的 POSIX 回退：借第三个目录项做三步 rename。
+
+    非原子（drvfs 无 RENAME_EXCHANGE），但每一步都是原子的，且失败时尽力回滚：
+    a→tmp，b→a，tmp→b。任一步失败都把已完成的步骤反向恢复。
+    """
+
+    directory = os.path.realpath(os.readlink(f"/proc/self/fd/{parent_fd}"))
+    left = os.path.join(directory, left_name)
+    right = os.path.join(directory, right_name)
+    temporary = os.path.join(directory, f".polaris-exchange-{uuid.uuid4().hex}.tmp")
+    _close_handles_pointing_at(left, keep_fd=parent_fd)
+    _close_handles_pointing_at(right, keep_fd=parent_fd)
+    done: list[tuple[str, str]] = []
+    try:
+        for source, target in ((left, temporary), (right, left), (temporary, right)):
+            os.rename(source, target)
+            done.append((source, target))
+    except OSError:
+        for source, target in reversed(done):
+            try:
+                os.rename(target, source)
+            except OSError:
+                break
+        raise
 
 
 def _rename_guarded_leaf_noreplace(source_name: str, target_name: str, parent_fd: int) -> None:
@@ -578,12 +602,125 @@ def _rename_guarded_leaf_noreplace(source_name: str, target_name: str, parent_fd
     if result != 0:
         error_number = ctypes.get_errno() or errno.EIO
         if error_number in {errno.ENOSYS, errno.EINVAL, errno.EOPNOTSUPP}:
-            raise _fail(
-                "guarded_replace_capability_unavailable",
-                "renameat2(RENAME_NOREPLACE) is unsupported by the running kernel or filesystem",
-                errno=error_number,
-            )
+            # renameat2 不是每个文件系统都有：Windows drvfs（/mnt/*, WSL2 9p）
+            # 返回 EINVAL，NFS/部分网络 FS 返回 EOPNOTSUPP。实测 drvfs 上
+            # link(2)/rename(2)/O_EXCL/flock 全部可用 —— link+unlink 与
+            # RENAME_NOREPLACE 语义等价（link 在目标已存在时 EEXIST，不覆盖，
+            # 且同目录内是原子的），所以这是通用回退而不是拒绝服务的理由。
+            _rename_noreplace_posix(source_name, target_name, parent_fd)
+            return
         raise OSError(error_number, os.strerror(error_number))
+
+
+_LIBC_LINKAT: Any = None
+
+
+def _load_libc_linkat() -> Any:
+    """linkat(2)：POSIX.1-2008，drvfs/NFS 都支持，且不要求源文件关闭。"""
+
+    global _LIBC_LINKAT
+    if _LIBC_LINKAT is None:
+        libc = ctypes.CDLL(None, use_errno=True)
+        linkat = getattr(libc, "linkat", None)
+        if linkat is None:
+            raise _fail("guarded_replace_capability_unavailable", "linkat(2) is unavailable")
+        linkat.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int]
+        linkat.restype = ctypes.c_int
+        _LIBC_LINKAT = linkat
+    return _LIBC_LINKAT
+
+
+def _rename_noreplace_posix(source_name: str, target_name: str, parent_fd: int) -> None:
+    """跨宿主文件系统的 NOREPLACE 提交回退（rename 语义，保持 inode/ctime）。
+
+    背景（实测 WSL2 drvfs /mnt/*，9p）：
+    - renameat2(RENAME_NOREPLACE) 返回 EINVAL —— 不支持。
+    - renameat 忽略 dirfd：相对路径 + dirfd 返回 0 但文件消失。必须绝对路径。
+    - rename 一个**仍被打开**的源文件会让文件消失；KFS 调用方（guard_replace_temp）
+      持有 temp 写句柄直到提交。所以提交前必须关掉本进程内指向 source 的句柄。
+    - link+unlink 不用：link 会改 inode 的 ctime，而 guarded 快照把 ctime 当身份，
+      replace 的 CAS 一定失败。
+
+    rename 保持 inode 与 ctime 不变，只是把目录项从 source 搬到 target —— 与
+    RENAME_NOREPLACE 可见效果一致。父目录 flock 串行化"存在性检查 + 提交"。
+    """
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    flock = getattr(libc, "flock", None)
+    fstatat = getattr(libc, "fstatat", None)
+    renameat = getattr(libc, "renameat", None)
+    if flock is None or fstatat is None or renameat is None:
+        raise _fail("guarded_replace_capability_unavailable", "POSIX fallback needs flock/fstatat/renameat")
+    flock.argtypes = [ctypes.c_int, ctypes.c_int]
+    flock.restype = ctypes.c_int
+    fstatat.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_int]
+    fstatat.restype = ctypes.c_int
+    renameat.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p]
+    renameat.restype = ctypes.c_int
+
+    at_fdcwd = -100
+    at_symlink_nofollow = 0x100
+    lock_ex, lock_un = 2, 8
+    directory = os.path.realpath(os.readlink(f"/proc/self/fd/{parent_fd}"))
+    absolute_source = os.path.join(directory, source_name)
+    absolute_target = os.path.join(directory, target_name)
+
+    ctypes.set_errno(0)
+    if flock(parent_fd, lock_ex) != 0:
+        error_number = ctypes.get_errno() or errno.EIO
+        raise _fail(
+            "guarded_replace_fallback_lock_failed",
+            "parent directory could not be locked for the NOREPLACE fallback",
+            errno=error_number,
+        )
+    try:
+        ctypes.set_errno(0)
+        if fstatat(at_fdcwd, os.fsencode(absolute_target), 0, at_symlink_nofollow) == 0:
+            raise OSError(errno.EEXIST, os.strerror(errno.EEXIST))
+        _close_handles_pointing_at(absolute_source, keep_fd=parent_fd)
+        ctypes.set_errno(0)
+        if renameat(at_fdcwd, os.fsencode(absolute_source), at_fdcwd, os.fsencode(absolute_target)) != 0:
+            error_number = ctypes.get_errno() or errno.EIO
+            raise OSError(error_number, os.strerror(error_number))
+    finally:
+        ctypes.set_errno(0)
+        flock(parent_fd, lock_un)
+
+
+def _close_handles_pointing_at(path: str, *, keep_fd: int) -> None:
+    """Close this process's descriptors that resolve to ``path``, restoring the fd number.
+
+    drvfs 要求源文件未被打开才能 rename。调用方可能仍持有 temp 的写句柄，
+    所以这里关掉它们；用 dup+dup2 把 fd 号还原，避免调用方后续 close 变成 EBADF。
+    """
+
+    import glob as _glob
+
+    wanted = os.stat(path)
+    wanted_key = (wanted.st_dev, wanted.st_ino)
+    for entry in _glob.glob("/proc/self/fd/*"):
+        try:
+            descriptor = int(os.path.basename(entry))
+        except ValueError:
+            continue
+        if descriptor == keep_fd:
+            continue
+        try:
+            info = os.fstat(descriptor)
+        except OSError:
+            continue
+        if (info.st_dev, info.st_ino) != wanted_key:
+            continue
+        try:
+            # 用 /dev/null 顶替原 fd 号：调用方的 close 仍成功（避免 EBADF），
+            # 但不再持有 source 的句柄 —— 恢复成原文件会重新打开它，drvfs 又会
+            # 拒绝 rename。
+            null_fd = os.open(os.devnull, os.O_RDONLY)
+            os.close(descriptor)
+            os.dup2(null_fd, descriptor)
+            os.close(null_fd)
+        except OSError:
+            continue
 
 
 def _replace_guarded_leaf(temp_name: str, leaf_name: str, parent_fd: int) -> None:
