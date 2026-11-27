@@ -7,6 +7,7 @@ import contextlib
 import hashlib
 import http.client
 import json
+import logging
 import os
 import re
 import time
@@ -39,6 +40,8 @@ from polaris.kernelone.llm.engine.contracts import AIRequest, AIResponse, TaskTy
 from polaris.kernelone.llm.engine.invocation_budget import invoke_with_budget
 from polaris.kernelone.llm.toolkit.parsers.core import parse_tool_calls
 from polaris.kernelone.process.process_tree import ProcessTreeDrainError
+
+logger = logging.getLogger(__name__)
 
 # Only a provider that did not answer at all is recoverable by the same
 # role. An explicit upstream error, such as a rate limit or a server error,
@@ -264,7 +267,13 @@ def _native_calls(response: AIResponse) -> list[ToolCall]:
     if not isinstance(calls, list):
         raise ValueError("native tool_calls must be a list")
     if terminal in {"tool_calls", "tool_use"} and not calls:
-        raise ValueError("native provider announced tools without complete calls")
+        # 容错并提醒，不整轮作废：provider 宣告了工具轮却没产出完整调用
+        # （实测 MiniMax-M3.1-Flash 偶发，曾让 L1-03 在 2 轮、L3-21 在 14 轮
+        # 直接 failed）。当作无调用的普通轮，由循环的停滞检测/重问处理。
+        logger.warning(
+            "native provider announced a tool turn without complete calls; treating as a plain turn"
+        )
+        terminal = "stop"
     if calls and terminal not in {"tool_calls", "tool_use", "stop", "end_turn", "length", "max_tokens"}:
         raise ValueError(f"native tool turn is incomplete: {terminal}")
     identities: set[str] = set()

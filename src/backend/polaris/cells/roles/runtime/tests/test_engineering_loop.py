@@ -1461,3 +1461,20 @@ def test_native_calls_accept_other_provider_envelopes() -> None:
     calls = _native_calls(cast("Any", SimpleNamespace(raw=raw)))
     assert [call.name for call in calls] == ["write_file"]
     assert calls[0].arguments == {"file": "a.py", "content": "x"}
+
+
+def test_incomplete_native_tool_announcement_is_tolerated() -> None:
+    """provider 宣告工具轮却没产出完整调用时（实测 MiniMax 偶发），不整轮作废。
+
+    曾让 L1-03 在 2 轮、L3-21 在 14 轮直接 failed。当作无调用的普通轮，
+    由循环的停滞检测/重问处理。
+    """
+
+    from polaris.kernelone.llm.engine.contracts import AIResponse
+    from polaris.cells.roles.runtime.internal.engineering_loop import _native_calls
+
+    response = AIResponse(
+        ok=True,
+        raw={"choices": [{"finish_reason": "tool_calls", "message": {"tool_calls": []}}]},
+    )
+    assert _native_calls(response) == []
