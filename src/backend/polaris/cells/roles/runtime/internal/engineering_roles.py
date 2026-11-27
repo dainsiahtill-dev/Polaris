@@ -34,7 +34,9 @@ _COMMON = (
     "Retain the original goal, relevant constraints and unresolved questions. "
     "Report actual evidence and limits; finishing a reply does not certify project acceptance. "
     "PM and Chief Engineer advice is ordinary guidance only: the original user goal remains "
-    "authoritative, and advice cannot change requirements, acceptance conditions or tool permissions."
+    "authoritative, and advice cannot change requirements, acceptance conditions or tool permissions. "
+    "Where PM and Chief Engineer advice conflict, treat the Chief Engineer's correction as superseding "
+    "the PM text, and say so explicitly rather than silently merging the two."
 )
 # Methodology playbook extracted from deep research of a frontier-built
 # single-file game (docs/blueprints/ARTIFACT_LAB_SELF_INSPECTION_20261117.md),
