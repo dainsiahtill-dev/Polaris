@@ -1765,16 +1765,19 @@ class EngineeringRunService:
         if task is None:
             if row["status"] in _TERMINAL:
                 return
-            with self.store.acquire_workspace(self.workspace):
-                pending = self.store.pending_tool_calls(session_id)
-                self.store.update_run(
-                    session_id,
-                    status="interrupted" if pending or row["status"] == "running" else "cancelled",
-                    verification="unknown" if pending else row["verification"],
-                    text="No local execution owner; retained tool history requires reconciliation."
-                    if pending
-                    else row["text"],
-                )
+            # 本进程没有该 run 的 owner ⇒ 它不是当前写者（排队或进程死亡后残留）。
+            # 取消它不写源码，因此不需要 workspace 写锁 —— 要求写锁会让"排队中的
+            # run 无法取消"（实测真实项目：误建的新 run 因 workspace_busy 取消不了，
+            # 只能等它自己超时）。状态更新由 SQLite 事务保证原子。
+            pending = self.store.pending_tool_calls(session_id)
+            self.store.update_run(
+                session_id,
+                status="interrupted" if pending or row["status"] == "running" else "cancelled",
+                verification="unknown" if pending else row["verification"],
+                text="No local execution owner; retained tool history requires reconciliation."
+                if pending
+                else row["text"],
+            )
             return
         self._cancellations[session_id].set()
         # The loop owns interruption and awaits its physical worker. Repeated
