@@ -544,6 +544,9 @@ def interpret_review_reports(
     # "Interim placeholder — review in progress"，major_findings 写着
     # "Review not yet complete"，被当成工程缺陷 → 整轮 FAIL。
     # 元信息过滤掉；过滤后为空就按未裁决处理（最终落到 unproven，不是 FAIL）。
+    def findings_of(report: Mapping[str, Any]) -> list[Any]:
+        return list(normalize_clause_findings(report.get("clause_findings")))
+
     def _substantive_findings(report: Mapping[str, Any]) -> list[str]:
         return [
             str(item)
@@ -551,11 +554,23 @@ def interpret_review_reports(
             if not _is_meta_finding(str(item))
         ]
 
+    # major_findings 只有在条款矩阵有实质裁决（含 pass/fail）时才能否决。
+    # 实测 L3-21：QA 交全 unknown 的矩阵，却把"还缺哪些条款"写进 major_findings，
+    # 被当成工程缺陷 → 整轮 rejected；那其实是"我还没查"，不是拒绝。
     rejected = [
         (index, report)
         for index, report in valid
         if (not report["approved"] and index not in inconclusive)
+        # major_findings 否决的条件：
+        #  - approved=True 却列了 major findings —— 自相矛盾；
+        #  - 未批准且矩阵有实质裁决（含 pass/fail）。
+        # 全 unknown 的矩阵 + approved=False 时，major_findings 只是"我还没查"的元信息，
+        # 不能当工程缺陷（实测 L3-21 因此整轮被误判 rejected）。
         or _substantive_findings(report)
+        and (
+            report["approved"]
+            or any(item.status in {"pass", "fail"} for item in findings_of(report))
+        )
     ]
     feedback = list(
         dict.fromkeys(

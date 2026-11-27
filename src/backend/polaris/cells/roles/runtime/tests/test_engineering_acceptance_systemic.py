@@ -635,3 +635,42 @@ def test_meta_findings_are_not_engineering_defects() -> None:
         ),
     }
     assert interpret_review_reports([real])[0] == "rejected"
+
+
+def test_major_findings_cannot_veto_an_all_unknown_matrix() -> None:
+    """实测 L3-21：QA 交全 unknown 的矩阵，却把"还缺哪些条款"写进 major_findings，
+    被当成工程缺陷 → 整轮 rejected。那是"我还没查"，不是拒绝。
+    major_findings 只有在矩阵有实质裁决（含 pass/fail）时才能否决。
+    """
+
+    report = {
+        "call_id": "meta",
+        "content": json.dumps(
+            {
+                "approved": False,
+                "feedback": "Interim ruling placeholder pending further direct verification.",
+                "major_findings": ["clause 3 未被矩阵覆盖", "clause 7 未被矩阵覆盖"],
+                "clause_findings": [
+                    {"clause": str(index), "status": "unknown", "evidence": "Not yet inspected."}
+                    for index in range(1, 12)
+                ],
+            }
+        ),
+    }
+    assert interpret_review_reports([report])[0] == "unknown"
+
+    substantive = {
+        "call_id": "real",
+        "content": json.dumps(
+            {
+                "approved": False,
+                "feedback": "存在真实缺陷",
+                "major_findings": ["重置后 pending 未清空"],
+                "clause_findings": [
+                    {"clause": "1", "status": "pass", "evidence": "call_x：已读"},
+                    {"clause": "2", "status": "fail", "evidence": "call_y：失败"},
+                ],
+            }
+        ),
+    }
+    assert interpret_review_reports([substantive])[0] == "rejected"
