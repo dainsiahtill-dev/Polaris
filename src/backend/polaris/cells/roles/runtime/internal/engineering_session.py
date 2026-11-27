@@ -1534,22 +1534,14 @@ class EngineeringSessionStore:
         self, connection: sqlite3.Connection, row: Mapping[str, Any], *, verification_starting: bool = False
     ) -> dict[str, object]:
         """Project existing durable checks and QA facts; no separate acceptance ledger."""
-        terminal = None
-        if row["status"] not in {"running", "pending"}:
-            # Capture the original delivery decision in this admission epoch.
-            # Later observations stay in the journal for reconciliation.
-            terminal = connection.execute(
-                "SELECT seq,json_extract(payload,'$.project_outcome') AS outcome FROM events "
-                "WHERE session_id=? AND kind='run_updated' AND json_extract(payload,'$.status') "
-                "IN ('completed','cancelled','failed','interrupted') AND seq > "
-                "(SELECT COALESCE(MAX(seq),0) FROM events WHERE session_id=? AND kind='run_resumed') "
-                "ORDER BY seq LIMIT 1",
-                (row["session_id"], row["session_id"]),
-            ).fetchone()
+        # 不能把事件窗口截断到"前一个终态 run_updated"：QA 的批准裁决可能发生在
+        # 那个终态事件之后、真正交付完成之前。实测 L1-09：QA 第一帧被 provider
+        # 看护中断（seq1479 写了 interrupted 终态），第二帧 approved（seq1727），
+        # 投影却停在 unknown —— 裁决被窗口丢掉。terminal 只用于 outcome 门。
         events = connection.execute(
-            "SELECT seq,kind,payload FROM events WHERE session_id=? AND (? IS NULL OR seq<=?) "
+            "SELECT seq,kind,payload FROM events WHERE session_id=? "
             "AND kind IN ('verification_started','verification_completed','qa_review_started','qa_review_completed') ORDER BY seq",
-            (row["session_id"], terminal["seq"] if terminal else None, terminal["seq"] if terminal else None),
+            (row["session_id"],),
         ).fetchall()
         verification_seq = 0
         start_seq = 0
@@ -1636,8 +1628,10 @@ class EngineeringSessionStore:
         )
         fidelity_ok = (not required) or fidelity.status == "passed"
         accepted = row["status"] == "completed" and evidence and (not required or verdict == "approved") and fidelity_ok
-        if terminal is not None and terminal["outcome"] != "accepted":
-            accepted = False
+        # 不再用"上一个终态的 outcome"当门：那可能是过时结论（实测 L1-09：
+        # 上一次投影因裁决被窗口丢掉而写 unproven，裁决修好后仍被它压住）。
+        # 拒绝后翻案由 evidence 的 revision 绑定拦住：候选变了 →
+        # verification_payload.workspace_revision != 当前 → evidence False。
         # unproven：宿主检查全绿、当前 revision 有绑定证据，但**没有有效的独立裁决**
         # （QA 未裁/复审未裁完）。这与"harness 坏了"的 unknown 是两回事 ——
         # 实测 L1-03：QA 第一次裁 rejected（"视觉层没真正落到屏幕上""缺 README"，

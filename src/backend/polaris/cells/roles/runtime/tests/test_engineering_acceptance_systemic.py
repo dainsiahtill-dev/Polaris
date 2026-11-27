@@ -674,3 +674,106 @@ def test_major_findings_cannot_veto_an_all_unknown_matrix() -> None:
         ),
     }
     assert interpret_review_reports([substantive])[0] == "rejected"
+
+
+
+def test_qa_approval_after_interrupted_frame_is_projected(tmp_path: Path) -> None:
+    workspace = tmp_path
+    """实测 L1-09：QA 第一帧被 provider 看护中断（写了终态 run_updated），
+    第二帧才 approved。旧投影把事件窗口截断到那个终态 → 裁决被丢，整轮 unproven。
+    修复后 approved 必须被投影成 accepted。
+    """
+
+    from polaris.cells.roles.runtime.internal.engineering_session import EngineeringSessionStore
+    from polaris.cells.roles.runtime.public.contracts.engineering_run import RoleRunCommand, ToolObservation
+
+    store = EngineeringSessionStore(workspace)
+    command = RoleRunCommand("qa-late-approval", "director", "原始目标", workspace, workflow="direct", required_checks=("run checks",))
+    store.create_run(
+        command,
+        scope=PermissionScope((workspace,), (workspace,), frozenset({"execute_command"}), False),
+        limits=RunLimits(None, 10000, 2000),
+        engine_version="engineering_v2",
+        request_key=None,
+        require_qa=True,
+    )
+    store.append_event(
+        command.session_id,
+        kind="verification_started",
+        role="director",
+        payload={"input_binding": {"commands": ["run checks"]}},
+    )
+    store.append_event(
+        command.session_id,
+        kind="verification_completed",
+        role="director",
+        payload={
+            "verification": "passed",
+            "workspace_revision": 1,
+            "input_binding": {"commands": ["run checks"]},
+            "checks": [{"command": "run checks", "ok": True, "exit_code": 0}],
+        },
+    )
+    verification_seq = next(
+        event["seq"]
+        for event in store.load_events(command.session_id)
+        if event["kind"] == "verification_completed"
+    )
+    binding = {"workspace_revision": 1, "verification_seq": verification_seq, "commands": ["run checks"]}
+    # 第一帧：QA 被中断，写一条 outcome 为 NULL 的终态 run_updated。
+    store.append_event(command.session_id, kind="qa_review_started", role="qa", payload={"input_binding": binding})
+    store.append_event(command.session_id, kind="run_updated", role="qa", payload={"status": "interrupted"})
+    # 第二帧：QA 批准。
+    store.append_event(command.session_id, kind="qa_review_started", role="qa", payload={"input_binding": binding})
+    store.append_event(command.session_id, kind="role_started", role="qa", payload={"frame_seq": 90})
+    store.record_tool_dispatch(
+        command.session_id, turn_seq=5, call_id="call_qa", tool="report_review", arguments={}, role="qa"
+    )
+    store.record_tool_observation(
+        command.session_id,
+        turn_seq=5,
+        observation=ToolObservation(
+            "call_qa",
+            "report_review",
+            True,
+            json.dumps(
+                {
+                    "approved": True,
+                    "feedback": "ok",
+                    "clause_findings": [{"clause": "1", "status": "pass", "evidence": "call_x"}],
+                }
+            ),
+            0,
+            False,
+        ),
+        role="qa",
+    )
+    frame_seq = next(
+        event["seq"] for event in store.load_events(command.session_id) if event["kind"] == "role_started" and event["role"] == "qa"
+    )
+    store.append_event(
+        command.session_id,
+        kind="qa_review_completed",
+        role="qa",
+        payload={
+            "verdict": "rejected",
+            "feedback": "缺陷",
+            "input_binding": binding,
+            "frame_seq": frame_seq,
+            "report_call_id": "call_qa",
+            "report_turn_seq": 5,
+        },
+    )
+    store.update_run(
+        command.session_id,
+        status="completed",
+        verification="passed",
+        workspace_revision=1,
+        checks=[ToolObservation("call_checks", "run checks", True, "ok", 0, False)],
+    )
+    with store._connection() as connection:
+        row = dict(connection.execute("SELECT * FROM runs WHERE session_id=?", (command.session_id,)).fetchone())
+        projected = store._acceptance(connection, row)
+    # 旧实现会把事件窗口截断到那条 interrupted 终态 → verdict 停在 unknown。
+    assert projected["qa_verdict"] == "rejected", projected
+    assert projected["project_outcome"] == "rejected", projected
