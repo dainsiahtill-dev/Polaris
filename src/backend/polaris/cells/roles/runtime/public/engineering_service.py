@@ -2652,6 +2652,15 @@ class EngineeringRunService:
                 payload={"idle_seconds": round(idle, 1), "timeout_seconds": timeout_s},
             )
             await self.cancel(session_id, workspace=self.workspace)
+            # 可选：卡死后自动续跑（默认关）。drvfs（WSL2 9p）的 p9_client_rpc
+            # 无超时，一次阻塞就会 fail-closed；开启后宿主自动续跑，保留已提交观察，
+            # 不让一次瞬时 IO 阻塞终止整个任务。
+            if os.environ.get("KERNELONE_RUN_AUTO_RESUME", "0").strip().lower() in {"1", "true", "on"}:
+                try:
+                    await asyncio.sleep(float(os.environ.get("KERNELONE_RUN_AUTO_RESUME_DELAY_S", "5")))
+                    await self.resume(session_id, workspace=self.workspace)
+                except Exception as exc:  # noqa: BLE001 - 续跑失败保持 fail-closed
+                    logger.warning("engineering run %s 自动续跑失败：%s", session_id, exc)
             return
 
     def _revalidated_scope(self, row: dict[str, Any]) -> PermissionScope:
