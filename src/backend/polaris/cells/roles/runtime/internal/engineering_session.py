@@ -1534,6 +1534,17 @@ class EngineeringSessionStore:
         self, connection: sqlite3.Connection, row: Mapping[str, Any], *, verification_starting: bool = False
     ) -> dict[str, object]:
         """Project existing durable checks and QA facts; no separate acceptance ledger."""
+        terminal = None
+        if row["status"] not in {"running", "pending"}:
+            terminal = connection.execute(
+                "SELECT seq,json_extract(payload,'$.project_outcome') AS outcome FROM events "
+                "WHERE session_id=? AND kind='run_updated' AND json_extract(payload,'$.status') "
+                "IN ('completed','cancelled','failed','interrupted') "
+                "AND json_extract(payload,'$.project_outcome') IS NOT NULL AND seq > "
+                "(SELECT COALESCE(MAX(seq),0) FROM events WHERE session_id=? AND kind='run_resumed') "
+                "ORDER BY seq LIMIT 1",
+                (row["session_id"], row["session_id"]),
+            ).fetchone()
         # 不能把事件窗口截断到"前一个终态 run_updated"：QA 的批准裁决可能发生在
         # 那个终态事件之后、真正交付完成之前。实测 L1-09：QA 第一帧被 provider
         # 看护中断（seq1479 写了 interrupted 终态），第二帧 approved（seq1727），
@@ -1628,10 +1639,13 @@ class EngineeringSessionStore:
         )
         fidelity_ok = (not required) or fidelity.status == "passed"
         accepted = row["status"] == "completed" and evidence and (not required or verdict == "approved") and fidelity_ok
-        # 不再用"上一个终态的 outcome"当门：那可能是过时结论（实测 L1-09：
-        # 上一次投影因裁决被窗口丢掉而写 unproven，裁决修好后仍被它压住）。
-        # 拒绝后翻案由 evidence 的 revision 绑定拦住：候选变了 →
-        # verification_payload.workspace_revision != 当前 → evidence False。
+        # 契约（test_late_qa_verdict_cannot_promote_terminal_delivery）：run 已终态后
+        # 晚到的 QA 裁决不能提升交付。门只认**真正算出交付结论**的终态
+        # （project_outcome 非 NULL）；QA 中断帧写的 run_updated outcome 为 NULL，
+        # 不算交付决定。实测 L1-09：裁决(1727)在交付终态(1728)之前，
+        # 修窗口后 terminal 不会命中 1479，门不拦。
+        if terminal is not None and terminal["outcome"] != "accepted":
+            accepted = False
         # unproven：宿主检查全绿、当前 revision 有绑定证据，但**没有有效的独立裁决**
         # （QA 未裁/复审未裁完）。这与"harness 坏了"的 unknown 是两回事 ——
         # 实测 L1-03：QA 第一次裁 rejected（"视觉层没真正落到屏幕上""缺 README"，
