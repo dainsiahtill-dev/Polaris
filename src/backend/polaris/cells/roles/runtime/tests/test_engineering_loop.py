@@ -1470,8 +1470,8 @@ def test_incomplete_native_tool_announcement_is_tolerated() -> None:
     由循环的停滞检测/重问处理。
     """
 
-    from polaris.kernelone.llm.engine.contracts import AIResponse
     from polaris.cells.roles.runtime.internal.engineering_loop import _native_calls
+    from polaris.kernelone.llm.engine.contracts import AIResponse
 
     response = AIResponse(
         ok=True,

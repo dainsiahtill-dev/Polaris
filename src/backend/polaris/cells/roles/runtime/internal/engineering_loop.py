@@ -924,18 +924,24 @@ async def run_engineering_loop(
     last_run_card_key: tuple[str, str] | None = None
 
     capability_last_used: dict[str, int] = {}
+    from polaris.cells.roles.runtime.internal.engineering_provider_guard import ProviderLatencyGuard
+
+    provider_guard = ProviderLatencyGuard()
     capability_last_reminded: dict[str, int] = {}
     resident_stage: str | None = None
     resident_profile_fingerprint = ""
     # MCP 工具（配置驱动）：无配置就是没有；配了但 server 不可用会明确报错。
+    # MCP：目录 + 按任务选择。只有选中的工具进请求；未选中的不进（省 token、不稀释注意力）。
     from polaris.infrastructure.mcp.engineering_bridge import engineering_mcp_kwargs
+
+    _mcp_kwargs = engineering_mcp_kwargs(task_text=str(command.instruction or ""))
 
     tools = EngineeringTools(
         command.workspace,
         scope,
         limits,
         cancel,
-        **engineering_mcp_kwargs(),
+        **_mcp_kwargs,
         consult=consult_current if consult is not None and command.role == "director" else None,
         review=review_current if command.role == "qa" else None,
         verify=verify_current if verify is not None and command.role == "director" else None,
@@ -2270,6 +2276,48 @@ async def run_engineering_loop(
                     "trace_id": response.trace_id,
                 },
             )
+            # Provider 延迟看护：慢而输出少 = provider 侧（排队/限速），不是模型慢。
+            # 持续如此时剩余预算不足以完成任务，早停并如实记录，而不是把 5400s 静默
+            # 烧光（实测 L1-03：9 轮 × 721s → verification 从未运行）。
+            _usage = response.raw.get("usage") if isinstance(response.raw, dict) else None
+            _out_tokens = 0
+            if isinstance(_usage, dict):
+                try:
+                    _out_tokens = int(_usage.get("output_tokens") or 0)
+                except (TypeError, ValueError):
+                    _out_tokens = 0
+            provider_guard.observe(
+                latency_ms=response.latency_ms,
+                output_tokens=_out_tokens,
+                provider_id=response.provider_id,
+            )
+            _remaining_budget = (limits.deadline - time.time()) if limits.deadline is not None else None
+            _decision, _evidence = provider_guard.evaluate(remaining_budget_s=_remaining_budget)
+            if _decision == "degraded":
+                store.append_event(
+                    command.session_id,
+                    kind="provider_degraded",
+                    role=command.role,
+                    payload={"turn_seq": turn_seq, **_evidence},
+                )
+            elif _decision == "starved":
+                store.append_event(
+                    command.session_id,
+                    kind="budget_starved_by_provider",
+                    role=command.role,
+                    payload={"turn_seq": turn_seq, **_evidence},
+                )
+                store.append_event(
+                    command.session_id,
+                    kind="run_updated",
+                    role=command.role,
+                    payload={
+                        "status": "interrupted",
+                        "verification": "unknown",
+                        "budget_starved_by_provider": True,
+                    },
+                )
+                return finish("interrupted", "provider 持续慢，剩余预算不足以完成任务")
             if cancel.is_set():
                 return finish("cancelled", "Engineering role cancelled before tool dispatch.")
             if not response.ok:

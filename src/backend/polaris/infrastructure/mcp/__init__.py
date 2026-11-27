@@ -1,27 +1,29 @@
-"""MCP（Model Context Protocol）传输层：服务端 + 通用客户端。
+"""MCP（Model Context Protocol）：通用客户端 + 工具目录 + AGI 选择。
 
-实测 2026-11-27：Polaris 此前**没有** MCP 支持 —— 旧 `infrastructure/tools/mcp_client.py`
-已删，无 JSON-RPC 传输层，Director/QA 工具集不含任何 MCP 工具。只留下两个响应契约
-（`mcp_context_response` / `mcp_verify_events`）和 accel 的数据源。
+实测 2026-11-27：Polaris 此前没有 MCP 支持（旧 infrastructure/tools/mcp_client.py 已删，
+无 JSON-RPC 传输层）。本模块提供：
 
-本模块补齐传输层：
-- `server`：把 accel 能力暴露成 MCP 工具（JSON-RPC 2.0 over stdio）。
-- `client`：通用 stdio 客户端（配置驱动），把任意 MCP server 的工具接进工程循环。
+- `client`：通用 stdio 客户端（配置驱动），任意 MCP server 都能接。
+- `catalog`：把外部 server 的工具汇总成**目录**（类别/描述），惰性拉取并缓存。
+- `selection`：按任务文本与类别**选择**工具子集，只有选中的进当轮请求。
 
 设计不变量：**通用**（任意 MCP server，不针对特定项目）、**fail-closed**
-（server 不可用时工具不可用，不静默降级）、**授权不外扩**（仍受 PermissionScope 约束）。
+（server 不可用即报错，不静默降级）、**授权不外扩**（仍受 PermissionScope 约束）、
+**不全量注入**（工具多不等于能力强，未选中的不进请求）。
 """
 
 from __future__ import annotations
 
+from polaris.infrastructure.mcp.catalog import CatalogEntry, McpToolCatalog
 from polaris.infrastructure.mcp.client import McpClient, McpServerError, load_server_configs
-from polaris.infrastructure.mcp.server import MCP_SERVER_NAME, McpToolError, serve_stdio
+from polaris.infrastructure.mcp.selection import select_categories, select_tools
 
 __all__ = [
-    "MCP_SERVER_NAME",
+    "CatalogEntry",
     "McpClient",
     "McpServerError",
-    "McpToolError",
+    "McpToolCatalog",
     "load_server_configs",
-    "serve_stdio",
+    "select_categories",
+    "select_tools",
 ]
