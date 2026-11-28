@@ -184,7 +184,12 @@ def _native_client(
                     context_reference_owner=context_reference_owner,
                 ),
                 ProviderConfig(
-                    provider_name=f"kernelone_native:{provider_id}",
+                    # breaker 按 provider_name 复用：同名会让 QA 连坐 Director 的
+                    # 熔断状态（实测 L3-26/27/28：QA 被 circuit_open 挡死，
+                    # 且 recovery 仍是 Director 的 45-60s）。QA 用独立名字。
+                    provider_name=(
+                        f"kernelone_native:{provider_id}:qa" if role == "qa" else f"kernelone_native:{provider_id}"
+                    ),
                     circuit_breaker_config=_qa_circuit_breaker_config() if role == "qa" else None,
                 ),
             )
