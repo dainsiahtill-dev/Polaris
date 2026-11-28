@@ -25,7 +25,11 @@ _config_lock = threading.Lock()
 
 # ─── Default timeout values ────────────────────────────────────────────────────
 # These match the defaults in _runtime_config.py
-_DEFAULT_INVOKE_TIMEOUT_SEC: float = 30.0
+_DEFAULT_INVOKE_TIMEOUT_SEC: float = 120.0
+# 30s 对 LLM 长请求太短：QA 要读源码 + 跑命令，上下文长，实测 L4-31 的 QA
+# 跑了 19 分钟、22 次全成功后，最后被 "Invoke timeout after 30.0s" 砍掉
+# 累积失败 → 熔断 → 没有裁决。120s 给长上下文留出余量；仍可用
+# KERNELONE_LLM_INVOKE_TIMEOUT_SEC 覆盖。
 _DEFAULT_STREAM_TIMEOUT_SEC: float = 300.0
 _DEFAULT_TOKEN_TIMEOUT_SEC: float = 60.0
 _DEFAULT_MAX_CONCURRENCY: int = 100
