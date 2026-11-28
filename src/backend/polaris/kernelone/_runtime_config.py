@@ -58,7 +58,9 @@ _ENV_MAPPINGS: dict[str, tuple[str, str]] = {
     "task_id": ("KERNELONE_TASK_ID", ""),
     # LLM concurrency / timeout
     "llm_max_concurrency": ("KERNELONE_LLM_MAX_CONCURRENCY", "100"),
-    "llm_invoke_timeout_sec": ("KERNELONE_LLM_INVOKE_TIMEOUT_SEC", "30"),
+    # 30s 对 LLM 长请求太短：实测 QA 读源码+跑命令的长请求被 "Invoke timeout
+# after 30.0s" 砍掉，累积失败 → 熔断 → 没有验收裁决（L4-31）。
+"llm_invoke_timeout_sec": ("KERNELONE_LLM_INVOKE_TIMEOUT_SEC", "120"),
     "llm_stream_timeout_sec": ("KERNELONE_LLM_STREAM_TIMEOUT_SEC", "300"),
     # Tool loop safety
     "tool_loop_read_file_content_chars": ("KERNELONE_TOOL_LOOP_READ_FILE_CONTENT_CHARS", "16000"),
