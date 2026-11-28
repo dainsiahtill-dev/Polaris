@@ -2427,10 +2427,13 @@ class EngineeringRunService:
         decision_deadline = ""
         if source_reads >= 4 and row["verification"] == "passed":
             decision_deadline = (
-                f"你已经读过 {source_reads} 次源码/仓库，宿主检查也全绿 —— 这足以裁定。"
-                "现在必须交 report_review：能从源码判的条款判 pass/fail（证据写你读过的文件与行），"
-                "判不了的标 unknown 并写明还需要什么观察。"
-                "不要再回「正在读源码」「初步探针」这类进度汇报 —— 那是非裁决，会被退回。\n\n"
+                f"【必须现在裁决】你已经读过 {source_reads} 次源码/仓库，宿主检查也全绿 —— 这足以裁定。"
+                "现在立即交 report_review，逐条给 status（pass/fail/unknown）："
+                "能判的判 pass/fail（pass 要写你读过的文件与行或真实 call_id），"
+                "判不了的标 unknown 并写明还缺什么观察。"
+                "禁止再回「正在读源码」「初步探针」「placeholder」「interim」「provisional」"
+                "「reconnaissance」「not the final ruling」等任何进度性文字 —— "
+                "它们一律算非裁决，会被退回重问，且不会改变结论。\n\n"
             )
         advice_block = ""
         for event in reversed(self.store.load_events(command.session_id)):
@@ -2449,6 +2452,9 @@ class EngineeringRunService:
         instruction = (
             "Original user goal:\n"
             + row["instruction"]
+            # 裁决要求必须前置：放在末尾会被条款表、建议与成本控制稀释，
+            # 实测 L4-34 读够 60 次仍交 "placeholder"（= 未裁决 → interrupted）。
+            + (("\n\n" + decision_deadline) if decision_deadline else "")
             + "\n\nCurrent actual required checks (these do not establish semantic correctness):\n"
             + json.dumps(
                 [
@@ -2464,7 +2470,6 @@ class EngineeringRunService:
             "clause_findings is REQUIRED: exactly one entry per acceptance clause listed above, each with status pass|fail|unknown and evidence. "
             "A report is rejected if any clause is missing, and a fail entry requires approved=false. Do not treat Director text as evidence."
             + (("\n\n" + extra_guidance) if extra_guidance.strip() else "")
-            + (("\n\n" + decision_deadline) if decision_deadline else "")
             + ("\n\n" + advice_block if advice_block else "")
             + "\n\n成本控制：先用源码与已有回执判条款；browser_observe 最多 3 次，"
             "只在'没有渲染就无法判'的条款上使用。缺的条款宿主会补成 unknown 并点名，"
