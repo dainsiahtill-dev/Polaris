@@ -277,6 +277,32 @@ def _run_typescript_check(workspace: Path, *, timeout_s: int = 300) -> bool:
     raise _CheckUnavailableError("TypeScript toolchain and build recipe unavailable")
 
 
+def _toolchain_bin_dirs() -> list[Path]:
+    """宿主配置的工具链目录（缺 PATH 时也能找到 javac/go/cargo 等）。
+
+    实测 L2-16（Java）：javac 在 ~/.local/jdk/bin，不在 PATH ——
+    shutil.which 找不到，catalog 质检报 "toolchain unavailable" → 整个
+    bench_gate=UNKNOWN。host-config 里明明配了 toolchain_bin_dirs。
+    """
+
+    import json
+    import os
+
+    raw = os.environ.get("POLARIS_HOST_CONFIG") or "/home/dains/.polaris/bench_runs/host-config-toolchains.json"
+    try:
+        with open(raw, encoding="utf-8") as handle:
+            config = json.load(handle)
+    except (OSError, ValueError):
+        return []
+    dirs: list[Path] = []
+    for profile in (config.get("permission_profiles") or {}).values():
+        for item in profile.get("toolchain_bin_dirs") or []:
+            path = Path(item).expanduser()
+            if path.is_dir() and path not in dirs:
+                dirs.append(path)
+    return dirs
+
+
 def _run_command(command: list[str], *, cwd: Path, timeout_s: int = 600) -> bool:
     """Run a compiler inside KernelOne confinement with only the scratch copy writable."""
     try:
@@ -287,6 +313,12 @@ def _run_command(command: list[str], *, cwd: Path, timeout_s: int = 600) -> bool
         # UNKNOWN（实测 L1-04：平台侧 completed/accepted/passed 全绿，
         # 唯独 bench_gate=UNKNOWN，只因为 catalog 质检跑不了 go_compile）。
         system_tool = shutil.which(command[0])
+        if system_tool is None:
+            for directory in _toolchain_bin_dirs():
+                candidate = directory / command[0]
+                if candidate.exists():
+                    system_tool = str(candidate)
+                    break
         tool_dirs: list[Path] = []
         if system_tool:
             tool_dir = Path(system_tool).resolve().parent
