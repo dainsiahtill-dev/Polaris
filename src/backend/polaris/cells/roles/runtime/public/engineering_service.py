@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -1047,6 +1048,19 @@ class EngineeringRunService:
                 raise PermissionError("nested role exceeds its active session owner")
             if limits != host_limits or cancel is not host_cancel:
                 raise PermissionError("nested role cannot replace owner limits or cancellation")
+            # 角色 client 必须按当前角色解析：owner 的 client 是 Director 的，
+            # 直接复用会让 QA/PM/CE 全部跑在 Director 的模型上 —— 实测把
+            # roles.qa 配成 LongCat-2.5 后，44 次 QA 请求仍全是 MiniMax。
+            # client 不是预算/授权（那由 scope/limits 管），所以按 role 重建是安全的。
+            if command.role != original.role:
+                with contextlib.suppress(RuntimeError, ValueError, TypeError):
+                    client = _native_client(
+                        self.workspace,
+                        host_limits,
+                        command.role,
+                        self._observe_native_request,
+                        self.context_reference_owner_resolver(command.session_id),
+                    )
             return await self._run_current_role(command, scope=scope, limits=limits, cancel=cancel, client=client)
         session_id = await self._start(command, scope=scope, limits=limits, request_key=None, cancel=cancel)
         return await self._await_result(session_id, cancel)
