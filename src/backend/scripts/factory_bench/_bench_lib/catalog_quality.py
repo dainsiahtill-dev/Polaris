@@ -367,7 +367,15 @@ def _run_command(command: list[str], *, cwd: Path, timeout_s: int = 600) -> bool
             command,
             workspace=cwd,
             cwd=cwd,
-            read_roots=[cwd, *tool_dirs, *env_roots],
+            # 工具链的父目录也要挂：javac 在 ~/.local/jdk/bin，但它依赖
+            # ~/.local/jdk/lib/libjli.so —— 只挂 bin 会 rc=127
+            # "libjli.so: cannot open shared object file"（实测 L3-25）。
+            read_roots=[
+                cwd,
+                *tool_dirs,
+                *[d.parent for d in tool_dirs if d.parent.is_dir()],
+                *env_roots,
+            ],
             write_roots=[cwd],
             network_allowed=False,
             toolchain_bin_dirs=tool_dirs,
