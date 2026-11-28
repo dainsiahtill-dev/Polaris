@@ -111,8 +111,9 @@ def _native_bindings(role: str) -> tuple[tuple[str, str], ...]:
     ones the host already configured for the role, so the chain never
     invents an endpoint and never widens the authorization.
     """
-    if role not in _DEGRADABLE_ROLES:
-        return ()
+    # 所有角色都解析宿主配置绑定。旧版只允许 director 解析，其他角色返回空 →
+    # _native_client 无绑定可用 → 回退全局默认，于是 roles.qa 的配置形同虚设
+    # （实测：把 QA 配成 LongCat-2.5，实际 20 次请求全是 MiniMax）。
     try:
         provider_id, model = resolve_provider_model(
             provider_id=None,
