@@ -225,6 +225,10 @@ async def test_collaborative_role_assignments_reach_final_provider_requests(
     assert len(bodies) == 3
     captures: dict[str, list[dict[str, Any]]] = {}
     for path in (isolated_workspace / ".polaris/runtime/contexts").glob("*/*"):
+        # contexts/pins/<shard> 是目录（QA 现在也写自己的 context snapshot，
+        # 会出现 pins/），glob("*/*") 会匹配到它 —— 只读真正的快照文件。
+        if not path.is_file():
+            continue
         snapshot = json.loads(path.read_text(encoding="utf-8"))
         request = snapshot["provider_request"]
         if request.get("request_identity", {}).get("session_id") == command.session_id:

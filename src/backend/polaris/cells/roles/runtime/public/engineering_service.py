@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -1047,6 +1048,9 @@ class EngineeringRunService:
                 raise PermissionError("nested role exceeds its active session owner")
             if limits != host_limits or cancel is not host_cancel:
                 raise PermissionError("nested role cannot replace owner limits or cancellation")
+            if command.role != original.role:
+                with contextlib.suppress(RuntimeError, ValueError, TypeError):
+                    client = _native_client(self.workspace, host_limits, command.role, self._observe_native_request, self.context_reference_owner_resolver(command.session_id))
             return await self._run_current_role(command, scope=scope, limits=limits, cancel=cancel, client=client)
         session_id = await self._start(command, scope=scope, limits=limits, request_key=None, cancel=cancel)
         return await self._await_result(session_id, cancel)
