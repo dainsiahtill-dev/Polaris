@@ -141,6 +141,19 @@ def _native_bindings(role: str) -> tuple[tuple[str, str], ...]:
     return tuple(bindings)
 
 
+def _qa_circuit_breaker_config() -> Any:
+    """QA 用更宽容的熔断：它是唯一的独立验收环节。
+
+    实测 L3-26/L3-27：QA 请求 LongCat 后半段出现少量失败 → QA 自己的 breaker
+    打开 → 第二次 QA 帧 4 秒即死（circuit_open:26s_remaining）→ 没有裁决。
+    验收被实现阶段的偶发失败连坐，是本轮首要失败模式。
+    """
+
+    from polaris.kernelone.llm.engine.resilience import CircuitBreakerConfig
+
+    return CircuitBreakerConfig(failure_threshold=25, recovery_timeout=15.0)
+
+
 def _native_client(
     workspace: Path,
     limits: RunLimits,
@@ -170,7 +183,10 @@ def _native_client(
                     native_request_observer=native_request_observer,
                     context_reference_owner=context_reference_owner,
                 ),
-                ProviderConfig(provider_name=f"kernelone_native:{provider_id}"),
+                ProviderConfig(
+                    provider_name=f"kernelone_native:{provider_id}",
+                    circuit_breaker_config=_qa_circuit_breaker_config() if role == "qa" else None,
+                ),
             )
         )
     if not entries:
